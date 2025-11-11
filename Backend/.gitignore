@@ -1,0 +1,8 @@
+# Backend/.gitignore
+.idea/
+venv/
+__pycache__/
+.env
+.env.production
+*.log
+*.pyc
