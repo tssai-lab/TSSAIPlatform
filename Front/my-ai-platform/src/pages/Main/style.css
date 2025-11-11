@@ -1,0 +1,22 @@
+.main-layout {
+  height: 100vh;
+}
+
+.main-sider {
+  background: #F6F7F9;
+}
+
+/* 主内容区布局 */
+.main-content-layout {
+  padding: 4px;
+  background: #F6F7F9;
+}
+
+/* 内容卡片 */
+.main-content {
+  padding: 0 16px;
+  margin: 0 ;
+  min-height: 280px;
+  background: #ffffff;
+  border-radius: 8px; /* 轻微的圆角，更现代化 */
+}
