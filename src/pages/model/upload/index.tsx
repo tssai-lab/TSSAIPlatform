@@ -77,12 +77,12 @@ const ModelUpload: React.FC = () => {
           <Upload
             beforeUpload={() => false}
             maxCount={1}
-            accept=".zip"
+            accept=".pt,.pth,.onnx,.pb,.h5,.keras,.zip"
           >
             <Button icon={<UploadOutlined />}>选择文件（支持拖拽）</Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
-            支持 Zip 包，单个文件≤10GB
+            支持 .pt / .pth / .onnx / .pb 等单文件；千问等大模型由多文件组成，请打包为 .zip 后上传，单个文件≤2GB
           </div>
         </Form.Item>
         <Form.Item>

@@ -1,5 +1,5 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, message, Select, Upload } from 'antd';
+import { Button, Form, Input, message, Space, Upload } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
 import React from 'react';
 import { history } from '@umijs/max';
@@ -34,17 +34,7 @@ const DatasetUpload: React.FC = () => {
         >
           <Input placeholder="请输入数据集名称" />
         </Form.Item>
-        <Form.Item
-          name="type"
-          label="类型"
-          rules={[{ required: true, message: '请选择类型' }]}
-        >
-          <Select placeholder="请选择类型">
-            <Select.Option value="CV">CV</Select.Option>
-            <Select.Option value="NLP">NLP</Select.Option>
-          </Select>
-        </Form.Item>
-        <Form.Item name="description" label="描述">
+        <Form.Item name="description" label="描述（可选）">
           <Input.TextArea rows={4} placeholder="请输入描述（可选）" />
         </Form.Item>
         <Form.Item

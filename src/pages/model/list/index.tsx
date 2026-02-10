@@ -3,19 +3,21 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { MOCK_MODELS } from '@/constants/mockData';
 
 /**
- * 模型列表页
+ * 模型列表页（与 TSSAIPlatform-frontend-prototype 一致）
  */
 const ModelList: React.FC = () => {
-  // TODO: 调用接口 GET /api/model/list
   const fetchModelList = async (params: any) => {
-    console.log('查询参数:', params);
-    return {
-      data: [],
-      success: true,
-      total: 0,
-    };
+    // 开发阶段使用 Mock，后端就绪后改为 request(API_CONFIG.ENDPOINTS.MODEL_LIST, { params })
+    const { name, type, current = 1, pageSize = 10 } = params;
+    let list = [...MOCK_MODELS];
+    if (name) list = list.filter((m) => m.name.includes(name));
+    if (type) list = list.filter((m) => m.type === type);
+    const start = (current - 1) * pageSize;
+    const data = list.slice(start, start + pageSize);
+    return { data, success: true, total: list.length };
   };
 
   const handleDelete = async (modelId: string) => {
@@ -58,10 +60,12 @@ const ModelList: React.FC = () => {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
+      hideInSearch: true,
     },
     {
       title: '操作',
       key: 'action',
+      hideInSearch: true,
       render: (_, record) => (
         <Space>
           <Button
@@ -86,13 +90,15 @@ const ModelList: React.FC = () => {
 
   return (
     <PageContainer
+      title="模型管理"
+      subTitle="管理所有已上传的模型，支持搜索、筛选、删除等操作"
       extra={[
         <Button
           key="upload"
           type="primary"
           onClick={() => history.push('/model/upload')}
         >
-          上传模型
+          + 上传模型
         </Button>,
       ]}
     >

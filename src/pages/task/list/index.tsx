@@ -3,19 +3,20 @@ import { Button, message, Popconfirm, Space, Tag } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { MOCK_TASKS } from '@/constants/mockData';
 
 /**
- * 训练任务列表页
+ * 训练任务列表页（与 TSSAIPlatform-frontend-prototype 一致）
  */
 const TaskList: React.FC = () => {
-  // TODO: 调用接口 GET /api/task/list
   const fetchTaskList = async (params: any) => {
-    console.log('查询参数:', params);
-    return {
-      data: [],
-      success: true,
-      total: 0,
-    };
+    const { name, status, current = 1, pageSize = 10 } = params;
+    let list = [...MOCK_TASKS];
+    if (name) list = list.filter((t) => t.name.includes(name));
+    if (status) list = list.filter((t) => t.status === status);
+    const start = (current - 1) * pageSize;
+    const data = list.slice(start, start + pageSize);
+    return { data, success: true, total: list.length };
   };
 
   const handleStop = async (taskId: string) => {
@@ -81,11 +82,13 @@ const TaskList: React.FC = () => {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
+      hideInSearch: true,
       render: (progress) => `${progress || 0}%`,
     },
     {
       title: '操作',
       key: 'action',
+      hideInSearch: true,
       render: (_, record) => (
         <Space>
           <Button
@@ -119,6 +122,8 @@ const TaskList: React.FC = () => {
 
   return (
     <PageContainer
+      title="训练任务"
+      subTitle="管理所有训练任务，支持状态筛选、终止、删除等操作"
       extra={[
         <Button
           key="create"

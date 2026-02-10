@@ -1,77 +1,142 @@
+/**
+ * 模型详情页（与 TSSAIPlatform-frontend-prototype 一致）
+ * 基本信息、模型描述、模型参数（只读）、代码内容、版本历史；使用此模型训练、下载、删除
+ */
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Card, Descriptions, Tabs } from 'antd';
+import { Button, Card, Descriptions, message, Popconfirm, Space, Table, Tag } from 'antd';
 import React, { useEffect, useState } from 'react';
 import { history, useParams } from '@umijs/max';
+import { MOCK_MODEL_DETAIL } from '@/constants/mockData';
 
-/**
- * 模型详情页
- */
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const [modelInfo, setModelInfo] = useState<any>(null);
+  const [modelInfo, setModelInfo] = useState<typeof MOCK_MODEL_DETAIL | null>(null);
 
   useEffect(() => {
-    // TODO: 调用接口 GET /api/model/detail
-    console.log('查询模型详情:', id);
-    // setModelInfo(data);
+    // 开发阶段使用 Mock，后端就绪后改为 request(API_CONFIG.ENDPOINTS.MODEL_DETAIL + id)
+    setModelInfo(MOCK_MODEL_DETAIL);
   }, [id]);
+
+  const copyCode = () => {
+    if (!modelInfo?.codeContent) return;
+    navigator.clipboard.writeText(modelInfo.codeContent).then(
+      () => message.success('代码已复制到剪贴板'),
+      () => message.error('复制失败'),
+    );
+  };
+
+  const handleDelete = () => {
+    message.success('删除成功（Mock）');
+    history.push('/model/list');
+  };
+
+  if (!modelInfo) return null;
 
   return (
     <PageContainer
       title="模型详情"
+      subTitle="查看模型的详细信息和元数据"
       onBack={() => history.push('/model/list')}
-      extra={[
-        <Button key="download">下载模型</Button>,
-        <Button key="back" onClick={() => history.push('/model/list')}>
-          返回列表
-        </Button>,
-      ]}
+      extra={
+        <Space>
+          <Button type="primary" onClick={() => history.push(`/task/create?modelId=${id}`)}>
+            使用此模型训练
+          </Button>
+          <Button onClick={() => message.info('下载功能（Mock）')}>下载模型</Button>
+          <Popconfirm title="确定要删除这个模型吗？删除后无法恢复。" onConfirm={handleDelete}>
+            <Button danger>删除模型</Button>
+          </Popconfirm>
+          <Button onClick={() => history.push('/model/list')}>返回列表</Button>
+        </Space>
+      }
     >
-      <Card title="基础信息" style={{ marginBottom: 16 }}>
+      <Card title="基本信息" style={{ marginBottom: 16 }}>
         <Descriptions column={2}>
           <Descriptions.Item label="模型名称">
-            {modelInfo?.name || '-'}
+            <strong>{modelInfo.name}</strong>
           </Descriptions.Item>
-          <Descriptions.Item label="版本号">
-            {modelInfo?.version || '-'}
+          <Descriptions.Item label="版本号">{modelInfo.version}</Descriptions.Item>
+          <Descriptions.Item label="模型类型">
+            <Tag color={modelInfo.type === 'CV' ? 'blue' : 'green'}>{modelInfo.type}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="类型">
-            {modelInfo?.type || '-'}
+          <Descriptions.Item label="文件大小">{modelInfo.size}</Descriptions.Item>
+          <Descriptions.Item label="上传时间">{modelInfo.uploadTime}</Descriptions.Item>
+          <Descriptions.Item label="更新时间">{modelInfo.updateTime}</Descriptions.Item>
+          <Descriptions.Item label="时间戳">
+            <span style={{ fontFamily: 'monospace' }}>{modelInfo.timestamp}</span>
+            <span style={{ marginLeft: 8, color: '#8c8c8c', fontSize: 12 }}>(Unix Timestamp)</span>
           </Descriptions.Item>
-          <Descriptions.Item label="上传时间">
-            {modelInfo?.uploadTime || '-'}
-          </Descriptions.Item>
-          <Descriptions.Item label="大小">
-            {modelInfo?.size || '-'}
-          </Descriptions.Item>
-          <Descriptions.Item label="备注">
-            {modelInfo?.remark || '-'}
+          <Descriptions.Item label="备注" span={2}>
+            {modelInfo.remark}
           </Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card>
-        <Tabs
-          items={[
+      <Card title="模型描述" style={{ marginBottom: 16 }}>
+        <p style={{ color: '#595959', lineHeight: 1.8 }}>
+          YOLOv8 是一个先进的实时目标检测模型，具有高精度、快速推理、易于部署、灵活配置等特点。
+        </p>
+      </Card>
+
+      <Card title="模型参数（只读）" style={{ marginBottom: 16 }}>
+        <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 12 }}>
+          提示：模型参数是在训练时确定的，无法直接修改。如需调整参数，请使用此模型重新训练。
+        </div>
+        <Descriptions column={2}>
+          <Descriptions.Item label="框架">{modelInfo.params.framework}</Descriptions.Item>
+          <Descriptions.Item label="输入尺寸">{modelInfo.params.inputSize}</Descriptions.Item>
+          <Descriptions.Item label="类别数">{modelInfo.params.numClasses}</Descriptions.Item>
+          <Descriptions.Item label="参数量">{modelInfo.params.paramsCount}</Descriptions.Item>
+          <Descriptions.Item label="训练数据集">{modelInfo.params.trainDataset}</Descriptions.Item>
+          <Descriptions.Item label="训练参数" span={2}>
+            <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{modelInfo.params.trainParams}</span>
+          </Descriptions.Item>
+        </Descriptions>
+      </Card>
+
+      <Card
+        title="代码内容"
+        extra={<Button size="small" onClick={copyCode}>复制代码</Button>}
+        style={{ marginBottom: 16 }}
+      >
+        <pre
+          style={{
+            background: '#f5f5f5',
+            border: '1px solid #d9d9d9',
+            borderRadius: 6,
+            padding: 16,
+            maxHeight: 400,
+            overflow: 'auto',
+            margin: 0,
+            fontFamily: 'Courier New, monospace',
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          {modelInfo.codeContent}
+        </pre>
+        <div style={{ marginTop: 12, color: '#8c8c8c', fontSize: 12 }}>
+          提示：代码内容从模型文件中提取，支持查看和复制
+        </div>
+      </Card>
+
+      <Card title="版本历史">
+        <Table
+          dataSource={modelInfo.versionHistory}
+          rowKey="version"
+          pagination={false}
+          columns={[
+            { title: '版本', dataIndex: 'version', key: 'version' },
+            { title: '更新时间', dataIndex: 'updateTime', key: 'updateTime' },
+            { title: '时间戳', dataIndex: 'timestamp', key: 'timestamp', render: (v) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
             {
-              key: 'code',
-              label: '代码预览',
-              children: (
-                <div>
-                  {/* TODO: 调用接口 GET /api/model/previewCode */}
-                  {/* TODO: 使用代码预览组件显示代码 */}
-                  <p>代码预览功能待实现</p>
-                </div>
-              ),
-            },
-            {
-              key: 'dataset',
-              label: '关联数据集',
-              children: (
-                <div>
-                  {/* TODO: 显示关联的数据集列表 */}
-                  <p>关联数据集功能待实现</p>
-                </div>
+              title: '操作',
+              key: 'action',
+              render: () => (
+                <Space>
+                  <Button type="link" size="small">下载</Button>
+                  <Button type="link" size="small">查看代码</Button>
+                </Space>
               ),
             },
           ]}
@@ -82,9 +147,3 @@ const ModelDetail: React.FC = () => {
 };
 
 export default ModelDetail;
-
-
-
-
-
-
