@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+# MinIO（与 Docker 容器 minio-tss 一致，数据持久化到 E:\tss_minio_data）
+minio:
+  endpoint: http://127.0.0.1:9010
+  access-key: admin
+  secret-key: password123
+  bucket: models
+
+spring:
+  application:
+    name: tss-backend
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
