@@ -22,9 +22,19 @@ import React, { useEffect, useState } from 'react';
 import { history, useSearchParams } from '@umijs/max';
 import JsonEditor from '@/components/JsonEditor';
 import { MOCK_DATASETS, MOCK_MODELS } from '@/constants/mockData';
-import { API_CONFIG, MODEL_TYPES, UPLOAD_CONFIG } from '@/constants/platform';
-import { fetchDatasetList, fetchModelList } from '@/services/platform';
-import { request } from '@umijs/max';
+import { MODEL_TYPES, UPLOAD_CONFIG } from '@/constants/platform';
+import {
+  fetchDatasetList,
+  fetchModelList,
+  modelUploadInit,
+  modelUploadChunk,
+  modelUploadComplete,
+  createTaskWithParams,
+  createTaskWithTrainingCode,
+  uploadDataset,
+} from '@/services/platform';
+
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 分片
 
 const { Step } = Steps;
 const { TextArea } = Input;
@@ -96,24 +106,39 @@ const TaskCreate: React.FC = () => {
         message.warning('请选择模型文件');
         return;
       }
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('name', values.modelName);
-      formData.append('version', values.version);
-      formData.append('type', values.type);
-      formData.append('remark', values.remark);
-
-      await request(API_CONFIG.ENDPOINTS.MODEL_UPLOAD, {
-        method: 'POST',
-        data: formData,
-        requestType: 'form',
-      });
+      // 分片上传（与 TSSAIPlatform-xyx 后端 ModelUploadController 对齐）
+      const initRes = await modelUploadInit(
+        { fileName: file.name, fileSize: file.size },
+        { skipErrorHandler: true },
+      );
+      const uploadId = initRes?.data?.uploadId;
+      if (!uploadId) {
+        throw new Error((initRes as any)?.errorMessage ?? '初始化上传失败');
+      }
+      const chunkSize = initRes?.data?.chunkSize ?? CHUNK_SIZE;
+      const totalChunks = Math.ceil(file.size / chunkSize);
+      for (let partIndex = 0; partIndex < totalChunks; partIndex++) {
+        const start = partIndex * chunkSize;
+        const end = Math.min(start + chunkSize, file.size);
+        const chunk = file.slice(start, end);
+        await modelUploadChunk(uploadId, partIndex, chunk, { skipErrorHandler: true });
+      }
+      await modelUploadComplete(
+        {
+          uploadId,
+          modelName: values.modelName,
+          version: values.version,
+          type: values.type,
+          remark: values.remark,
+        },
+        { skipErrorHandler: true },
+      );
       message.success('模型上传成功');
       setSelectedModel({ id: 'new', name: `${values.modelName} (${values.version})`, type: values.type });
       fetchModelList({ pageSize: 100 }).then((res) => res?.data && setModelList(res.data));
     } catch (e: any) {
       if (e?.errorFields) return;
-      message.error(e?.message || '上传失败');
+      message.error(e?.message || e?.info?.errorMessage || '上传失败');
     }
   };
 
@@ -125,15 +150,7 @@ const TaskCreate: React.FC = () => {
         message.warning('请选择数据集文件');
         return;
       }
-      const formData = new FormData();
-      fileList.forEach((f: File) => formData.append('files', f));
-      formData.append('name', values.datasetName);
-
-      await request(API_CONFIG.ENDPOINTS.DATASET_UPLOAD, {
-        method: 'POST',
-        data: formData,
-        requestType: 'form',
-      });
+      await uploadDataset({ name: values.datasetName, files: fileList });
       message.success('数据集上传成功');
       setSelectedDataset({ id: 'new', name: values.datasetName });
       fetchDatasetList({ pageSize: 100 }).then((res) => res?.data && setDatasetList(res.data));
@@ -226,9 +243,11 @@ const TaskCreate: React.FC = () => {
             return;
           }
         }
-        await request(API_CONFIG.ENDPOINTS.TASK_CREATE, {
-          method: 'POST',
-          data: { name: taskName.trim(), modelId: selectedModel.id, datasetId: selectedDataset.id, params },
+        await createTaskWithParams({
+          name: taskName.trim(),
+          modelId: selectedModel.id,
+          datasetId: selectedDataset.id,
+          params,
         });
         message.success('训练任务创建成功，参数将在训练过程中应用');
       } else {
@@ -237,16 +256,11 @@ const TaskCreate: React.FC = () => {
           message.warning('请上传训练代码文件');
           return;
         }
-        const formData = new FormData();
-        formData.append('name', taskName.trim());
-        formData.append('modelId', selectedModel.id);
-        formData.append('datasetId', selectedDataset.id);
-        formData.append('paramsMode', 'upload');
-        formData.append('trainingCode', file);
-        await request(API_CONFIG.ENDPOINTS.TASK_CREATE, {
-          method: 'POST',
-          data: formData,
-          requestType: 'form',
+        await createTaskWithTrainingCode({
+          name: taskName.trim(),
+          modelId: selectedModel.id,
+          datasetId: selectedDataset.id,
+          trainingCodeFile: file,
         });
         message.success('训练任务创建成功，将使用您上传的训练代码进行训练');
       }

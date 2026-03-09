@@ -1,107 +1,92 @@
-﻿import type { RequestOptions } from '@@/plugin-request/request';
+import type { RequestOptions } from '@@/plugin-request/request';
 import type { RequestConfig } from '@umijs/max';
-import { message, notification } from 'antd';
+import { message } from 'antd';
+import storage from './utils/storage';
+import { STORAGE_KEYS } from './constants/storageKeys';
 
-// 错误处理方案： 错误类型
-enum ErrorShowType {
-  SILENT = 0,
-  WARN_MESSAGE = 1,
-  ERROR_MESSAGE = 2,
-  NOTIFICATION = 3,
-  REDIRECT = 9,
+/** 后端标准响应格式：code, message, data */
+interface BackendResponse {
+  code?: number;
+  message?: string;
+  data?: any;
+  success?: boolean; // 由响应拦截器根据 code 构造
 }
-// 与后端约定的响应数据格式
-interface ResponseStructure {
-  success: boolean;
-  data: any;
-  errorCode?: number;
-  errorMessage?: string;
-  showType?: ErrorShowType;
+
+/** 错误信息结构（error.info） */
+interface BizErrorInfo {
+  code?: number;
+  message?: string;
+  data?: any;
 }
 
 /**
- * @name 错误处理
- * pro 自带的错误处理， 可以在这里做自己的改动
- * @doc https://umijs.org/docs/max/request#配置
+ * Request 服务层 - 错误处理
+ * 文档：前端请求结构说明
+ * 1. errorThrower：判断是否有错误，有则抛出 BizError
+ * 2. errorHandler：统一处理错误（401 跳转登录、403 权限、其他提示）
  */
 export const errorConfig: RequestConfig = {
-  // 错误处理： umi@3 的错误处理方案。
   errorConfig: {
-    // 错误抛出
+    /** 判断是否有错误，有错误则抛出 */
     errorThrower: (res) => {
-      const { success, data, errorCode, errorMessage, showType } =
-        res as unknown as ResponseStructure;
-      if (!success) {
-        const error: any = new Error(errorMessage);
+      const { success, code, message: msg, data } = res as unknown as BackendResponse;
+      if (success === false) {
+        const error: any = new Error(msg || '请求失败');
         error.name = 'BizError';
-        error.info = { errorCode, errorMessage, showType, data };
-        throw error; // 抛出自制的错误
+        error.info = { code, message: msg, data } as BizErrorInfo;
+        throw error;
       }
     },
-    // 错误接收及处理
+    /** 统一错误处理 */
     errorHandler: (error: any, opts: any) => {
       if (opts?.skipErrorHandler) throw error;
-      // 我们的 errorThrower 抛出的错误。
+
       if (error.name === 'BizError') {
-        const errorInfo: ResponseStructure | undefined = error.info;
-        if (errorInfo) {
-          const { errorMessage, errorCode } = errorInfo;
-          switch (errorInfo.showType) {
-            case ErrorShowType.SILENT:
-              // do nothing
-              break;
-            case ErrorShowType.WARN_MESSAGE:
-              message.warning(errorMessage);
-              break;
-            case ErrorShowType.ERROR_MESSAGE:
-              message.error(errorMessage);
-              break;
-            case ErrorShowType.NOTIFICATION:
-              notification.open({
-                description: errorMessage,
-                message: errorCode,
-              });
-              break;
-            case ErrorShowType.REDIRECT:
-              // TODO: redirect
-              break;
-            default:
-              message.error(errorMessage);
-          }
+        const info = error.info as BizErrorInfo | undefined;
+        const code = info?.code;
+        const msg = info?.message || error.message;
+
+        if (code === 401) {
+          message.error('鉴权失败');
+          // 开发阶段无后端，不跳转登录页
+          // window.location.href = '/user/login';
+          return;
         }
+        if (code === 403) {
+          message.error('暂无操作权限');
+          return;
+        }
+        message.error(msg || '业务处理失败');
       } else if (error.response) {
-        // Axios 的错误
-        // 请求成功发出且服务器也响应了状态码，但状态代码超出了 2xx 的范围
-        message.error(`Response status:${error.response.status}`);
+        message.error(`请求失败: ${error.response.status}`);
       } else if (error.request) {
-        // 请求已经成功发起，但没有收到响应
-        // \`error.request\` 在浏览器中是 XMLHttpRequest 的实例，
-        // 而在node.js中是 http.ClientRequest 的实例
-        message.error('None response! Please retry.');
+        message.error('请求超时或网络错误');
       } else {
-        // 发送请求时出了点问题
-        message.error('Request error, please retry.');
+        message.error('请求失败，请重试');
       }
     },
   },
 
-  // 请求拦截器
+  /** 请求拦截器：在请求头中添加 token */
   requestInterceptors: [
     (config: RequestOptions) => {
-      // 拦截请求配置，进行个性化处理。
-      const url = config?.url?.concat('?token=123');
-      return { ...config, url };
+      const token = storage.get<string>(STORAGE_KEYS.TOKEN);
+      if (token) {
+        config.headers = {
+          ...config.headers,
+          Authorization: `Bearer ${token}`,
+        };
+      }
+      return config;
     },
   ],
 
-  // 响应拦截器
+  /** 响应拦截器：根据后端 code 构造 success，供框架错误处理使用 */
   responseInterceptors: [
-    (response) => {
-      // 拦截响应数据，进行个性化处理
-      const { data } = response as unknown as ResponseStructure;
-
-      if (data?.success === false) {
-        message.error('请求失败！');
+    (response: any) => {
+      const data = response?.data as BackendResponse | undefined;
+      if (data && typeof data === 'object' && 'code' in data && !('success' in data)) {
+        data.success = data.code === 200;
       }
       return response;
     },

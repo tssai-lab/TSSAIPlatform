@@ -10,6 +10,10 @@ export const API_CONFIG = {
   ENDPOINTS: {
     MODEL_LIST: '/model/list',
     MODEL_UPLOAD: '/model/upload',
+    /** 分片上传（与 TSSAIPlatform-xyx 后端 ModelUploadController 对齐） */
+    MODEL_UPLOAD_INIT: '/model/upload/init',
+    MODEL_UPLOAD_CHUNK: '/model/upload/chunk',
+    MODEL_UPLOAD_COMPLETE: '/model/upload/complete',
     MODEL_DETAIL: '/model/detail',
     MODEL_DELETE: '/model/delete',
     MODEL_EDIT: '/model/edit',
@@ -27,6 +31,8 @@ export const API_CONFIG = {
     TASK_METRICS: '/task/metrics',
     TASK_FILES: '/task/files',
     TASK_FILE_DOWNLOAD: '/task/file/download',
+    /** 独立 MLflow 指标接口（经 proxy 转发） */
+    MLFLOW_METRICS_HISTORY: '/mlflow-api/2.0/mlflow/metrics/get-history-bulk',
   },
 } as const;
 

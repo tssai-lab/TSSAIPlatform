@@ -18,6 +18,14 @@ import '@ant-design/v5-patch-for-react-19';
 const isDev = process.env.NODE_ENV === 'development';
 const loginPath = '/user/login';
 
+/** 开发阶段 Mock 用户（无后端时直接视为已登录） */
+const MOCK_CURRENT_USER: API.CurrentUser = {
+  name: '开发用户',
+  userid: 'dev-user',
+  avatar: undefined,
+  access: 'admin',
+};
+
 /**
  * @see https://umijs.org/docs/api/runtime-config#getinitialstate
  * */
@@ -29,31 +37,15 @@ export async function getInitialState(): Promise<{
 }> {
   const fetchUserInfo = async () => {
     try {
-      const msg = await queryCurrentUser({
-        skipErrorHandler: true,
-      });
+      const msg = await queryCurrentUser({ skipErrorHandler: true });
       return msg.data;
-    } catch (_error) {
-      history.push(loginPath);
+    } catch {
+      return MOCK_CURRENT_USER;
     }
-    return undefined;
   };
-  // 如果不是登录页面，执行
-  const { location } = history;
-  if (
-    ![loginPath, '/user/register', '/user/register-result'].includes(
-      location.pathname,
-    )
-  ) {
-    const currentUser = await fetchUserInfo();
-    return {
-      fetchUserInfo,
-      currentUser,
-      settings: defaultSettings as Partial<LayoutSettings>,
-    };
-  }
   return {
     fetchUserInfo,
+    currentUser: MOCK_CURRENT_USER,
     settings: defaultSettings as Partial<LayoutSettings>,
   };
 }
@@ -87,11 +79,10 @@ export const layout: RunTimeLayoutConfig = ({
     footerRender: () => <Footer />,
 
     onPageChange: () => {
-      const { location } = history;
-      // 如果没有登录，重定向到 login
-      if (!initialState?.currentUser && location.pathname !== loginPath) {
-        history.push(loginPath);
-      }
+      // 开发阶段已使用 Mock 用户，不再强制跳转登录
+      // if (!initialState?.currentUser && location.pathname !== loginPath) {
+      //   history.push(loginPath);
+      // }
     },
     // 配置布局装饰背景图
     bgLayoutImgList: [
@@ -158,6 +149,7 @@ export const layout: RunTimeLayoutConfig = ({
  * @doc https://umijs.org/docs/max/request#配置
  */
 export const request: RequestConfig = {
-  baseURL: 'https://proapi.azurewebsites.net',
+  baseURL: '/api',
+  timeout: 10000,
   ...errorConfig,
 };

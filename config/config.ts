@@ -87,6 +87,8 @@ export default defineConfig({
   layout: {
     locale: true,
     ...defaultSettings,
+    // 开发阶段禁用登录跳转，设为 false 不重定向到登录页
+    loginPath: false,
   },
   /**
    * @name moment2dayjs 插件

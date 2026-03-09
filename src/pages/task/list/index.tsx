@@ -3,39 +3,40 @@ import { Button, message, Popconfirm, Space, Tag } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchTaskList as fetchTaskListService, stopTask, deleteTask } from '@/services/platform';
 import { MOCK_TASKS } from '@/constants/mockData';
 
 /**
- * 训练任务列表页（与 TSSAIPlatform-frontend-prototype 一致）
+ * 训练任务列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const TaskList: React.FC = () => {
   const fetchTaskList = async (params: any) => {
-    const { name, status, current = 1, pageSize = 10 } = params;
-    let list = [...MOCK_TASKS];
-    if (name) list = list.filter((t) => t.name.includes(name));
-    if (status) list = list.filter((t) => t.status === status);
-    const start = (current - 1) * pageSize;
-    const data = list.slice(start, start + pageSize);
-    return { data, success: true, total: list.length };
+    try {
+      const res = await fetchTaskListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_TASKS, success: true, total: MOCK_TASKS.length };
+    }
   };
 
   const handleStop = async (taskId: string) => {
     try {
-      // TODO: 调用接口 POST /api/task/stop
-      console.log('终止任务:', taskId);
+      await stopTask(taskId);
       message.success('任务已终止');
-    } catch (error) {
-      message.error('终止失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '终止失败');
     }
   };
 
   const handleDelete = async (taskId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/task/delete
-      console.log('删除任务:', taskId);
+      await deleteTask(taskId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 

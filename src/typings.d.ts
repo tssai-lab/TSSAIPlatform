@@ -29,6 +29,28 @@ declare namespace API {
     createTime: string;
     status: 'pending' | 'running' | 'success' | 'failed';
     progress: number;
+    runId?: string;
+    completeTime?: string;
+    duration?: string;
+    files?: { name: string; desc: string }[];
+  };
+
+  // 模型详情（扩展字段，后端可能部分返回）
+  type ModelDetail = API.ModelItem & {
+    updateTime?: string;
+    timestamp?: string;
+    params?: { framework?: string; inputSize?: string; numClasses?: string; paramsCount?: string; trainDataset?: string; trainParams?: string };
+    codeContent?: string;
+    versionHistory?: { version: string; updateTime: string; timestamp: string }[];
+  };
+
+  // MLflow 指标点
+  type MlflowMetricPoint = {
+    key: string;
+    value: number;
+    timestamp?: number;
+    step: number;
+    run_id?: string;
   };
 
   // 用户相关

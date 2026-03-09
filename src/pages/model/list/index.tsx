@@ -3,30 +3,30 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchModelList as fetchModelListService, deleteModel } from '@/services/platform';
 import { MOCK_MODELS } from '@/constants/mockData';
 
 /**
- * 模型列表页（与 TSSAIPlatform-frontend-prototype 一致）
+ * 模型列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const ModelList: React.FC = () => {
   const fetchModelList = async (params: any) => {
-    // 开发阶段使用 Mock，后端就绪后改为 request(API_CONFIG.ENDPOINTS.MODEL_LIST, { params })
-    const { name, type, current = 1, pageSize = 10 } = params;
-    let list = [...MOCK_MODELS];
-    if (name) list = list.filter((m) => m.name.includes(name));
-    if (type) list = list.filter((m) => m.type === type);
-    const start = (current - 1) * pageSize;
-    const data = list.slice(start, start + pageSize);
-    return { data, success: true, total: list.length };
+    try {
+      const res = await fetchModelListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_MODELS, success: true, total: MOCK_MODELS.length };
+    }
   };
 
   const handleDelete = async (modelId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/model/delete
-      console.log('删除模型:', modelId);
+      await deleteModel(modelId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 

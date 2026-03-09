@@ -175,6 +175,8 @@ npm install
 
 ## 相关文档
 
+- [**项目入门说明-初学者版.md**](./项目入门说明-初学者版.md) - **零基础入门，配代码解释**
+- [TSSAIPlatform-frontend开发流程说明.md](./TSSAIPlatform-frontend开发流程说明.md) - 项目开发流程、环境、任务范围、修改记录
 - [UmiJS 文档](https://umijs.org/)
 - [Ant Design Pro 文档](https://pro.ant.design/)
 - [Ant Design 文档](https://ant.design/)

@@ -3,29 +3,30 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchDatasetList as fetchDatasetListService, deleteDataset } from '@/services/platform';
 import { MOCK_DATASETS } from '@/constants/mockData';
 
 /**
- * 数据集列表页（与 TSSAIPlatform-frontend-prototype 一致）
+ * 数据集列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const DatasetList: React.FC = () => {
   const fetchDatasetList = async (params: any) => {
-    const { name, type, current = 1, pageSize = 10 } = params;
-    let list = [...MOCK_DATASETS];
-    if (name) list = list.filter((d) => d.name.includes(name));
-    if (type) list = list.filter((d) => d.type === type);
-    const start = (current - 1) * pageSize;
-    const data = list.slice(start, start + pageSize);
-    return { data, success: true, total: list.length };
+    try {
+      const res = await fetchDatasetListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_DATASETS, success: true, total: MOCK_DATASETS.length };
+    }
   };
 
   const handleDelete = async (datasetId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/dataset/delete
-      console.log('删除数据集:', datasetId);
+      await deleteDataset(datasetId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 

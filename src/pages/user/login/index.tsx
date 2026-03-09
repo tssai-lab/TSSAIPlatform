@@ -21,7 +21,7 @@ import {
 } from '@umijs/max';
 import { Alert, App, Tabs } from 'antd';
 import { createStyles } from 'antd-style';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Footer } from '@/components';
 import { login } from '@/services/ant-design-pro/api';
@@ -99,6 +99,13 @@ const Login: React.FC = () => {
   const { styles } = useStyles();
   const { message } = App.useApp();
   const intl = useIntl();
+
+  // 开发阶段：已 Mock 登录，若已有 currentUser 则直接跳转首页
+  useEffect(() => {
+    if (initialState?.currentUser?.name) {
+      history.replace('/dashboard');
+    }
+  }, [initialState?.currentUser]);
 
   const fetchUserInfo = async () => {
     const userInfo = await initialState?.fetchUserInfo?.();
