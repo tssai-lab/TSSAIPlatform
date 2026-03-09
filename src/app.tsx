@@ -3,11 +3,12 @@ import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import { SettingDrawer } from '@ant-design/pro-components';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history, Link } from '@umijs/max';
+import { message, notification } from 'antd';
 import React from 'react';
 import { AvatarDropdown, AvatarName, Footer, Question } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
+import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
-import { errorConfig } from './requestErrorConfig';
 import '@ant-design/v5-patch-for-react-19';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -198,7 +199,76 @@ export const layout: RunTimeLayoutConfig = ({
  * 它基于 axios 和 ahooks 的 useRequest 提供了一套统一的网络请求和错误处理方案。
  * @doc https://umijs.org/docs/max/request#配置
  */
+// 全局请求配置
 export const request: RequestConfig = {
-  baseURL: 'https://proapi.azurewebsites.net',
-  ...errorConfig,
+  timeout: 10000,
+  baseURL: '/api',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+
+  errorConfig: {
+    errorThrower: (res) => {
+      const resAny = (res as any) ?? {};
+      const { code, message, msg, data } = resAny;
+      const messageText = msg ?? message;
+      const isSuccess =
+        typeof code !== 'undefined' ? code === 200 : resAny.success;
+      if (!isSuccess) {
+        const error = new Error(messageText || '请求失败') as any;
+        error.name = 'BizError';
+        error.info = { code, data };
+        throw error;
+      }
+    },
+
+    errorHandler: (error: any, opts: any) => {
+      if (opts?.skipErrorHandler) return;
+
+      if (error.name === 'AxiosError') {
+        if (error.code === 'ECONNABORTED') {
+          message.error('请求超时，请稍后重试');
+        } else {
+          message.error(`网络错误：${error.message || '无法连接服务器'}`);
+        }
+      } else if (error.name === 'BizError') {
+        const { code } = error.info ?? {};
+        switch (code) {
+          case 401:
+            notification.error({ message: '登录失效，请重新登录' });
+            history.push(loginPath);
+            break;
+          case 403:
+            message.warning('暂无操作权限，请联系管理员');
+            break;
+          default:
+            message.error(error.message || '业务处理失败');
+        }
+      }
+    },
+  },
+
+  requestInterceptors: [
+    (config: any) => {
+      // 与登录页 storage.set(STORAGE_KEYS.TOKEN, token) 成对
+      const token = storage.get<string>(STORAGE_KEYS.TOKEN);
+      if (token && config.headers) {
+        config.headers.Authorization = `Bearer ${typeof token === 'string' ? token : ''}`;
+      }
+      return config;
+    },
+  ],
+
+  responseInterceptors: [
+    (response) => {
+      // 插件只有 data.success === false 时才调用 errorThrower，后端用 code 表示错误，这里把 code !== 200 转成 success: false
+      const data = response?.data as
+        | { code?: number; success?: boolean }
+        | undefined;
+      if (data && typeof data.code !== 'undefined' && data.code !== 200) {
+        data.success = false;
+      }
+      return response;
+    },
+  ],
 };
