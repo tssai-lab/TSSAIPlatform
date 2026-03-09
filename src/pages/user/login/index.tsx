@@ -25,6 +25,7 @@ import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Footer } from '@/components';
 import { login } from '@/services/ant-design-pro/api';
+import { storage, STORAGE_KEYS } from '@/utils/storage';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
 
@@ -123,7 +124,18 @@ const Login: React.FC = () => {
     try {
       // 登录
       const msg = await login({ ...values, type });
-      if (msg.status === 'ok') {
+      // 兼容两种成功标识：status === 'ok'（旧）或 code === 200（后端 code/msg/data）
+      const isSuccess =
+        (msg as any)?.status === 'ok' || (msg as any)?.code === 200;
+      if (isSuccess) {
+        // 登录成功后把 token 写入本地（使用 utils/storage），供 request 拦截器读取
+        const token =
+          (msg as any)?.data?.token ??
+          (msg as any)?.data?.accessToken ??
+          (msg as any)?.token;
+        if (token) {
+          storage.set(STORAGE_KEYS.TOKEN, token);
+        }
         const defaultLoginSuccessMessage = intl.formatMessage({
           id: 'pages.login.success',
           defaultMessage: '登录成功！',

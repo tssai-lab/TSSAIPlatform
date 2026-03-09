@@ -1,46 +1,30 @@
-/**
- * 本地存储工具
- * 对 localStorage 的统一封装，便于维护和扩展
- */
-const storage = {
-  get<T = string>(key: string): T | null {
+// 存储工具：统一处理token等持久化数据
+export const storage = {
+  set<T = any>(key: string, data: T): void {
+    localStorage.setItem(key, JSON.stringify(data));
+  },
+
+  get<T = any>(key: string): T | null {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
     try {
-      const value = localStorage.getItem(key);
-      if (value === null) return null;
-      try {
-        return JSON.parse(value) as T;
-      } catch {
-        return value as T;
-      }
+      return JSON.parse(raw);
     } catch {
       return null;
     }
   },
 
-  set(key: string, value: unknown): void {
-    try {
-      const str = typeof value === 'string' ? value : JSON.stringify(value);
-      localStorage.setItem(key, str);
-    } catch (e) {
-      console.warn('storage set error:', e);
-    }
-  },
-
   remove(key: string): void {
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {
-      console.warn('storage remove error:', e);
-    }
+    localStorage.removeItem(key);
   },
 
   clear(): void {
-    try {
-      localStorage.clear();
-    } catch (e) {
-      console.warn('storage clear error:', e);
-    }
+    localStorage.clear();
   },
 };
 
-export default storage;
+// 存储键常量：统一管理所有存储键
+export const STORAGE_KEYS = {
+  TOKEN: 'token',
+  USER_INFO: 'USER_INFO',
+};
