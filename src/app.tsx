@@ -3,21 +3,27 @@ import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import { SettingDrawer } from '@ant-design/pro-components';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history, Link } from '@umijs/max';
-import React from 'react';
-import {
-  AvatarDropdown,
-  AvatarName,
-  Footer,
-  Question,
-} from '@/components';
 import { message, notification } from 'antd';
+import React from 'react';
+import { AvatarDropdown, AvatarName, Footer, Question } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
+import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
-import { storage, STORAGE_KEYS } from '@/utils/storage';
 import '@ant-design/v5-patch-for-react-19';
 
 const isDev = process.env.NODE_ENV === 'development';
 const loginPath = '/user/login';
+
+/** 开发环境：根据 localStorage.mock_role 返回模拟用户，用于验证不同角色权限；userid 用于「我的操作记录」按用户名过滤 */
+function getMockCurrentUserByRole(role: string): API.CurrentUser {
+  const roleMap: Record<string, { name: string; userid: string }> = {
+    super_admin: { name: 'admin（超管）', userid: 'admin' },
+    normal_admin: { name: 'manager1（普管）', userid: 'manager1' },
+    user: { name: 'test01（普通用户）', userid: 'test01' },
+  };
+  const o = roleMap[role] || roleMap.super_admin;
+  return { name: o.name, userid: o.userid, role: role as API.UserRole };
+}
 
 /**
  * @see https://umijs.org/docs/api/runtime-config#getinitialstate
@@ -33,20 +39,57 @@ export async function getInitialState(): Promise<{
       const msg = await queryCurrentUser({
         skipErrorHandler: true,
       });
-      return msg.data;
+      const user = msg.data;
+      // 开发环境：若本地设置了 mock_role，则覆盖角色以模拟不同权限
+      if (isDev && typeof window !== 'undefined') {
+        const mockRole = window.localStorage.getItem(
+          'mock_role',
+        ) as API.UserRole | null;
+        if (
+          mockRole &&
+          (mockRole === 'super_admin' ||
+            mockRole === 'normal_admin' ||
+            mockRole === 'user')
+        ) {
+          return { ...user, role: mockRole } as API.CurrentUser;
+        }
+        if (user && !user.role) {
+          return { ...user, role: 'super_admin' } as API.CurrentUser;
+        }
+      }
+      return user;
     } catch (_error) {
       history.push(loginPath);
     }
     return undefined;
   };
-  // 如果不是登录页面，执行
   const { location } = history;
   if (
-    ![loginPath, '/user/register', '/user/register-result'].includes(
-      location.pathname,
-    )
+    ![
+      loginPath,
+      '/user/register',
+      '/user/register-result',
+      '/user/forgot-password',
+      '/user/reset-password',
+    ].includes(location.pathname)
   ) {
-    const currentUser = await fetchUserInfo();
+    let currentUser = await fetchUserInfo();
+    // 开发环境：无登录接口时使用 mock 角色，便于切换角色验证权限
+    if (isDev && typeof window !== 'undefined' && !currentUser) {
+      const mockRole = window.localStorage.getItem(
+        'mock_role',
+      ) as API.UserRole | null;
+      if (
+        mockRole &&
+        (mockRole === 'super_admin' ||
+          mockRole === 'normal_admin' ||
+          mockRole === 'user')
+      ) {
+        currentUser = getMockCurrentUserByRole(mockRole);
+      } else {
+        currentUser = getMockCurrentUserByRole('super_admin');
+      }
+    }
     return {
       fetchUserInfo,
       currentUser,
@@ -66,9 +109,7 @@ export const layout: RunTimeLayoutConfig = ({
 }) => {
   return {
     // 顶部导航栏右侧的菜单
-    actionsRender: () => [
-      <Question key="doc" />,
-    ],
+    actionsRender: () => [<Question key="doc" />],
     // 配置顶部栏右侧的用户头像
     avatarProps: {
       // 头像图片地址
@@ -218,10 +259,12 @@ export const request: RequestConfig = {
     },
   ],
 
- responseInterceptors: [
+  responseInterceptors: [
     (response) => {
       // 插件只有 data.success === false 时才调用 errorThrower，后端用 code 表示错误，这里把 code !== 200 转成 success: false
-      const data = response?.data as { code?: number; success?: boolean } | undefined;
+      const data = response?.data as
+        | { code?: number; success?: boolean }
+        | undefined;
       if (data && typeof data.code !== 'undefined' && data.code !== 200) {
         data.success = false;
       }
