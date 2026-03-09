@@ -4,11 +4,13 @@
  // 这段代码是 TypeScript 的全局类型声明，核心是定义前端调用后端 API 时的入参 / 出参数据结构；
  // 所有前端与后端交互的通用数据结构（接口入参、出参、通用错误格式等），都推荐集中写在这个文件里
 declare namespace API {
+  /** 角色：super_admin 超级管理员 | normal_admin 普通管理员 | user 普通用户 */
+  type UserRole = 'super_admin' | 'normal_admin' | 'user';
+
   type CurrentUser = {
     name?: string;
-    avatar?: string
+    avatar?: string;
     userid?: string;
-    email?: string;
     signature?: string;
     title?: string;
     group?: string;
@@ -17,6 +19,8 @@ declare namespace API {
     unreadCount?: number;
     country?: string;
     access?: string;
+    /** 用于权限判断：super_admin | normal_admin | user */
+    role?: UserRole;
     geographic?: {
       province?: { label?: string; key?: string };
       city?: { label?: string; key?: string };
@@ -50,5 +54,48 @@ declare namespace API {
     errorMessage?: string;
     /** 业务上的请求是否成功 */
     success?: boolean;
+  };
+
+  type ForgotPasswordParams = {
+    phone?: string;
+  };
+
+  type ForgotPasswordResult = {
+    code?: number;
+    msg?: string;
+    data?: {
+      captcha?: string;
+      expireTime?: number;
+    };
+  };
+
+  type ResetPasswordParams = {
+    phone?: string;
+    captcha?: string;
+    newPassword?: string;
+    confirmPassword?: string;
+  };
+
+  type ResetPasswordResult = {
+    code?: number;
+    msg?: string;
+    data?: any;
+  };
+
+  type RegisterParams = {
+    username?: string;
+    password?: string;
+    phone?: string;
+    captcha?: string;
+  };
+
+  type RegisterResult = {
+    code?: number;
+    msg?: string;
+    data?: {
+      userId?: string;
+      username?: string;
+      phone?: string;
+    };
   };
 }

@@ -190,7 +190,6 @@ const Login: React.FC = () => {
           onFinish={async (values) => {
             await handleSubmit(values as API.LoginParams);
           }}
-          
         >
           <Tabs
             activeKey={type}
@@ -370,6 +369,7 @@ const Login: React.FC = () => {
               style={{
                 float: 'right',
               }}
+              onClick={() => history.push('/user/forgot-password')}
             >
               <FormattedMessage
                 id="pages.login.forgotPassword"

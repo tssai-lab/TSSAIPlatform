@@ -78,6 +78,10 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
       loginOut();
       return;
     }
+    if (key === 'my-logs') {
+      history.push('/account/my-logs');
+      return;
+    }
     history.push(`/account/${key}`);
   };
 
@@ -110,6 +114,11 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
             key: 'center',
             icon: <UserOutlined />,
             label: '个人中心',
+          },
+          {
+            key: 'my-logs',
+            icon: <UserOutlined />,
+            label: '我的操作记录',
           },
           {
             key: 'settings',
