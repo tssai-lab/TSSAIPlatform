@@ -30,6 +30,16 @@ export default [
         path: '/user/register',
         component: './user/register',
       },
+      {
+        name: 'forgotPassword',
+        path: '/user/forgot-password',
+        component: './user/forgot-password',
+      },
+      {
+        name: 'resetPassword',
+        path: '/user/reset-password',
+        component: './user/reset-password',
+      },
     ],
   },
   // 资产管理 - 模型
@@ -101,27 +111,56 @@ export default [
       },
     ],
   },
-  // 系统管理
+  // 系统管理（超管见全部，普管仅见用户管理+日志管理）
   {
     path: '/system',
     name: '系统管理',
     icon: 'setting',
-    access: 'canAdmin',
+    access: 'isAdmin',
     routes: [
       {
         path: '/system/user',
         name: '用户管理',
         component: './system/user',
+        access: 'canAccessSystemUser',
+      },
+      {
+        path: '/system/role',
+        name: '角色管理',
+        component: './system/role',
+        access: 'canAccessSystemRole',
+      },
+      {
+        path: '/system/permission',
+        name: '权限管理',
+        component: './system/permission',
+        access: 'canAccessSystemPermission',
       },
       {
         path: '/system/log',
-        name: '审计日志',
+        name: '日志管理',
         component: './system/log',
+        access: 'canAccessSystemLog',
       },
       {
         path: '/system/api-doc',
         name: 'API文档',
         component: './system/api-doc',
+        access: 'canAccessSystemUser',
+      },
+    ],
+  },
+  // 个人中心（所有登录用户可见）
+  {
+    path: '/account',
+    name: '个人中心',
+    icon: 'user',
+    access: 'canViewMyOperationLogs',
+    routes: [
+      {
+        path: '/account/my-logs',
+        name: '我的操作记录',
+        component: './account/my-logs',
       },
     ],
   },
@@ -131,6 +170,13 @@ export default [
     name: '首页',
     icon: 'home',
     component: './dashboard',
+  },
+  {
+    path: '/403',
+    name: '无权限',
+    layout: false,
+    component: './403',
+    hideInMenu: true,
   },
   {
     path: '*',

@@ -1,10 +1,10 @@
-import { LockOutlined, MobileOutlined, UserOutlined } from '@ant-design/icons';
+import { LockOutlined, MobileOutlined } from '@ant-design/icons';
 import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Footer } from '@/components';
-import { register } from '@/services/ant-design-pro/api';
+import { resetPassword } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
 
@@ -22,7 +22,7 @@ const useStyles = createStyles(({ token }) => {
   };
 });
 
-const RegisterMessage: React.FC<{
+const ResetPasswordMessage: React.FC<{
   content: string;
 }> = ({ content }) => {
   return (
@@ -38,11 +38,11 @@ const RegisterMessage: React.FC<{
 };
 
 /**
- * 注册页
+ * 重置密码页 - 第二步：输入验证码和新密码
  */
-const Register: React.FC = () => {
+const ResetPassword: React.FC = () => {
   const [form] = Form.useForm();
-  const [registerState, setRegisterState] = useState<{
+  const [resetPasswordState, setResetPasswordState] = useState<{
     status?: string;
     message?: string;
   }>({});
@@ -51,6 +51,23 @@ const Register: React.FC = () => {
   const { styles } = useStyles();
   const { message: messageApi } = App.useApp();
   const intl = useIntl();
+
+  // 从URL参数获取手机号
+  const getPhoneFromUrl = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('phone') || '';
+  };
+  const phoneFromUrl = getPhoneFromUrl();
+
+  useEffect(() => {
+    if (phoneFromUrl) {
+      form.setFieldsValue({ phone: phoneFromUrl });
+    } else {
+      // 如果没有手机号参数，跳转到忘记密码页面
+      messageApi.warning('请先输入手机号');
+      history.push('/user/forgot-password');
+    }
+  }, [phoneFromUrl]);
 
   // 开始倒计时
   const startCountdown = () => {
@@ -74,7 +91,7 @@ const Register: React.FC = () => {
   // 获取验证码
   const handleGetCaptcha = async () => {
     try {
-      const phone = form.getFieldValue('phone');
+      const phone = form.getFieldValue('phone') || phoneFromUrl;
       if (!phone) {
         messageApi.error('请输入手机号！');
         return;
@@ -99,7 +116,7 @@ const Register: React.FC = () => {
         }
         startCountdown();
       } else {
-        setRegisterState({
+        setResetPasswordState({
           status: 'error',
           message: (result as any).msg || '验证码发送失败，请重试！',
         });
@@ -111,7 +128,7 @@ const Register: React.FC = () => {
         return;
       }
       console.error('获取验证码失败:', error);
-      setRegisterState({
+      setResetPasswordState({
         status: 'error',
         message: error.message || '验证码发送失败，请重试！',
       });
@@ -119,47 +136,47 @@ const Register: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (values: any) => {
+  // 重置密码
+  const handleResetPassword = async (values: any) => {
     try {
-      const response = await register({
-        username: values.username,
-        password: values.password,
-        phone: values.phone,
+      const phone = values.phone || phoneFromUrl;
+      const response = await resetPassword({
+        phone: phone,
         captcha: values.captcha,
+        newPassword: values.newPassword,
+        confirmPassword: values.confirmPassword,
       });
 
       if (response.code === 200) {
-        messageApi.success('注册成功！');
-        // 注册成功后跳转到登录页
+        messageApi.success('密码重置成功！');
+        // 跳转到登录页
         setTimeout(() => {
           history.push('/user/login');
         }, 1000);
       } else {
-        setRegisterState({
+        setResetPasswordState({
           status: 'error',
-          message: response.msg || '注册失败，请重试！',
+          message: response.msg || '密码重置失败，请重试！',
         });
-        messageApi.error(response.msg || '注册失败，请重试！');
+        messageApi.error(response.msg || '密码重置失败，请重试！');
       }
     } catch (error: any) {
-      console.error('注册失败:', error);
-      setRegisterState({
+      console.error('重置密码失败:', error);
+      setResetPasswordState({
         status: 'error',
-        message: error.message || '注册失败，请重试！',
+        message: error.message || '密码重置失败，请重试！',
       });
-      messageApi.error(error.message || '注册失败，请重试！');
+      messageApi.error(error.message || '密码重置失败，请重试！');
     }
   };
-
-  const { status } = registerState;
 
   return (
     <div className={styles.container}>
       <Helmet>
         <title>
           {intl.formatMessage({
-            id: 'menu.register',
-            defaultMessage: '注册页',
+            id: 'menu.resetPassword',
+            defaultMessage: '重置密码',
           })}
           {Settings.title && ` - ${Settings.title}`}
         </title>
@@ -174,90 +191,51 @@ const Register: React.FC = () => {
         <div
           style={{
             margin: '0 auto',
-            maxWidth: 400,
-            padding: '24px',
+            maxWidth: 450,
+            padding: '32px',
             background: '#fff',
             borderRadius: '8px',
             boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
           }}
         >
-          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <img
               alt="logo"
               src="/logo.svg"
               style={{ height: 44, marginBottom: 16 }}
             />
-            <h2 style={{ marginBottom: 8 }}>注册账号</h2>
-            <p style={{ color: '#999', fontSize: 14 }}>创建您的新账号</p>
+            <h2 style={{ marginBottom: 8 }}>重置密码</h2>
+            <p style={{ color: '#999', fontSize: 14 }}>请输入验证码和新密码</p>
           </div>
 
-          {status === 'error' && (
-            <RegisterMessage
-              content={registerState.message || '注册失败，请重试！'}
+          {resetPasswordState.status === 'error' && (
+            <ResetPasswordMessage
+              content={resetPasswordState.message || '操作失败，请重试！'}
             />
           )}
 
           <Form
             form={form}
-            onFinish={handleSubmit}
+            onFinish={handleResetPassword}
             layout="vertical"
             size="large"
+            initialValues={{ phone: phoneFromUrl }}
           >
-            <Form.Item
-              name="username"
-              rules={[
-                { required: true, message: '请输入用户名' },
-                { min: 3, message: '用户名至少3个字符' },
-              ]}
-            >
-              <Input prefix={<UserOutlined />} placeholder="请输入用户名" />
-            </Form.Item>
-
-            <Form.Item
-              name="password"
-              rules={[
-                { required: true, message: '请输入密码' },
-                { min: 6, message: '密码长度至少6位' },
-              ]}
-            >
-              <Input.Password
-                prefix={<LockOutlined />}
-                placeholder="请输入密码（至少6位）"
-              />
-            </Form.Item>
-
-            <Form.Item
-              name="confirmPassword"
-              dependencies={['password']}
-              rules={[
-                { required: true, message: '请确认密码' },
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    if (!value || getFieldValue('password') === value) {
-                      return Promise.resolve();
-                    }
-                    return Promise.reject(new Error('两次输入的密码不一致'));
-                  },
-                }),
-              ]}
-            >
-              <Input.Password
-                prefix={<LockOutlined />}
-                placeholder="请再次输入密码"
-              />
-            </Form.Item>
-
             <Form.Item
               name="phone"
               rules={[
                 { required: true, message: '请输入手机号！' },
-                { pattern: /^1\d{10}$/, message: '手机号格式错误！' },
+                {
+                  pattern: /^1\d{10}$/,
+                  message: '手机号格式错误！',
+                },
               ]}
             >
               <Input
                 prefix={<MobileOutlined />}
-                placeholder="手机号"
+                placeholder="请输入手机号"
                 maxLength={11}
+                disabled={!!phoneFromUrl}
               />
             </Form.Item>
 
@@ -284,22 +262,65 @@ const Register: React.FC = () => {
                       onClick={handleGetCaptcha}
                       style={{ padding: 0, height: 'auto' }}
                     >
-                      获取验证码
+                      重新获取
                     </Button>
                   )
                 }
               />
             </Form.Item>
 
+            <Form.Item
+              name="newPassword"
+              rules={[
+                { required: true, message: '请输入新密码！' },
+                { min: 6, message: '密码长度至少6位' },
+              ]}
+            >
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="请输入新密码（至少6位）"
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="confirmPassword"
+              dependencies={['newPassword']}
+              rules={[
+                { required: true, message: '请确认新密码！' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('newPassword') === value) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('两次输入的密码不一致！'));
+                  },
+                }),
+              ]}
+            >
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="请再次输入新密码"
+              />
+            </Form.Item>
+
             <Form.Item>
               <Button type="primary" htmlType="submit" block>
-                注册
+                重置密码
               </Button>
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 0, textAlign: 'center' }}>
+              <Button
+                type="link"
+                onClick={() => {
+                  history.push('/user/forgot-password');
+                }}
+              >
+                返回上一步
+              </Button>
+              <span style={{ margin: '0 8px' }}>|</span>
               <Button type="link" onClick={() => history.push('/user/login')}>
-                已有账号？去登录
+                返回登录
               </Button>
             </Form.Item>
           </Form>
@@ -310,4 +331,4 @@ const Register: React.FC = () => {
   );
 };
 
-export default Register;
+export default ResetPassword;

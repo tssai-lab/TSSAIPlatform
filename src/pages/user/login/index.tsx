@@ -25,8 +25,8 @@ import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Footer } from '@/components';
 import { login } from '@/services/ant-design-pro/api';
-import { storage, STORAGE_KEYS } from '@/utils/storage';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { STORAGE_KEYS, storage } from '@/utils/storage';
 import Settings from '../../../../config/defaultSettings';
 
 const useStyles = createStyles(({ token }) => {
@@ -209,7 +209,6 @@ const Login: React.FC = () => {
           onFinish={async (values) => {
             await handleSubmit(values as API.LoginParams);
           }}
-          
         >
           <Tabs
             activeKey={type}
@@ -389,6 +388,7 @@ const Login: React.FC = () => {
               style={{
                 float: 'right',
               }}
+              onClick={() => history.push('/user/forgot-password')}
             >
               <FormattedMessage
                 id="pages.login.forgotPassword"

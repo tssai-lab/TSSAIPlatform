@@ -1,12 +1,44 @@
 /**
- * @see https://umijs.org/docs/max/access#access
- * */
+ * 系统权限定义（基于 useAccess）
+ * 角色：super_admin 超级管理员 | normal_admin 普通管理员 | user 普通用户
+ */
 export default function access(
   initialState: { currentUser?: API.CurrentUser } | undefined,
 ) {
   const { currentUser } = initialState ?? {};
+  const role = currentUser?.role ?? '';
+
+  const isSuperAdmin = role === 'super_admin';
+  const isNormalAdmin = role === 'normal_admin';
+  const isAdmin = isSuperAdmin || isNormalAdmin;
+
   return {
-    // 判断是否为管理员
-    canAdmin: currentUser?.access === 'admin' || currentUser?.role === 'admin',
+    /** 是否超级管理员（唯一，系统最高权限） */
+    isSuperAdmin,
+    /** 是否普通管理员（可管理普通用户，无角色/权限管理） */
+    isNormalAdmin,
+    /** 是否任意管理员（用于显示系统管理一级菜单） */
+    isAdmin,
+
+    /** 系统管理-用户管理：超管+普管可见 */
+    canAccessSystemUser: isAdmin,
+    /** 系统管理-角色管理：仅超管 */
+    canAccessSystemRole: isSuperAdmin,
+    /** 系统管理-权限管理：仅超管 */
+    canAccessSystemPermission: isSuperAdmin,
+    /** 系统管理-日志管理：超管+普管可见 */
+    canAccessSystemLog: isAdmin,
+
+    /** 用户管理-删除/批量删除/导出：仅超管 */
+    canUserDeleteOrExport: isSuperAdmin,
+    /** 用户管理-角色筛选与分配管理员角色：仅超管（普管只能分配非管理员角色） */
+    canUserRoleFilterAndAssignAdmin: isSuperAdmin,
+    /** 日志管理-导出：仅超管 */
+    canLogExport: isSuperAdmin,
+    /** 日志管理-查看管理员日志及IP：仅超管（普管仅看普通用户日志且隐藏IP） */
+    canLogViewAdminAndIp: isSuperAdmin,
+
+    /** 个人中心-我的操作记录：所有登录用户 */
+    canViewMyOperationLogs: !!currentUser,
   };
 }
