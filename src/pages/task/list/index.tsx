@@ -3,38 +3,40 @@ import { Button, message, Popconfirm, Space, Tag } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchTaskList as fetchTaskListService, stopTask, deleteTask } from '@/services/platform';
+import { MOCK_TASKS } from '@/constants/mockData';
 
 /**
- * 训练任务列表页
+ * 训练任务列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const TaskList: React.FC = () => {
-  // TODO: 调用接口 GET /api/task/list
   const fetchTaskList = async (params: any) => {
-    console.log('查询参数:', params);
-    return {
-      data: [],
-      success: true,
-      total: 0,
-    };
+    try {
+      const res = await fetchTaskListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_TASKS, success: true, total: MOCK_TASKS.length };
+    }
   };
 
   const handleStop = async (taskId: string) => {
     try {
-      // TODO: 调用接口 POST /api/task/stop
-      console.log('终止任务:', taskId);
+      await stopTask(taskId);
       message.success('任务已终止');
-    } catch (error) {
-      message.error('终止失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '终止失败');
     }
   };
 
   const handleDelete = async (taskId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/task/delete
-      console.log('删除任务:', taskId);
+      await deleteTask(taskId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 
@@ -81,11 +83,13 @@ const TaskList: React.FC = () => {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
+      hideInSearch: true,
       render: (progress) => `${progress || 0}%`,
     },
     {
       title: '操作',
       key: 'action',
+      hideInSearch: true,
       render: (_, record) => (
         <Space>
           <Button
@@ -119,6 +123,8 @@ const TaskList: React.FC = () => {
 
   return (
     <PageContainer
+      title="训练任务"
+      subTitle="管理所有训练任务，支持状态筛选、终止、删除等操作"
       extra={[
         <Button
           key="create"

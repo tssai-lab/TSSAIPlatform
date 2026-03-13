@@ -11,6 +11,11 @@
  * @doc https://umijs.org/docs/guides/routes
  */
 export default [
+  // 根路径优先重定向到首页（开发阶段已 Mock 登录，无需跳转登录页）
+  {
+    path: '/',
+    redirect: '/dashboard',
+  },
   {
     path: '/user',
     layout: false,
@@ -165,11 +170,6 @@ export default [
     name: '首页',
     icon: 'home',
     component: './dashboard',
-  },
-  // 访问根路径时，重定向到首页（已登录）或登录页（未登录）
-  {
-    path: '/',
-    redirect: '/dashboard',
   },
   {
     path: '/403',

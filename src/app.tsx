@@ -61,8 +61,8 @@ export async function getInitialState(): Promise<{
     } catch (_error) {
       history.push(loginPath);
     }
-    return undefined;
   };
+
   const { location } = history;
   if (
     ![
@@ -96,8 +96,10 @@ export async function getInitialState(): Promise<{
       settings: defaultSettings as Partial<LayoutSettings>,
     };
   }
+
   return {
     fetchUserInfo,
+    currentUser: getMockCurrentUserByRole('super_admin'),
     settings: defaultSettings as Partial<LayoutSettings>,
   };
 }
@@ -129,11 +131,10 @@ export const layout: RunTimeLayoutConfig = ({
     footerRender: () => <Footer />,
 
     onPageChange: () => {
-      const { location } = history;
-      // 如果没有登录，重定向到 login
-      if (!initialState?.currentUser && location.pathname !== loginPath) {
-        history.push(loginPath);
-      }
+      // 开发阶段已使用 Mock 用户，不再强制跳转登录
+      // if (!initialState?.currentUser && location.pathname !== loginPath) {
+      //   history.push(loginPath);
+      // }
     },
     // 配置布局装饰背景图
     bgLayoutImgList: [

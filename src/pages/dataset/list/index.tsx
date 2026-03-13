@@ -3,28 +3,30 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchDatasetList as fetchDatasetListService, deleteDataset } from '@/services/platform';
+import { MOCK_DATASETS } from '@/constants/mockData';
 
 /**
- * 数据集列表页
+ * 数据集列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const DatasetList: React.FC = () => {
-  // TODO: 调用接口 GET /api/dataset/list
   const fetchDatasetList = async (params: any) => {
-    console.log('查询参数:', params);
-    return {
-      data: [],
-      success: true,
-      total: 0,
-    };
+    try {
+      const res = await fetchDatasetListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_DATASETS, success: true, total: MOCK_DATASETS.length };
+    }
   };
 
   const handleDelete = async (datasetId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/dataset/delete
-      console.log('删除数据集:', datasetId);
+      await deleteDataset(datasetId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 
@@ -53,15 +55,18 @@ const DatasetList: React.FC = () => {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
+      hideInSearch: true,
     },
     {
       title: '文件数',
       dataIndex: 'fileCount',
       key: 'fileCount',
+      hideInSearch: true,
     },
     {
       title: '操作',
       key: 'action',
+      hideInSearch: true,
       render: (_, record) => (
         <Space>
           <Button type="link" onClick={() => history.push(`/dataset/detail/${record.id}`)}>
@@ -83,13 +88,15 @@ const DatasetList: React.FC = () => {
 
   return (
     <PageContainer
+      title="数据集管理"
+      subTitle="管理所有已上传的数据集，支持搜索、筛选、删除等操作"
       extra={[
         <Button
           key="upload"
           type="primary"
           onClick={() => history.push('/dataset/upload')}
         >
-          上传数据集
+          + 上传数据集
         </Button>,
       ]}
     >

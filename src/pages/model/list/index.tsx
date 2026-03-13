@@ -3,28 +3,30 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { fetchModelList as fetchModelListService, deleteModel } from '@/services/platform';
+import { MOCK_MODELS } from '@/constants/mockData';
 
 /**
- * 模型列表页
+ * 模型列表页 - Page 层
+ * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const ModelList: React.FC = () => {
-  // TODO: 调用接口 GET /api/model/list
   const fetchModelList = async (params: any) => {
-    console.log('查询参数:', params);
-    return {
-      data: [],
-      success: true,
-      total: 0,
-    };
+    try {
+      const res = await fetchModelListService(params);
+      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+    } catch {
+      return { data: MOCK_MODELS, success: true, total: MOCK_MODELS.length };
+    }
   };
 
   const handleDelete = async (modelId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/model/delete
-      console.log('删除模型:', modelId);
+      await deleteModel(modelId);
       message.success('删除成功');
-    } catch (error) {
-      message.error('删除失败');
+      window.location.reload();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 
@@ -58,10 +60,12 @@ const ModelList: React.FC = () => {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
+      hideInSearch: true,
     },
     {
       title: '操作',
       key: 'action',
+      hideInSearch: true,
       render: (_, record) => (
         <Space>
           <Button
@@ -86,13 +90,15 @@ const ModelList: React.FC = () => {
 
   return (
     <PageContainer
+      title="模型管理"
+      subTitle="管理所有已上传的模型，支持搜索、筛选、删除等操作"
       extra={[
         <Button
           key="upload"
           type="primary"
           onClick={() => history.push('/model/upload')}
         >
-          上传模型
+          + 上传模型
         </Button>,
       ]}
     >
