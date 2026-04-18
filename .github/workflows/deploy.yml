@@ -1,0 +1,38 @@
+name: 前端自动化部署
+
+# 只有推送到这两个分支才会部署
+# feat 分支 永远不会触发！！！
+on:
+  push:
+    branches:
+      - frontend-dev
+      - frontend-main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 打包项目
+        run: npm run build
+
+      - name: 部署到服务器
+        uses: burnett01/rsync-deployments@6.0.0
+        with:
+          switches: -avzr --delete
+          path: dist/
+          remote_host: ${{ secrets.SERVER_HOST }}
+          remote_user: ${{ secrets.SERVER_USER }}
+          remote_pass: ${{ secrets.SERVER_PASSWORD }}
+          remote_dir: /var/www/xwzx-news

@@ -21,6 +21,7 @@ function getMockCurrentUserByRole(role: string): API.CurrentUser {
     normal_admin: { name: 'manager1（普管）', userid: 'manager1' },
     user: { name: 'test01（普通用户）', userid: 'test01' },
   };
+
   const o = roleMap[role] || roleMap.super_admin;
   return { name: o.name, userid: o.userid, role: role as API.UserRole };
 }
