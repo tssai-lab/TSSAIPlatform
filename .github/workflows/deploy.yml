@@ -32,7 +32,7 @@ jobs:
         with:
           switches: -avzr --delete
           path: dist/
-          remote_host: ${{ secrets.SERVER_HOST }}
-          remote_user: ${{ secrets.SERVER_USER }}
-          remote_pass: ${{ secrets.SERVER_PASSWORD }}
+          remote_host: ${{ secrets.MAIN_SERVER_HOST }}
+          remote_user: ${{ secrets.MAIN_SERVER_USER }}
+          remote_pass: ${{ secrets.MAIN_SERVER_PASSWORD }}
           remote_dir: /var/www/xwzx-news
