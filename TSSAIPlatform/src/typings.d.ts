@@ -1,4 +1,11 @@
 declare namespace API {
+  type CurrentUser = {
+    access?: string;
+    role?: 'admin' | 'user';
+    name?: string;
+    avatar?: string;
+  };
+
   // 模型相关
   type ModelItem = {
     id: string;
@@ -6,8 +13,23 @@ declare namespace API {
     version: string;
     type: 'CV' | 'NLP';
     uploadTime: string;
-    size: string;
+    size?: string;
+    sizeBytes?: number;
     remark?: string;
+    storagePath?: string;
+  };
+
+  type ModelDetail = {
+    id: string;
+    name: string;
+    version: string;
+    type: 'CV' | 'NLP';
+    createdAt?: string;
+    uploadTime?: string;
+    size?: string;
+    sizeBytes?: number;
+    remark?: string;
+    storagePath?: string;
   };
 
   // 数据集相关
@@ -18,6 +40,7 @@ declare namespace API {
     uploadTime: string;
     size: string;
     fileCount: number;
+    storagePath?: string;
   };
 
   // 任务相关

@@ -1,14 +1,42 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Button, message, Popconfirm, Space } from 'antd';
-import type { ProColumns } from '@ant-design/pro-components';
-import React from 'react';
-import { history } from '@umijs/max';
+import type { ActionType, ProColumns } from '@ant-design/pro-components';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { history, useLocation } from '@umijs/max';
 import { getModelList, deleteModel } from '@/services/ant-design-pro/model';
+import { getDownloadUrl } from '@/services/ant-design-pro/files';
 
 /**
  * 模型列表页（数据来自后端，模型文件存 MinIO）
  */
 const ModelList: React.FC = () => {
+  const actionRef = useRef<ActionType | undefined>(undefined);
+  const location = useLocation();
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined || bytes === null || Number.isNaN(bytes)) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+      value /= 1024;
+      idx += 1;
+    }
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[idx]}`;
+  };
+
+  const refreshKey = useMemo(() => {
+    const sp = new URLSearchParams(location.search || '');
+    return sp.get('refresh');
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!refreshKey) return;
+    // 来自上传页的刷新信号：自动刷新表格数据
+    actionRef.current?.reload?.();
+  }, [refreshKey]);
+
   const fetchModelList = async () => {
     const res = await getModelList({ skipErrorHandler: true });
     const payload = res?.data ?? { data: [], total: 0 };
@@ -26,8 +54,8 @@ const ModelList: React.FC = () => {
     try {
       await deleteModel(modelId, { skipErrorHandler: true });
       message.success('删除成功');
-      // 刷新表格
-      window.location.reload();
+      // 只刷新表格，不整页刷新
+      actionRef.current?.reload?.();
     } catch (error: any) {
       message.error(error?.info?.errorMessage ?? error?.message ?? '删除失败');
     }
@@ -63,6 +91,7 @@ const ModelList: React.FC = () => {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
+      render: (_, record) => record.size || formatBytes(record.sizeBytes),
     },
     {
       title: '操作',
@@ -75,7 +104,15 @@ const ModelList: React.FC = () => {
           >
             查看详情
           </Button>
-          <Button type="link">下载</Button>
+          <Button
+            type="link"
+            disabled={!record?.storagePath}
+            href={record?.storagePath ? getDownloadUrl(record.storagePath) : undefined}
+            target="_blank"
+            rel="noreferrer"
+          >
+            下载
+          </Button>
           <Popconfirm
             title="确定要删除吗？"
             onConfirm={() => handleDelete(record.id)}
@@ -102,6 +139,7 @@ const ModelList: React.FC = () => {
       ]}
     >
       <ProTable
+        actionRef={actionRef}
         columns={columns}
         request={fetchModelList}
         rowKey="id"

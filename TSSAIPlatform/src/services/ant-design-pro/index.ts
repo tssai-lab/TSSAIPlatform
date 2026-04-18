@@ -4,7 +4,11 @@
 // API 唯一标识：
 import * as api from './api';
 import * as login from './login';
+import * as files from './files';
+import * as dataset from './dataset';
 export default {
   api,
   login,
+  files,
+  dataset,
 };

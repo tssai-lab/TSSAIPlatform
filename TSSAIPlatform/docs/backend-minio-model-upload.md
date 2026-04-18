@@ -12,6 +12,7 @@
 | Access Key | `admin` |
 | Secret Key | `password123` |
 | Bucket   | 示例中统一用 `models`，需在 MinIO 中先创建或代码里自动创建 |
+| 数据目录 | 仓库根目录 `tss_minio_data`，Docker 挂载到容器内 `/data` |
 
 ---
 

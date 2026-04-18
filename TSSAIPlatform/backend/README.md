@@ -1,12 +1,12 @@
 # 模型上传后端（Spring Boot + MinIO）
 
-前端上传的模型文件经本服务接收后，写入 MinIO，并持久化到宿主机目录（如 Docker 挂载的 `E:\tss_minio_data`）。
+前端上传的模型文件经本服务接收后，写入 MinIO，并持久化到宿主机目录（如 Docker 挂载仓库根目录的 `.\tss_minio_data`）。
 
 ## 环境要求
 
 - JDK 17+
 - Maven 3.6+
-- 已启动 MinIO 容器（如 `minio-tss`，API 端口 9010）
+- 已启动 MinIO 容器（如 `minio-tss`，API 端口 9010，数据目录挂载到仓库根目录 `tss_minio_data`）
 
 ## 配置
 
@@ -48,7 +48,7 @@ cd backend
 
 1. 前端分片上传 → 本服务接收分片并写入 MinIO 临时对象。
 2. complete 时本服务将分片合并为最终对象，路径：`models/{模型名}/{版本}/{文件名}`。
-3. MinIO 将数据写入容器内 `/data`，因 Docker 挂载 `E:\tss_minio_data:/data`，文件实际持久化在 **E:\tss_minio_data**。
+3. MinIO 将数据写入容器内 `/data`，因 Docker 挂载 `.\tss_minio_data:/data`，文件实际持久化在仓库根目录 **tss_minio_data**。
 
 ## 模型记录存储
 

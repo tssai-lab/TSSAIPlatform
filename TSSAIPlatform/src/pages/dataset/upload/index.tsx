@@ -1,8 +1,11 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, message, Select, Upload } from 'antd';
+import { Button, Form, Input, message, Select, Space, Upload } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
 import React from 'react';
 import { history } from '@umijs/max';
+import type { UploadFile } from 'antd/es/upload/interface';
+import { uploadObject } from '@/services/ant-design-pro/files';
+import { createDatasetAsset, createDatasetVersion } from '@/services/ant-design-pro/dataset';
 
 /**
  * 数据集上传页
@@ -12,9 +15,41 @@ const DatasetUpload: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
-      // TODO: 调用接口 POST /api/dataset/upload
-      console.log('上传参数:', values);
-      message.success('上传成功！');
+      const fileList = (values.files ?? []) as UploadFile[];
+      const file = fileList[0]?.originFileObj as File | undefined;
+      if (!file) {
+        message.error('请选择数据集文件');
+        return;
+      }
+
+      // 1) 创建数据集资产
+      const assetRes = await createDatasetAsset(
+        { name: values.name, type: values.type, remark: values.description },
+        { skipErrorHandler: true },
+      );
+      const assetId = assetRes?.data?.id;
+      if (!assetId) {
+        throw new Error((assetRes as any)?.errorMessage ?? '创建数据集资产失败');
+      }
+
+      // 2) 上传文件到 MinIO（objectName 采用可读路径）
+      const version = values.version || 'v1';
+      const objectName = `datasets/${assetId}/${version}/${file.name}`;
+      const uploadRes = await uploadObject(file, objectName, { skipErrorHandler: true });
+
+      // 3) 创建版本记录
+      await createDatasetVersion(
+        {
+          assetId,
+          version,
+          fileName: file.name,
+          storagePath: uploadRes?.data?.objectName ?? objectName,
+          sizeBytes: uploadRes?.data?.size ?? file.size,
+        },
+        { skipErrorHandler: true },
+      );
+
+      message.success('上传成功！数据集已存储至 MinIO');
       history.push('/dataset/list');
     } catch (error) {
       message.error('上传失败，请重试！');
@@ -47,13 +82,29 @@ const DatasetUpload: React.FC = () => {
         <Form.Item name="description" label="描述">
           <Input.TextArea rows={4} placeholder="请输入描述（可选）" />
         </Form.Item>
+        <Form.Item name="version" label="版本号" initialValue="v1">
+          <Input placeholder="例如: v1" />
+        </Form.Item>
         <Form.Item
           name="files"
           label="文件"
-          rules={[{ required: true, message: '请上传文件' }]}
+          valuePropName="fileList"
+          getValueFromEvent={(e) => e?.fileList ?? []}
+          rules={[
+            {
+              required: true,
+              validator: (_, value) => {
+                const list = Array.isArray(value) ? value : value?.fileList ?? [];
+                if (!list?.length || !list[0].originFileObj) {
+                  return Promise.reject(new Error('请上传文件'));
+                }
+                return Promise.resolve();
+              },
+            },
+          ]}
         >
-          <Upload multiple beforeUpload={() => false}>
-            <Button icon={<UploadOutlined />}>选择文件（支持多文件）</Button>
+          <Upload beforeUpload={() => false} maxCount={1} accept=".zip">
+            <Button icon={<UploadOutlined />}>选择文件</Button>
           </Upload>
         </Form.Item>
         <Form.Item>

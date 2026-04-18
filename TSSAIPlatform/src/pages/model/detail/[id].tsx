@@ -2,18 +2,35 @@ import { PageContainer } from '@ant-design/pro-components';
 import { Button, Card, Descriptions, Tabs } from 'antd';
 import React, { useEffect, useState } from 'react';
 import { history, useParams } from '@umijs/max';
+import { getDownloadUrl } from '@/services/ant-design-pro/files';
+import { getModelDetail } from '@/services/ant-design-pro/model';
 
 /**
  * 模型详情页
  */
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const [modelInfo, setModelInfo] = useState<any>(null);
+  const [modelInfo, setModelInfo] = useState<API.ModelDetail | null>(null);
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined || bytes === null || Number.isNaN(bytes)) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+      value /= 1024;
+      idx += 1;
+    }
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[idx]}`;
+  };
 
   useEffect(() => {
-    // TODO: 调用接口 GET /api/model/detail
-    console.log('查询模型详情:', id);
-    // setModelInfo(data);
+    if (!id) return;
+    (async () => {
+      const res = await getModelDetail(id);
+      setModelInfo(res?.data ?? null);
+    })();
   }, [id]);
 
   return (
@@ -21,7 +38,17 @@ const ModelDetail: React.FC = () => {
       title="模型详情"
       onBack={() => history.push('/model/list')}
       extra={[
-        <Button key="download">下载模型</Button>,
+        modelInfo?.storagePath ? (
+          <Button key="download" type="primary">
+            <a href={getDownloadUrl(modelInfo.storagePath)} style={{ color: 'inherit' }}>
+              下载模型
+            </a>
+          </Button>
+        ) : (
+          <Button key="download" type="primary" disabled>
+            下载模型
+          </Button>
+        ),
         <Button key="back" onClick={() => history.push('/model/list')}>
           返回列表
         </Button>,
@@ -39,10 +66,10 @@ const ModelDetail: React.FC = () => {
             {modelInfo?.type || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="上传时间">
-            {modelInfo?.uploadTime || '-'}
+            {modelInfo?.uploadTime || modelInfo?.createdAt || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="大小">
-            {modelInfo?.size || '-'}
+            {modelInfo?.size || formatBytes(modelInfo?.sizeBytes)}
           </Descriptions.Item>
           <Descriptions.Item label="备注">
             {modelInfo?.remark || '-'}

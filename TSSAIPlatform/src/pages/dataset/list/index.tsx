@@ -3,26 +3,37 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
 import { history } from '@umijs/max';
+import { deleteDatasetAsset, listDatasetAssets } from '@/services/ant-design-pro/dataset';
+import { getDownloadUrl } from '@/services/ant-design-pro/files';
 
 /**
  * 数据集列表页
  */
 const DatasetList: React.FC = () => {
-  // TODO: 调用接口 GET /api/dataset/list
-  const fetchDatasetList = async (params: any) => {
-    console.log('查询参数:', params);
+  const fetchDatasetList = async () => {
+    const res = await listDatasetAssets({ skipErrorHandler: true });
+    const list = res?.data ?? [];
     return {
-      data: [],
+      data: list.map((a: any) => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        uploadTime: a.createdAt,
+        size: '-',
+        fileCount: 0,
+        // 版本文件下载暂不在列表页直接展示（需要 join version 表）
+        storagePath: a.storagePath,
+      })),
       success: true,
-      total: 0,
+      total: list.length,
     };
   };
 
   const handleDelete = async (datasetId: string) => {
     try {
-      // TODO: 调用接口 DELETE /api/dataset/delete
-      console.log('删除数据集:', datasetId);
+      await deleteDatasetAsset(datasetId, { skipErrorHandler: true });
       message.success('删除成功');
+      window.location.reload();
     } catch (error) {
       message.error('删除失败');
     }
@@ -67,7 +78,15 @@ const DatasetList: React.FC = () => {
           <Button type="link" onClick={() => history.push(`/dataset/detail/${record.id}`)}>
             查看详情
           </Button>
-          <Button type="link">下载</Button>
+          <Button
+            type="link"
+            disabled={!record?.storagePath}
+            href={record?.storagePath ? getDownloadUrl(record.storagePath) : undefined}
+            target="_blank"
+            rel="noreferrer"
+          >
+            下载
+          </Button>
           <Popconfirm
             title="确定要删除吗？"
             onConfirm={() => handleDelete(record.id)}

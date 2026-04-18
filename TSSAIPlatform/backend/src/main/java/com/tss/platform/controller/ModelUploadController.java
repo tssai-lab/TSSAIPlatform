@@ -4,9 +4,11 @@ import com.tss.platform.config.MinioConfig;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.UploadCompleteRequest;
 import com.tss.platform.dto.UploadInitRequest;
-import com.tss.platform.model.ModelRecord;
 import com.tss.platform.model.UploadSession;
-import com.tss.platform.service.ModelStoreService;
+import com.tss.platform.entity.ModelAsset;
+import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.repository.ModelAssetRepository;
+import com.tss.platform.repository.ModelVersionRepository;
 import io.minio.*;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,14 +28,17 @@ public class ModelUploadController {
 
     private final MinioClient minioClient;
     private final String bucket;
-    private final ModelStoreService modelStore;
+    private final ModelAssetRepository modelAssetRepo;
+    private final ModelVersionRepository modelVersionRepo;
     private final Map<String, UploadSession> uploadSessions = new ConcurrentHashMap<>();
 
     public ModelUploadController(MinioClient minioClient, MinioConfig minioConfig,
-                                 ModelStoreService modelStore) {
+                                 ModelAssetRepository modelAssetRepo,
+                                 ModelVersionRepository modelVersionRepo) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
-        this.modelStore = modelStore;
+        this.modelAssetRepo = modelAssetRepo;
+        this.modelVersionRepo = modelVersionRepo;
     }
 
     @PostMapping("/init")
@@ -112,18 +118,35 @@ public class ModelUploadController {
         } catch (Exception e) {
             return ApiResponse.fail("合并文件失败: " + e.getMessage());
         }
-        ModelRecord record = ModelRecord.of(
-                null, req.getModelName(), req.getVersion(), req.getType(),
-                req.getRemark(), destName);
-        modelStore.save(record);
+        // 1) 落库：资产
+        ModelAsset asset = new ModelAsset();
+        asset.setId("model-asset-" + UUID.randomUUID().toString().replace("-", ""));
+        asset.setName(req.getModelName());
+        asset.setType(req.getType());
+        asset.setRemark(req.getRemark());
+        asset.setCreatedAt(Instant.now());
+        asset.setUpdatedAt(Instant.now());
+        modelAssetRepo.save(asset);
+
+        // 2) 落库：版本
+        ModelVersion ver = new ModelVersion();
+        ver.setId("model-ver-" + UUID.randomUUID().toString().replace("-", ""));
+        ver.setAssetId(asset.getId());
+        ver.setVersion(req.getVersion());
+        ver.setFileName(session.getFileName());
+        ver.setStoragePath(destName);
+        ver.setSizeBytes(session.getFileSize());
+        ver.setCreatedAt(Instant.now());
+        modelVersionRepo.save(ver);
+
         Map<String, Object> data = new HashMap<>();
-        data.put("id", record.getId());
-        data.put("name", record.getName());
-        data.put("version", record.getVersion());
-        data.put("type", record.getType());
-        data.put("remark", record.getRemark());
-        data.put("storagePath", record.getStoragePath());
-        data.put("createdAt", record.getCreatedAt());
+        data.put("id", ver.getId());
+        data.put("name", asset.getName());
+        data.put("version", ver.getVersion());
+        data.put("type", asset.getType());
+        data.put("remark", asset.getRemark());
+        data.put("storagePath", ver.getStoragePath());
+        data.put("createdAt", ver.getCreatedAt());
         return ApiResponse.ok(data);
     }
 }

@@ -60,7 +60,8 @@ const ModelUpload: React.FC = () => {
         { skipErrorHandler: true },
       );
       message.success('上传成功！模型已存储至 MinIO');
-      history.push('/model/list');
+      // 回到列表后触发表格自动刷新（避免用户手动点刷新按钮）
+      history.push(`/model/list?refresh=${Date.now()}`);
     } catch (error: any) {
       const msg =
         error?.info?.errorMessage ?? error?.message ?? '上传失败，请重试';

@@ -45,9 +45,9 @@ npm start
 
 ### 5. 模型上传（需同时启动后端与 MinIO）
 
-模型上传功能依赖 **Java 后端** 和 **MinIO**，文件会经后端写入 MinIO，并持久化到 MinIO 挂载目录（如 `E:\tss_minio_data`）。
+模型上传功能依赖 **Java 后端** 和 **MinIO**，文件会经后端写入 MinIO，并持久化到 MinIO 挂载目录（仓库根目录 `tss_minio_data`）。
 
-1. **启动 MinIO**：确保 Docker 中已运行 MinIO 容器（API 端口 9010，如 `minio-tss`）。
+1. **启动 MinIO**：确保 Docker 中已运行 MinIO 容器（API 端口 9010，如 `minio-tss`），并把容器 `/data` 挂载到仓库根目录 `tss_minio_data`。
 2. **启动后端**（需 JDK 17+，无需单独安装 Maven）：
    ```bash
    cd backend

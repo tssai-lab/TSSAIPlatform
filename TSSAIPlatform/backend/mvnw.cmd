@@ -20,6 +20,19 @@ if defined JAVA_HOME (
   del "%TEMP%\mvnw_java.txt" 2>nul
   if defined JAVA_EXE goto javaFound
 )
+@REM Try common JDK 17+ installs under Program Files (Microsoft/Java)
+for /d %%d in ("%ProgramFiles%\Microsoft\jdk-17*-hotspot") do (
+  if exist "%%d\bin\java.exe" (
+    set "JAVA_EXE=%%d\bin\java.exe"
+    goto javaFound
+  )
+)
+for /d %%d in ("%ProgramFiles%\Java\jdk-17*") do (
+  if exist "%%d\bin\java.exe" (
+    set "JAVA_EXE=%%d\bin\java.exe"
+    goto javaFound
+  )
+)
 @REM Try .jdks subdirs (batch)
 for /d %%d in ("%USERPROFILE%\.jdks\*") do (
   if exist "%%d\bin\java.exe" (
@@ -81,7 +94,7 @@ if not exist %WRAPPER_JAR% (
   )
 )
 
-%JAVA_EXE% -classpath %WRAPPER_JAR% "-Dmaven.multiModuleProjectDirectory=%MAVEN_PROJECTBASEDIR%" %WRAPPER_LAUNCHER% %*
+"%JAVA_EXE%" -classpath %WRAPPER_JAR% "-Dmaven.multiModuleProjectDirectory=%MAVEN_PROJECTBASEDIR%" %WRAPPER_LAUNCHER% %*
 
 if errorlevel 1 set ERROR_CODE=1
 

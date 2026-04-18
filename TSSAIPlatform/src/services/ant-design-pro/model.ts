@@ -50,6 +50,15 @@ export async function getModelList(options?: { [key: string]: any }) {
   });
 }
 
+/** 模型详情 GET /api/model/detail?id= */
+export async function getModelDetail(id: string, options?: { [key: string]: any }) {
+  return request<{ data: API.ModelDetail }>('/api/model/detail', {
+    method: 'GET',
+    params: { id },
+    ...(options || {}),
+  });
+}
+
 /** 删除模型 DELETE /api/model/delete */
 export async function deleteModel(id: string, options?: { [key: string]: any }) {
   return request<Record<string, any>>('/api/model/delete', {
