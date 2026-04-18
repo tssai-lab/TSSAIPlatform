@@ -27,13 +27,12 @@ jobs:
       - name: 打包项目
         run: npm run build
 
-      - name: 部署到服务器
-        uses: burnett01/rsync-deployments@5.1.0
+      - name: 上传 dist 到服务器
+        uses: appleboy/scp-action@master
         with:
-          switches: -avzr --delete
-          path: dist/
-          remote_host: ${{ secrets.MAIN_SERVER_HOST }}
-          remote_user: ${{ secrets.MAIN_SERVER_USER }}
-          remote_pass: ${{ secrets.MAIN_SERVER_PASSWORD }}
-          remote_dir: /var/www/xwzx-news
-          remote_port: 22
+          host: ${{ secrets.MAIN_SERVER_HOST }}
+          username: ${{ secrets.MAIN_SERVER_USER }}
+          password: ${{ secrets.MAIN_SERVER_PASSWORD }}
+          source: "dist/*"        # 上传 dist 里面所有内容
+          target: "/var/www/"  # 大厂标准路径！
+          strip_components: 1    # 自动去掉 dist 目录层级
