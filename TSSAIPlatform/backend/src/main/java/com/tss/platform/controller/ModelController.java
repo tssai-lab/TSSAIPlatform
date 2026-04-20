@@ -1,10 +1,13 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.ModelCodeFileDto;
+import com.tss.platform.dto.ModelCodePreviewDto;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.service.ModelCodePreviewService;
 import com.tss.platform.service.MinioService;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,13 +24,16 @@ public class ModelController {
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
     private final MinioService minioService;
+    private final ModelCodePreviewService codePreviewService;
 
     public ModelController(ModelAssetRepository modelAssetRepo,
                            ModelVersionRepository modelVersionRepo,
-                           MinioService minioService) {
+                           MinioService minioService,
+                           ModelCodePreviewService codePreviewService) {
         this.modelAssetRepo = modelAssetRepo;
         this.modelVersionRepo = modelVersionRepo;
         this.minioService = minioService;
+        this.codePreviewService = codePreviewService;
     }
 
     @GetMapping("/list")
@@ -74,6 +80,27 @@ public class ModelController {
         item.put("sizeBytes", ver.getSizeBytes());
         item.put("createdAt", ver.getCreatedAt());
         return ApiResponse.ok(item);
+    }
+
+    @GetMapping("/code-files")
+    public ApiResponse<List<ModelCodeFileDto>> codeFiles(@RequestParam String id) {
+        try {
+            return ApiResponse.ok(codePreviewService.listCodeFiles(id));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @GetMapping("/previewCode")
+    public ApiResponse<ModelCodePreviewDto> previewCode(
+            @RequestParam String id,
+            @RequestParam String path
+    ) {
+        try {
+            return ApiResponse.ok(codePreviewService.previewCode(id, path));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
     }
 
     @DeleteMapping("/delete")

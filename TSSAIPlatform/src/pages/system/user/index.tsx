@@ -44,7 +44,7 @@ const UserManagement: React.FC = () => {
       }
       message.success(editingUser ? '编辑成功' : '新增成功');
       setModalVisible(false);
-    } catch (error) {
+    } catch {
       message.error('操作失败');
     }
   };
@@ -54,7 +54,7 @@ const UserManagement: React.FC = () => {
       // TODO: 调用接口 POST /api/sys/user/resetPwd
       console.log('重置密码:', userId);
       message.success('密码重置成功');
-    } catch (error) {
+    } catch {
       message.error('重置失败');
     }
   };
@@ -183,7 +183,6 @@ const UserManagement: React.FC = () => {
 };
 
 export default UserManagement;
-
 
 
 

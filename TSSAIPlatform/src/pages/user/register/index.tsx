@@ -1,5 +1,5 @@
 import { LockOutlined, UserOutlined, MobileOutlined } from '@ant-design/icons';
-import { FormattedMessage, Helmet, useIntl } from '@umijs/max';
+import { Helmet, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useState } from 'react';
@@ -7,7 +7,7 @@ import { history } from '@umijs/max';
 import { Footer } from '@/components';
 import Settings from '../../../../config/defaultSettings';
 
-const useStyles = createStyles(({ token }) => {
+const useStyles = createStyles(() => {
   return {
     container: {
       display: 'flex',
@@ -55,7 +55,7 @@ const Register: React.FC = () => {
       setTimeout(() => {
         history.push('/user/login');
       }, 1000);
-    } catch (error) {
+    } catch {
       messageApi.error('注册失败，请重试！');
       setRegisterState({
         status: 'error',
@@ -189,6 +189,5 @@ const Register: React.FC = () => {
 };
 
 export default Register;
-
 
 

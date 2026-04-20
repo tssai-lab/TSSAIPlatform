@@ -1,41 +1,40 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Button, message, Popconfirm, Space } from 'antd';
-import type { ProColumns } from '@ant-design/pro-components';
-import React from 'react';
+import type { ActionType, ProColumns } from '@ant-design/pro-components';
+import React, { useRef } from 'react';
 import { history } from '@umijs/max';
-import { deleteDatasetAsset, listDatasetAssets } from '@/services/ant-design-pro/dataset';
+import { deleteDatasetAsset, getDatasetList } from '@/services/ant-design-pro/dataset';
 import { getDownloadUrl } from '@/services/ant-design-pro/files';
 
 /**
  * 数据集列表页
  */
 const DatasetList: React.FC = () => {
-  const fetchDatasetList = async () => {
-    const res = await listDatasetAssets({ skipErrorHandler: true });
-    const list = res?.data ?? [];
+  const actionRef = useRef<ActionType | undefined>(undefined);
+
+  const fetchDatasetList = async (params: any) => {
+    const type = params?.type === 'CV' || params?.type === 'NLP' ? params.type : undefined;
+    const res = await getDatasetList(type ? { type } : undefined, { skipErrorHandler: true });
+    const payload = res?.data ?? { data: [], total: 0 };
     return {
-      data: list.map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        type: a.type,
-        uploadTime: a.createdAt,
-        size: '-',
-        fileCount: 0,
-        // 版本文件下载暂不在列表页直接展示（需要 join version 表）
-        storagePath: a.storagePath,
-      })),
+      data: payload.data ?? [],
       success: true,
-      total: list.length,
+      total: payload.total ?? 0,
     };
   };
 
   const handleDelete = async (datasetId: string) => {
     try {
-      await deleteDatasetAsset(datasetId, { skipErrorHandler: true });
-      message.success('删除成功');
-      window.location.reload();
-    } catch (error) {
-      message.error('删除失败');
+      const res = await deleteDatasetAsset(datasetId, { skipErrorHandler: true });
+      const result = res?.data;
+      message.success(
+        result
+          ? `删除成功，已清理 ${result.deletedVersions} 个版本、${result.deletedObjects} 个文件`
+          : '删除成功',
+      );
+      actionRef.current?.reload?.();
+    } catch (error: any) {
+      message.error(error?.info?.errorMessage ?? error?.message ?? '删除失败');
     }
   };
 
@@ -55,20 +54,30 @@ const DatasetList: React.FC = () => {
       },
     },
     {
+      title: '当前版本',
+      dataIndex: 'version',
+      key: 'version',
+      search: false,
+      renderText: (value) => value || '-',
+    },
+    {
       title: '上传时间',
       dataIndex: 'uploadTime',
       key: 'uploadTime',
       valueType: 'dateTime',
+      search: false,
     },
     {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
+      search: false,
     },
     {
       title: '文件数',
       dataIndex: 'fileCount',
       key: 'fileCount',
+      search: false,
     },
     {
       title: '操作',
@@ -88,7 +97,10 @@ const DatasetList: React.FC = () => {
             下载
           </Button>
           <Popconfirm
-            title="确定要删除吗？"
+            title="确定删除该数据集吗？"
+            description="将同步删除该数据集的所有版本记录和 MinIO 文件。"
+            okText="删除"
+            cancelText="取消"
             onConfirm={() => handleDelete(record.id)}
           >
             <Button type="link" danger>
@@ -113,6 +125,7 @@ const DatasetList: React.FC = () => {
       ]}
     >
       <ProTable
+        actionRef={actionRef}
         columns={columns}
         request={fetchDatasetList}
         rowKey="id"
@@ -128,9 +141,6 @@ const DatasetList: React.FC = () => {
 };
 
 export default DatasetList;
-
-
-
 
 
 

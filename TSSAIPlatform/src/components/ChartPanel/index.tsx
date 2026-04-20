@@ -50,7 +50,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ metricsData, loading = false })
         </div>
       </div>
       <div style={{ marginTop: 16 }}>
-        <button>下载图片</button>
+        <button type="button">下载图片</button>
         <span style={{ marginLeft: 16, fontSize: 12, color: '#999' }}>
           提示：需要安装 echarts 并实现图表渲染逻辑
         </span>
@@ -60,7 +60,6 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ metricsData, loading = false })
 };
 
 export default ChartPanel;
-
 
 
 

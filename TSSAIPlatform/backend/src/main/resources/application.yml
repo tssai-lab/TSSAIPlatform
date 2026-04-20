@@ -23,8 +23,11 @@ spring:
       enabled: true
       force: true
     multipart:
-      max-file-size: 100MB
-      max-request-size: 100MB
+      # 这里只限制单个 HTTP multipart 请求大小，不限制数据集总文件大小。
+      # 数据集上传走 /api/dataset/upload/* 分片链路，当前单分片为 5MB；
+      # 因此 10GB 数据集会被拆成约 2048 个小请求，不受传统 100MB 单次直传上限影响。
+      max-file-size: 64MB
+      max-request-size: 64MB
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/tss}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}

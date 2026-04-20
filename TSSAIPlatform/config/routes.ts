@@ -69,6 +69,12 @@ export default [
         component: './dataset/upload',
         hideInMenu: true,
       },
+      {
+        path: '/dataset/detail/:id',
+        name: '数据集详情',
+        component: './dataset/detail/[id]',
+        hideInMenu: true,
+      },
     ],
   },
   // 训练调度

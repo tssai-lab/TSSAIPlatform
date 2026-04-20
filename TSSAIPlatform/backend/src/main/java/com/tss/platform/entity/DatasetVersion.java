@@ -34,6 +34,9 @@ public class DatasetVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "remark", length = 1024)
+    private String remark;
+
     @Column(name = "created_at")
     private Instant createdAt;
 }

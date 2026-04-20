@@ -1,7 +1,6 @@
-import React from 'react';
-import { Modal, Button } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
-import { message } from 'antd';
+import { Button, message, Modal } from 'antd';
+import React from 'react';
 
 export interface CodePreviewProps {
   codeText?: string;
@@ -10,10 +9,6 @@ export interface CodePreviewProps {
   onClose?: () => void;
 }
 
-/**
- * 代码预览弹窗
- * 功能：显示代码文本，支持语法高亮、复制、关闭
- */
 const CodePreview: React.FC<CodePreviewProps> = ({
   codeText = '',
   fileName = '',
@@ -39,13 +34,13 @@ const CodePreview: React.FC<CodePreviewProps> = ({
           关闭
         </Button>,
       ]}
-      width={800}
+      width={900}
     >
       <div
         style={{
-          maxHeight: 500,
+          maxHeight: 560,
           overflow: 'auto',
-          fontFamily: 'monospace',
+          fontFamily: 'Consolas, Menlo, Monaco, monospace',
           fontSize: 12,
           background: '#f5f5f5',
           padding: 16,
@@ -56,17 +51,8 @@ const CodePreview: React.FC<CodePreviewProps> = ({
           {codeText || '暂无代码内容'}
         </pre>
       </div>
-      <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
-        提示：需要安装 CodeMirror 或类似库实现语法高亮
-      </div>
     </Modal>
   );
 };
 
 export default CodePreview;
-
-
-
-
-
-

@@ -1,10 +1,7 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Button, DatePicker } from 'antd';
+import { Button } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
 import React from 'react';
-import { RangePickerProps } from 'antd/es/date-picker';
-
-const { RangePicker } = DatePicker;
 
 /**
  * 审计日志页（超管专属）
@@ -78,6 +75,7 @@ const AuditLog: React.FC = () => {
         rowKey="id"
         search={{
           labelWidth: 'auto',
+          optionRender: false,
         }}
         pagination={{
           pageSize: 10,
@@ -88,8 +86,6 @@ const AuditLog: React.FC = () => {
 };
 
 export default AuditLog;
-
-
 
 
 

@@ -1,57 +1,171 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { Button, Form, Input, message, Progress, Select, Space, Upload } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
+import { Alert, Button, Form, Input, message, Progress, Select, Space, Upload } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { history } from '@umijs/max';
 import {
-  modelUploadInit,
   modelUploadChunk,
   modelUploadComplete,
+  modelUploadInit,
+  modelUploadProgress,
 } from '@/services/ant-design-pro/model';
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 分片
+const CHUNK_SIZE = 5 * 1024 * 1024;
+const DRAFT_KEY = 'tss.model.upload.draft';
 
-/**
- * 模型上传页：分片上传到后端，由后端写入 MinIO
- */
+type TaskType = 'CV' | 'NLP';
+
+type ModelUploadFormValues = {
+  modelName: string;
+  version: string;
+  type: TaskType;
+  remark: string;
+  file: UploadFile[];
+};
+
+type ModelUploadDraft = {
+  uploadId: string;
+  fileFingerprint: string;
+  fileName: string;
+  fileSize: number;
+  modelName: string;
+  version: string;
+  type: TaskType;
+  remark: string;
+};
+
+const taskTypeOptions: { label: string; value: TaskType }[] = [
+  { label: 'CV', value: 'CV' },
+  { label: 'NLP', value: 'NLP' },
+];
+
+const isTaskType = (value?: string): value is TaskType => value === 'CV' || value === 'NLP';
+
+const buildFileFingerprint = (file: File, values: ModelUploadFormValues) =>
+  [
+    file.name,
+    file.size,
+    file.lastModified,
+    values.modelName.trim(),
+    values.version.trim(),
+    values.type,
+  ].join('|');
+
+const readDraft = (): ModelUploadDraft | undefined => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? JSON.parse(raw) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const saveDraft = (draft: ModelUploadDraft) => {
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+};
+
+const clearDraft = () => {
+  localStorage.removeItem(DRAFT_KEY);
+};
+
+const uploadChunkWithRetry = async (
+  uploadId: string,
+  partIndex: number,
+  chunk: Blob,
+  maxRetries = 3,
+) => {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    try {
+      return await modelUploadChunk(uploadId, partIndex, chunk, { skipErrorHandler: true });
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxRetries) break;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+    }
+  }
+  throw lastError;
+};
+
 const ModelUpload: React.FC = () => {
   const [form] = Form.useForm();
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [resumeTip, setResumeTip] = useState<string>();
 
-  const handleSubmit = async (values: any) => {
+  useEffect(() => {
+    const draft = readDraft();
+    if (!draft) return;
+    form.setFieldsValue({
+      modelName: draft.modelName,
+      version: draft.version,
+      type: draft.type,
+      remark: draft.remark,
+    });
+    setResumeTip(`检测到未完成上传：${draft.fileName}。请重新选择同一个文件后继续上传。`);
+  }, [form]);
+
+  const handleSubmit = async (values: ModelUploadFormValues) => {
+    if (!isTaskType(values.type)) {
+      message.error('模型任务类型仅支持 CV 或 NLP');
+      return;
+    }
     const fileList = (values.file ?? []) as UploadFile[];
     const file = fileList[0]?.originFileObj as File | undefined;
     if (!file) {
       message.error('请选择模型文件');
       return;
     }
+
     setUploading(true);
     setUploadPercent(0);
     try {
+      const fileFingerprint = buildFileFingerprint(file, values);
       const initRes = await modelUploadInit(
-        { fileName: file.name, fileSize: file.size },
+        { fileName: file.name, fileSize: file.size, fileFingerprint },
         { skipErrorHandler: true },
       );
-      const uploadId = initRes?.data?.uploadId;
-      if (!uploadId) {
+      const progress = initRes?.data;
+      if (!progress?.uploadId) {
         throw new Error((initRes as any)?.errorMessage ?? '初始化上传失败');
       }
-      const chunkSize = initRes?.data?.chunkSize ?? CHUNK_SIZE;
-      const totalChunks = Math.ceil(file.size / chunkSize);
 
-      for (let partIndex = 0; partIndex < totalChunks; partIndex++) {
+      saveDraft({
+        uploadId: progress.uploadId,
+        fileFingerprint,
+        fileName: file.name,
+        fileSize: file.size,
+        modelName: values.modelName,
+        version: values.version,
+        type: values.type,
+        remark: values.remark,
+      });
+
+      const serverProgress = await modelUploadProgress(progress.uploadId, { skipErrorHandler: true });
+      const latestProgress = serverProgress?.data ?? progress;
+      const chunkSize = latestProgress.chunkSize ?? CHUNK_SIZE;
+      const totalChunks = latestProgress.totalChunks || Math.ceil(file.size / chunkSize);
+      const uploadedParts = new Set(latestProgress.uploadedPartIndexes ?? []);
+      setUploadPercent(Math.round((uploadedParts.size / totalChunks) * 100));
+
+      for (let partIndex = 0; partIndex < totalChunks; partIndex += 1) {
+        if (uploadedParts.has(partIndex)) continue;
         const start = partIndex * chunkSize;
         const end = Math.min(start + chunkSize, file.size);
         const chunk = file.slice(start, end);
-        await modelUploadChunk(uploadId, partIndex, chunk, { skipErrorHandler: true });
-        setUploadPercent(Math.round(((partIndex + 1) / totalChunks) * 100));
+        const chunkRes = await uploadChunkWithRetry(progress.uploadId, partIndex, chunk);
+        const nextUploadedParts = new Set(chunkRes?.data?.uploadedPartIndexes ?? [...uploadedParts, partIndex]);
+        uploadedParts.clear();
+        nextUploadedParts.forEach((item) => {
+          uploadedParts.add(item);
+        });
+        setUploadPercent(Math.round((uploadedParts.size / totalChunks) * 100));
       }
 
       await modelUploadComplete(
         {
-          uploadId,
+          uploadId: progress.uploadId,
           modelName: values.modelName,
           version: values.version,
           type: values.type,
@@ -59,24 +173,28 @@ const ModelUpload: React.FC = () => {
         },
         { skipErrorHandler: true },
       );
-      message.success('上传成功！模型已存储至 MinIO');
-      // 回到列表后触发表格自动刷新（避免用户手动点刷新按钮）
+      clearDraft();
+      setResumeTip(undefined);
+      message.success('上传成功，模型已存储至 MinIO');
       history.push(`/model/list?refresh=${Date.now()}`);
     } catch (error: any) {
-      const msg =
-        error?.info?.errorMessage ?? error?.message ?? '上传失败，请重试';
+      const msg = error?.info?.errorMessage ?? error?.message ?? '上传失败，请重试';
       message.error(msg);
     } finally {
       setUploading(false);
-      setUploadPercent(0);
     }
   };
 
   return (
-    <PageContainer
-      title="上传模型"
-      onBack={() => history.push('/model/list')}
-    >
+    <PageContainer title="上传模型" onBack={() => history.push('/model/list')}>
+      {resumeTip && (
+        <Alert
+          type="info"
+          showIcon
+          message={resumeTip}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Form form={form} onFinish={handleSubmit} layout="vertical">
         <Form.Item
           name="modelName"
@@ -97,10 +215,7 @@ const ModelUpload: React.FC = () => {
           label="类型"
           rules={[{ required: true, message: '请选择类型' }]}
         >
-          <Select placeholder="请选择类型">
-            <Select.Option value="CV">CV</Select.Option>
-            <Select.Option value="NLP">NLP</Select.Option>
-          </Select>
+          <Select placeholder="请选择类型" options={taskTypeOptions} />
         </Form.Item>
         <Form.Item
           name="remark"
@@ -121,10 +236,7 @@ const ModelUpload: React.FC = () => {
           name="file"
           label="模型文件"
           valuePropName="fileList"
-          getValueFromEvent={(e) => {
-            const list = e?.fileList ?? [];
-            return list;
-          }}
+          getValueFromEvent={(e) => e?.fileList ?? []}
           rules={[
             {
               required: true,
@@ -150,7 +262,7 @@ const ModelUpload: React.FC = () => {
             <Button icon={<UploadOutlined />}>选择文件（支持拖拽）</Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
-            支持 Zip 包，单个文件≤10GB；将上传至后端并存储到 MinIO
+            支持 Zip 包，按 5MB 分片上传；中断或刷新后可重新选择同一文件续传
           </div>
         </Form.Item>
         {uploading && (
@@ -174,4 +286,3 @@ const ModelUpload: React.FC = () => {
 };
 
 export default ModelUpload;
-

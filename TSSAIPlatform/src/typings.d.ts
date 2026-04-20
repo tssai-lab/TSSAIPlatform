@@ -35,12 +35,19 @@ declare namespace API {
   // 数据集相关
   type DatasetItem = {
     id: string;
+    assetId?: string;
     name: string;
     type: 'CV' | 'NLP';
-    uploadTime: string;
-    size: string;
+    versionId?: string;
+    version?: string;
+    fileName?: string;
+    uploadTime?: string;
+    size?: string;
+    sizeBytes?: number;
+    versionRemark?: string;
     fileCount: number;
     storagePath?: string;
+    remark?: string;
   };
 
   // 任务相关

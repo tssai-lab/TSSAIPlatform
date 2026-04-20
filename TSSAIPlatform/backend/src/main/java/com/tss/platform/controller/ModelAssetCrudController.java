@@ -2,6 +2,7 @@ package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.entity.ModelAsset;
+import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.ModelAssetRepository;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,14 +23,19 @@ public class ModelAssetCrudController {
 
     @PostMapping
     public ApiResponse<ModelAsset> create(@RequestBody ModelAsset body) {
-        if (body.getId() == null || body.getId().isBlank()) {
-            body.setId("model-asset-" + UUID.randomUUID().toString().replace("-", ""));
+        try {
+            body.setType(TaskType.normalize(body.getType()));
+            if (body.getId() == null || body.getId().isBlank()) {
+                body.setId("model-asset-" + UUID.randomUUID().toString().replace("-", ""));
+            }
+            if (body.getCreatedAt() == null) {
+                body.setCreatedAt(Instant.now());
+            }
+            body.setUpdatedAt(Instant.now());
+            return ApiResponse.ok(repo.save(body));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
         }
-        if (body.getCreatedAt() == null) {
-            body.setCreatedAt(Instant.now());
-        }
-        body.setUpdatedAt(Instant.now());
-        return ApiResponse.ok(repo.save(body));
     }
 
     @GetMapping("/{id}")
@@ -51,7 +57,11 @@ public class ModelAssetCrudController {
         }
         ModelAsset e = existing.get();
         e.setName(body.getName());
-        e.setType(body.getType());
+        try {
+            e.setType(TaskType.normalize(body.getType()));
+        } catch (IllegalArgumentException ex) {
+            return ApiResponse.fail(ex.getMessage());
+        }
         e.setRemark(body.getRemark());
         e.setUpdatedAt(Instant.now());
         return ApiResponse.ok(repo.save(e));
