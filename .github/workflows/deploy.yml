@@ -1,4 +1,4 @@
-name: 前端自动化部署demo1
+name: 前端自动化部署demo1代码
 
 on:
   push:
