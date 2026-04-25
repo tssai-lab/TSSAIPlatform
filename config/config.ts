@@ -27,6 +27,12 @@ export default defineConfig({
   publicPath: PUBLIC_PATH,
 
   /**
+   * @name favicon
+   * @description 配置站点 favicon（从 public/ 下读取）
+   */
+  favicons: ['/estun.png'],
+
+  /**
    * @name 兼容性设置
    * @description 设置 ie11 不一定完美兼容，需要检查自己使用的所有依赖
    * @doc https://umijs.org/docs/api/config#targets
