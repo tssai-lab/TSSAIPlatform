@@ -3,7 +3,6 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
-import { Footer } from '@/components';
 import { register } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
@@ -305,7 +304,6 @@ const Register: React.FC = () => {
           </Form>
         </div>
       </div>
-      <Footer />
     </div>
   );
 };
