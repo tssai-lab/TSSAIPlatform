@@ -183,7 +183,7 @@ const Register: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <img
               alt="logo"
-              src="/logo.svg"
+              src="/estun.png"
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>注册账号</h2>
