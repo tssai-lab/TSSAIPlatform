@@ -189,7 +189,7 @@ const Login: React.FC = () => {
             minWidth: 280,
             maxWidth: '75vw',
           }}
-          logo={<img alt="logo" src="/logo.svg" />}
+          logo={<img alt="logo" src="/estun.png" />}
           title="AI平台"
           subTitle={intl.formatMessage({
             id: 'pages.layouts.userLayout.title',

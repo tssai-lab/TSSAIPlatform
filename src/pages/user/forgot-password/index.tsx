@@ -114,7 +114,7 @@ const ForgotPassword: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <img
               alt="logo"
-              src="/logo.svg"
+              src="/estun.png"
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>忘记密码</h2>
