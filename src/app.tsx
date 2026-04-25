@@ -5,7 +5,7 @@ import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history, Link } from '@umijs/max';
 import { message, notification } from 'antd';
 import React from 'react';
-import { AvatarDropdown, AvatarName, Footer, Question } from '@/components';
+import { AvatarDropdown, AvatarName, Question } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
@@ -132,8 +132,6 @@ export const layout: RunTimeLayoutConfig = ({
     // waterMarkProps: {
     //   content: initialState?.currentUser?.name,
     // },
-    // 配置全局页脚
-    footerRender: () => <Footer />,
 
     onPageChange: () => {
       // 开发阶段已使用 Mock 用户，不再强制跳转登录
