@@ -79,6 +79,11 @@ export default [
         component: './dataset/list',
       },
       {
+        path: '/dataset/point-cloud',
+        name: '点云查看',
+        component: './dataset/point-cloud',
+      },
+      {
         path: '/dataset/upload',
         name: '上传数据集',
         component: './dataset/upload',
@@ -125,22 +130,22 @@ export default [
         access: 'canAccessSystemUser',
       },
       {
-        path: '/system/role',
-        name: '角色管理',
-        component: './system/role',
-        access: 'canAccessSystemRole',
-      },
-      {
-        path: '/system/permission',
-        name: '权限管理',
-        component: './system/permission',
-        access: 'canAccessSystemPermission',
+        path: '/system/admin',
+        name: '管理员列表',
+        component: './system/admin',
+        access: 'canAccessSystemAdmin',
       },
       {
         path: '/system/log',
         name: '日志管理',
         component: './system/log',
         access: 'canAccessSystemLog',
+      },
+      {
+        path: '/system/config',
+        name: '系统配置',
+        component: './system/config',
+        access: 'canAccessSystemConfig',
       },
       {
         path: '/system/api-doc',

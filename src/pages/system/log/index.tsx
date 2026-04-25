@@ -11,10 +11,11 @@ import dayjs from 'dayjs';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   exportLog,
-  getLogList,
+  fetchLogList as fetchLogListService,
   type LogItem,
   type LogListParams,
-} from '@/services/system/log';
+} from '@/services/system';
+import { toProTableFail, toProTableSuccess, withIndex } from '@/utils/proTable';
 
 type LogTypeTab = 'system' | 'operation';
 
@@ -100,27 +101,15 @@ const LogManagement: React.FC = () => {
 
       setCurrentParams(requestParams);
 
-      const response = await getLogList(requestParams);
+      const response = await fetchLogListService(requestParams);
 
-      if (response.code === 200) {
-        const list = (response.data?.list ?? []).map(
-          (item: LogItem, index: number) => ({
-            ...item,
-            _index: (current! - 1) * pageSize! + index + 1,
-          }),
-        );
-        return {
-          data: list,
-          success: true,
-          total: response.data?.total ?? 0,
-        };
+      if (response.code !== 200) {
+        return toProTableFail<LogItem>();
       }
-      message.error(response.msg ?? '查询失败');
-      return { data: [], success: false, total: 0 };
+      const list = withIndex(response.data?.list ?? [], current, pageSize);
+      return toProTableSuccess(list, response.data?.total ?? 0);
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err?.message ?? '查询失败');
-      return { data: [], success: false, total: 0 };
+      return toProTableFail<LogItem>();
     }
   };
 
@@ -137,7 +126,7 @@ const LogManagement: React.FC = () => {
       };
       const response = await exportLog(params);
       if (response.code === 200) {
-        message.success(response.msg ?? '导出成功');
+        message.success(response.message || '导出成功');
         if (
           (response as { data?: { downloadUrl?: string } })?.data?.downloadUrl
         ) {
@@ -146,12 +135,9 @@ const LogManagement: React.FC = () => {
             '_blank',
           );
         }
-      } else {
-        message.error(response.msg ?? '导出失败');
       }
     } catch (error: unknown) {
       const err = error as { message?: string };
-      message.error(err?.message ?? '导出失败');
     }
   };
 
@@ -239,6 +225,8 @@ const LogManagement: React.FC = () => {
 
   return (
     <PageContainer
+      title="日志管理"
+      subTitle="查看系统日志与操作日志，支持筛选查询与导出。"
       extra={
         canExport
           ? [
