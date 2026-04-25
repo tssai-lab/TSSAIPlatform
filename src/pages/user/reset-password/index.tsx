@@ -3,7 +3,6 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useEffect, useRef, useState } from 'react';
-import { Footer } from '@/components';
 import { resetPassword } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
@@ -201,7 +200,7 @@ const ResetPassword: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <img
               alt="logo"
-              src="/logo.svg"
+              src="/estun.png"
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>重置密码</h2>
@@ -326,7 +325,6 @@ const ResetPassword: React.FC = () => {
           </Form>
         </div>
       </div>
-      <Footer />
     </div>
   );
 };
