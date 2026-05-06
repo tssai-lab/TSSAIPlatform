@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+/backend/target/
+/backend/data/
+/backend/logs/
+/TSSAIPlatform/
+/backend-source-backup/
+/m2/
+/.vscode/
+
