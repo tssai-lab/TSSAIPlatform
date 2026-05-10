@@ -18,6 +18,7 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
+import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +40,7 @@ public class TrainingExperimentService {
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
     private final ObjectMapper objectMapper;
+    private final AuthContext authContext;
 
     public TrainingExperimentService(
             TrainingExperimentVersionRepository repo,
@@ -46,7 +48,8 @@ public class TrainingExperimentService {
             ModelAssetRepository modelAssetRepo,
             DatasetVersionRepository datasetVersionRepo,
             DatasetAssetRepository datasetAssetRepo,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AuthContext authContext
     ) {
         this.repo = repo;
         this.modelVersionRepo = modelVersionRepo;
@@ -54,6 +57,7 @@ public class TrainingExperimentService {
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
         this.objectMapper = objectMapper;
+        this.authContext = authContext;
     }
 
     @Transactional
@@ -80,6 +84,7 @@ public class TrainingExperimentService {
         version.setHyperParamsJson(toJson(initialParams));
         version.setStatus(STATUS_PENDING);
         version.setRemark(req.getRemark());
+        version.setOwnerUserId(authContext.currentUserId());
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
@@ -90,6 +95,7 @@ public class TrainingExperimentService {
     public TrainingExperimentVersionDto createVersion(String experimentId, CreateExperimentVersionRequest req) {
         TrainingExperimentVersion latest = repo.findTopByExperimentIdOrderByVersionNoDesc(experimentId)
                 .orElseThrow(() -> new IllegalArgumentException("experimentId 不存在"));
+        requireExperimentAccess(latest);
 
         TrainingExperimentVersion version = new TrainingExperimentVersion();
         version.setId(newVersionId());
@@ -104,6 +110,7 @@ public class TrainingExperimentService {
         version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
         version.setStatus(STATUS_PENDING);
         version.setRemark(req.getRemark() != null ? req.getRemark() : latest.getRemark());
+        version.setOwnerUserId(latest.getOwnerUserId());
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
@@ -114,6 +121,7 @@ public class TrainingExperimentService {
     public List<TrainingExperimentVersionDto> listVersions(String experimentId) {
         return repo.findByExperimentIdOrderByVersionNoAsc(experimentId)
                 .stream()
+                .filter(this::canAccessExperiment)
                 .map(this::toDto)
                 .collect(Collectors.toList());
     }
@@ -122,6 +130,7 @@ public class TrainingExperimentService {
     public TrainingExperimentVersionDto getVersion(String experimentId, Integer versionNo) {
         TrainingExperimentVersion version = repo.findByExperimentIdAndVersionNo(experimentId, versionNo)
                 .orElseThrow(() -> new IllegalArgumentException("指定实验版本不存在"));
+        requireExperimentAccess(version);
         return toDto(version);
     }
 
@@ -129,20 +138,27 @@ public class TrainingExperimentService {
     public TrainingExperimentVersionDto getLatestByExperimentId(String experimentId) {
         TrainingExperimentVersion version = repo.findTopByExperimentIdOrderByVersionNoDesc(experimentId)
                 .orElseThrow(() -> new IllegalArgumentException("experimentId 不存在"));
+        requireExperimentAccess(version);
         return toDto(version);
     }
 
     @Transactional(readOnly = true)
     public TrainingExperimentVersionDto getByIdOrExperimentId(String id) {
-        return repo.findById(id)
-                .map(this::toDto)
-                .orElseGet(() -> getLatestByExperimentId(id));
+        TrainingExperimentVersion byId = repo.findById(id).orElse(null);
+        if (byId != null) {
+            requireExperimentAccess(byId);
+            return toDto(byId);
+        }
+        return getLatestByExperimentId(id);
     }
 
     @Transactional(readOnly = true)
     public List<TrainingExperimentVersionDto> listLatestExperiments() {
         Map<String, TrainingExperimentVersion> latestByExperiment = new LinkedHashMap<>();
-        for (TrainingExperimentVersion item : repo.findAllByOrderByCreatedAtDesc()) {
+        List<TrainingExperimentVersion> source = authContext.isAdmin()
+                ? repo.findAllByOrderByCreatedAtDesc()
+                : repo.findAllByOwnerUserIdOrderByCreatedAtDesc(authContext.currentUserId());
+        for (TrainingExperimentVersion item : source) {
             TrainingExperimentVersion current = latestByExperiment.get(item.getExperimentId());
             if (current == null || item.getVersionNo() > current.getVersionNo()) {
                 latestByExperiment.put(item.getExperimentId(), item);
@@ -162,6 +178,7 @@ public class TrainingExperimentService {
     ) {
         TrainingExperimentVersion version = repo.findByExperimentIdAndVersionNo(experimentId, versionNo)
                 .orElseThrow(() -> new IllegalArgumentException("指定实验版本不存在"));
+        requireExperimentAccess(version);
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         if (params == null) {
             throw new IllegalArgumentException("hyperParams 不能为空");
@@ -179,6 +196,7 @@ public class TrainingExperimentService {
         TrainingExperimentVersion version = repo.findById(idOrExperimentId)
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
+        requireExperimentAccess(version);
         version.setStatus(status);
         version.setUpdatedAt(Instant.now());
         return toDto(repo.save(version));
@@ -188,6 +206,7 @@ public class TrainingExperimentService {
     public void deleteExperiment(String idOrExperimentId) {
         TrainingExperimentVersion byId = repo.findById(idOrExperimentId).orElse(null);
         if (byId != null) {
+            requireExperimentAccess(byId);
             repo.deleteByExperimentId(byId.getExperimentId());
             return;
         }
@@ -195,6 +214,7 @@ public class TrainingExperimentService {
         if (versions.isEmpty()) {
             throw new IllegalArgumentException("训练任务不存在");
         }
+        requireExperimentAccess(versions.get(0));
         repo.deleteByExperimentId(idOrExperimentId);
     }
 
@@ -211,6 +231,7 @@ public class TrainingExperimentService {
         dto.setStatus(version.getStatus());
         dto.setProgress(progressOf(version.getStatus()));
         dto.setRemark(version.getRemark());
+        dto.setOwnerUserId(version.getOwnerUserId());
         dto.setCreatedAt(version.getCreatedAt());
         dto.setUpdatedAt(version.getUpdatedAt());
         return dto;
@@ -309,6 +330,8 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("模型版本不存在: " + modelVersionId));
         ModelAsset asset = modelAssetRepo.findById(version.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
+        Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
+        authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
         return TaskType.normalize(asset.getType());
     }
 
@@ -317,6 +340,16 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在: " + datasetVersionId));
         DatasetAsset asset = datasetAssetRepo.findById(version.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("数据集资产不存在: " + version.getAssetId()));
+        Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
+        authContext.requireOwnerAccess(ownerUserId, "dataset version not found or no permission");
         return TaskType.normalize(asset.getType());
+    }
+
+    private boolean canAccessExperiment(TrainingExperimentVersion version) {
+        return authContext.canAccessOwner(version.getOwnerUserId());
+    }
+
+    private void requireExperimentAccess(TrainingExperimentVersion version) {
+        authContext.requireOwnerAccess(version.getOwnerUserId(), "experiment not found or no permission");
     }
 }

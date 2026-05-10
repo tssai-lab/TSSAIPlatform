@@ -59,6 +59,9 @@ public class TrainingExperimentVersion {
     @Column(name = "remark", length = 1024)
     private String remark;
 
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

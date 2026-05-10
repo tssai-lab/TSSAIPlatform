@@ -9,6 +9,10 @@ import java.util.Optional;
 public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, String> {
     List<DatasetVersion> findByAssetId(String assetId);
 
+    List<DatasetVersion> findByOwnerUserId(Integer ownerUserId);
+
+    List<DatasetVersion> findByAssetIdAndOwnerUserId(String assetId, Integer ownerUserId);
+
     Optional<DatasetVersion> findTopByAssetIdOrderByCreatedAtDesc(String assetId);
 }
 

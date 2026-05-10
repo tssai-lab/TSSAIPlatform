@@ -7,6 +7,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.security.AuthContext;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,17 +29,20 @@ public class DatasetAssetCrudController {
     private final DatasetVersionRepository versionRepo;
     private final MinioClient minioClient;
     private final String bucket;
+    private final AuthContext authContext;
 
     public DatasetAssetCrudController(
             DatasetAssetRepository repo,
             DatasetVersionRepository versionRepo,
             MinioClient minioClient,
-            MinioConfig minioConfig
+            MinioConfig minioConfig,
+            AuthContext authContext
     ) {
         this.repo = repo;
         this.versionRepo = versionRepo;
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
+        this.authContext = authContext;
     }
 
     @PostMapping
@@ -48,6 +52,7 @@ public class DatasetAssetCrudController {
             if (body.getId() == null || body.getId().isBlank()) {
                 body.setId("dataset-asset-" + UUID.randomUUID().toString().replace("-", ""));
             }
+            body.setOwnerUserId(authContext.currentUserId());
             if (body.getCreatedAt() == null) {
                 body.setCreatedAt(Instant.now());
             }
@@ -61,12 +66,18 @@ public class DatasetAssetCrudController {
     @GetMapping("/{id}")
     public ApiResponse<DatasetAsset> get(@PathVariable String id) {
         Optional<DatasetAsset> v = repo.findById(id);
-        return v.map(ApiResponse::ok).orElseGet(() -> ApiResponse.fail("未找到: " + id));
+        if (v.isEmpty() || !authContext.canAccessOwner(v.get().getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + id);
+        }
+        return ApiResponse.ok(v.get());
     }
 
     @GetMapping
     public ApiResponse<List<DatasetAsset>> list() {
-        return ApiResponse.ok(repo.findAll());
+        if (authContext.isAdmin()) {
+            return ApiResponse.ok(repo.findAll());
+        }
+        return ApiResponse.ok(repo.findByOwnerUserId(authContext.currentUserId()));
     }
 
     @PutMapping("/{id}")
@@ -76,6 +87,9 @@ public class DatasetAssetCrudController {
             return ApiResponse.fail("未找到: " + id);
         }
         DatasetAsset e = existing.get();
+        if (!authContext.canAccessOwner(e.getOwnerUserId())) {
+            return ApiResponse.fail("no permission: " + id);
+        }
         e.setName(body.getName());
         try {
             e.setType(TaskType.normalize(body.getType()));
@@ -91,8 +105,8 @@ public class DatasetAssetCrudController {
     @Transactional
     public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
         Optional<DatasetAsset> existing = repo.findById(id);
-        if (existing.isEmpty()) {
-            return ApiResponse.fail("未找到: " + id);
+        if (existing.isEmpty() || !authContext.canAccessOwner(existing.get().getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + id);
         }
 
         List<DatasetVersion> versions = versionRepo.findByAssetId(id);

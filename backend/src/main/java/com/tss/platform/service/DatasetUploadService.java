@@ -13,6 +13,7 @@ import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.GetObjectArgs;
@@ -62,6 +63,7 @@ public class DatasetUploadService {
     private final DatasetUploadChunkRepository chunkRepo;
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
+    private final AuthContext authContext;
 
     public DatasetUploadService(
             MinioClient minioClient,
@@ -69,7 +71,8 @@ public class DatasetUploadService {
             DatasetUploadSessionRepository sessionRepo,
             DatasetUploadChunkRepository chunkRepo,
             DatasetAssetRepository assetRepo,
-            DatasetVersionRepository versionRepo
+            DatasetVersionRepository versionRepo,
+            AuthContext authContext
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -77,17 +80,23 @@ public class DatasetUploadService {
         this.chunkRepo = chunkRepo;
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
+        this.authContext = authContext;
     }
 
     @Transactional
     public DatasetUploadProgressDto init(DatasetUploadInitRequest req) {
         validateInit(req);
+        Integer ownerUserId = authContext.currentUserId();
         String taskType = TaskType.normalize(req.getType());
         validateDatasetFileName(taskType, req.getFileName());
         String fingerprint = normalizeText(req.getFileFingerprint());
         if (fingerprint != null) {
             DatasetUploadSession existing = sessionRepo
-                    .findFirstByFileFingerprintAndStatusOrderByUpdatedAtDesc(fingerprint, STATUS_UPLOADING)
+                    .findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+                            fingerprint,
+                            STATUS_UPLOADING,
+                            ownerUserId
+                    )
                     .orElse(null);
             if (existing != null && sameUpload(existing, req, taskType)) {
                 existing.setRemark(req.getRemark());
@@ -109,6 +118,7 @@ public class DatasetUploadService {
         session.setType(taskType);
         session.setRemark(req.getRemark());
         session.setStatus(STATUS_UPLOADING);
+        session.setOwnerUserId(ownerUserId);
         Instant now = Instant.now();
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
@@ -131,7 +141,7 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("非末尾分片大小必须等于 chunkSize");
         }
 
-        String objectName = "datasets/_uploads/" + uploadId + "/part-" + partIndex;
+        String objectName = "users/" + session.getOwnerUserId() + "/datasets/_uploads/" + uploadId + "/part-" + partIndex;
         try (InputStream is = file.getInputStream()) {
             minioClient.putObject(
                     PutObjectArgs.builder()
@@ -191,7 +201,8 @@ public class DatasetUploadService {
 
         String assetId = "dataset-asset-" + UUID.randomUUID().toString().replace("-", "");
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
-        String destName = "datasets/" + assetId + "/" + sanitizeSegment(session.getVersion())
+        String destName = "users/" + session.getOwnerUserId()
+                + "/datasets/" + assetId + "/" + sanitizeSegment(session.getVersion())
                 + "/" + sanitizeSegment(session.getFileName());
         try {
             List<ComposeSource> sources = chunks.stream()
@@ -225,6 +236,7 @@ public class DatasetUploadService {
         asset.setName(session.getDatasetName());
         asset.setType(session.getType());
         asset.setRemark(session.getRemark());
+        asset.setOwnerUserId(session.getOwnerUserId());
         asset.setCreatedAt(now);
         asset.setUpdatedAt(now);
         assetRepo.save(asset);
@@ -237,6 +249,7 @@ public class DatasetUploadService {
         version.setStoragePath(destName);
         version.setSizeBytes(session.getFileSize());
         version.setRemark(session.getRemark());
+        version.setOwnerUserId(session.getOwnerUserId());
         version.setCreatedAt(now);
         versionRepo.save(version);
 
@@ -273,10 +286,11 @@ public class DatasetUploadService {
         }
 
         String version = defaultVersion(versionValue);
+        Integer ownerUserId = authContext.currentUserId();
         String assetId = "dataset-asset-" + UUID.randomUUID().toString().replace("-", "");
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
         String fileName = sanitizeSegment(datasetName) + "-" + sanitizeSegment(version) + "-folder.zip";
-        String destName = "datasets/" + assetId + "/" + sanitizeSegment(version) + "/" + fileName;
+        String destName = "users/" + ownerUserId + "/datasets/" + assetId + "/" + sanitizeSegment(version) + "/" + fileName;
         Path tempZip = null;
 
         try {
@@ -304,6 +318,7 @@ public class DatasetUploadService {
             asset.setName(datasetName.trim());
             asset.setType(taskType);
             asset.setRemark(remark);
+            asset.setOwnerUserId(ownerUserId);
             asset.setCreatedAt(now);
             asset.setUpdatedAt(now);
             assetRepo.save(asset);
@@ -316,6 +331,7 @@ public class DatasetUploadService {
             versionEntity.setStoragePath(destName);
             versionEntity.setSizeBytes(sizeBytes);
             versionEntity.setRemark(remark);
+            versionEntity.setOwnerUserId(ownerUserId);
             versionEntity.setCreatedAt(now);
             versionRepo.save(versionEntity);
 
@@ -367,8 +383,10 @@ public class DatasetUploadService {
         if (uploadId == null || uploadId.isBlank()) {
             throw new IllegalArgumentException("uploadId 不能为空");
         }
-        return sessionRepo.findById(uploadId)
+        DatasetUploadSession session = sessionRepo.findById(uploadId)
                 .orElseThrow(() -> new IllegalArgumentException("uploadId 无效"));
+        authContext.requireOwnerAccess(session.getOwnerUserId(), "uploadId invalid or not accessible");
+        return session;
     }
 
     private DatasetUploadProgressDto progress(DatasetUploadSession session) {
@@ -417,6 +435,7 @@ public class DatasetUploadService {
         data.put("storagePath", session.getStoragePath());
         data.put("sizeBytes", session.getFileSize());
         data.put("status", session.getStatus());
+        data.put("ownerUserId", session.getOwnerUserId());
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
         return data;
@@ -448,6 +467,7 @@ public class DatasetUploadService {
         data.put("storagePath", storagePath);
         data.put("sizeBytes", sizeBytes);
         data.put("status", STATUS_COMPLETED);
+        data.put("ownerUserId", authContext.currentUserId());
         data.put("createdAt", createdAt);
         data.put("updatedAt", updatedAt);
         return data;

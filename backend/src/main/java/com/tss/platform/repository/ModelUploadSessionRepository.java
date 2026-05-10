@@ -10,4 +10,10 @@ public interface ModelUploadSessionRepository extends JpaRepository<ModelUploadS
             String fileFingerprint,
             String status
     );
+
+    Optional<ModelUploadSession> findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+            String fileFingerprint,
+            String status,
+            Integer ownerUserId
+    );
 }

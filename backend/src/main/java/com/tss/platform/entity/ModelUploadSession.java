@@ -53,6 +53,9 @@ public class ModelUploadSession {
     @Column(name = "version_id", length = 64)
     private String versionId;
 
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

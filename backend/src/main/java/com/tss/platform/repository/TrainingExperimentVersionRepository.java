@@ -15,5 +15,7 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
 
     List<TrainingExperimentVersion> findAllByOrderByCreatedAtDesc();
 
+    List<TrainingExperimentVersion> findAllByOwnerUserIdOrderByCreatedAtDesc(Integer ownerUserId);
+
     void deleteByExperimentId(String experimentId);
 }

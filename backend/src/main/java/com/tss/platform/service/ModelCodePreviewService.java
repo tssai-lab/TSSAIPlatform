@@ -4,6 +4,7 @@ import com.tss.platform.dto.ModelCodeFileDto;
 import com.tss.platform.dto.ModelCodePreviewDto;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedInputStream;
@@ -32,10 +33,16 @@ public class ModelCodePreviewService {
 
     private final ModelVersionRepository modelVersionRepo;
     private final MinioService minioService;
+    private final AuthContext authContext;
 
-    public ModelCodePreviewService(ModelVersionRepository modelVersionRepo, MinioService minioService) {
+    public ModelCodePreviewService(
+            ModelVersionRepository modelVersionRepo,
+            MinioService minioService,
+            AuthContext authContext
+    ) {
         this.modelVersionRepo = modelVersionRepo;
         this.minioService = minioService;
+        this.authContext = authContext;
     }
 
     public List<ModelCodeFileDto> listCodeFiles(String modelVersionId) {
@@ -105,8 +112,10 @@ public class ModelCodePreviewService {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("模型版本 ID 不能为空");
         }
-        return modelVersionRepo.findById(id)
+        ModelVersion version = modelVersionRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("模型不存在"));
+        authContext.requireOwnerAccess(version.getOwnerUserId(), "model not found or no permission");
+        return version;
     }
 
     private void ensureZip(String storagePath) {

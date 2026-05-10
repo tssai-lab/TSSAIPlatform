@@ -18,6 +18,7 @@ public class TrainingExperimentVersionDto {
     private String status;
     private Integer progress;
     private String remark;
+    private Integer ownerUserId;
     private Instant createdAt;
     private Instant updatedAt;
 

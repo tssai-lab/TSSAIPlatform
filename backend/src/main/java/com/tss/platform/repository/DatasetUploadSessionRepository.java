@@ -10,4 +10,10 @@ public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUpl
             String fileFingerprint,
             String status
     );
+
+    Optional<DatasetUploadSession> findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+            String fileFingerprint,
+            String status,
+            Integer ownerUserId
+    );
 }

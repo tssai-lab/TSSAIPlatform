@@ -7,5 +7,9 @@ import java.util.List;
 
 public interface ModelVersionRepository extends JpaRepository<ModelVersion, String> {
     List<ModelVersion> findByAssetId(String assetId);
+
+    List<ModelVersion> findByOwnerUserId(Integer ownerUserId);
+
+    List<ModelVersion> findByAssetIdAndOwnerUserId(String assetId, Integer ownerUserId);
 }
 

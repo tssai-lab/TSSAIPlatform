@@ -6,6 +6,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.security.AuthContext;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Comparator;
@@ -21,10 +22,16 @@ public class DatasetController {
 
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
+    private final AuthContext authContext;
 
-    public DatasetController(DatasetAssetRepository assetRepo, DatasetVersionRepository versionRepo) {
+    public DatasetController(
+            DatasetAssetRepository assetRepo,
+            DatasetVersionRepository versionRepo,
+            AuthContext authContext
+    ) {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
+        this.authContext = authContext;
     }
 
     @GetMapping("/list")
@@ -41,7 +48,11 @@ public class DatasetController {
         }
 
         final String filterType = normalizedType;
-        List<Map<String, Object>> data = assetRepo.findAll()
+        List<DatasetAsset> assets = authContext.isAdmin()
+                ? assetRepo.findAll()
+                : assetRepo.findByOwnerUserId(authContext.currentUserId());
+
+        List<Map<String, Object>> data = assets
                 .stream()
                 .filter(asset -> filterType == null || filterType.equals(asset.getType()))
                 .map(this::toListItem)
@@ -72,6 +83,7 @@ public class DatasetController {
         item.put("name", asset.getName());
         item.put("type", asset.getType());
         item.put("remark", asset.getRemark());
+        item.put("ownerUserId", asset.getOwnerUserId());
         item.put("versionId", version != null ? version.getId() : null);
         item.put("version", version != null ? version.getVersion() : null);
         item.put("fileName", version != null ? version.getFileName() : null);

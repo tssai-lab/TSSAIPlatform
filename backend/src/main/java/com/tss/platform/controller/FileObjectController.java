@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.MinioService;
 import io.minio.StatObjectResponse;
 import org.springframework.core.io.InputStreamResource;
@@ -22,9 +23,11 @@ import java.util.Map;
 public class FileObjectController {
 
     private final MinioService minioService;
+    private final AuthContext authContext;
 
-    public FileObjectController(MinioService minioService) {
+    public FileObjectController(MinioService minioService, AuthContext authContext) {
         this.minioService = minioService;
+        this.authContext = authContext;
     }
 
     @GetMapping("/health")
@@ -49,6 +52,7 @@ public class FileObjectController {
             if (name == null || name.isBlank()) {
                 return ApiResponse.fail("objectName 不能为空");
             }
+            name = normalizeUserObjectName(name);
             minioService.uploadFile(name, file);
             StatObjectResponse stat = minioService.stat(name);
             Map<String, Object> data = new HashMap<>();
@@ -64,6 +68,7 @@ public class FileObjectController {
     @GetMapping("/download")
     public ResponseEntity<?> download(@RequestParam("objectName") String objectName) {
         try {
+            requireObjectAccess(objectName);
             StatObjectResponse stat = minioService.stat(objectName);
             InputStream is = minioService.downloadStream(objectName);
             String filename = objectName.contains("/") ? objectName.substring(objectName.lastIndexOf('/') + 1) : objectName;
@@ -83,6 +88,7 @@ public class FileObjectController {
     @DeleteMapping("/delete")
     public ApiResponse<Map<String, Object>> delete(@RequestParam("objectName") String objectName) {
         try {
+            requireObjectAccess(objectName);
             minioService.deleteObject(objectName);
             Map<String, Object> data = new HashMap<>();
             data.put("objectName", objectName);
@@ -91,6 +97,30 @@ public class FileObjectController {
         } catch (Exception e) {
             return ApiResponse.fail("删除失败: " + e.getMessage());
         }
+    }
+    private String normalizeUserObjectName(String objectName) {
+        if (authContext.isAdmin()) {
+            return objectName;
+        }
+        String prefix = currentUserPrefix();
+        if (objectName.startsWith(prefix)) {
+            return objectName;
+        }
+        String cleanName = objectName.replace('\\', '/').replaceAll("^/+", "");
+        return prefix + "files/" + cleanName;
+    }
+
+    private void requireObjectAccess(String objectName) {
+        if (authContext.isAdmin()) {
+            return;
+        }
+        if (objectName == null || !objectName.startsWith(currentUserPrefix())) {
+            throw new IllegalArgumentException("object not found or no permission");
+        }
+    }
+
+    private String currentUserPrefix() {
+        return "users/" + authContext.currentUserId() + "/";
     }
 }
 

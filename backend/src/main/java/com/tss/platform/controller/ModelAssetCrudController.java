@@ -4,6 +4,7 @@ import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.ModelAssetRepository;
+import com.tss.platform.security.AuthContext;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -16,9 +17,11 @@ import java.util.UUID;
 public class ModelAssetCrudController {
 
     private final ModelAssetRepository repo;
+    private final AuthContext authContext;
 
-    public ModelAssetCrudController(ModelAssetRepository repo) {
+    public ModelAssetCrudController(ModelAssetRepository repo, AuthContext authContext) {
         this.repo = repo;
+        this.authContext = authContext;
     }
 
     @PostMapping
@@ -28,6 +31,7 @@ public class ModelAssetCrudController {
             if (body.getId() == null || body.getId().isBlank()) {
                 body.setId("model-asset-" + UUID.randomUUID().toString().replace("-", ""));
             }
+            body.setOwnerUserId(authContext.currentUserId());
             if (body.getCreatedAt() == null) {
                 body.setCreatedAt(Instant.now());
             }
@@ -41,12 +45,18 @@ public class ModelAssetCrudController {
     @GetMapping("/{id}")
     public ApiResponse<ModelAsset> get(@PathVariable String id) {
         Optional<ModelAsset> v = repo.findById(id);
-        return v.map(ApiResponse::ok).orElseGet(() -> ApiResponse.fail("未找到: " + id));
+        if (v.isEmpty() || !authContext.canAccessOwner(v.get().getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + id);
+        }
+        return ApiResponse.ok(v.get());
     }
 
     @GetMapping
     public ApiResponse<List<ModelAsset>> list() {
-        return ApiResponse.ok(repo.findAll());
+        if (authContext.isAdmin()) {
+            return ApiResponse.ok(repo.findAll());
+        }
+        return ApiResponse.ok(repo.findByOwnerUserId(authContext.currentUserId()));
     }
 
     @PutMapping("/{id}")
@@ -56,6 +66,9 @@ public class ModelAssetCrudController {
             return ApiResponse.fail("未找到: " + id);
         }
         ModelAsset e = existing.get();
+        if (!authContext.canAccessOwner(e.getOwnerUserId())) {
+            return ApiResponse.fail("no permission: " + id);
+        }
         e.setName(body.getName());
         try {
             e.setType(TaskType.normalize(body.getType()));
@@ -69,8 +82,9 @@ public class ModelAssetCrudController {
 
     @DeleteMapping("/{id}")
     public ApiResponse<Object> delete(@PathVariable String id) {
-        if (!repo.existsById(id)) {
-            return ApiResponse.fail("未找到: " + id);
+        Optional<ModelAsset> existing = repo.findById(id);
+        if (existing.isEmpty() || !authContext.canAccessOwner(existing.get().getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + id);
         }
         repo.deleteById(id);
         return ApiResponse.ok(null);

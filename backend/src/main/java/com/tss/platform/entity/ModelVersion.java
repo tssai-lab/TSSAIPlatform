@@ -34,6 +34,9 @@ public class ModelVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
     @Column(name = "created_at")
     private Instant createdAt;
 }

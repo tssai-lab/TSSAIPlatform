@@ -13,6 +13,7 @@ import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelUploadChunkRepository;
 import com.tss.platform.repository.ModelUploadSessionRepository;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.MinioClient;
@@ -48,6 +49,7 @@ public class ModelUploadService {
     private final ModelUploadChunkRepository chunkRepo;
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
+    private final AuthContext authContext;
 
     public ModelUploadService(
             MinioClient minioClient,
@@ -55,7 +57,8 @@ public class ModelUploadService {
             ModelUploadSessionRepository sessionRepo,
             ModelUploadChunkRepository chunkRepo,
             ModelAssetRepository modelAssetRepo,
-            ModelVersionRepository modelVersionRepo
+            ModelVersionRepository modelVersionRepo,
+            AuthContext authContext
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -63,15 +66,21 @@ public class ModelUploadService {
         this.chunkRepo = chunkRepo;
         this.modelAssetRepo = modelAssetRepo;
         this.modelVersionRepo = modelVersionRepo;
+        this.authContext = authContext;
     }
 
     @Transactional
     public ModelUploadProgressDto init(UploadInitRequest req) {
         validateInit(req);
+        Integer ownerUserId = authContext.currentUserId();
         String fingerprint = normalizeText(req.getFileFingerprint());
         if (fingerprint != null) {
             ModelUploadSession existing = sessionRepo
-                    .findFirstByFileFingerprintAndStatusOrderByUpdatedAtDesc(fingerprint, STATUS_UPLOADING)
+                    .findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+                            fingerprint,
+                            STATUS_UPLOADING,
+                            ownerUserId
+                    )
                     .orElse(null);
             if (existing != null && sameUpload(existing, req)) {
                 existing.setUpdatedAt(Instant.now());
@@ -88,6 +97,7 @@ public class ModelUploadService {
         session.setChunkSize(CHUNK_SIZE);
         session.setTotalChunks((int) Math.ceil(req.getFileSize() / (double) CHUNK_SIZE));
         session.setStatus(STATUS_UPLOADING);
+        session.setOwnerUserId(ownerUserId);
         Instant now = Instant.now();
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
@@ -110,7 +120,7 @@ public class ModelUploadService {
             throw new IllegalArgumentException("非末尾分片大小必须等于 chunkSize");
         }
 
-        String objectName = "models/_uploads/" + uploadId + "/part-" + partIndex;
+        String objectName = "users/" + session.getOwnerUserId() + "/models/_uploads/" + uploadId + "/part-" + partIndex;
         try (InputStream is = file.getInputStream()) {
             minioClient.putObject(
                     PutObjectArgs.builder()
@@ -168,7 +178,8 @@ public class ModelUploadService {
 
         String assetId = "model-asset-" + UUID.randomUUID().toString().replace("-", "");
         String versionId = "model-ver-" + UUID.randomUUID().toString().replace("-", "");
-        String destName = "models/" + sanitizeSegment(req.getModelName())
+        String destName = "users/" + session.getOwnerUserId()
+                + "/models/" + sanitizeSegment(req.getModelName())
                 + "/" + sanitizeSegment(req.getVersion())
                 + "/" + sanitizeSegment(session.getFileName());
         try {
@@ -195,6 +206,7 @@ public class ModelUploadService {
         asset.setName(req.getModelName().trim());
         asset.setType(taskType);
         asset.setRemark(req.getRemark().trim());
+        asset.setOwnerUserId(session.getOwnerUserId());
         asset.setCreatedAt(now);
         asset.setUpdatedAt(now);
         modelAssetRepo.save(asset);
@@ -206,6 +218,7 @@ public class ModelUploadService {
         ver.setFileName(session.getFileName());
         ver.setStoragePath(destName);
         ver.setSizeBytes(session.getFileSize());
+        ver.setOwnerUserId(session.getOwnerUserId());
         ver.setCreatedAt(now);
         modelVersionRepo.save(ver);
 
@@ -246,8 +259,10 @@ public class ModelUploadService {
         if (uploadId == null || uploadId.isBlank()) {
             throw new IllegalArgumentException("uploadId 不能为空");
         }
-        return sessionRepo.findById(uploadId)
+        ModelUploadSession session = sessionRepo.findById(uploadId)
                 .orElseThrow(() -> new IllegalArgumentException("uploadId 无效"));
+        authContext.requireOwnerAccess(session.getOwnerUserId(), "uploadId invalid or not accessible");
+        return session;
     }
 
     private ModelUploadProgressDto progress(ModelUploadSession session) {
@@ -302,6 +317,7 @@ public class ModelUploadService {
         data.put("storagePath", session.getStoragePath());
         data.put("sizeBytes", session.getFileSize());
         data.put("status", session.getStatus());
+        data.put("ownerUserId", session.getOwnerUserId());
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
         return data;
