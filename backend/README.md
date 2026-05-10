@@ -271,11 +271,20 @@ Invoke-RestMethod `
 
 ## 鉴权说明
 
-当前 `WebConfig` 只对模块一相关接口启用权限拦截：
+当前 `WebConfig` 已对模块一与模块二核心接口启用权限拦截：
 
 ```text
 /api/user/**
 /api/log/**
+/api/model/**
+/api/model-assets/**
+/api/model-versions/**
+/api/dataset/**
+/api/dataset-assets/**
+/api/dataset-versions/**
+/api/task/**
+/api/experiments/**
+/api/files/**
 ```
 
 公开接口：
@@ -286,17 +295,28 @@ POST /api/user/register/mobile
 POST /api/user/sms/code
 POST /api/user/forget/password
 POST /api/user/login
+GET  /api/files/health
 ```
 
-其余模块一接口需要请求头：
+其余受保护接口需要请求头：
 
 ```text
 Authorization: Bearer <token>
 ```
 
-管理员接口主要集中在 `/api/user/**` 的用户管理能力中，模块一通过 Sa-Token session 中的 `roleId` 判断权限。
+模块一通过 Sa-Token session 中的 `roleId` 判断管理员权限，`roleId=1/2` 视为管理员，`roleId=3` 视为普通用户。
 
-模块二接口目前没有被模块一拦截器强制拦截，避免影响已有模型、数据集和训练流程。
+模块二模型、数据集、上传会话和训练实验已经增加 `owner_user_id`。普通用户查询列表、详情、删除时只允许访问自己的资源；管理员可以访问全部资源。
+
+MinIO 仍使用一个后端服务账号连接，业务隔离通过数据库 `owner_user_id` 与对象路径前缀实现：
+
+```text
+users/{userId}/models/...
+users/{userId}/datasets/...
+users/{userId}/files/...
+```
+
+`/api/files/health` 保持公开用于健康检查；其他 `/api/files/**` 接口需要登录，并会校验对象路径归属。
 
 ## 主要接口概览
 
@@ -440,10 +460,11 @@ MinIO 对象路径约定：
 
 | 类型 | 路径 |
 | --- | --- |
-| 模型临时分片 | `models/_uploads/{uploadId}/part-{index}` |
-| 模型最终文件 | `models/{modelName}/{version}/{fileName}` |
-| 数据集临时分片 | `datasets/_uploads/{uploadId}/part-{index}` |
-| 数据集最终文件 | `datasets/{assetId}/{version}/{fileName}` |
+| 模型临时分片 | `users/{userId}/models/_uploads/{uploadId}/part-{index}` |
+| 模型最终文件 | `users/{userId}/models/{modelName}/{version}/{fileName}` |
+| 数据集临时分片 | `users/{userId}/datasets/_uploads/{uploadId}/part-{index}` |
+| 数据集最终文件 | `users/{userId}/datasets/{assetId}/{version}/{fileName}` |
+| 通用文件对象 | `users/{userId}/files/{objectName}` |
 
 ## 常用配置
 
@@ -507,5 +528,6 @@ Authorization: Bearer <token>
 - 模块一短信验证码为内存模拟，服务重启后缓存会丢失。
 - 模块一部分迁移自 demo 的业务 message/log 文案可能仍有编码问题，后续可统一清理。
 - 模块二训练任务只管理元数据，暂未接入真实训练调度器。
-- 模块二接口当前未强制接入模块一鉴权，避免影响已有上传和训练流程。
+- 旧模型、数据集、实验记录如果 `owner_user_id` 为空，普通用户默认不可见，管理员可见；如需普通用户访问旧数据，需要补齐归属字段。
+- 模块二业务操作审计仍可继续增强，例如模型/数据集上传、删除、训练状态变更等。
 - 默认 PostgreSQL 和 MinIO 账号密码仅适合本地开发，不应直接用于生产环境。

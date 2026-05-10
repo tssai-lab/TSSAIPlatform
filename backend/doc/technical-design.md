@@ -138,6 +138,23 @@ Authorization: Bearer <token>
 | `POST /api/user/sms/code` | 获取短信验证码 |
 | `POST /api/user/forget/password` | 忘记密码 |
 | `POST /api/user/login` | 登录 |
+| `GET /api/files/health` | MinIO 健康检查 |
+
+当前纳入登录鉴权的业务路径：
+
+```text
+/api/user/**
+/api/log/**
+/api/model/**
+/api/model-assets/**
+/api/model-versions/**
+/api/dataset/**
+/api/dataset-assets/**
+/api/dataset-versions/**
+/api/task/**
+/api/experiments/**
+/api/files/**
+```
 
 登录后用户可访问：
 
@@ -151,6 +168,8 @@ Authorization: Bearer <token>
 - `/api/user/**` 下非公开、非自助接口默认需要管理员权限。
 - 管理员角色为 `roleId = 1` 或 `roleId = 2`。
 - 普通用户角色为 `roleId = 3`。
+- 模块二资源通过 `owner_user_id` 做数据隔离，普通用户只能访问自己的模型、数据集、训练实验和文件对象。
+- 管理员可跨用户访问全部模块二资源。
 
 注意：`controller/AuthController` 中的 `/api/login/account`、`/api/currentUser`、`/api/login/outLogin` 是 Ant Design Pro 演示兼容接口，不等同于正式 Sa-Token 登录链路。
 
@@ -547,6 +566,7 @@ Authorization: Bearer <token>
 | `name` | `VARCHAR(255)` | not null | 模型名称 |
 | `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP` |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 资源归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 | `updated_at` | `TIMESTAMP` | nullable | 更新时间 |
 
@@ -560,6 +580,7 @@ Authorization: Bearer <token>
 | `file_name` | `VARCHAR(255)` | nullable | 原始文件名 |
 | `storage_path` | `VARCHAR(1024)` | nullable | MinIO 对象路径 |
 | `size_bytes` | `BIGINT` | nullable | 文件大小 |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 资源归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 
 #### model_upload_session
@@ -576,6 +597,7 @@ Authorization: Bearer <token>
 | `storage_path` | `VARCHAR(1024)` | nullable | 合并后对象路径 |
 | `asset_id` | `VARCHAR(64)` | nullable | 生成的模型资产 ID |
 | `version_id` | `VARCHAR(64)` | nullable | 生成的模型版本 ID |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 上传会话归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 | `updated_at` | `TIMESTAMP` | nullable | 更新时间 |
 
@@ -603,6 +625,7 @@ Authorization: Bearer <token>
 | `name` | `VARCHAR(255)` | not null | 数据集名称 |
 | `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP` |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 资源归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 | `updated_at` | `TIMESTAMP` | nullable | 更新时间 |
 
@@ -617,6 +640,7 @@ Authorization: Bearer <token>
 | `storage_path` | `VARCHAR(1024)` | nullable | MinIO 对象路径 |
 | `size_bytes` | `BIGINT` | nullable | 文件大小 |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 资源归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 
 #### dataset_upload_session
@@ -637,6 +661,7 @@ Authorization: Bearer <token>
 | `storage_path` | `VARCHAR(1024)` | nullable | 合并后对象路径 |
 | `asset_id` | `VARCHAR(64)` | nullable | 生成的数据集资产 ID |
 | `version_id` | `VARCHAR(64)` | nullable | 生成的数据集版本 ID |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 上传会话归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 | `updated_at` | `TIMESTAMP` | nullable | 更新时间 |
 
@@ -670,6 +695,7 @@ Authorization: Bearer <token>
 | `hyper_params_json` | `TEXT` | nullable | 超参数 JSON |
 | `status` | `VARCHAR(32)` | nullable | 任务状态 |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
+| `owner_user_id` | `INTEGER` | nullable, index recommended | 实验归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
 | `updated_at` | `TIMESTAMP` | nullable | 更新时间 |
 
@@ -687,10 +713,17 @@ models
 
 | 业务 | 数据库字段 | 说明 |
 | --- | --- | --- |
-| 模型版本文件 | `model_version.storage_path` | 完整模型包或代码包对象路径 |
-| 数据集版本文件 | `dataset_version.storage_path` | 完整数据集包对象路径 |
-| 模型上传分片 | `model_upload_chunk.object_name` | 临时分片对象路径，完成后清理 |
-| 数据集上传分片 | `dataset_upload_chunk.object_name` | 临时分片对象路径，完成后清理 |
+| 模型版本文件 | `model_version.storage_path` | `users/{userId}/models/{modelName}/{version}/{fileName}` |
+| 数据集版本文件 | `dataset_version.storage_path` | `users/{userId}/datasets/{assetId}/{version}/{fileName}` |
+| 模型上传分片 | `model_upload_chunk.object_name` | `users/{userId}/models/_uploads/{uploadId}/part-{index}` |
+| 数据集上传分片 | `dataset_upload_chunk.object_name` | `users/{userId}/datasets/_uploads/{uploadId}/part-{index}` |
+| 通用文件对象 | 请求返回 `objectName` | `users/{userId}/files/{objectName}` |
+
+MinIO 使用一个后端服务账号连接。不同业务用户的数据隔离不依赖 MinIO 多账号，而依赖：
+
+- 数据库 `owner_user_id`。
+- 对象路径前缀 `users/{userId}/`。
+- 后端接口在查询、下载、删除前做权限校验。
 
 删除行为：
 
@@ -803,6 +836,6 @@ curl http://服务器IP/api/files/health
 - 统一 `ApiResponse` 与 `Result` 两套响应模型，减少前端适配成本。
 - 将 MinIO 账号密码改为环境变量配置。
 - 为 JPA 表增加显式 Flyway/Liquibase 迁移脚本，替代生产环境依赖 `ddl-auto=update`。
-- 为 `/api/files/*`、模型、数据集、训练任务接口补充统一鉴权策略。
+- 为模型、数据集、训练实验等关键操作补充统一审计日志。
 - 生产环境启用 HTTPS，并通过 Nginx 控制上传大小与超时时间。
 - 为上传会话增加过期清理任务，定期删除长期未完成的临时分片。
