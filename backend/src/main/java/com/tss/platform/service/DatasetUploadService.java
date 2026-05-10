@@ -55,7 +55,9 @@ public class DatasetUploadService {
     private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
-    private static final Set<String> NLP_TEXT_EXTENSIONS = Set.of(".txt", ".json", ".jsonl");
+    private static final Set<String> NLP_ALLOWED_EXTENSIONS = Set.of(
+            ".txt", ".json", ".jsonl", ".csv", ".xlsx", ".xls", ".pdf", ".docx", ".xml"
+    );
     private static final int MAX_DATASET_ZIP_ENTRIES = 100_000;
     private static final long MAX_DATASET_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
 
@@ -603,11 +605,10 @@ public class DatasetUploadService {
             return;
         }
         if ("NLP".equals(taskType)) {
-            if (!(lower.endsWith(".txt")
-                    || lower.endsWith(".json")
-                    || lower.endsWith(".jsonl")
-                    || lower.endsWith(".zip"))) {
-                throw new IllegalArgumentException("NLP 数据集仅支持 .txt、.json、.jsonl 或包含这些文件的 zip 压缩包");
+            if (!lower.endsWith(".zip") && !NLP_ALLOWED_EXTENSIONS.contains(extensionOf(lower))) {
+                throw new IllegalArgumentException(
+                        "NLP dataset only supports .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, .xml, or zip containing these files"
+                );
             }
         }
     }
@@ -643,8 +644,11 @@ public class DatasetUploadService {
                         found = true;
                     }
                     if ("NLP".equals(taskType)) {
-                        if (!NLP_TEXT_EXTENSIONS.contains(ext)) {
-                            throw new IllegalArgumentException("NLP zip 数据集仅允许 .txt、.json 或 .jsonl 文件: " + entryName);
+                        if (!NLP_ALLOWED_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException(
+                                    "NLP zip dataset only allows .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, or .xml files: "
+                                            + entryName
+                            );
                         }
                         found = true;
                     }
@@ -658,7 +662,9 @@ public class DatasetUploadService {
                 throw new IllegalArgumentException("CV zip 数据集必须包含图片文件");
             }
             if ("NLP".equals(taskType)) {
-                throw new IllegalArgumentException("NLP zip 数据集必须包含 .txt、.json 或 .jsonl 文件");
+                throw new IllegalArgumentException(
+                        "NLP zip dataset must contain .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, or .xml files"
+                );
             }
         }
     }
