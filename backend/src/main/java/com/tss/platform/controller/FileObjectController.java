@@ -68,10 +68,10 @@ public class FileObjectController {
     @GetMapping("/download")
     public ResponseEntity<?> download(@RequestParam("objectName") String objectName) {
         try {
-            requireObjectAccess(objectName);
-            StatObjectResponse stat = minioService.stat(objectName);
-            InputStream is = minioService.downloadStream(objectName);
-            String filename = objectName.contains("/") ? objectName.substring(objectName.lastIndexOf('/') + 1) : objectName;
+            String cleanName = requireObjectAccess(objectName);
+            StatObjectResponse stat = minioService.stat(cleanName);
+            InputStream is = minioService.downloadStream(cleanName);
+            String filename = cleanName.contains("/") ? cleanName.substring(cleanName.lastIndexOf('/') + 1) : cleanName;
             String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
@@ -88,10 +88,10 @@ public class FileObjectController {
     @DeleteMapping("/delete")
     public ApiResponse<Map<String, Object>> delete(@RequestParam("objectName") String objectName) {
         try {
-            requireObjectAccess(objectName);
-            minioService.deleteObject(objectName);
+            String cleanName = requireObjectAccess(objectName);
+            minioService.deleteObject(cleanName);
             Map<String, Object> data = new HashMap<>();
-            data.put("objectName", objectName);
+            data.put("objectName", cleanName);
             data.put("deleted", true);
             return ApiResponse.ok(data);
         } catch (Exception e) {
@@ -99,28 +99,51 @@ public class FileObjectController {
         }
     }
     private String normalizeUserObjectName(String objectName) {
+        String cleanName = cleanObjectName(objectName);
         if (authContext.isAdmin()) {
-            return objectName;
+            return cleanName;
         }
         String prefix = currentUserPrefix();
-        if (objectName.startsWith(prefix)) {
-            return objectName;
+        if (cleanName.startsWith(prefix)) {
+            return cleanName;
         }
-        String cleanName = objectName.replace('\\', '/').replaceAll("^/+", "");
         return prefix + "files/" + cleanName;
     }
 
-    private void requireObjectAccess(String objectName) {
+    private String requireObjectAccess(String objectName) {
+        String cleanName = cleanObjectName(objectName);
         if (authContext.isAdmin()) {
-            return;
+            return cleanName;
         }
-        if (objectName == null || !objectName.startsWith(currentUserPrefix())) {
+        if (!cleanName.startsWith(currentUserPrefix())) {
             throw new IllegalArgumentException("object not found or no permission");
         }
+        return cleanName;
     }
 
     private String currentUserPrefix() {
         return "users/" + authContext.currentUserId() + "/";
+    }
+
+    private String cleanObjectName(String objectName) {
+        if (objectName == null || objectName.isBlank()) {
+            throw new IllegalArgumentException("objectName 不能为空");
+        }
+        for (int i = 0; i < objectName.length(); i += 1) {
+            if (Character.isISOControl(objectName.charAt(i))) {
+                throw new IllegalArgumentException("objectName 非法");
+            }
+        }
+        String normalized = objectName.replace('\\', '/').replaceAll("^/+", "");
+        for (String part : normalized.split("/")) {
+            if (".".equals(part) || "..".equals(part)) {
+                throw new IllegalArgumentException("objectName 非法");
+            }
+        }
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("objectName 不能为空");
+        }
+        return normalized;
     }
 }
 

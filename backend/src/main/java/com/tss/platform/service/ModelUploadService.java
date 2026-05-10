@@ -16,6 +16,7 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
+import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -35,6 +37,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class ModelUploadService {
@@ -42,6 +46,8 @@ public class ModelUploadService {
     private static final int CHUNK_SIZE = 5 * 1024 * 1024;
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final int MAX_MODEL_ZIP_ENTRIES = 100_000;
+    private static final long MAX_MODEL_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
 
     private final MinioClient minioClient;
     private final String bucket;
@@ -196,7 +202,9 @@ public class ModelUploadService {
                             .sources(sources)
                             .build()
             );
+            validateModelObjectFormat(destName);
         } catch (Exception e) {
+            removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
         }
 
@@ -362,6 +370,78 @@ public class ModelUploadService {
         String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
         if (!lower.endsWith(".zip")) {
             throw new IllegalArgumentException("模型文件仅支持 zip 压缩包");
+        }
+    }
+
+    private void validateModelObjectFormat(String objectName) throws Exception {
+        int entries = 0;
+        boolean foundFile = false;
+        long totalUncompressedBytes = 0;
+        try (InputStream is = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucket).object(objectName).build()
+        );
+             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                entries += 1;
+                if (entries > MAX_MODEL_ZIP_ENTRIES) {
+                    throw new IllegalArgumentException("模型 zip 文件条目过多");
+                }
+                String entryName = normalizeZipEntryName(entry.getName());
+                if (!isSafeZipEntryPath(entryName)) {
+                    throw new IllegalArgumentException("模型 zip 包含非法路径: " + entry.getName());
+                }
+                if (!entry.isDirectory()) {
+                    foundFile = true;
+                    totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes, MAX_MODEL_UNCOMPRESSED_BYTES);
+                }
+                zip.closeEntry();
+            }
+        }
+        if (!foundFile) {
+            throw new IllegalArgumentException("模型 zip 不能为空");
+        }
+    }
+
+    private long drainZipEntry(ZipInputStream zip, long currentTotal, long maxTotal) throws Exception {
+        byte[] buffer = new byte[8192];
+        long total = currentTotal;
+        int len;
+        while ((len = zip.read(buffer)) != -1) {
+            total += len;
+            if (total > maxTotal) {
+                throw new IllegalArgumentException("zip 解压后体积过大");
+            }
+        }
+        return total;
+    }
+
+    private String normalizeZipEntryName(String name) {
+        return name == null ? "" : name.replace('\\', '/');
+    }
+
+    private boolean isSafeZipEntryPath(String path) {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
+            return false;
+        }
+        for (String part : path.split("/")) {
+            if ("..".equals(part) || part.contains("\u0000")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void removeObjectQuietly(String objectName) {
+        if (objectName == null || objectName.isBlank()) {
+            return;
+        }
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder().bucket(bucket).object(objectName).build()
+            );
+        } catch (Exception ignored) {
+            // 保留原始错误。
         }
     }
 

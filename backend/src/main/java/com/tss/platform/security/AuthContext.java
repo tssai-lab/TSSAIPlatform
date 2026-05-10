@@ -31,4 +31,27 @@ public class AuthContext {
             throw new IllegalArgumentException(message);
         }
     }
+
+    public boolean canAccessObjectName(String objectName, Integer ownerUserId) {
+        if (isAdmin()) {
+            return true;
+        }
+        return objectName != null
+                && ownerUserId != null
+                && ownerUserId.equals(currentUserId())
+                && objectName.startsWith(userPrefix(ownerUserId));
+    }
+
+    public void requireObjectAccess(String objectName, Integer ownerUserId, String message) {
+        if (!canAccessObjectName(objectName, ownerUserId)) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    public String userPrefix(Integer ownerUserId) {
+        if (ownerUserId == null) {
+            throw new IllegalArgumentException("ownerUserId cannot be null");
+        }
+        return "users/" + ownerUserId + "/";
+    }
 }

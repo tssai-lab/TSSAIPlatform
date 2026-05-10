@@ -120,6 +120,7 @@ public class DatasetAssetCrudController {
 
         try {
             for (String objectName : objectNames) {
+                authContext.requireObjectAccess(objectName, existing.get().getOwnerUserId(), "object not found or no permission");
                 minioClient.removeObject(
                         RemoveObjectArgs.builder()
                                 .bucket(bucket)

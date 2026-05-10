@@ -124,12 +124,15 @@ public class ModelController {
         if (!authContext.canAccessOwner(effectiveOwner(ver))) {
             return ApiResponse.fail("model not found or no permission");
         }
-        try {
-            if (ver.getStoragePath() != null && !ver.getStoragePath().isBlank()) {
+        if (ver.getStoragePath() != null && !ver.getStoragePath().isBlank()) {
+            try {
+                authContext.requireObjectAccess(ver.getStoragePath(), effectiveOwner(ver), "object not found or no permission");
                 minioService.deleteObject(ver.getStoragePath());
+            } catch (IllegalArgumentException e) {
+                return ApiResponse.fail(e.getMessage());
+            } catch (Exception ignored) {
+                // 删除 MinIO 失败不阻断数据库删除（避免脏状态卡死）
             }
-        } catch (Exception ignored) {
-            // 删除 MinIO 失败不阻断数据库删除（避免脏状态卡死）
         }
         modelVersionRepo.deleteById(id);
         return ApiResponse.ok(null);

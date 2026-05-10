@@ -56,6 +56,8 @@ public class DatasetUploadService {
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
     private static final Set<String> NLP_TEXT_EXTENSIONS = Set.of(".txt", ".json", ".jsonl");
+    private static final int MAX_DATASET_ZIP_ENTRIES = 100_000;
+    private static final long MAX_DATASET_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
 
     private final MinioClient minioClient;
     private final String bucket;
@@ -616,22 +618,37 @@ public class DatasetUploadService {
             return;
         }
         boolean found = false;
+        int entries = 0;
+        long totalUncompressedBytes = 0;
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         );
              ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
+                entries += 1;
+                if (entries > MAX_DATASET_ZIP_ENTRIES) {
+                    throw new IllegalArgumentException("数据集 zip 文件条目过多");
+                }
+                String entryName = normalizeZipEntryName(entry.getName());
+                if (!isSafeZipEntryPath(entryName)) {
+                    throw new IllegalArgumentException("数据集 zip 包含非法路径: " + entry.getName());
+                }
                 if (!entry.isDirectory()) {
-                    String ext = extensionOf(entry.getName());
-                    if ("CV".equals(taskType) && CV_IMAGE_EXTENSIONS.contains(ext)) {
+                    String ext = extensionOf(entryName);
+                    if ("CV".equals(taskType)) {
+                        if (!CV_IMAGE_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException("CV zip 数据集仅允许图片文件: " + entryName);
+                        }
                         found = true;
-                        break;
                     }
-                    if ("NLP".equals(taskType) && NLP_TEXT_EXTENSIONS.contains(ext)) {
+                    if ("NLP".equals(taskType)) {
+                        if (!NLP_TEXT_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException("NLP zip 数据集仅允许 .txt、.json 或 .jsonl 文件: " + entryName);
+                        }
                         found = true;
-                        break;
                     }
+                    totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
                 }
                 zip.closeEntry();
             }
@@ -644,6 +661,35 @@ public class DatasetUploadService {
                 throw new IllegalArgumentException("NLP zip 数据集必须包含 .txt、.json 或 .jsonl 文件");
             }
         }
+    }
+
+    private long drainZipEntry(ZipInputStream zip, long currentTotal) throws Exception {
+        byte[] buffer = new byte[8192];
+        long total = currentTotal;
+        int len;
+        while ((len = zip.read(buffer)) != -1) {
+            total += len;
+            if (total > MAX_DATASET_UNCOMPRESSED_BYTES) {
+                throw new IllegalArgumentException("数据集 zip 解压后体积过大");
+            }
+        }
+        return total;
+    }
+
+    private String normalizeZipEntryName(String name) {
+        return name == null ? "" : name.replace('\\', '/');
+    }
+
+    private boolean isSafeZipEntryPath(String path) {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
+            return false;
+        }
+        for (String part : path.split("/")) {
+            if ("..".equals(part) || part.contains("\u0000")) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private String extensionOf(String name) {
