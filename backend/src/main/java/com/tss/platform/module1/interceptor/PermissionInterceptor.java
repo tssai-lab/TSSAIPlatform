@@ -27,8 +27,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
             "/api/user/register/mobile",
             "/api/user/sms/code",
             "/api/user/forget/password",
-            "/api/user/login",
-            "/api/files/health"
+            "/api/user/login"
     );
     private static final List<String> USER_SELF_PATHS = Arrays.asList(
             "/api/user/current-user",
@@ -40,11 +39,6 @@ public class PermissionInterceptor implements HandlerInterceptor {
         String requestUri = request.getRequestURI();
         SYSTEM_LOG.info("请求URI: {}", requestUri);
 
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
-            SYSTEM_LOG.info("CORS预检请求，直接放行: {}", requestUri);
-            return true;
-        }
-
         if (isPublicPath(requestUri)) {
             SYSTEM_LOG.info("公共路径，直接放行: {}", requestUri);
             return true;
@@ -52,10 +46,11 @@ public class PermissionInterceptor implements HandlerInterceptor {
 
         try {
             String token = request.getHeader("Authorization");
-            SYSTEM_LOG.info("收到Token: {}", token == null || token.isBlank() ? "no" : "yes");
+            SYSTEM_LOG.info("收到的Token: {}", token);
             // 去掉Bearer前缀
             if (token != null && token.startsWith("Bearer ")) {
                 token = token.substring(7);
+                SYSTEM_LOG.info("处理后的Token: {}", token);
                 // 手动设置Token
                 StpUtil.setTokenValue(token);
             }
@@ -93,7 +88,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
     }
 
     private boolean isPublicPath(String requestUri) {
-        return PUBLIC_PATHS.stream().anyMatch(requestUri::equals);
+        return PUBLIC_PATHS.stream().anyMatch(requestUri::startsWith);
     }
 
     private boolean isAdminOnlyPath(String requestUri) {
