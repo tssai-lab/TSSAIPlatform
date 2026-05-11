@@ -8,14 +8,14 @@ import lombok.Data;
 @Data
 public class UserRegisterDTO {
 
-    @Size(min = 6, max = 20, message = "Username must be 6-20 characters")
+    @Size(min = 6, max = 20, message = "用户名6-20位字符")
     private String username;
 
-    @NotBlank(message = "Password must not be blank")
-    @Pattern(regexp = "^\\w{6,16}$", message = "Password must be 6-16 letters, numbers, or underscores")
+    @NotBlank(message = "密码不能为空")
+    @Pattern(regexp = "^\\w{6,16}$", message = "密码6-16位字母/数字/下划线")
     private String password;
 
-    @NotBlank(message = "Confirm password must not be blank")
+    @NotBlank(message = "确认密码不能为空")
     private String confirmPassword;
 
     private String mobile;
