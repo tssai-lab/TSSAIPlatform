@@ -13,10 +13,10 @@ export default {
   /** 本地开发环境：api 与 mlflow 代理 */
   dev: {
     // 平台后端（后端就绪后取消注释并修改 target）
-    // '/api/': {
-    //   target: 'http://localhost:8080',
-    //   changeOrigin: true,
-    // },
+    '/api/': {
+      target: 'http://localhost:8080',
+      changeOrigin: true,
+    },
     /** 独立 MLflow 服务，用于任务详情页训练指标 */
     '/mlflow-api/': {
       target: 'http://localhost:5000',

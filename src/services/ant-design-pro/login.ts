@@ -2,7 +2,7 @@
 /* eslint-disable */
 import { request } from '@umijs/max';
 
-/** 发送验证码 POST /api/login/captcha */
+/** 发送验证码 POST /api/user/sms/code */
 export async function getFakeCaptcha(
   params: {
     /** 手机号 */
@@ -10,14 +10,15 @@ export async function getFakeCaptcha(
   },
   options?: { [key: string]: any },
 ) {
-  return request<API.FakeCaptcha>('/api/login/captcha', {
+  return request<API.FakeCaptcha>('/user/sms/code', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     data: {
-      phone: params.phone,
+      mobile: params.phone,
     },
+    skipErrorHandler: true,
     ...(options || {}),
   });
 }
