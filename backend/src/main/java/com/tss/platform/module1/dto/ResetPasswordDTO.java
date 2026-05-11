@@ -6,10 +6,10 @@ import lombok.Data;
 
 @Data
 public class ResetPasswordDTO {
-
+    
     private Integer userId;
-
-    @NotBlank(message = "New password must not be blank")
-    @Pattern(regexp = "^\\w{6,16}$", message = "Password must be 6-16 letters, numbers, or underscores")
+    
+    @NotBlank(message = "新密码不能为空")
+    @Pattern(regexp = "^\\w{6,16}$", message = "密码6-16位字母/数字/下划线")
     private String newPassword;
 }
