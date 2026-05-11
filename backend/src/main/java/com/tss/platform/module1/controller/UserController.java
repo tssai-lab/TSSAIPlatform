@@ -239,6 +239,31 @@ public class UserController {
         }
     }
 
+    /**
+     * 超级管理员将普通用户提升为普通管理员（role_id 3 → 2）
+     */
+    @PostMapping("/promote-to-admin")
+    public Result<?> promoteToNormalAdmin(@RequestBody Map<String, Integer> body) {
+        Integer operatorRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
+        if (operatorRoleId == null || operatorRoleId != 1) {
+            return Result.fail("仅超级管理员可操作");
+        }
+        Integer userId = body != null ? body.get("userId") : null;
+        if (userId == null) {
+            return Result.fail("用户ID不能为空");
+        }
+        USER_LOG.info("超级管理员晋升普通管理员: targetUserId={}", userId);
+        try {
+            userService.promoteToNormalAdmin(userId);
+            return Result.success(null, "已设为普通管理员");
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            SYSTEM_LOG.error("晋升管理员异常: userId={}, error={}", userId, e.getMessage());
+            return Result.fail("操作失败，请稍后重试");
+        }
+    }
+
     @PostMapping("/forget/password")
     public Result<?> forgetPassword(@Valid @RequestBody ForgetPasswordDTO dto) {
         USER_LOG.info("忘记密码请求: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
@@ -287,3 +312,4 @@ public class UserController {
         return ip;
     }
 }
+
