@@ -21,4 +21,7 @@ public interface UserService extends IService<User> {
     boolean registerByMobile(UserRegisterDTO dto);   // 手机号+验证码注册
     boolean forgetPassword(ForgetPasswordDTO dto);
     Map<String, Object> login(LoginDTO dto);
+
+    /** 将普通用户（role_id=3）提升为普通管理员（role_id=2），业务层校验目标用户状态 */
+    boolean promoteToNormalAdmin(Integer targetUserId);
 }
