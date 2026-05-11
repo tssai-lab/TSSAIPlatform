@@ -6,10 +6,14 @@ import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.MinioService;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,15 +24,18 @@ public class ModelVersionCrudController {
 
     private final ModelVersionRepository repo;
     private final ModelAssetRepository assetRepo;
+    private final MinioService minioService;
     private final AuthContext authContext;
 
     public ModelVersionCrudController(
             ModelVersionRepository repo,
             ModelAssetRepository assetRepo,
+            MinioService minioService,
             AuthContext authContext
     ) {
         this.repo = repo;
         this.assetRepo = assetRepo;
+        this.minioService = minioService;
         this.authContext = authContext;
     }
 
@@ -109,13 +116,32 @@ public class ModelVersionCrudController {
     }
 
     @DeleteMapping("/{id}")
-    public ApiResponse<Object> delete(@PathVariable String id) {
+    @Transactional
+    public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
         Optional<ModelVersion> existing = repo.findById(id);
         if (existing.isEmpty() || !authContext.canAccessOwner(effectiveOwner(existing.get()))) {
             return ApiResponse.fail("not found or no permission: " + id);
         }
-        repo.deleteById(id);
-        return ApiResponse.ok(null);
+        ModelVersion version = existing.get();
+        boolean deletedObject = false;
+        String objectName = version.getStoragePath();
+        if (objectName != null && !objectName.isBlank()) {
+            try {
+                authContext.requireObjectAccess(objectName, effectiveOwner(version), "object not found or no permission");
+                minioService.deleteObject(objectName);
+                deletedObject = true;
+            } catch (Exception e) {
+                return ApiResponse.fail("删除模型版本文件失败: " + e.getMessage());
+            }
+        }
+
+        repo.delete(version);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", id);
+        result.put("assetId", version.getAssetId());
+        result.put("deletedObject", deletedObject);
+        return ApiResponse.ok(result);
     }
 
     private Integer resolveAssetOwner(String assetId) {

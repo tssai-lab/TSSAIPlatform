@@ -8,6 +8,8 @@ import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetUploadChunk;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.model.CvAnnotationFormat;
+import com.tss.platform.model.CvTaskType;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
@@ -92,6 +94,8 @@ public class DatasetUploadService {
         validateInit(req);
         Integer ownerUserId = authContext.currentUserId();
         String taskType = TaskType.normalize(req.getType());
+        String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
+        String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
         validateDatasetFileName(taskType, req.getFileName());
         String fingerprint = normalizeText(req.getFileFingerprint());
         if (fingerprint != null) {
@@ -120,6 +124,8 @@ public class DatasetUploadService {
         session.setDatasetName(req.getDatasetName().trim());
         session.setVersion(defaultVersion(req.getVersion()));
         session.setType(taskType);
+        session.setCvTaskType(cvTaskType);
+        session.setAnnotationFormat(annotationFormat);
         session.setRemark(req.getRemark());
         session.setStatus(STATUS_UPLOADING);
         session.setOwnerUserId(ownerUserId);
@@ -222,7 +228,7 @@ public class DatasetUploadService {
                             .sources(sources)
                             .build()
             );
-            validateDatasetObjectFormat(session.getType(), session.getFileName(), destName);
+            validateDatasetObjectFormat(session.getType(), session.getAnnotationFormat(), session.getFileName(), destName);
         } catch (Exception e) {
             try {
                 minioClient.removeObject(
@@ -239,6 +245,8 @@ public class DatasetUploadService {
         asset.setId(assetId);
         asset.setName(session.getDatasetName());
         asset.setType(session.getType());
+        asset.setCvTaskType(session.getCvTaskType());
+        asset.setAnnotationFormat(session.getAnnotationFormat());
         asset.setRemark(session.getRemark());
         asset.setOwnerUserId(session.getOwnerUserId());
         asset.setCreatedAt(now);
@@ -252,6 +260,8 @@ public class DatasetUploadService {
         version.setFileName(session.getFileName());
         version.setStoragePath(destName);
         version.setSizeBytes(session.getFileSize());
+        version.setCvTaskType(session.getCvTaskType());
+        version.setAnnotationFormat(session.getAnnotationFormat());
         version.setRemark(session.getRemark());
         version.setOwnerUserId(session.getOwnerUserId());
         version.setCreatedAt(now);
@@ -273,12 +283,16 @@ public class DatasetUploadService {
             String datasetName,
             String versionValue,
             String type,
+            String cvTaskTypeValue,
+            String annotationFormatValue,
             String remark,
             List<MultipartFile> files,
             List<String> paths
     ) {
         requireText(datasetName, "datasetName 不能为空");
         String taskType = TaskType.normalize(type);
+        String cvTaskType = CvTaskType.normalizeForTask(taskType, cvTaskTypeValue);
+        String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, annotationFormatValue);
         if (!"CV".equals(taskType)) {
             throw new IllegalArgumentException("图片文件夹上传仅支持 CV 数据集");
         }
@@ -299,7 +313,7 @@ public class DatasetUploadService {
 
         try {
             tempZip = Files.createTempFile("dataset-folder-", ".zip");
-            int imageCount = writeCvFolderZip(tempZip, files, paths);
+            int imageCount = writeCvFolderZip(tempZip, files, paths, annotationFormat);
             if (imageCount <= 0) {
                 throw new IllegalArgumentException("CV 图片文件夹必须包含图片文件");
             }
@@ -314,13 +328,15 @@ public class DatasetUploadService {
                                 .build()
                 );
             }
-            validateDatasetObjectFormat(taskType, fileName, destName);
+            validateDatasetObjectFormat(taskType, annotationFormat, fileName, destName);
 
             Instant now = Instant.now();
             DatasetAsset asset = new DatasetAsset();
             asset.setId(assetId);
             asset.setName(datasetName.trim());
             asset.setType(taskType);
+            asset.setCvTaskType(cvTaskType);
+            asset.setAnnotationFormat(annotationFormat);
             asset.setRemark(remark);
             asset.setOwnerUserId(ownerUserId);
             asset.setCreatedAt(now);
@@ -334,6 +350,8 @@ public class DatasetUploadService {
             versionEntity.setFileName(fileName);
             versionEntity.setStoragePath(destName);
             versionEntity.setSizeBytes(sizeBytes);
+            versionEntity.setCvTaskType(cvTaskType);
+            versionEntity.setAnnotationFormat(annotationFormat);
             versionEntity.setRemark(remark);
             versionEntity.setOwnerUserId(ownerUserId);
             versionEntity.setCreatedAt(now);
@@ -346,6 +364,8 @@ public class DatasetUploadService {
                     datasetName.trim(),
                     version,
                     taskType,
+                    cvTaskType,
+                    annotationFormat,
                     remark,
                     fileName,
                     destName,
@@ -380,6 +400,8 @@ public class DatasetUploadService {
         }
         requireText(req.getDatasetName(), "datasetName 不能为空");
         String taskType = TaskType.normalize(req.getType());
+        CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
+        CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
         validateDatasetFileName(taskType, req.getFileName());
     }
 
@@ -413,6 +435,8 @@ public class DatasetUploadService {
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setCvTaskType(session.getCvTaskType());
+        dto.setAnnotationFormat(session.getAnnotationFormat());
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
@@ -434,6 +458,8 @@ public class DatasetUploadService {
         data.put("name", session.getDatasetName());
         data.put("version", session.getVersion());
         data.put("type", session.getType());
+        data.put("cvTaskType", session.getCvTaskType());
+        data.put("annotationFormat", session.getAnnotationFormat());
         data.put("remark", session.getRemark());
         data.put("fileName", session.getFileName());
         data.put("storagePath", session.getStoragePath());
@@ -452,6 +478,8 @@ public class DatasetUploadService {
             String datasetName,
             String version,
             String type,
+            String cvTaskType,
+            String annotationFormat,
             String remark,
             String fileName,
             String storagePath,
@@ -466,6 +494,8 @@ public class DatasetUploadService {
         data.put("name", datasetName);
         data.put("version", version);
         data.put("type", type);
+        data.put("cvTaskType", cvTaskType);
+        data.put("annotationFormat", annotationFormat);
         data.put("remark", remark);
         data.put("fileName", fileName);
         data.put("storagePath", storagePath);
@@ -477,7 +507,12 @@ public class DatasetUploadService {
         return data;
     }
 
-    private int writeCvFolderZip(Path tempZip, List<MultipartFile> files, List<String> paths) throws Exception {
+    private int writeCvFolderZip(
+            Path tempZip,
+            List<MultipartFile> files,
+            List<String> paths,
+            String annotationFormat
+    ) throws Exception {
         int imageCount = 0;
         Set<String> entryNames = new LinkedHashSet<>();
         try (OutputStream os = Files.newOutputStream(tempZip);
@@ -488,8 +523,12 @@ public class DatasetUploadService {
                     throw new IllegalArgumentException("图片文件不能为空");
                 }
                 String entryName = sanitizeZipEntryPath(paths.get(i), file.getOriginalFilename());
-                if (!CV_IMAGE_EXTENSIONS.contains(extensionOf(entryName))) {
-                    throw new IllegalArgumentException("CV 图片文件夹中仅允许图片文件: " + entryName);
+                String ext = extensionOf(entryName);
+                if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)) {
+                    throw new IllegalArgumentException(
+                            "CV folder upload does not allow file for annotationFormat "
+                                    + annotationFormat + ": " + entryName
+                    );
                 }
                 if (!entryNames.add(entryName)) {
                     throw new IllegalArgumentException("图片文件夹中存在重复路径: " + entryName);
@@ -502,7 +541,9 @@ public class DatasetUploadService {
                     input.transferTo(zip);
                 }
                 zip.closeEntry();
-                imageCount += 1;
+                if (CV_IMAGE_EXTENSIONS.contains(ext)) {
+                    imageCount += 1;
+                }
             }
         }
         return imageCount;
@@ -575,11 +616,19 @@ public class DatasetUploadService {
     }
 
     private boolean sameUpload(DatasetUploadSession session, DatasetUploadInitRequest req, String taskType) {
+        String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
+        String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
         return session.getFileName().equals(req.getFileName().trim())
                 && session.getFileSize().equals(req.getFileSize())
                 && session.getDatasetName().equals(req.getDatasetName().trim())
                 && session.getVersion().equals(defaultVersion(req.getVersion()))
-                && session.getType().equals(taskType);
+                && session.getType().equals(taskType)
+                && equalsNullable(session.getCvTaskType(), cvTaskType)
+                && equalsNullable(session.getAnnotationFormat(), annotationFormat);
+    }
+
+    private boolean equalsNullable(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private String defaultVersion(String value) {
@@ -613,12 +662,19 @@ public class DatasetUploadService {
         }
     }
 
-    private void validateDatasetObjectFormat(String taskType, String fileName, String objectName) throws Exception {
+    private void validateDatasetObjectFormat(
+            String taskType,
+            String annotationFormat,
+            String fileName,
+            String objectName
+    ) throws Exception {
         String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
         if (!lower.endsWith(".zip")) {
             return;
         }
         boolean found = false;
+        boolean foundCvImage = false;
+        boolean foundCvAnnotation = false;
         int entries = 0;
         long totalUncompressedBytes = 0;
         try (InputStream is = minioClient.getObject(
@@ -638,6 +694,21 @@ public class DatasetUploadService {
                 if (!entry.isDirectory()) {
                     String ext = extensionOf(entryName);
                     if ("CV".equals(taskType)) {
+                        if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)) {
+                            throw new IllegalArgumentException(
+                                    "CV zip dataset does not allow file for annotationFormat "
+                                            + annotationFormat + ": " + entryName
+                            );
+                        }
+                        foundCvImage = foundCvImage || CV_IMAGE_EXTENSIONS.contains(ext);
+                        foundCvAnnotation = foundCvAnnotation
+                                || CvAnnotationFormat.isAnnotationFile(annotationFormat, ext);
+                        found = true;
+                        totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
+                        zip.closeEntry();
+                        continue;
+                    }
+                    if ("CV".equals(taskType)) {
                         if (!CV_IMAGE_EXTENSIONS.contains(ext)) {
                             throw new IllegalArgumentException("CV zip 数据集仅允许图片文件: " + entryName);
                         }
@@ -655,6 +726,16 @@ public class DatasetUploadService {
                     totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
                 }
                 zip.closeEntry();
+            }
+        }
+        if ("CV".equals(taskType)) {
+            if (!foundCvImage) {
+                throw new IllegalArgumentException("CV zip dataset must contain image files");
+            }
+            if (CvAnnotationFormat.requiresAnnotationFile(annotationFormat) && !foundCvAnnotation) {
+                throw new IllegalArgumentException(
+                        "CV zip dataset must contain annotation files for annotationFormat " + annotationFormat
+                );
             }
         }
         if (!found) {

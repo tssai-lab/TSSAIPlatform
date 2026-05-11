@@ -82,6 +82,12 @@ public class DatasetController {
         item.put("assetId", asset.getId());
         item.put("name", asset.getName());
         item.put("type", asset.getType());
+        item.put("cvTaskType", version != null && version.getCvTaskType() != null
+                ? version.getCvTaskType()
+                : asset.getCvTaskType());
+        item.put("annotationFormat", version != null && version.getAnnotationFormat() != null
+                ? version.getAnnotationFormat()
+                : asset.getAnnotationFormat());
         item.put("remark", asset.getRemark());
         item.put("ownerUserId", asset.getOwnerUserId());
         item.put("versionId", version != null ? version.getId() : null);

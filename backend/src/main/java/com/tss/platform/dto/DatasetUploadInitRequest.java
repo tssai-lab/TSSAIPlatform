@@ -10,5 +10,7 @@ public class DatasetUploadInitRequest {
     private String datasetName;
     private String version;
     private String type;
+    private String cvTaskType;
+    private String annotationFormat;
     private String remark;
 }

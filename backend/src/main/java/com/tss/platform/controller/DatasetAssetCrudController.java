@@ -4,6 +4,8 @@ import com.tss.platform.config.MinioConfig;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.model.CvAnnotationFormat;
+import com.tss.platform.model.CvTaskType;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
@@ -49,6 +51,8 @@ public class DatasetAssetCrudController {
     public ApiResponse<DatasetAsset> create(@RequestBody DatasetAsset body) {
         try {
             body.setType(TaskType.normalize(body.getType()));
+            body.setCvTaskType(CvTaskType.normalizeForTask(body.getType(), body.getCvTaskType()));
+            body.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(body.getType(), body.getAnnotationFormat()));
             if (body.getId() == null || body.getId().isBlank()) {
                 body.setId("dataset-asset-" + UUID.randomUUID().toString().replace("-", ""));
             }
@@ -93,6 +97,8 @@ public class DatasetAssetCrudController {
         e.setName(body.getName());
         try {
             e.setType(TaskType.normalize(body.getType()));
+            e.setCvTaskType(CvTaskType.normalizeForTask(e.getType(), body.getCvTaskType()));
+            e.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(e.getType(), body.getAnnotationFormat()));
         } catch (IllegalArgumentException ex) {
             return ApiResponse.fail(ex.getMessage());
         }

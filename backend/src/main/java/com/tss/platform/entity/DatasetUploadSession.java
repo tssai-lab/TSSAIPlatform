@@ -50,6 +50,12 @@ public class DatasetUploadSession {
     @Column(name = "task_type", nullable = false, length = 16)
     private String type;
 
+    @Column(name = "cv_task_type", length = 64)
+    private String cvTaskType;
+
+    @Column(name = "annotation_format", length = 64)
+    private String annotationFormat;
+
     @Column(name = "remark", length = 1024)
     private String remark;
 

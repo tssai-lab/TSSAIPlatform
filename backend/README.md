@@ -9,6 +9,30 @@ TSS AI Platform 后端服务，基于 **Java 17 + Spring Boot 3.5.14** 构建，
 
 > 当前代码结构中，模块一已经收敛到 `com.tss.platform.module1`。模块二仍保留在 `com.tss.platform.controller/service/repository/entity/dto/model` 等顶层包下，后续可以在功能稳定后再重构到 `module2` 包。
 
+模块二对前端、模块一、训练执行模块、推理模块的稳定接口边界见：
+
+```text
+doc/module2-external-contract.md
+```
+
+模块二详细测试方案见：
+
+```text
+doc/module2-test-plan.md
+```
+
+模块二测试执行细节手册见：
+
+```text
+doc/module2-test-execution-guide.md
+```
+
+模块二测试结果报告见：
+
+```text
+doc/module2-test-report.md
+```
+
 ## 技术栈
 
 | 类型 | 当前实现 |
@@ -400,8 +424,12 @@ users/{userId}/files/...
 数据集上传规则：
 
 - `CV` 支持 zip，压缩包内必须包含图片文件；也支持 `/api/dataset/upload/folder` 直接上传图片文件夹。
+- `CV` 额外支持 `cvTaskType` 和 `annotationFormat` 两个元数据字段，主任务类型仍保持 `type=CV`。
+- `cvTaskType` 支持 `IMAGE_CLASSIFICATION`、`OBJECT_DETECTION`、`SEMANTIC_SEGMENTATION`、`INSTANCE_SEGMENTATION`、`UNLABELED`、`OTHER`，也兼容中文值：`图像分类`、`目标检测`、`语义分割`、`实例分割`、`无标注`、`其他`。
+- `annotationFormat` 支持 `NONE`、`FOLDER_CLASSIFICATION`、`CSV`、`YOLO`、`COCO`、`VOC`、`MASK`、`LABELME`、`OTHER`，也兼容中文值：`无标注`、`文件夹分类`、`掩码`、`其他`。
 - CV 图片扩展名支持 `.jpg`、`.jpeg`、`.png`、`.bmp`、`.gif`、`.webp`、`.tif`、`.tiff`。
-- `NLP` 支持 `.txt`、`.json`、`.jsonl`，也支持包含这些文件的 zip。
+- CV 标注格式校验规则：`NONE/FOLDER_CLASSIFICATION/MASK` 只允许图片；`CSV` 允许图片和 `.csv`；`YOLO` 允许图片和 `.txt/.yaml/.yml`；`COCO/LABELME` 允许图片和 `.json`；`VOC` 允许图片和 `.xml`；`OTHER` 允许图片和 `.txt/.json/.xml/.csv/.yaml/.yml`。
+- `NLP` 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，也支持仅包含这些文件的 zip。
 
 ### 模块二：训练任务与实验版本
 

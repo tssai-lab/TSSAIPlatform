@@ -34,6 +34,12 @@ public class DatasetVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "cv_task_type", length = 64)
+    private String cvTaskType;
+
+    @Column(name = "annotation_format", length = 64)
+    private String annotationFormat;
+
     @Column(name = "remark", length = 1024)
     private String remark;
 

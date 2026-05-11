@@ -67,12 +67,16 @@ public class DatasetUploadController {
             @RequestParam String datasetName,
             @RequestParam(required = false) String version,
             @RequestParam String type,
+            @RequestParam(required = false) String cvTaskType,
+            @RequestParam(required = false) String annotationFormat,
             @RequestParam(required = false) String remark,
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("paths") List<String> paths
     ) {
         try {
-            return ApiResponse.ok(service.uploadCvFolder(datasetName, version, type, remark, files, paths));
+            return ApiResponse.ok(service.uploadCvFolder(
+                    datasetName, version, type, cvTaskType, annotationFormat, remark, files, paths
+            ));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
