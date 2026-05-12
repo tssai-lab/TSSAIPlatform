@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
@@ -21,7 +21,6 @@ import {
   SYSTEM_STATUS,
   SYSTEM_STATUS_OPTIONS,
 } from '@/constants/systemLabels';
-import { promoteUserToNormalAdmin } from '@/services/ant-design-pro/api';
 import {
   addUser,
   checkUsername,
@@ -275,23 +274,6 @@ const UserManagement: React.FC = () => {
     message.info('导出功能需对接后端接口');
   };
 
-  const handlePromoteToAdmin = async (record: UserItem) => {
-    try {
-      const res = await promoteUserToNormalAdmin({ userId: record.id });
-      if (res.code === 200) {
-        message.success(
-          (res as any).msg ??
-            (res as any).message ??
-            '已设为普通管理员',
-        );
-        actionRef.current?.reload();
-      }
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '操作失败');
-    }
-  };
-
   const roleOptions = canRoleFilterAndAssignAdmin
     ? SYSTEM_ROLE_OPTIONS_SUPER
     : SYSTEM_ROLE_OPTIONS_NORMAL_ADMIN;
@@ -398,23 +380,6 @@ const UserManagement: React.FC = () => {
       hideInSearch: true,
       render: (_, record) => (
         <Space>
-          {isSuperAdmin && record.role === SYSTEM_ROLES.USER && (
-            <Popconfirm
-              title={`将「${record.username}」设为普通管理员？`}
-              description="该用户将获得与普通管理员相同的管理权限（仍低于超级管理员）。"
-              okText="确定"
-              cancelText="取消"
-              onConfirm={() => handlePromoteToAdmin(record)}
-            >
-              <Button
-                type="link"
-                size="small"
-                icon={<UserSwitchOutlined />}
-              >
-                设为管理员
-              </Button>
-            </Popconfirm>
-          )}
           <Button
             type="link"
             size="small"

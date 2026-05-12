@@ -3,7 +3,7 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useEffect, useRef, useState } from 'react';
-import { forgotPassword } from '@/services/ant-design-pro/api';
+import { resetPassword } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
 
@@ -139,31 +139,25 @@ const ResetPassword: React.FC = () => {
   const handleResetPassword = async (values: any) => {
     try {
       const phone = values.phone || phoneFromUrl;
-      const response = await forgotPassword({
-        mobile: phone,
-        smsCode: values.captcha,
+      const response = await resetPassword({
+        phone: phone,
+        captcha: values.captcha,
         newPassword: values.newPassword,
+        confirmPassword: values.confirmPassword,
       });
 
       if (response.code === 200) {
-        messageApi.success(
-          (response as any).msg ??
-            (response as any).message ??
-            '密码重置成功！',
-        );
+        messageApi.success('密码重置成功！');
+        // 跳转到登录页
         setTimeout(() => {
           history.push('/user/login');
         }, 1000);
       } else {
-        const errText =
-          (response as any).msg ??
-          (response as any).message ??
-          '密码重置失败，请重试！';
         setResetPasswordState({
           status: 'error',
-          message: errText,
+          message: response.msg || '密码重置失败，请重试！',
         });
-        messageApi.error(errText);
+        messageApi.error(response.msg || '密码重置失败，请重试！');
       }
     } catch (error: any) {
       console.error('重置密码失败:', error);
@@ -248,7 +242,7 @@ const ResetPassword: React.FC = () => {
               name="captcha"
               rules={[
                 { required: true, message: '请输入验证码！' },
-                { pattern: /^\d{6}$/, message: '验证码为6位数字' },
+                { len: 4, message: '验证码为4位数字' },
               ]}
             >
               <Input
@@ -278,15 +272,12 @@ const ResetPassword: React.FC = () => {
               name="newPassword"
               rules={[
                 { required: true, message: '请输入新密码！' },
-                {
-                  pattern: /^\w{6,16}$/,
-                  message: '密码须为 6-16 位字母、数字或下划线',
-                },
+                { min: 6, message: '密码长度至少6位' },
               ]}
             >
               <Input.Password
                 prefix={<LockOutlined />}
-                placeholder="6-16 位字母、数字或下划线"
+                placeholder="请输入新密码（至少6位）"
               />
             </Form.Item>
 

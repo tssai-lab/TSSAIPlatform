@@ -3,7 +3,7 @@ import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import { SettingDrawer } from '@ant-design/pro-components';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history, Link } from '@umijs/max';
-import { App, notification } from 'antd';
+import { message, notification } from 'antd';
 import React from 'react';
 import { AvatarDropdown, AvatarName, Question } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
@@ -14,20 +14,17 @@ import '@ant-design/v5-patch-for-react-19';
 const isDev = process.env.NODE_ENV === 'development';
 const loginPath = '/user/login';
 
-/** 后端 role_id → access.ts 使用的角色码 */
-function roleIdToAccessRole(
-  roleId?: number,
-): API.UserRole | undefined {
-  if (roleId === 1) return 'super_admin';
-  if (roleId === 2) return 'normal_admin';
-  if (roleId === 3) return 'user';
-  return undefined;
+/** 开发环境：根据 localStorage.mock_role 返回模拟用户，用于验证不同角色权限；userid 用于「我的操作记录」按用户名过滤 */
+function getMockCurrentUserByRole(role: string): API.CurrentUser {
+  const roleMap: Record<string, { name: string; userid: string }> = {
+    super_admin: { name: 'admin（超管）', userid: 'admin' },
+    normal_admin: { name: 'manager1（普管）', userid: 'manager1' },
+    user: { name: 'test01（普通用户）', userid: 'test01' },
+  };
+
+  const o = roleMap[role] || roleMap.super_admin;
+  return { name: o.name, userid: o.userid, role: role as API.UserRole };
 }
-
-// 创建全局message实例引用
-let messageInstance: any;
-
-
 
 /**
  * @see https://umijs.org/docs/api/runtime-config#getinitialstate
@@ -43,15 +40,28 @@ export async function getInitialState(): Promise<{
       const msg = await queryCurrentUser({
         skipErrorHandler: true,
       });
-      const user = (msg as any)?.data;
-      if (!user) return undefined;
-      return {
-        ...user,
-        // 后端返回 username，这里兼容 ProLayout 默认使用的 name 字段
-        name: user.name ?? user.username,
-        role: roleIdToAccessRole(user.roleId),
-      };
+      const user = msg.data;
+      // 开发环境：若本地设置了 mock_role，则覆盖角色以模拟不同权限
+      if (isDev && typeof window !== 'undefined') {
+        const mockRole = window.localStorage.getItem(
+          'mock_role',
+        ) as API.UserRole | null;
+        if (
+          mockRole &&
+          (mockRole === 'super_admin' ||
+            mockRole === 'normal_admin' ||
+            mockRole === 'user')
+        ) {
+          return { ...user, role: mockRole } as API.CurrentUser;
+        }
+        if (user && !user.role) {
+          return { ...user, role: 'super_admin' } as API.CurrentUser;
+        }
+      }
+      return user;
     } catch (_error) {
+      console.log(222);
+      history.push(loginPath);
       return undefined;
     }
   };
@@ -66,7 +76,25 @@ export async function getInitialState(): Promise<{
       '/user/reset-password',
     ].includes(location.pathname)
   ) {
-    const currentUser = await fetchUserInfo();
+    console.log('1111');
+    let currentUser = await fetchUserInfo();
+    console.log('currentUser:', currentUser);
+    // 开发环境：无登录接口时使用 mock 角色，便于切换角色验证权限
+    if (isDev && typeof window !== 'undefined' && !currentUser) {
+      const mockRole = window.localStorage.getItem(
+        'mock_role',
+      ) as API.UserRole | null;
+      if (
+        mockRole &&
+        (mockRole === 'super_admin' ||
+          mockRole === 'normal_admin' ||
+          mockRole === 'user')
+      ) {
+        currentUser = getMockCurrentUserByRole(mockRole);
+      } else {
+        currentUser = getMockCurrentUserByRole('super_admin');
+      }
+    }
     return {
       fetchUserInfo,
       currentUser,
@@ -76,7 +104,7 @@ export async function getInitialState(): Promise<{
 
   return {
     fetchUserInfo,
-    currentUser: undefined,
+    currentUser: isDev ? getMockCurrentUserByRole('super_admin') : undefined,
     settings: defaultSettings as Partial<LayoutSettings>,
   };
 }
@@ -86,10 +114,6 @@ export const layout: RunTimeLayoutConfig = ({
   initialState,
   setInitialState,
 }) => {
-  // 初始化message实例
-  if (!messageInstance) {
-    messageInstance = App.useApp().message;
-  }
   return {
     // 顶部导航栏右侧的菜单
     actionsRender: () => [<Question key="doc" />],
@@ -110,17 +134,10 @@ export const layout: RunTimeLayoutConfig = ({
     // },
 
     onPageChange: () => {
-      const { pathname } = history.location;
-      const noLoginPaths = new Set([
-        loginPath,
-        '/user/register',
-        '/user/forgot-password',
-        '/user/reset-password',
-      ]);
-      if (noLoginPaths.has(pathname)) return;
-      if (!initialState?.currentUser) {
-        history.push(loginPath);
-      }
+      // 开发阶段已使用 Mock 用户，不再强制跳转登录
+      // if (!initialState?.currentUser && location.pathname !== loginPath) {
+      //   history.push(loginPath);
+      // }
     },
     // 配置布局装饰背景图
     bgLayoutImgList: [
@@ -214,9 +231,9 @@ export const request: RequestConfig = {
 
       if (error.name === 'AxiosError') {
         if (error.code === 'ECONNABORTED') {
-          messageInstance?.error('请求超时，请稍后重试');
+          message.error('请求超时，请稍后重试');
         } else {
-          messageInstance?.error(`网络错误：${error.message || '无法连接服务器'}`);
+          message.error(`网络错误：${error.message || '无法连接服务器'}`);
         }
       } else if (error.name === 'BizError') {
         const { code } = error.info ?? {};
@@ -226,10 +243,10 @@ export const request: RequestConfig = {
             history.push(loginPath);
             break;
           case 403:
-            messageInstance?.warning('暂无操作权限，请联系管理员');
+            message.warning('暂无操作权限，请联系管理员');
             break;
           default:
-            messageInstance?.error(error.message || '业务处理失败');
+            message.error(error.message || '业务处理失败');
         }
       }
     },
