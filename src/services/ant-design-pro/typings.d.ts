@@ -9,6 +9,11 @@ declare namespace API {
 
   type CurrentUser = {
     name?: string;
+    username?: string;
+    id?: number | string;
+    mobile?: string;
+    roleId?: number;
+    status?: boolean;
     avatar?: string;
     userid?: string;
     signature?: string;
@@ -30,6 +35,17 @@ declare namespace API {
   };
 
   type LoginResult = {
+    code?: number;
+    msg?: string;
+    data?: {
+      token?: string;
+      accessToken?: string;
+      userId?: number | string;
+      username?: string;
+      mobile?: string;
+      roleId?: number;
+      status?: boolean;
+    };
     status?: string;
     type?: string;
     currentAuthority?: string;
@@ -43,6 +59,9 @@ declare namespace API {
   type LoginParams = {
     username?: string;
     password?: string;
+    mobile?: string;
+    smsCode?: string;
+    captcha?: string;
     autoLogin?: boolean;
     type?: string;
   };
@@ -56,8 +75,11 @@ declare namespace API {
     success?: boolean;
   };
 
+  /** POST /api/user/forget/password — 与 ForgetPasswordDTO 一致 */
   type ForgotPasswordParams = {
-    phone?: string;
+    mobile?: string;
+    smsCode?: string;
+    newPassword?: string;
   };
 
   type ForgotPasswordResult = {
@@ -85,8 +107,9 @@ declare namespace API {
   type RegisterParams = {
     username?: string;
     password?: string;
-    phone?: string;
-    captcha?: string;
+    confirmPassword?: string;
+    mobile?: string;
+    smsCode?: string;
   };
 
   type RegisterResult = {
@@ -95,7 +118,7 @@ declare namespace API {
     data?: {
       userId?: string;
       username?: string;
-      phone?: string;
+      mobile?: string;
     };
   };
 }

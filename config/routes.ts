@@ -11,10 +11,9 @@
  * @doc https://umijs.org/docs/guides/routes
  */
 export default [
-  // 根路径优先重定向到首页（开发阶段已 Mock 登录，无需跳转登录页）
   {
     path: '/',
-    redirect: '/dashboard',
+    redirect: '/user/login',
   },
   {
     path: '/user',

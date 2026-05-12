@@ -2,27 +2,27 @@
 /* eslint-disable */
 import { request } from '@umijs/max';
 
-/** 获取当前的用户 GET /api/currentUser */
+/** 获取当前的用户 GET /api/user/current-user */
 export async function currentUser(options?: { [key: string]: any }) {
   return request<{
     data: API.CurrentUser;
-  }>('/currentUser', {
+  }>('/user/current-user', {
     method: 'GET',
     ...(options || {}),
   });
 }
 
-/** 退出登录接口 POST /api/login/outLogin */
+/** 退出登录接口 POST /api/user/logout */
 export async function outLogin(options?: { [key: string]: any }) {
-  return request<Record<string, any>>('/login/outLogin', {
+  return request<Record<string, any>>('/user/logout', {
     method: 'POST',
     ...(options || {}),
   });
 }
 
-/** 登录接口 POST /api/login/account */
+/** 登录接口 POST /api/user/login */
 export async function login(body: API.LoginParams, options?: { [key: string]: any }) {
-  return request<API.LoginResult>('/login/account', {
+  return request<API.LoginResult>('/user/login', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -32,12 +32,12 @@ export async function login(body: API.LoginParams, options?: { [key: string]: an
   });
 }
 
-/** 忘记密码接口 POST /api/user/forgotPassword */
+/** 忘记密码接口 POST /api/user/forget/password */
 export async function forgotPassword(
   body: API.ForgotPasswordParams,
   options?: { [key: string]: any },
 ) {
-  return request<API.ForgotPasswordResult>('/api/user/forgotPassword', {
+  return request<API.ForgotPasswordResult>('/user/forget/password', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -47,12 +47,12 @@ export async function forgotPassword(
   });
 }
 
-/** 重置密码接口 POST /api/user/resetPassword */
+/** 重置密码接口 POST /api/user/reset-password */
 export async function resetPassword(
   body: API.ResetPasswordParams,
   options?: { [key: string]: any },
 ) {
-  return request<API.ResetPasswordResult>('/api/user/resetPassword', {
+  return request<API.ResetPasswordResult>('/user/reset-password', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -62,12 +62,12 @@ export async function resetPassword(
   });
 }
 
-/** 注册接口 POST /api/user/register */
+/** 注册接口 POST /api/user/register/username */
 export async function register(
   body: API.RegisterParams,
   options?: { [key: string]: any },
 ) {
-  return request<API.RegisterResult>('/api/user/register', {
+  return request<API.RegisterResult>('/user/register/username', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -75,5 +75,38 @@ export async function register(
     data: body,
     ...(options || {}),
   });
+}
+
+/** 手机号注册接口 POST /api/user/register/mobile */
+export async function registerByMobile(
+  body: API.RegisterParams,
+  options?: { [key: string]: any },
+) {
+  return request<API.RegisterResult>('/user/register/mobile', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 超级管理员：将普通用户设为普通管理员 POST /api/user/promote-to-admin */
+export async function promoteUserToNormalAdmin(
+  body: { userId: number },
+  options?: { [key: string]: any },
+) {
+  return request<{ code?: number; message?: string; msg?: string }>(
+    '/user/promote-to-admin',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      data: body,
+      ...(options || {}),
+    },
+  );
 }
 

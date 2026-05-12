@@ -3,6 +3,7 @@
  * 封装用户管理相关接口，供 Page 层调用
  */
 import { request } from '@umijs/max';
+import { SYSTEM_STATUS, SYSTEM_ROLES } from '@/constants/systemLabels';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
 
 /** 当前登录用户角色（用于后端按权限返回数据范围） */
@@ -69,13 +70,103 @@ export interface CommonResponse<T = any> {
   data?: T;
 }
 
-/** 查询用户列表 POST /api/system/user/list */
+function pickRoleLabel(roleId: unknown): string {
+  const n = Number(roleId);
+  if (n === 1) return SYSTEM_ROLES.SUPER_ADMIN;
+  if (n === 2) return SYSTEM_ROLES.NORMAL_ADMIN;
+  if (n === 3) return SYSTEM_ROLES.USER;
+  return SYSTEM_ROLES.USER;
+}
+
+/** 查询用户列表 GET /api/user/list（后端），前端分页与筛选在本地完成 */
 export async function fetchUserList(params: UserListParams) {
-  return request<UserListResponse>(SYSTEM_API_CONFIG.ENDPOINTS.USER_LIST, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    data: params,
+  const res = await request<{
+    code?: number;
+    message?: string;
+    data?: Record<string, unknown>[];
+  }>('/user/list', {
+    method: 'GET',
   });
+
+  if (res.code !== 200 || !Array.isArray(res.data)) {
+    return {
+      code: res.code ?? 500,
+      message: (res as any).message ?? '查询失败',
+      data: { list: [], total: 0 },
+    };
+  }
+
+  let rows: UserItem[] = res.data.map((row) => {
+    const id = Number(row.id);
+    const username = String(row.username ?? '');
+    const phone = String(row.mobile ?? row.phone ?? '');
+    const roleId = row.role_id ?? row.roleId;
+    const role = pickRoleLabel(roleId);
+    const sb = row.status;
+    const status =
+      sb === true ||
+      sb === 'true' ||
+      sb === 't' ||
+      sb === 1 ||
+      sb === '1'
+        ? SYSTEM_STATUS.ENABLED
+        : SYSTEM_STATUS.DISABLED;
+    const createdRaw = row.created_at ?? row.createdAt;
+    let createTime = '';
+    if (createdRaw != null) {
+      const s = String(createdRaw);
+      createTime = s.length >= 10 ? s.slice(0, 10) : s;
+    }
+    return {
+      id,
+      username,
+      phone,
+      department: '默认部门',
+      role,
+      status,
+      createTime,
+    };
+  });
+
+  if (params.currentUserRole === 'normal_admin') {
+    rows = rows.filter((r) => r.role === SYSTEM_ROLES.USER);
+  }
+
+  const {
+    username,
+    phone,
+    role,
+    status,
+    createTime,
+    pageNum = 1,
+    pageSize = 10,
+  } = params;
+
+  if (username) {
+    rows = rows.filter((r) => r.username.includes(String(username)));
+  }
+  if (phone) {
+    rows = rows.filter((r) => r.phone.includes(String(phone)));
+  }
+  if (role) {
+    rows = rows.filter((r) => r.role === role);
+  }
+  if (status) {
+    rows = rows.filter((r) => r.status === status);
+  }
+  if (createTime) {
+    rows = rows.filter((r) => r.createTime === createTime);
+  }
+
+  const total = rows.length;
+  const start = (pageNum - 1) * pageSize;
+  const list = rows.slice(start, start + pageSize);
+
+  return {
+    code: 200,
+    message: 'ok',
+    data: { list, total },
+  };
 }
 
 /** 新增用户 POST /api/system/user/add */
