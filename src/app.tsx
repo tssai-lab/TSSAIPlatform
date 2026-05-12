@@ -249,12 +249,14 @@ export const request: RequestConfig = {
   responseInterceptors: [
     (response) => {
       // 插件只有 data.success === false 时才调用 errorThrower，后端用 code 表示错误，这里把 code !== 200 转成 success: false
+      // response是响应体，response.data是后端返回的code message data这样的数据结构
       const data = response?.data as
         | { code?: number; success?: boolean }
         | undefined;
       if (data && typeof data.code !== 'undefined' && data.code !== 200) {
         data.success = false;
       }
+      // 返回响应体
       return response;
     },
   ],

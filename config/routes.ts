@@ -90,31 +90,31 @@ export default [
       },
     ],
   },
-  // 训练调度
-  {
-    path: '/task',
-    name: '训练调度',
-    icon: 'thunderbolt',
-    routes: [
-      {
-        path: '/task/list',
-        name: '任务列表',
-        component: './task/list',
-      },
-      {
-        path: '/task/create',
-        name: '发起训练',
-        component: './task/create',
-        hideInMenu: true,
-      },
-      {
-        path: '/task/detail/:id',
-        name: '训练结果',
-        component: './task/detail/[id]',
-        hideInMenu: true,
-      },
-    ],
-  },
+  // // 训练调度
+  // {
+  //   path: '/task',
+  //   name: '训练调度',
+  //   icon: 'thunderbolt',
+  //   routes: [
+  //     {
+  //       path: '/task/list',
+  //       name: '任务列表',
+  //       component: './task/list',
+  //     },
+  //     {
+  //       path: '/task/create',
+  //       name: '发起训练',
+  //       component: './task/create',
+  //       hideInMenu: true,
+  //     },
+  //     {
+  //       path: '/task/detail/:id',
+  //       name: '训练结果',
+  //       component: './task/detail/[id]',
+  //       hideInMenu: true,
+  //     },
+  //   ],
+  // },
   // 系统管理（超管见全部，普管仅见用户管理+日志管理）
   {
     path: '/system',
@@ -134,53 +134,46 @@ export default [
         component: './system/admin',
         access: 'canAccessSystemAdmin',
       },
-      {
-        path: '/system/log',
-        name: '日志管理',
-        component: './system/log',
-        access: 'canAccessSystemLog',
-      },
-      {
-        path: '/system/config',
-        name: '系统配置',
-        component: './system/config',
-        access: 'canAccessSystemConfig',
-      },
-      {
-        path: '/system/api-doc',
-        name: 'API文档',
-        component: './system/api-doc',
-        access: 'canAccessSystemUser',
-      },
+      // {
+      //   path: '/system/log',
+      //   name: '日志管理',
+      //   component: './system/log',
+      //   access: 'canAccessSystemLog',
+      // },
+      // {
+      //   path: '/system/config',
+      //   name: '系统配置',
+      //   component: './system/config',
+      //   access: 'canAccessSystemConfig',
+      // },
+      // {
+      //   path: '/system/api-doc',
+      //   name: 'API文档',
+      //   component: './system/api-doc',
+      //   access: 'canAccessSystemUser',
+      // },
     ],
   },
-  // 个人中心（所有登录用户可见）
-  {
-    path: '/account',
-    name: '个人中心',
-    icon: 'user',
-    access: 'canViewMyOperationLogs',
-    routes: [
-      {
-        path: '/account/my-logs',
-        name: '我的操作记录',
-        component: './account/my-logs',
-      },
-    ],
-  },
+  // // 个人中心（所有登录用户可见）
+  // {
+  //   path: '/account',
+  //   name: '个人中心',
+  //   icon: 'user',
+  //   access: 'canViewMyOperationLogs',
+  //   routes: [
+  //     {
+  //       path: '/account/my-logs',
+  //       name: '我的操作记录',
+  //       component: './account/my-logs',
+  //     },
+  //   ],
+  // },
   // 首页
   {
     path: '/dashboard',
     name: '首页',
     icon: 'home',
     component: './dashboard',
-  },
-  {
-    path: '/403',
-    name: '无权限',
-    layout: false,
-    component: './403',
-    hideInMenu: true,
   },
   {
     path: '*',
