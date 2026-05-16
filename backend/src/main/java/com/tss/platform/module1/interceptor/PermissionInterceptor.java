@@ -92,7 +92,11 @@ public class PermissionInterceptor implements HandlerInterceptor {
     }
 
     private boolean isAdminOnlyPath(String requestUri) {
-        if (!requestUri.startsWith("/api/user")) {
+        if (!requestUri.startsWith("/api/user") && 
+            !requestUri.startsWith("/api/log") && 
+            !requestUri.startsWith("/api/role") &&
+            !requestUri.startsWith("/api/system/user") &&
+            !requestUri.startsWith("/api/system/log")) {
             return false;
         }
         if (isPublicPath(requestUri)) {
