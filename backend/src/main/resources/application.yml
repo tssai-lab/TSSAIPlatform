@@ -6,10 +6,10 @@ server:
 
 # MinIO（与 Docker 容器 minio-tss 一致，数据持久化到仓库根目录 tss_minio_data）
 minio:
-  endpoint: http://127.0.0.1:9010
-  access-key: admin
-  secret-key: password123
-  bucket: models
+  endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9010}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: ${MINIO_BUCKET:models}
 
 spring:
   application:
@@ -30,12 +30,17 @@ spring:
       max-request-size: 64MB
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/tss}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:

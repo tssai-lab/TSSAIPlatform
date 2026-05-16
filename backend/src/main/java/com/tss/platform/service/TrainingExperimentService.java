@@ -7,6 +7,7 @@ import com.tss.platform.dto.CreateExperimentVersionRequest;
 import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
 import com.tss.platform.dto.UpdateHyperParamsRequest;
+import com.tss.platform.dto.UpdateTrainingResultRequest;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ModelAsset;
@@ -25,7 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -33,6 +36,14 @@ import java.util.stream.Collectors;
 public class TrainingExperimentService {
 
     private static final String STATUS_PENDING = "pending";
+    private static final Set<String> ALLOWED_STATUSES = Set.of(
+            "pending",
+            "queued",
+            "running",
+            "success",
+            "failed",
+            "stopped"
+    );
 
     private final TrainingExperimentVersionRepository repo;
     private final ModelVersionRepository modelVersionRepo;
@@ -83,6 +94,7 @@ public class TrainingExperimentService {
         version.setDatasetVersionId(req.getDatasetVersionId().trim());
         version.setHyperParamsJson(toJson(initialParams));
         version.setStatus(STATUS_PENDING);
+        version.setProgress(progressOf(STATUS_PENDING));
         version.setRemark(req.getRemark());
         version.setOwnerUserId(authContext.currentUserId());
         Instant now = Instant.now();
@@ -109,6 +121,7 @@ public class TrainingExperimentService {
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
         version.setStatus(STATUS_PENDING);
+        version.setProgress(progressOf(STATUS_PENDING));
         version.setRemark(req.getRemark() != null ? req.getRemark() : latest.getRemark());
         version.setOwnerUserId(latest.getOwnerUserId());
         Instant now = Instant.now();
@@ -197,8 +210,36 @@ public class TrainingExperimentService {
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
-        version.setStatus(status);
+        String normalizedStatus = normalizeStatus(status);
+        version.setStatus(normalizedStatus);
+        version.setProgress(progressOf(normalizedStatus));
         version.setUpdatedAt(Instant.now());
+        return toDto(repo.save(version));
+    }
+
+    @Transactional
+    public TrainingExperimentVersionDto updateResult(
+            String experimentId,
+            Integer versionNo,
+            UpdateTrainingResultRequest req
+    ) {
+        TrainingExperimentVersion version = repo.findByExperimentIdAndVersionNo(experimentId, versionNo)
+                .orElseThrow(() -> new IllegalArgumentException("指定实验版本不存在"));
+        requireExperimentAccess(version);
+        applyResult(version, req);
+        return toDto(repo.save(version));
+    }
+
+    @Transactional
+    public TrainingExperimentVersionDto updateResultByIdOrExperimentId(
+            String idOrExperimentId,
+            UpdateTrainingResultRequest req
+    ) {
+        TrainingExperimentVersion version = repo.findById(idOrExperimentId)
+                .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
+                        .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
+        requireExperimentAccess(version);
+        applyResult(version, req);
         return toDto(repo.save(version));
     }
 
@@ -229,7 +270,13 @@ public class TrainingExperimentService {
         dto.setDatasetVersionId(version.getDatasetVersionId());
         dto.setHyperParams(fromJson(version.getHyperParamsJson()));
         dto.setStatus(version.getStatus());
-        dto.setProgress(progressOf(version.getStatus()));
+        dto.setProgress(version.getProgress() != null ? version.getProgress() : progressOf(version.getStatus()));
+        dto.setMetrics(fromJson(version.getMetricsJson()));
+        dto.setLogPath(version.getLogPath());
+        dto.setOutputPath(version.getOutputPath());
+        dto.setErrorMessage(version.getErrorMessage());
+        dto.setStartedAt(version.getStartedAt());
+        dto.setFinishedAt(version.getFinishedAt());
         dto.setRemark(version.getRemark());
         dto.setOwnerUserId(version.getOwnerUserId());
         dto.setCreatedAt(version.getCreatedAt());
@@ -271,6 +318,72 @@ public class TrainingExperimentService {
             fallback.put("raw", json);
             return fallback;
         }
+    }
+
+    private void applyResult(TrainingExperimentVersion version, UpdateTrainingResultRequest req) {
+        if (req == null) {
+            throw new IllegalArgumentException("request body cannot be empty");
+        }
+        String nextStatus = req.getStatus() == null || req.getStatus().isBlank()
+                ? version.getStatus()
+                : normalizeStatus(req.getStatus());
+        if (nextStatus != null) {
+            version.setStatus(nextStatus);
+        }
+        if (req.getProgress() != null) {
+            version.setProgress(validateProgress(req.getProgress()));
+        } else if (req.getStatus() != null && !req.getStatus().isBlank()) {
+            version.setProgress(progressOf(nextStatus));
+        }
+        if (req.getMetrics() != null) {
+            version.setMetricsJson(toResultJson(req.getMetrics(), "metrics must be valid JSON"));
+        }
+        if (req.getLogPath() != null) {
+            version.setLogPath(blankToNull(req.getLogPath()));
+        }
+        if (req.getOutputPath() != null) {
+            version.setOutputPath(blankToNull(req.getOutputPath()));
+        }
+        if (req.getErrorMessage() != null) {
+            version.setErrorMessage(blankToNull(req.getErrorMessage()));
+        }
+        if (req.getStartedAt() != null) {
+            version.setStartedAt(req.getStartedAt());
+        }
+        if (req.getFinishedAt() != null) {
+            version.setFinishedAt(req.getFinishedAt());
+        }
+        if (req.getRemark() != null) {
+            version.setRemark(req.getRemark());
+        }
+        version.setUpdatedAt(Instant.now());
+    }
+
+    private String toResultJson(Object value, String errorMessage) {
+        try {
+            JsonNode node = toJsonNode(value);
+            return objectMapper.writeValueAsString(node);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(errorMessage);
+        }
+    }
+
+    private String normalizeStatus(String status) {
+        if (status == null || status.isBlank()) {
+            throw new IllegalArgumentException("status cannot be empty");
+        }
+        String normalized = status.trim().toLowerCase(Locale.ROOT);
+        if (!ALLOWED_STATUSES.contains(normalized)) {
+            throw new IllegalArgumentException("status only supports pending, queued, running, success, failed, stopped");
+        }
+        return normalized;
+    }
+
+    private Integer validateProgress(Integer progress) {
+        if (progress < 0 || progress > 100) {
+            throw new IllegalArgumentException("progress must be between 0 and 100");
+        }
+        return progress;
     }
 
     private Integer progressOf(String status) {
@@ -326,9 +439,9 @@ public class TrainingExperimentService {
     }
 
     private String resolveModelTaskType(String modelVersionId) {
-        ModelVersion version = modelVersionRepo.findById(modelVersionId)
+        ModelVersion version = modelVersionRepo.findByIdAndDeletedFalse(modelVersionId)
                 .orElseThrow(() -> new IllegalArgumentException("模型版本不存在: " + modelVersionId));
-        ModelAsset asset = modelAssetRepo.findById(version.getAssetId())
+        ModelAsset asset = modelAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
@@ -336,9 +449,9 @@ public class TrainingExperimentService {
     }
 
     private String resolveDatasetTaskType(String datasetVersionId) {
-        DatasetVersion version = datasetVersionRepo.findById(datasetVersionId)
+        DatasetVersion version = datasetVersionRepo.findByIdAndDeletedFalse(datasetVersionId)
                 .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在: " + datasetVersionId));
-        DatasetAsset asset = datasetAssetRepo.findById(version.getAssetId())
+        DatasetAsset asset = datasetAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("数据集资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "dataset version not found or no permission");

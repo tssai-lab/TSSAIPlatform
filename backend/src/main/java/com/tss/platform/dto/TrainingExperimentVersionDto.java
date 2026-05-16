@@ -17,6 +17,12 @@ public class TrainingExperimentVersionDto {
     private JsonNode hyperParams;
     private String status;
     private Integer progress;
+    private JsonNode metrics;
+    private String logPath;
+    private String outputPath;
+    private String errorMessage;
+    private Instant startedAt;
+    private Instant finishedAt;
     private String remark;
     private Integer ownerUserId;
     private Instant createdAt;

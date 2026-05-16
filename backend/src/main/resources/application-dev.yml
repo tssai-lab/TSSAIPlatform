@@ -4,3 +4,7 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+
+minio:
+  access-key: ${MINIO_ACCESS_KEY:admin}
+  secret-key: ${MINIO_SECRET_KEY:password123}

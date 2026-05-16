@@ -21,12 +21,13 @@ import io.minio.ComposeSource;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedInputStream;
@@ -53,6 +54,7 @@ public class DatasetUploadService {
 
     private static final int CHUNK_SIZE = 5 * 1024 * 1024;
     private static final String STATUS_UPLOADING = "UPLOADING";
+    private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
@@ -70,6 +72,7 @@ public class DatasetUploadService {
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
     private final AuthContext authContext;
+    private final MinioDeleteTaskService minioDeleteTaskService;
 
     public DatasetUploadService(
             MinioClient minioClient,
@@ -78,7 +81,8 @@ public class DatasetUploadService {
             DatasetUploadChunkRepository chunkRepo,
             DatasetAssetRepository assetRepo,
             DatasetVersionRepository versionRepo,
-            AuthContext authContext
+            AuthContext authContext,
+            MinioDeleteTaskService minioDeleteTaskService
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -87,6 +91,7 @@ public class DatasetUploadService {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
         this.authContext = authContext;
+        this.minioDeleteTaskService = minioDeleteTaskService;
     }
 
     @Transactional
@@ -194,7 +199,7 @@ public class DatasetUploadService {
         if (req == null || req.getUploadId() == null || req.getUploadId().isBlank()) {
             throw new IllegalArgumentException("uploadId 不能为空");
         }
-        DatasetUploadSession session = getSession(req.getUploadId());
+        DatasetUploadSession session = claimCompleting(req.getUploadId());
         if (STATUS_COMPLETED.equals(session.getStatus())) {
             return completedPayload(session);
         }
@@ -230,50 +235,49 @@ public class DatasetUploadService {
             );
             validateDatasetObjectFormat(session.getType(), session.getAnnotationFormat(), session.getFileName(), destName);
         } catch (Exception e) {
-            try {
-                minioClient.removeObject(
-                        RemoveObjectArgs.builder().bucket(bucket).object(destName).build()
-                );
-            } catch (Exception ignored) {
-                // 合并后格式校验失败时尽力清理临时最终对象。
-            }
+            removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
         }
 
-        Instant now = Instant.now();
-        DatasetAsset asset = new DatasetAsset();
-        asset.setId(assetId);
-        asset.setName(session.getDatasetName());
-        asset.setType(session.getType());
-        asset.setCvTaskType(session.getCvTaskType());
-        asset.setAnnotationFormat(session.getAnnotationFormat());
-        asset.setRemark(session.getRemark());
-        asset.setOwnerUserId(session.getOwnerUserId());
-        asset.setCreatedAt(now);
-        asset.setUpdatedAt(now);
-        assetRepo.save(asset);
+        try {
+            Instant now = Instant.now();
+            DatasetAsset asset = new DatasetAsset();
+            asset.setId(assetId);
+            asset.setName(session.getDatasetName());
+            asset.setType(session.getType());
+            asset.setCvTaskType(session.getCvTaskType());
+            asset.setAnnotationFormat(session.getAnnotationFormat());
+            asset.setRemark(session.getRemark());
+            asset.setOwnerUserId(session.getOwnerUserId());
+            asset.setCreatedAt(now);
+            asset.setUpdatedAt(now);
+            assetRepo.saveAndFlush(asset);
 
-        DatasetVersion version = new DatasetVersion();
-        version.setId(versionId);
-        version.setAssetId(assetId);
-        version.setVersion(session.getVersion());
-        version.setFileName(session.getFileName());
-        version.setStoragePath(destName);
-        version.setSizeBytes(session.getFileSize());
-        version.setCvTaskType(session.getCvTaskType());
-        version.setAnnotationFormat(session.getAnnotationFormat());
-        version.setRemark(session.getRemark());
-        version.setOwnerUserId(session.getOwnerUserId());
-        version.setCreatedAt(now);
-        versionRepo.save(version);
+            DatasetVersion version = new DatasetVersion();
+            version.setId(versionId);
+            version.setAssetId(assetId);
+            version.setVersion(session.getVersion());
+            version.setFileName(session.getFileName());
+            version.setStoragePath(destName);
+            version.setSizeBytes(session.getFileSize());
+            version.setCvTaskType(session.getCvTaskType());
+            version.setAnnotationFormat(session.getAnnotationFormat());
+            version.setRemark(session.getRemark());
+            version.setOwnerUserId(session.getOwnerUserId());
+            version.setCreatedAt(now);
+            versionRepo.saveAndFlush(version);
 
-        session.setStatus(STATUS_COMPLETED);
-        session.setStoragePath(destName);
-        session.setAssetId(assetId);
-        session.setVersionId(versionId);
-        session.setUpdatedAt(now);
-        sessionRepo.save(session);
-        cleanupChunks(session.getId(), chunks);
+            session.setStatus(STATUS_COMPLETED);
+            session.setStoragePath(destName);
+            session.setAssetId(assetId);
+            session.setVersionId(versionId);
+            session.setUpdatedAt(now);
+            sessionRepo.saveAndFlush(session);
+        } catch (RuntimeException e) {
+            removeObjectQuietly(destName);
+            throw new IllegalArgumentException("保存数据集上传记录失败: " + rootMessage(e));
+        }
+        registerChunkCleanup(session.getId(), chunks);
 
         return completedPayload(session);
     }
@@ -341,7 +345,7 @@ public class DatasetUploadService {
             asset.setOwnerUserId(ownerUserId);
             asset.setCreatedAt(now);
             asset.setUpdatedAt(now);
-            assetRepo.save(asset);
+            assetRepo.saveAndFlush(asset);
 
             DatasetVersion versionEntity = new DatasetVersion();
             versionEntity.setId(versionId);
@@ -355,7 +359,7 @@ public class DatasetUploadService {
             versionEntity.setRemark(remark);
             versionEntity.setOwnerUserId(ownerUserId);
             versionEntity.setCreatedAt(now);
-            versionRepo.save(versionEntity);
+            versionRepo.saveAndFlush(versionEntity);
 
             return completedPayload(
                     null,
@@ -412,6 +416,38 @@ public class DatasetUploadService {
         DatasetUploadSession session = sessionRepo.findById(uploadId)
                 .orElseThrow(() -> new IllegalArgumentException("uploadId 无效"));
         authContext.requireOwnerAccess(session.getOwnerUserId(), "uploadId invalid or not accessible");
+        return session;
+    }
+
+    private DatasetUploadSession claimCompleting(String uploadId) {
+        DatasetUploadSession session = getSession(uploadId);
+        if (STATUS_COMPLETED.equals(session.getStatus())) {
+            return session;
+        }
+        if (STATUS_COMPLETING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("数据集文件正在合并中，请稍后查询进度");
+        }
+        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("上传状态不允许完成: " + session.getStatus());
+        }
+
+        Instant now = Instant.now();
+        int updated = sessionRepo.updateStatusIfCurrent(
+                session.getId(),
+                session.getOwnerUserId(),
+                STATUS_UPLOADING,
+                STATUS_COMPLETING,
+                now
+        );
+        if (updated == 0) {
+            DatasetUploadSession current = getSession(uploadId);
+            if (STATUS_COMPLETED.equals(current.getStatus())) {
+                return current;
+            }
+            throw new IllegalArgumentException("数据集文件正在合并中，请稍后查询进度");
+        }
+        session.setStatus(STATUS_COMPLETING);
+        session.setUpdatedAt(now);
         return session;
     }
 
@@ -587,32 +623,52 @@ public class DatasetUploadService {
             return;
         }
         try {
-            minioClient.removeObject(
-                    RemoveObjectArgs.builder().bucket(bucket).object(objectName).build()
+            minioDeleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                    objectName,
+                    MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK,
+                    objectName,
+                    null
             );
         } catch (Exception ignored) {
             // 清理失败时保留原始错误。
         }
     }
 
-    private void cleanupChunks(String uploadId, List<DatasetUploadChunk> chunks) {
+    private void registerChunkCleanup(String uploadId, List<DatasetUploadChunk> chunks) {
         List<String> objectNames = new ArrayList<>();
         for (DatasetUploadChunk chunk : chunks) {
             objectNames.add(chunk.getObjectName());
         }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cleanupChunks(uploadId, objectNames);
+                }
+            });
+            return;
+        }
+        cleanupChunks(uploadId, objectNames);
+    }
+
+    private void cleanupChunks(String uploadId, List<String> objectNames) {
         for (String objectName : objectNames) {
             try {
-                minioClient.removeObject(
-                        RemoveObjectArgs.builder()
-                                .bucket(bucket)
-                                .object(objectName)
-                                .build()
+                minioDeleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                        objectName,
+                        MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_CHUNK,
+                        uploadId,
+                        null
                 );
             } catch (Exception ignored) {
-                // 临时分片清理失败不阻断完成结果，后续可用定时任务兜底清理。
+                // 临时分片删除任务入队失败不阻断完成结果。
             }
         }
-        chunkRepo.deleteByUploadId(uploadId);
+        try {
+            chunkRepo.deleteByUploadId(uploadId);
+        } catch (Exception ignored) {
+            // 临时分片元数据清理失败不影响已完成的数据集记录。
+        }
     }
 
     private boolean sameUpload(DatasetUploadSession session, DatasetUploadInitRequest req, String taskType) {
@@ -783,6 +839,14 @@ public class DatasetUploadService {
         String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
         int index = lower.lastIndexOf('.');
         return index >= 0 ? lower.substring(index) : "";
+    }
+
+    private String rootMessage(Throwable e) {
+        Throwable current = e;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage() == null ? e.getMessage() : current.getMessage();
     }
 
     private String sanitizeSegment(String value) {

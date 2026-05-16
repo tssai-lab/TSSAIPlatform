@@ -97,12 +97,19 @@ public class MinioService {
     }
 
     public void deleteObject(String objectName) throws Exception {
+        deleteObject(bucket, objectName);
+    }
+
+    public void deleteObject(String targetBucket, String objectName) throws Exception {
+        if (targetBucket == null || targetBucket.isBlank()) {
+            throw new IllegalArgumentException("bucket 不能为空");
+        }
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");
         }
         minioClient.removeObject(
                 RemoveObjectArgs.builder()
-                        .bucket(bucket)
+                        .bucket(targetBucket)
                         .object(objectName)
                         .build()
         );

@@ -56,6 +56,27 @@ public class TrainingExperimentVersion {
     @Column(name = "status", length = 32)
     private String status;
 
+    @Column(name = "progress")
+    private Integer progress;
+
+    @Column(name = "metrics_json", columnDefinition = "TEXT")
+    private String metricsJson;
+
+    @Column(name = "log_path", length = 1024)
+    private String logPath;
+
+    @Column(name = "output_path", length = 1024)
+    private String outputPath;
+
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    @Column(name = "finished_at")
+    private Instant finishedAt;
+
     @Column(name = "remark", length = 1024)
     private String remark;
 

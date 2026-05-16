@@ -42,5 +42,11 @@ public class DatasetAsset {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    @Column(name = "deleted", nullable = false)
+    private Boolean deleted = false;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 }
 

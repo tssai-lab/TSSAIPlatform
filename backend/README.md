@@ -2,44 +2,31 @@
 
 TSS AI Platform 后端服务，基于 **Java 17 + Spring Boot 3.5.14** 构建，为前端提供 `/api/**` 接口。
 
-当前后端已经集成两部分能力：
+当前后端包含两部分主要能力：
 
-- **模块一**：用户注册、登录、Token 鉴权、用户管理、操作日志。
-- **模块二**：模型管理、数据集管理、分片上传、MinIO 文件对象、训练任务/实验版本元数据管理。
+- **模块一：用户与权限**
+  用户注册、登录、Sa-Token 鉴权、用户管理、操作日志。
 
-> 当前代码结构中，模块一已经收敛到 `com.tss.platform.module1`。模块二仍保留在 `com.tss.platform.controller/service/repository/entity/dto/model` 等顶层包下，后续可以在功能稳定后再重构到 `module2` 包。
+- **模块二：数据资产标准化管理**
+  模型资产管理、数据集资产管理、版本管理、分片上传、MinIO 对象存储、训练实验版本元数据、训练结果回写元数据。
 
-模块二对前端、模块一、训练执行模块、推理模块的稳定接口边界见：
+模块一代码位于 `com.tss.platform.module1`。模块二当前仍位于顶层包 `com.tss.platform.controller/service/repository/entity/dto/model` 等目录，尚未迁移到独立 `module2` 包。
+
+模块二对外契约和审查文档可参考：
 
 ```text
 doc/module2-external-contract.md
-```
-
-模块二详细测试方案见：
-
-```text
-doc/module2-test-plan.md
-```
-
-模块二测试执行细节手册见：
-
-```text
-doc/module2-test-execution-guide.md
-```
-
-模块二测试结果报告见：
-
-```text
-doc/module2-test-report.md
+../doc1/
 ```
 
 ## 技术栈
 
-| 类型 | 当前实现 |
+| 类别 | 当前实现 |
 | --- | --- |
 | Java | JDK 17 |
 | Web 框架 | Spring Boot 3.5.14 |
 | ORM | Spring Data JPA / Hibernate 6 |
+| 数据库迁移 | Flyway |
 | 模块一数据访问 | MyBatis-Plus 3.5.5 |
 | 登录鉴权 | Sa-Token 1.37.0 |
 | 密码加密 | BCrypt |
@@ -59,97 +46,145 @@ backend/
 |   |   |-- TssPlatformApplication.java
 |   |   |-- config/                  # CORS、MinIO、拦截器注册
 |   |   |-- module1/                 # 用户、角色、鉴权、日志
-|   |   |   |-- controller/
-|   |   |   |-- dto/
-|   |   |   |-- entity/
-|   |   |   |-- interceptor/
-|   |   |   |-- mapper/
-|   |   |   |-- service/
-|   |   |   `-- util/
 |   |   |-- controller/              # 模块二 REST API
 |   |   |-- dto/                     # 模块二请求/响应对象
 |   |   |-- entity/                  # 模块二 JPA 实体
-|   |   |-- model/                   # 模块二领域模型
+|   |   |-- model/                   # 模块二枚举和旧模型
 |   |   |-- repository/              # 模块二 JPA Repository
-|   |   `-- service/                 # 模型、数据集、训练任务等业务逻辑
+|   |   `-- service/                 # 模型、数据集、训练实验业务逻辑
 |   `-- resources/
 |       |-- application.yml          # 默认 PostgreSQL + MinIO 配置
-|       |-- application-dev.yml      # H2 开发配置
+|       |-- application-dev.yml      # H2 本地开发配置
 |       `-- db/
-|           `-- module1-schema-postgresql.sql
+|           |-- module1-schema-postgresql.sql
+|           `-- migration/           # 模块二 Flyway 迁移
 ```
 
 ## 环境要求
 
 - JDK 17 可用。
-- Docker Desktop 可用。
-- PostgreSQL 容器建议名称：`tss-postgres`。
-- MinIO 容器建议名称：`minio-tss`。
+- PostgreSQL 可用。
+- MinIO 可用。
 - 后端默认监听端口：`8080`。
 
-当前默认数据库配置：
+推荐本地容器名：
+
+```text
+PostgreSQL: tss-postgres
+MinIO:      minio-tss
+```
+
+## 配置说明
+
+生产/默认 profile 不再在 `application.yml` 中写明文数据库和 MinIO 密码。启动前必须提供以下环境变量：
+
+| 变量 | 是否必填 | 说明 |
+| --- | --- | --- |
+| `SPRING_DATASOURCE_URL` | 可选 | 默认 `jdbc:postgresql://127.0.0.1:5432/tss` |
+| `SPRING_DATASOURCE_USERNAME` | 必填 | PostgreSQL 用户名 |
+| `SPRING_DATASOURCE_PASSWORD` | 必填 | PostgreSQL 密码 |
+| `MINIO_ENDPOINT` | 可选 | 默认 `http://127.0.0.1:9010` |
+| `MINIO_ACCESS_KEY` | 必填 | MinIO access key |
+| `MINIO_SECRET_KEY` | 必填 | MinIO secret key |
+| `MINIO_BUCKET` | 可选 | 默认 `models` |
+| `SPRING_PROFILES_ACTIVE` | 可选 | 默认 `default`；本地 H2 可设为 `dev` |
+
+当前默认配置要点：
 
 ```yaml
 spring:
-  datasource:
-    url: jdbc:postgresql://127.0.0.1:5432/tss
-    username: postgres
-    password: postgres
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+  jpa:
+    hibernate:
+      ddl-auto: validate
 ```
 
-当前默认 MinIO 配置：
+说明：
 
-```yaml
-minio:
-  endpoint: http://127.0.0.1:9010
-  access-key: admin
-  secret-key: password123
-  bucket: models
-```
+- 模块二表结构由 Flyway 迁移脚本管理，不再依赖 `ddl-auto=update`。
+- Hibernate 只做 `validate`，用于校验实体与数据库结构是否一致。
+- `application-dev.yml` 为本地开发保留 MinIO 默认账号占位：`admin/password123`，不要用于生产环境。
 
-## PostgreSQL 初始化
-
-如果 PostgreSQL 在 Docker 中运行，并且容器名是 `tss-postgres`，端口映射是 `5432:5432`，可以这样确认数据库：
+PowerShell 本地启动示例：
 
 ```powershell
-docker exec -it tss-postgres psql -U postgres -c "\l"
+$env:SPRING_DATASOURCE_USERNAME="postgres"
+$env:SPRING_DATASOURCE_PASSWORD="postgres"
+$env:MINIO_ACCESS_KEY="admin"
+$env:MINIO_SECRET_KEY="password123"
+.\mvnw.cmd spring-boot:run
 ```
 
-如果还没有 `tss` 数据库，创建它：
+使用 H2 dev profile：
 
 ```powershell
-docker exec -it tss-postgres psql -U postgres -c "create database tss;"
+$env:MINIO_ACCESS_KEY="admin"
+$env:MINIO_SECRET_KEY="password123"
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
-模块二的 JPA 表会由 Hibernate 自动维护。模块一使用 MyBatis-Plus，需要先执行 SQL 脚本创建 `users`、`roles`、`operation_logs`：
+## 数据库初始化
+
+### 模块一
+
+模块一使用 MyBatis-Plus，不由 Flyway 管理。首次使用 PostgreSQL 时需要手动执行：
 
 ```powershell
-Get-Content E:\resource\TSSAIPlatform\TSSAIPlatform\backend\src\main\resources\db\module1-schema-postgresql.sql | docker exec -i tss-postgres psql -U postgres -d tss
+Get-Content E:\resource\TSSAIPlatform\backend\src\main\resources\db\module1-schema-postgresql.sql | docker exec -i tss-postgres psql -U postgres -d tss
 ```
 
-检查表：
-
-```powershell
-docker exec -it tss-postgres psql -U postgres -d tss -c "\dt"
-```
-
-检查角色初始数据：
-
-```powershell
-docker exec -it tss-postgres psql -U postgres -d tss -c "select * from roles;"
-```
-
-正常应包含：
+该脚本创建：
 
 ```text
-1 | super_admin | Super administrator
-2 | admin       | Administrator
-3 | user        | Normal user
+roles
+users
+operation_logs
 ```
+
+### 模块二
+
+模块二由 Flyway 自动执行 `src/main/resources/db/migration` 下的迁移脚本：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `V1__module2_core_schema.sql` | 创建模块二核心表、索引 |
+| `V2__module2_constraints.sql` | 增加唯一索引、外键、枚举 CHECK 约束 |
+| `V3__training_result_callback_fields.sql` | 增加训练结果回写字段 |
+
+模块二核心表：
+
+```text
+model_asset
+model_version
+model_upload_session
+model_upload_chunk
+dataset_asset
+dataset_version
+dataset_upload_session
+dataset_upload_chunk
+training_experiment_version
+```
+
+重要约束：
+
+- `model_version(asset_id, version)` 唯一。
+- `dataset_version(asset_id, version)` 唯一。
+- 模型/数据集版本通过外键关联资产表。
+- 训练实验版本通过外键关联模型版本和数据集版本。
+- `type` 只允许 `CV` / `NLP`。
+- 上传状态只允许 `UPLOADING` / `COMPLETING` / `COMPLETED`。
+- 训练状态只允许 `pending` / `queued` / `running` / `success` / `failed` / `stopped`。
+- 训练进度 `progress` 范围为 `0..100`。
+
+如果历史库中已有重复版本号、非法枚举值或孤儿引用，Flyway 迁移会失败。需要先清理脏数据，再启动新版本。
 
 ## MinIO 启动示例
 
-如果本机还没有 MinIO，可以在仓库根目录执行：
+本地没有 MinIO 时，可在仓库根目录执行：
 
 ```powershell
 docker run -d --name minio-tss `
@@ -166,20 +201,14 @@ MinIO 控制台：
 http://127.0.0.1:9011
 ```
 
-登录账号：
-
-```text
-admin / password123
-```
-
-后端启动时会自动检查并创建 `models` bucket。
+后端启动时会检查并创建 `MINIO_BUCKET` 对应的 bucket，默认 bucket 为 `models`。
 
 ## 构建和启动
 
 进入后端目录：
 
 ```powershell
-cd E:\resource\TSSAIPlatform\TSSAIPlatform\backend
+cd E:\resource\TSSAIPlatform\backend
 ```
 
 编译：
@@ -194,17 +223,16 @@ cd E:\resource\TSSAIPlatform\TSSAIPlatform\backend
 .\mvnw.cmd clean package -DskipTests
 ```
 
+如果仅需验证打包流程且本地已有 Spring Boot 重打包产物被占用，可跳过 repackage：
+
+```powershell
+.\mvnw.cmd -DskipTests "-Dspring-boot.repackage.skip=true" package
+```
+
 启动：
 
 ```powershell
 .\mvnw.cmd spring-boot:run
-```
-
-启动成功时会看到类似日志：
-
-```text
-Tomcat started on port 8080
-Started TssPlatformApplication
 ```
 
 运行 jar：
@@ -213,89 +241,9 @@ Started TssPlatformApplication
 java -jar target\tss-backend-1.0.0.jar
 ```
 
-使用 H2 开发 profile：
-
-```powershell
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
-```
-
-或：
-
-```powershell
-java -jar target\tss-backend-1.0.0.jar --spring.profiles.active=dev
-```
-
-## 模块一接口自测
-
-注册用户：
-
-```powershell
-$body = @{
-  username = "testuser"
-  password = "test123"
-  confirmPassword = "test123"
-  roleId = 3
-} | ConvertTo-Json -Compress
-
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8080/api/user/register/username" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-登录并保存 Token：
-
-```powershell
-$loginBody = @{
-  type = "account"
-  username = "testuser"
-  password = "test123"
-} | ConvertTo-Json -Compress
-
-$loginResult = Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8080/api/user/login" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body $loginBody
-
-$token = $loginResult.data.token
-$token
-```
-
-获取当前用户：
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8080/api/user/current-user" `
-  -Method Get `
-  -Headers @{ Authorization = "Bearer $token" }
-```
-
-查询操作日志：
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8080/api/log/list" `
-  -Method Get `
-  -Headers @{ Authorization = "Bearer $token" }
-```
-
-模块一接口返回格式：
-
-```json
-{
-  "code": 200,
-  "message": "操作结果",
-  "data": {}
-}
-```
-
-> 迁移自 demo 的部分 message/log 文案可能仍有乱码，不影响接口逻辑。后续可以统一清理为正常中文或英文。
-
 ## 鉴权说明
 
-当前 `WebConfig` 已对模块一与模块二核心接口启用权限拦截：
+当前 `WebConfig` 对以下路径启用权限拦截：
 
 ```text
 /api/user/**
@@ -328,19 +276,15 @@ GET  /api/files/health
 Authorization: Bearer <token>
 ```
 
-模块一通过 Sa-Token session 中的 `roleId` 判断管理员权限，`roleId=1/2` 视为管理员，`roleId=3` 视为普通用户。
+模块二按 `owner_user_id` 做数据隔离。普通用户只能访问自己的模型、数据集、上传会话、训练实验和文件对象；管理员角色 `roleId=1/2` 可访问全部资源。
 
-模块二模型、数据集、上传会话和训练实验已经增加 `owner_user_id`。普通用户查询列表、详情、删除时只允许访问自己的资源；管理员可以访问全部资源。
-
-MinIO 仍使用一个后端服务账号连接，业务隔离通过数据库 `owner_user_id` 与对象路径前缀实现：
+MinIO 使用一个后端服务账号连接，业务隔离依赖数据库 `owner_user_id` 和对象路径前缀：
 
 ```text
 users/{userId}/models/...
 users/{userId}/datasets/...
 users/{userId}/files/...
 ```
-
-`/api/files/health` 保持公开用于健康检查；其他 `/api/files/**` 接口需要登录，并会校验对象路径归属。
 
 ## 主要接口概览
 
@@ -354,16 +298,16 @@ users/{userId}/files/...
 | `/api/user/login` | POST | 账号或手机号登录 |
 | `/api/user/logout` | POST | 退出登录 |
 | `/api/user/current-user` | GET | 当前登录用户 |
-| `/api/user/list` | GET | 用户列表，含角色名 |
+| `/api/user/list` | GET | 用户列表 |
 | `/api/user/add` | POST | 管理员新增用户 |
 | `/api/user/reset-password` | POST | 管理员重置密码 |
 | `/api/user/delete/{userId}` | DELETE | 软删除用户 |
 | `/api/log/record` | POST | 记录操作日志 |
 | `/api/log/list` | GET | 查询操作日志 |
 
-### 兼容旧前端的演示登录
+### 演示登录兼容接口
 
-以下接口仍存在于 `AuthController`，用于兼容原 Ant Design Pro 登录流程，不是真实模块一鉴权：
+以下接口位于 `AuthController`，仅用于兼容旧 Ant Design Pro 登录流程，不是正式模块一鉴权链路：
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
@@ -371,7 +315,7 @@ users/{userId}/files/...
 | `/api/currentUser` | GET | 演示当前用户 |
 | `/api/login/outLogin` | POST | 演示退出 |
 
-后续前端应逐步切换到 `/api/user/login`、`/api/user/current-user`、`/api/user/logout`。
+前端应逐步切换到 `/api/user/login`、`/api/user/current-user`、`/api/user/logout`。
 
 ### 模块二：MinIO 文件对象
 
@@ -392,19 +336,21 @@ users/{userId}/files/...
 | `/api/model/upload/complete` | POST | 合并分片并创建模型资产/版本 |
 | `/api/model/list` | GET | 模型版本列表 |
 | `/api/model/detail?id=...` | GET | 模型详情 |
-| `/api/model/code-files?id=...` | GET | 列出 zip 内可预览代码文件 |
-| `/api/model/previewCode?id=...&path=...` | GET | 预览 zip 内文本代码 |
+| `/api/model/code-files?id=...` | GET | 列出 ZIP 内可预览代码文件 |
+| `/api/model/previewCode?id=...&path=...` | GET | 预览 ZIP 内文本代码 |
 | `/api/model/delete?id=...` | DELETE | 删除模型版本并尝试删除 MinIO 文件 |
-| `/api/model-assets` | GET/POST | 模型资产 CRUD |
+| `/api/model-assets` | GET/POST | 模型资产列表/创建 |
 | `/api/model-assets/{id}` | GET/PUT/DELETE | 模型资产详情、更新、删除 |
-| `/api/model-versions` | GET/POST | 模型版本 CRUD |
+| `/api/model-versions` | GET/POST | 模型版本列表/创建 |
 | `/api/model-versions/{id}` | GET/PUT/DELETE | 模型版本详情、更新、删除 |
 
 模型上传规则：
 
 - 模型文件仅支持 `.zip`。
 - `type` 支持 `CV` 和 `NLP`。
-- 分片大小由后端服务固定为 5MiB。
+- 分片大小由后端固定为 5MiB。
+- 同一模型资产下版本号唯一。
+- 删除模型资产/版本前会检查是否被训练实验引用；被引用时拒绝删除。
 
 ### 模块二：数据集管理
 
@@ -415,23 +361,24 @@ users/{userId}/files/...
 | `/api/dataset/upload/chunk` | POST | 上传数据集分片 |
 | `/api/dataset/upload/progress` | GET | 查询数据集上传进度 |
 | `/api/dataset/upload/complete` | POST | 合并分片并创建数据集资产/版本 |
-| `/api/dataset/upload/folder` | POST | 上传 CV 图片文件夹，后端打包为 zip |
-| `/api/dataset-assets` | GET/POST | 数据集资产 CRUD |
+| `/api/dataset/upload/folder` | POST | 上传 CV 图片文件夹，后端打包为 ZIP |
+| `/api/dataset-assets` | GET/POST | 数据集资产列表/创建 |
 | `/api/dataset-assets/{id}` | GET/PUT/DELETE | 数据集资产详情、更新、删除 |
-| `/api/dataset-versions` | GET/POST | 数据集版本 CRUD |
+| `/api/dataset-versions` | GET/POST | 数据集版本列表/创建 |
 | `/api/dataset-versions/{id}` | GET/PUT/DELETE | 数据集版本详情、更新、删除 |
 
 数据集上传规则：
 
-- `CV` 支持 zip，压缩包内必须包含图片文件；也支持 `/api/dataset/upload/folder` 直接上传图片文件夹。
-- `CV` 额外支持 `cvTaskType` 和 `annotationFormat` 两个元数据字段，主任务类型仍保持 `type=CV`。
-- `cvTaskType` 支持 `IMAGE_CLASSIFICATION`、`OBJECT_DETECTION`、`SEMANTIC_SEGMENTATION`、`INSTANCE_SEGMENTATION`、`UNLABELED`、`OTHER`，也兼容中文值：`图像分类`、`目标检测`、`语义分割`、`实例分割`、`无标注`、`其他`。
-- `annotationFormat` 支持 `NONE`、`FOLDER_CLASSIFICATION`、`CSV`、`YOLO`、`COCO`、`VOC`、`MASK`、`LABELME`、`OTHER`，也兼容中文值：`无标注`、`文件夹分类`、`掩码`、`其他`。
-- CV 图片扩展名支持 `.jpg`、`.jpeg`、`.png`、`.bmp`、`.gif`、`.webp`、`.tif`、`.tiff`。
-- CV 标注格式校验规则：`NONE/FOLDER_CLASSIFICATION/MASK` 只允许图片；`CSV` 允许图片和 `.csv`；`YOLO` 允许图片和 `.txt/.yaml/.yml`；`COCO/LABELME` 允许图片和 `.json`；`VOC` 允许图片和 `.xml`；`OTHER` 允许图片和 `.txt/.json/.xml/.csv/.yaml/.yml`。
-- `NLP` 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，也支持仅包含这些文件的 zip。
+- `CV` 支持 ZIP 或 `/api/dataset/upload/folder` 文件夹上传，内容必须包含图片文件。
+- `NLP` 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，也支持仅包含这些文件的 ZIP。
+- `cvTaskType` 支持 `IMAGE_CLASSIFICATION`、`OBJECT_DETECTION`、`SEMANTIC_SEGMENTATION`、`INSTANCE_SEGMENTATION`、`UNLABELED`、`OTHER`。
+- `annotationFormat` 支持 `NONE`、`FOLDER_CLASSIFICATION`、`CSV`、`YOLO`、`COCO`、`VOC`、`MASK`、`LABELME`、`OTHER`。
+- 同一数据集资产下版本号唯一。
+- 删除数据集资产/版本前会检查是否被训练实验引用；被引用时拒绝删除。
 
 ### 模块二：训练任务与实验版本
+
+当前训练模块管理实验元数据和结果回写元数据，不调度真实训练作业。
 
 | 接口 | 方法 | 说明 |
 | --- | --- | --- |
@@ -439,37 +386,37 @@ users/{userId}/files/...
 | `/api/task/list` | GET | 训练任务列表，每个实验返回最新版本 |
 | `/api/task/detail?id=...` | GET | 查询训练任务详情 |
 | `/api/task/stop?id=...` | POST | 将任务状态改为 `stopped` |
+| `/api/task/result?id=...` | POST | 按训练版本 ID 或 experimentId 回写训练结果 |
 | `/api/task/delete?id=...` | DELETE | 删除一个实验下的所有版本 |
 | `/api/experiments` | POST | 创建训练实验，等价于 `/api/task/create` |
 | `/api/experiments/{experimentId}/versions` | GET | 查看实验版本历史 |
 | `/api/experiments/{experimentId}/versions` | POST | 创建实验新版本 |
 | `/api/experiments/{experimentId}/versions/{versionNo}` | GET | 查看指定实验版本 |
 | `/api/experiments/{experimentId}/versions/{versionNo}/hyper-parameters` | PUT | 修改指定版本超参数 |
+| `/api/experiments/{experimentId}/versions/{versionNo}/result` | PUT | 回写指定实验版本训练结果 |
 
-当前训练模块只管理实验、版本、状态、超参数、模型版本和数据集版本之间的关系，暂未调度真实训练作业。
+训练结果回写字段：
 
-## 数据表
-
-模块一手动 SQL 表：
-
-```text
-roles
-users
-operation_logs
+```json
+{
+  "status": "running",
+  "progress": 50,
+  "metrics": {
+    "accuracy": 0.91
+  },
+  "logPath": "users/1/training/exp-xxx/log.txt",
+  "outputPath": "users/1/training/exp-xxx/output/",
+  "errorMessage": null,
+  "startedAt": "2026-05-11T10:00:00Z",
+  "finishedAt": null,
+  "remark": "optional"
+}
 ```
 
-模块二 JPA 表：
+状态只允许：
 
 ```text
-model_asset
-model_version
-model_upload_session
-model_upload_chunk
-dataset_asset
-dataset_version
-dataset_upload_session
-dataset_upload_chunk
-training_experiment_version
+pending, queued, running, success, failed, stopped
 ```
 
 ## 分片上传说明
@@ -482,32 +429,40 @@ training_experiment_version
 4. 全部分片上传完成后调用 `complete`。
 5. 后端使用 MinIO `composeObject` 合并最终文件，落库资产/版本记录，并清理临时分片。
 
-默认单片大小为 5MiB。`application.yml` 中的 `64MB` multipart 限制只约束单个 HTTP 请求，不限制模型或数据集的总文件大小。
+默认单片大小为 5MiB。`application.yml` 中的 `64MB` multipart 限制只约束单个 HTTP 请求，不限制模型或数据集总文件大小。
 
 MinIO 对象路径约定：
 
 | 类型 | 路径 |
 | --- | --- |
 | 模型临时分片 | `users/{userId}/models/_uploads/{uploadId}/part-{index}` |
-| 模型最终文件 | `users/{userId}/models/{modelName}/{version}/{fileName}` |
+| 模型最终文件 | `users/{userId}/models/{assetId}/{version}/{fileName}` |
 | 数据集临时分片 | `users/{userId}/datasets/_uploads/{uploadId}/part-{index}` |
 | 数据集最终文件 | `users/{userId}/datasets/{assetId}/{version}/{fileName}` |
 | 通用文件对象 | `users/{userId}/files/{objectName}` |
 
-## 常用配置
-
-| 配置 | 默认值 | 说明 |
-| --- | --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `default` | 设置为 `dev` 时使用 H2 |
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://127.0.0.1:5432/tss` | PostgreSQL 地址 |
-| `SPRING_DATASOURCE_USERNAME` | `postgres` | 数据库用户名 |
-| `SPRING_DATASOURCE_PASSWORD` | `postgres` | 数据库密码 |
-| `server.port` | `8080` | 后端端口 |
-| `spring.servlet.multipart.max-file-size` | `64MB` | 单个 multipart 文件大小限制 |
-| `spring.servlet.multipart.max-request-size` | `64MB` | 单个 multipart 请求大小限制 |
-| `sa-token.token-name` | `Authorization` | 模块一 Token 请求头 |
-
 ## 常见问题
+
+### 启动时报缺少环境变量
+
+默认 profile 下数据库用户名、密码和 MinIO 密钥没有默认值。请先设置：
+
+```powershell
+$env:SPRING_DATASOURCE_USERNAME="postgres"
+$env:SPRING_DATASOURCE_PASSWORD="postgres"
+$env:MINIO_ACCESS_KEY="admin"
+$env:MINIO_SECRET_KEY="password123"
+```
+
+### Flyway 迁移失败
+
+常见原因：
+
+- 历史数据中同一资产下存在重复版本号。
+- `type`、`status`、`cvTaskType`、`annotationFormat` 存在非法值。
+- 训练实验引用了不存在的模型版本或数据集版本。
+
+需要先清理数据库脏数据，再重新启动。
 
 ### package 阶段提示 jar 无法重命名
 
@@ -517,23 +472,21 @@ MinIO 对象路径约定：
 Unable to rename target\tss-backend-1.0.0.jar to target\tss-backend-1.0.0.jar.original
 ```
 
-通常是旧的 jar 或 `spring-boot:run` 进程还在运行。先在运行后端的终端按 `Ctrl+C`，再执行：
+通常是旧 jar 或 `spring-boot:run` 进程仍在运行。先停止后端进程，再执行：
 
 ```powershell
 .\mvnw.cmd clean package -DskipTests
 ```
 
-### PostgreSQL 表不存在
-
-模块一表不会由 JPA 自动创建，需要执行：
+仅验证普通 jar 打包时也可使用：
 
 ```powershell
-Get-Content E:\resource\TSSAIPlatform\TSSAIPlatform\backend\src\main\resources\db\module1-schema-postgresql.sql | docker exec -i tss-postgres psql -U postgres -d tss
+.\mvnw.cmd -DskipTests "-Dspring-boot.repackage.skip=true" package
 ```
 
 ### MinIO 连接失败
 
-确认 MinIO API 端口是 `9010`，账号密码与 `application.yml` 一致。可访问：
+确认 MinIO API 端口是 `9010`，并且环境变量中的账号密码正确。可访问：
 
 ```text
 GET http://127.0.0.1:8080/api/files/health
@@ -541,21 +494,12 @@ GET http://127.0.0.1:8080/api/files/health
 
 ### 大文件超过 64MB 是否会失败
 
-不会。模型和数据集上传走 5MiB 分片，只要单个分片请求小于 multipart 限制，总文件可以远大于 64MB。
-
-### 前端还在走 `/api/login/account`
-
-旧演示登录接口仍存在，但真实用户体系已经在 `/api/user/login`。后续前端需要保存模块一登录返回的 token，并在请求头中携带：
-
-```text
-Authorization: Bearer <token>
-```
+模型和数据集上传走 5MiB 分片。只要单个分片请求小于 multipart 限制，总文件可以远大于 64MB。
 
 ## 当前边界
 
 - 模块一短信验证码为内存模拟，服务重启后缓存会丢失。
-- 模块一部分迁移自 demo 的业务 message/log 文案可能仍有编码问题，后续可统一清理。
-- 模块二训练任务只管理元数据，暂未接入真实训练调度器。
-- 旧模型、数据集、实验记录如果 `owner_user_id` 为空，普通用户默认不可见，管理员可见；如需普通用户访问旧数据，需要补齐归属字段。
-- 模块二业务操作审计仍可继续增强，例如模型/数据集上传、删除、训练状态变更等。
-- 默认 PostgreSQL 和 MinIO 账号密码仅适合本地开发，不应直接用于生产环境。
+- 模块二训练任务当前管理实验、版本、状态、超参数和结果回写元数据，尚未接入真实训练调度器。
+- 训练结果回写保存指标、日志路径、输出路径等元数据，不负责生成或上传训练产物。
+- 旧数据如果 `owner_user_id` 为空，普通用户默认不可见，管理员可见；需要访问旧数据时应补齐归属字段。
+- 模块二业务审计仍可继续增强，例如模型/数据集上传、删除、训练状态变更等操作日志。

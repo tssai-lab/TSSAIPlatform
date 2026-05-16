@@ -19,11 +19,12 @@ import io.minio.ComposeSource;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -45,6 +46,7 @@ public class ModelUploadService {
 
     private static final int CHUNK_SIZE = 5 * 1024 * 1024;
     private static final String STATUS_UPLOADING = "UPLOADING";
+    private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final int MAX_MODEL_ZIP_ENTRIES = 100_000;
     private static final long MAX_MODEL_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
@@ -56,6 +58,7 @@ public class ModelUploadService {
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
     private final AuthContext authContext;
+    private final MinioDeleteTaskService minioDeleteTaskService;
 
     public ModelUploadService(
             MinioClient minioClient,
@@ -64,7 +67,8 @@ public class ModelUploadService {
             ModelUploadChunkRepository chunkRepo,
             ModelAssetRepository modelAssetRepo,
             ModelVersionRepository modelVersionRepo,
-            AuthContext authContext
+            AuthContext authContext,
+            MinioDeleteTaskService minioDeleteTaskService
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -73,6 +77,7 @@ public class ModelUploadService {
         this.modelAssetRepo = modelAssetRepo;
         this.modelVersionRepo = modelVersionRepo;
         this.authContext = authContext;
+        this.minioDeleteTaskService = minioDeleteTaskService;
     }
 
     @Transactional
@@ -167,9 +172,9 @@ public class ModelUploadService {
     @Transactional
     public Map<String, Object> complete(UploadCompleteRequest req) {
         String taskType = validateComplete(req);
-        ModelUploadSession session = getSession(req.getUploadId());
+        ModelUploadSession session = claimCompleting(req.getUploadId());
         if (STATUS_COMPLETED.equals(session.getStatus())) {
-            return completedPayload(session, req.getModelName(), req.getVersion(), taskType, req.getRemark());
+            return completedPayload(session);
         }
 
         List<ModelUploadChunk> chunks = chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId());
@@ -185,7 +190,7 @@ public class ModelUploadService {
         String assetId = "model-asset-" + UUID.randomUUID().toString().replace("-", "");
         String versionId = "model-ver-" + UUID.randomUUID().toString().replace("-", "");
         String destName = "users/" + session.getOwnerUserId()
-                + "/models/" + sanitizeSegment(req.getModelName())
+                + "/models/" + assetId
                 + "/" + sanitizeSegment(req.getVersion())
                 + "/" + sanitizeSegment(session.getFileName());
         try {
@@ -208,35 +213,42 @@ public class ModelUploadService {
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
         }
 
-        Instant now = Instant.now();
-        ModelAsset asset = new ModelAsset();
-        asset.setId(assetId);
-        asset.setName(req.getModelName().trim());
-        asset.setType(taskType);
-        asset.setRemark(req.getRemark().trim());
-        asset.setOwnerUserId(session.getOwnerUserId());
-        asset.setCreatedAt(now);
-        asset.setUpdatedAt(now);
-        modelAssetRepo.save(asset);
+        ModelAsset asset;
+        ModelVersion ver;
+        try {
+            Instant now = Instant.now();
+            asset = new ModelAsset();
+            asset.setId(assetId);
+            asset.setName(req.getModelName().trim());
+            asset.setType(taskType);
+            asset.setRemark(req.getRemark().trim());
+            asset.setOwnerUserId(session.getOwnerUserId());
+            asset.setCreatedAt(now);
+            asset.setUpdatedAt(now);
+            modelAssetRepo.saveAndFlush(asset);
 
-        ModelVersion ver = new ModelVersion();
-        ver.setId(versionId);
-        ver.setAssetId(assetId);
-        ver.setVersion(req.getVersion().trim());
-        ver.setFileName(session.getFileName());
-        ver.setStoragePath(destName);
-        ver.setSizeBytes(session.getFileSize());
-        ver.setOwnerUserId(session.getOwnerUserId());
-        ver.setCreatedAt(now);
-        modelVersionRepo.save(ver);
+            ver = new ModelVersion();
+            ver.setId(versionId);
+            ver.setAssetId(assetId);
+            ver.setVersion(req.getVersion().trim());
+            ver.setFileName(session.getFileName());
+            ver.setStoragePath(destName);
+            ver.setSizeBytes(session.getFileSize());
+            ver.setOwnerUserId(session.getOwnerUserId());
+            ver.setCreatedAt(now);
+            modelVersionRepo.saveAndFlush(ver);
 
-        session.setStatus(STATUS_COMPLETED);
-        session.setStoragePath(destName);
-        session.setAssetId(assetId);
-        session.setVersionId(versionId);
-        session.setUpdatedAt(now);
-        sessionRepo.save(session);
-        cleanupChunks(session.getId(), chunks);
+            session.setStatus(STATUS_COMPLETED);
+            session.setStoragePath(destName);
+            session.setAssetId(assetId);
+            session.setVersionId(versionId);
+            session.setUpdatedAt(now);
+            sessionRepo.saveAndFlush(session);
+        } catch (RuntimeException e) {
+            removeObjectQuietly(destName);
+            throw new IllegalArgumentException("保存模型上传记录失败: " + rootMessage(e));
+        }
+        registerChunkCleanup(session.getId(), chunks);
 
         return completedPayload(session, asset.getName(), ver.getVersion(), asset.getType(), asset.getRemark());
     }
@@ -270,6 +282,38 @@ public class ModelUploadService {
         ModelUploadSession session = sessionRepo.findById(uploadId)
                 .orElseThrow(() -> new IllegalArgumentException("uploadId 无效"));
         authContext.requireOwnerAccess(session.getOwnerUserId(), "uploadId invalid or not accessible");
+        return session;
+    }
+
+    private ModelUploadSession claimCompleting(String uploadId) {
+        ModelUploadSession session = getSession(uploadId);
+        if (STATUS_COMPLETED.equals(session.getStatus())) {
+            return session;
+        }
+        if (STATUS_COMPLETING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("模型文件正在合并中，请稍后查询进度");
+        }
+        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("上传状态不允许完成: " + session.getStatus());
+        }
+
+        Instant now = Instant.now();
+        int updated = sessionRepo.updateStatusIfCurrent(
+                session.getId(),
+                session.getOwnerUserId(),
+                STATUS_UPLOADING,
+                STATUS_COMPLETING,
+                now
+        );
+        if (updated == 0) {
+            ModelUploadSession current = getSession(uploadId);
+            if (STATUS_COMPLETED.equals(current.getStatus())) {
+                return current;
+            }
+            throw new IllegalArgumentException("模型文件正在合并中，请稍后查询进度");
+        }
+        session.setStatus(STATUS_COMPLETING);
+        session.setUpdatedAt(now);
         return session;
     }
 
@@ -331,24 +375,58 @@ public class ModelUploadService {
         return data;
     }
 
-    private void cleanupChunks(String uploadId, List<ModelUploadChunk> chunks) {
+    private Map<String, Object> completedPayload(ModelUploadSession session) {
+        ModelVersion version = session.getVersionId() == null
+                ? null
+                : modelVersionRepo.findById(session.getVersionId()).orElse(null);
+        ModelAsset asset = version == null || version.getAssetId() == null
+                ? null
+                : modelAssetRepo.findById(version.getAssetId()).orElse(null);
+
+        return completedPayload(
+                session,
+                asset != null ? asset.getName() : null,
+                version != null ? version.getVersion() : null,
+                asset != null ? asset.getType() : null,
+                asset != null ? asset.getRemark() : null
+        );
+    }
+
+    private void registerChunkCleanup(String uploadId, List<ModelUploadChunk> chunks) {
         List<String> objectNames = new ArrayList<>();
         for (ModelUploadChunk chunk : chunks) {
             objectNames.add(chunk.getObjectName());
         }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cleanupChunks(uploadId, objectNames);
+                }
+            });
+            return;
+        }
+        cleanupChunks(uploadId, objectNames);
+    }
+
+    private void cleanupChunks(String uploadId, List<String> objectNames) {
         for (String objectName : objectNames) {
             try {
-                minioClient.removeObject(
-                        RemoveObjectArgs.builder()
-                                .bucket(bucket)
-                                .object(objectName)
-                                .build()
+                minioDeleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                        objectName,
+                        MinioDeleteTaskService.SOURCE_MODEL_UPLOAD_CHUNK,
+                        uploadId,
+                        null
                 );
             } catch (Exception ignored) {
-                // 临时分片清理失败不阻断完成结果，后续可用定时任务兜底清理。
+                // 临时分片删除任务入队失败不阻断完成结果。
             }
         }
-        chunkRepo.deleteByUploadId(uploadId);
+        try {
+            chunkRepo.deleteByUploadId(uploadId);
+        } catch (Exception ignored) {
+            // 临时分片元数据清理失败不影响已完成的上传记录。
+        }
     }
 
     private boolean sameUpload(ModelUploadSession session, UploadInitRequest req) {
@@ -437,12 +515,23 @@ public class ModelUploadService {
             return;
         }
         try {
-            minioClient.removeObject(
-                    RemoveObjectArgs.builder().bucket(bucket).object(objectName).build()
+            minioDeleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                    objectName,
+                    MinioDeleteTaskService.SOURCE_MODEL_UPLOAD_ROLLBACK,
+                    objectName,
+                    null
             );
         } catch (Exception ignored) {
             // 保留原始错误。
         }
+    }
+
+    private String rootMessage(Throwable e) {
+        Throwable current = e;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage() == null ? e.getMessage() : current.getMessage();
     }
 
     private String sanitizeSegment(String value) {

@@ -2,13 +2,17 @@ package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.MinioDeleteTaskService;
 import com.tss.platform.service.MinioService;
 import io.minio.StatObjectResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,11 +26,19 @@ import java.util.Map;
 @RequestMapping("/api/files")
 public class FileObjectController {
 
+    private static final Logger log = LoggerFactory.getLogger(FileObjectController.class);
+
     private final MinioService minioService;
+    private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
 
-    public FileObjectController(MinioService minioService, AuthContext authContext) {
+    public FileObjectController(
+            MinioService minioService,
+            MinioDeleteTaskService minioDeleteTaskService,
+            AuthContext authContext
+    ) {
         this.minioService = minioService;
+        this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
     }
 
@@ -86,13 +98,20 @@ public class FileObjectController {
     }
 
     @DeleteMapping("/delete")
+    @Transactional
     public ApiResponse<Map<String, Object>> delete(@RequestParam("objectName") String objectName) {
         try {
             String cleanName = requireObjectAccess(objectName);
-            minioService.deleteObject(cleanName);
+            minioDeleteTaskService.enqueueDefaultBucketDelete(
+                    cleanName,
+                    MinioDeleteTaskService.SOURCE_FILE_OBJECT,
+                    cleanName,
+                    authContext.currentUserId()
+            );
+            log.info("File object delete queued: objectName={}, ownerUserId={}", cleanName, authContext.currentUserId());
             Map<String, Object> data = new HashMap<>();
             data.put("objectName", cleanName);
-            data.put("deleted", true);
+            data.put("minioDeleteQueued", true);
             return ApiResponse.ok(data);
         } catch (Exception e) {
             return ApiResponse.fail("删除失败: " + e.getMessage());

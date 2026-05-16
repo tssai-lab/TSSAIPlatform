@@ -7,12 +7,21 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 
 @Getter
 @Setter
 @Entity
-@Table(name = "model_version")
+@Table(
+        name = "model_version",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_model_version_asset_version",
+                        columnNames = {"asset_id", "version"}
+                )
+        }
+)
 public class ModelVersion {
 
     @Id
@@ -39,5 +48,11 @@ public class ModelVersion {
 
     @Column(name = "created_at")
     private Instant createdAt;
+
+    @Column(name = "deleted", nullable = false)
+    private Boolean deleted = false;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 }
 

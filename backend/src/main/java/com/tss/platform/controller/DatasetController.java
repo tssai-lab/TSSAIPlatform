@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -36,7 +37,11 @@ public class DatasetController {
 
     @GetMapping("/list")
     public ApiResponse<Map<String, Object>> list(
-            @RequestParam(value = "type", required = false) String type
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "current", required = false) Integer current,
+            @RequestParam(value = "pageSize", required = false) Integer pageSize
     ) {
         String normalizedType = null;
         if (type != null && !type.isBlank()) {
@@ -48,28 +53,43 @@ public class DatasetController {
         }
 
         final String filterType = normalizedType;
+        final String normalizedKeyword = normalizeKeyword(keyword);
         List<DatasetAsset> assets = authContext.isAdmin()
-                ? assetRepo.findAll()
-                : assetRepo.findByOwnerUserId(authContext.currentUserId());
-
-        List<Map<String, Object>> data = assets
-                .stream()
+                ? assetRepo.findByDeletedFalse()
+                : assetRepo.findByOwnerUserIdAndDeletedFalse(authContext.currentUserId());
+        List<DatasetAsset> filteredAssets = assets.stream()
                 .filter(asset -> filterType == null || filterType.equals(asset.getType()))
-                .map(this::toListItem)
+                .collect(Collectors.toList());
+
+        Set<String> assetIds = filteredAssets.stream()
+                .map(DatasetAsset::getId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+        List<DatasetVersion> versions = assetIds.isEmpty()
+                ? List.of()
+                : versionRepo.findByAssetIdInAndDeletedFalse(assetIds);
+        Map<String, List<DatasetVersion>> versionsByAssetId = versions.stream()
+                .collect(Collectors.groupingBy(DatasetVersion::getAssetId));
+
+        List<Map<String, Object>> allData = filteredAssets.stream()
+                .map(asset -> toListItem(asset, versionsByAssetId.getOrDefault(asset.getId(), List.of())))
+                .filter(item -> matchesKeyword(item, normalizedKeyword))
                 .sorted(Comparator.comparing(
                         item -> String.valueOf(item.getOrDefault("uploadTime", "")),
                         Comparator.reverseOrder()
                 ))
                 .collect(Collectors.toList());
+        List<Map<String, Object>> data = paginate(allData, page, current, pageSize);
 
         Map<String, Object> result = new HashMap<>();
         result.put("data", data);
-        result.put("total", data.size());
+        result.put("total", allData.size());
+        result.put("page", resolvePage(page, current));
+        result.put("pageSize", resolvePageSize(pageSize, allData.size()));
         return ApiResponse.ok(result);
     }
 
-    private Map<String, Object> toListItem(DatasetAsset asset) {
-        List<DatasetVersion> versions = versionRepo.findByAssetId(asset.getId());
+    private Map<String, Object> toListItem(DatasetAsset asset, List<DatasetVersion> versions) {
         Optional<DatasetVersion> latest = versions.stream()
                 .max(Comparator.comparing(
                         DatasetVersion::getCreatedAt,
@@ -104,6 +124,52 @@ public class DatasetController {
         item.put("createdAt", asset.getCreatedAt());
         item.put("updatedAt", asset.getUpdatedAt());
         return item;
+    }
+
+    private String normalizeKeyword(String keyword) {
+        return keyword == null || keyword.isBlank() ? null : keyword.trim().toLowerCase();
+    }
+
+    private boolean matchesKeyword(Map<String, Object> item, String keyword) {
+        if (keyword == null) {
+            return true;
+        }
+        return containsIgnoreCase(item.get("name"), keyword)
+                || containsIgnoreCase(item.get("version"), keyword)
+                || containsIgnoreCase(item.get("remark"), keyword)
+                || containsIgnoreCase(item.get("versionRemark"), keyword)
+                || containsIgnoreCase(item.get("fileName"), keyword);
+    }
+
+    private boolean containsIgnoreCase(Object value, String keyword) {
+        return value != null && value.toString().toLowerCase().contains(keyword);
+    }
+
+    private List<Map<String, Object>> paginate(
+            List<Map<String, Object>> source,
+            Integer page,
+            Integer current,
+            Integer pageSize
+    ) {
+        int size = resolvePageSize(pageSize, source.size());
+        if (size <= 0 || size >= source.size()) {
+            return source;
+        }
+        int pageNo = resolvePage(page, current);
+        int from = Math.min((pageNo - 1) * size, source.size());
+        int to = Math.min(from + size, source.size());
+        return source.subList(from, to);
+    }
+
+    private int resolvePage(Integer page, Integer current) {
+        if (current != null && current > 0) {
+            return current;
+        }
+        return page != null && page > 0 ? page : 1;
+    }
+
+    private int resolvePageSize(Integer pageSize, int total) {
+        return pageSize != null && pageSize > 0 ? pageSize : total;
     }
 
     private String formatBytes(Long bytes) {

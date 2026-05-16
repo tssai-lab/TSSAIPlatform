@@ -2,7 +2,9 @@ package com.tss.platform.service;
 
 import com.tss.platform.dto.ModelCodeFileDto;
 import com.tss.platform.dto.ModelCodePreviewDto;
+import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
@@ -32,15 +34,18 @@ public class ModelCodePreviewService {
     );
 
     private final ModelVersionRepository modelVersionRepo;
+    private final ModelAssetRepository modelAssetRepo;
     private final MinioService minioService;
     private final AuthContext authContext;
 
     public ModelCodePreviewService(
             ModelVersionRepository modelVersionRepo,
+            ModelAssetRepository modelAssetRepo,
             MinioService minioService,
             AuthContext authContext
     ) {
         this.modelVersionRepo = modelVersionRepo;
+        this.modelAssetRepo = modelAssetRepo;
         this.minioService = minioService;
         this.authContext = authContext;
     }
@@ -112,10 +117,19 @@ public class ModelCodePreviewService {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("模型版本 ID 不能为空");
         }
-        ModelVersion version = modelVersionRepo.findById(id)
+        ModelVersion version = modelVersionRepo.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new IllegalArgumentException("模型不存在"));
-        authContext.requireOwnerAccess(version.getOwnerUserId(), "model not found or no permission");
+        authContext.requireOwnerAccess(effectiveOwner(version), "model not found or no permission");
         return version;
+    }
+
+    private Integer effectiveOwner(ModelVersion version) {
+        if (version.getOwnerUserId() != null) {
+            return version.getOwnerUserId();
+        }
+        return modelAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .map(ModelAsset::getOwnerUserId)
+                .orElse(null);
     }
 
     private void ensureZip(String storagePath) {

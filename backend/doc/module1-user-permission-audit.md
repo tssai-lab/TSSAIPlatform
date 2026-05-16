@@ -182,24 +182,38 @@ users/{当前用户ID}/
 CV 数据集：
 
 ```text
-只支持 .zip
-zip 内必须包含图片文件
+只支持 .zip，或通过 /api/dataset/upload/folder 上传文件夹
+zip / 文件夹内必须至少包含一个图片文件
 图片后缀支持 .jpg、.jpeg、.png、.bmp、.gif、.webp、.tif、.tiff
+支持 cvTaskType，默认 UNLABELED
+支持 annotationFormat，默认 NONE
 ```
 
 CV 文件夹上传：
 
 ```text
-只允许上传图片文件
+至少包含一个图片文件
+标注文件按 annotationFormat 白名单校验
 会打包为 zip 后写入 MinIO
+```
+
+CV 标注格式规则：
+
+```text
+NONE / FOLDER_CLASSIFICATION / MASK：只允许图片
+CSV：允许 .csv，且必须包含标注文件
+YOLO：允许 .txt、.yaml、.yml，且必须包含标注文件
+COCO / LABELME：允许 .json，且必须包含标注文件
+VOC：允许 .xml，且必须包含标注文件
+OTHER：允许 .txt、.json、.xml、.csv、.yaml、.yml
 ```
 
 NLP 数据集：
 
 ```text
-支持 .txt、.json、.jsonl
+支持 .txt、.json、.jsonl、.csv、.xlsx、.xls、.pdf、.docx、.xml
 也支持 .zip
-zip 内必须包含 .txt、.json 或 .jsonl 文件
+zip 内必须包含 .txt、.json、.jsonl、.csv、.xlsx、.xls、.pdf、.docx 或 .xml 文件
 ```
 
 模型上传：
@@ -287,9 +301,9 @@ CV：
 NLP：
 
 ```text
-上传 .txt/.json/.jsonl，应成功
+上传 .txt/.json/.jsonl/.csv/.xlsx/.xls/.pdf/.docx/.xml，应成功
 上传非法后缀，应失败
-上传 zip 但内部没有 .txt/.json/.jsonl，应失败
+上传 zip 但内部没有 NLP 白名单格式文件，应失败
 ```
 
 ## 9. 模块一需要重点确认

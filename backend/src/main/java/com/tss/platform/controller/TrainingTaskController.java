@@ -3,6 +3,7 @@ package com.tss.platform.controller;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
+import com.tss.platform.dto.UpdateTrainingResultRequest;
 import com.tss.platform.service.TrainingExperimentService;
 import org.springframework.web.bind.annotation.*;
 
@@ -51,6 +52,18 @@ public class TrainingTaskController {
     public ApiResponse<TrainingExperimentVersionDto> stop(@RequestParam String id) {
         try {
             return ApiResponse.ok(service.updateStatus(id, "stopped"));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @PostMapping("/result")
+    public ApiResponse<TrainingExperimentVersionDto> updateResult(
+            @RequestParam String id,
+            @RequestBody UpdateTrainingResultRequest req
+    ) {
+        try {
+            return ApiResponse.ok(service.updateResultByIdOrExperimentId(id, req));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

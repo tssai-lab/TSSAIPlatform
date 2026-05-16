@@ -5,6 +5,7 @@ import com.tss.platform.dto.CreateExperimentVersionRequest;
 import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
 import com.tss.platform.dto.UpdateHyperParamsRequest;
+import com.tss.platform.dto.UpdateTrainingResultRequest;
 import com.tss.platform.service.TrainingExperimentService;
 import org.springframework.web.bind.annotation.*;
 
@@ -66,6 +67,19 @@ public class TrainingExperimentController {
     ) {
         try {
             return ApiResponse.ok(service.updateHyperParams(experimentId, versionNo, req));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @PutMapping("/{experimentId}/versions/{versionNo}/result")
+    public ApiResponse<TrainingExperimentVersionDto> updateResult(
+            @PathVariable String experimentId,
+            @PathVariable Integer versionNo,
+            @RequestBody UpdateTrainingResultRequest req
+    ) {
+        try {
+            return ApiResponse.ok(service.updateResult(experimentId, versionNo, req));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
