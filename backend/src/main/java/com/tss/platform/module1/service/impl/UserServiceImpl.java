@@ -72,6 +72,55 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO) {
+        Page<Map<String, Object>> page = new Page<>(queryDTO.getPage(), queryDTO.getSize());
+        return baseMapper.selectUserPage(page, queryDTO);
+    }
+
+    @Override
+    public Map<String, Object> getUserDetail(Integer userId) {
+        return baseMapper.selectUserDetail(userId);
+    }
+
+    @Override
+    public boolean updateUser(UserUpdateDTO updateDTO) {
+        User user = getById(updateDTO.getUserId());
+        if (user == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+        
+        if (updateDTO.getUsername() != null && !updateDTO.getUsername().isBlank()) {
+            user.setUsername(updateDTO.getUsername());
+        }
+        if (updateDTO.getMobile() != null && !updateDTO.getMobile().isBlank()) {
+            user.setMobile(updateDTO.getMobile());
+        }
+        if (updateDTO.getEmail() != null && !updateDTO.getEmail().isBlank()) {
+            user.setEmail(updateDTO.getEmail());
+        }
+        if (updateDTO.getRoleId() != null) {
+            user.setRoleId(updateDTO.getRoleId());
+        }
+        if (updateDTO.getStatus() != null) {
+            user.setStatus(updateDTO.getStatus());
+        }
+        user.setUpdatedAt(LocalDateTime.now());
+        
+        return updateById(user);
+    }
+
+    @Override
+    public boolean toggleUserStatus(Integer userId, Boolean status) {
+        User user = getById(userId);
+        if (user == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+        user.setStatus(status);
+        user.setUpdatedAt(LocalDateTime.now());
+        return updateById(user);
+    }
+
+    @Override
     public boolean registerByUsername(UserRegisterDTO dto) {
         SYSTEM_LOG.debug("注册请求入参: username={}", DesensitizationUtil.maskUsername(dto.getUsername()));
 
@@ -100,11 +149,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             user.setUsername(dto.getUsername().trim());
             user.setPassword(BCrypt.hashpw(dto.getPassword(), BCrypt.gensalt()));
             user.setEmail(dto.getUsername().trim() + "@default.com");
-            Integer roleId = dto.getRoleId();
-            if (roleId == null || roleId < 1 || roleId > 3) {
-                roleId = 3;
-            }
-            user.setRoleId(roleId);
+            user.setRoleId(3);
             user.setStatus(true);
             user.setCreatedAt(LocalDateTime.now());
             user.setUpdatedAt(LocalDateTime.now());
@@ -152,11 +197,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             user.setUsername(dto.getMobile().trim());
             user.setEmail(dto.getMobile().trim() + "@default.com");
             user.setPassword(BCrypt.hashpw(dto.getPassword(), BCrypt.gensalt()));
-            Integer roleId = dto.getRoleId();
-            if (roleId == null || roleId < 1 || roleId > 3) {
-                roleId = 3;
-            }
-            user.setRoleId(roleId);
+            user.setRoleId(3);
             user.setStatus(true);
             user.setCreatedAt(LocalDateTime.now());
             user.setUpdatedAt(LocalDateTime.now());
@@ -208,6 +249,31 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             USER_LOG.error("密码重置失败(数据库异常): mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
             throw new RuntimeException("密码重置失败，请稍后重试");
         }
+    }
+
+    @Override
+    public boolean promoteToNormalAdmin(Integer targetUserId) {
+        if (targetUserId == null) {
+            throw new IllegalArgumentException("用户ID不能为空");
+        }
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getId, targetUserId).isNull(User::getDeletedAt);
+        User user = getOne(wrapper);
+        if (user == null) {
+            SYSTEM_LOG.warn("晋升管理员失败: 用户不存在或已删除, userId={}", targetUserId);
+            throw new IllegalArgumentException("用户不存在");
+        }
+        if (user.getRoleId() == null || user.getRoleId() != 3) {
+            USER_LOG.warn("晋升管理员失败: 仅可将普通用户设为管理员, userId={}, roleId={}", targetUserId, user.getRoleId());
+            throw new IllegalArgumentException("仅可将普通用户设为普通管理员");
+        }
+        user.setRoleId(2);
+        user.setUpdatedAt(LocalDateTime.now());
+        boolean ok = updateById(user);
+        if (ok) {
+            USER_LOG.info("已设为普通管理员: userId={}", targetUserId);
+        }
+        return ok;
     }
 
     @Override
