@@ -1,8 +1,8 @@
-package com.example.demo.controller;
+package com.tss.platform.module1.controller;
 
-import com.example.demo.common.Result;
-import com.example.demo.entity.Role;
-import com.example.demo.service.RoleService;
+import com.tss.platform.module1.common.Result;
+import com.tss.platform.module1.entity.Role;
+import com.tss.platform.module1.service.RoleService;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
 
