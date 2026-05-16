@@ -1,12 +1,10 @@
+
 package com.tss.platform.module1.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.tss.platform.module1.common.Result;
-import com.tss.platform.module1.dto.UserRegisterDTO;
-import com.tss.platform.module1.dto.SmsCodeDTO;
-import com.tss.platform.module1.dto.LoginDTO;
-import com.tss.platform.module1.dto.ForgetPasswordDTO;
-import com.tss.platform.module1.dto.ResetPasswordDTO;
+import com.tss.platform.module1.dto.*;
 import com.tss.platform.module1.entity.OperationLog;
 import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.service.OperationLogService;
@@ -20,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,7 +46,7 @@ public class UserController {
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
         opLog.setUserName(user.getUsername() != null ? user.getUsername() : "unknown");
-        opLog.setOperationType("add");
+        opLog.setOperationType("新增");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员后台新增用户: " + DesensitizationUtil.maskUsername(user.getUsername()));
@@ -85,7 +84,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("reset");
+        opLog.setOperationType("重置");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员重置用户密码, userId=" + dto.getUserId());
@@ -117,6 +116,108 @@ public class UserController {
         return Result.success(list, "查询成功");
     }
 
+    @PostMapping("/page")
+    public Result<PageResultDTO<Map<String, Object>>> getUserPage(@RequestBody UserQueryDTO queryDTO) {
+        if (queryDTO.getPage() == null || queryDTO.getPage() < 1) {
+            queryDTO.setPage(1);
+        }
+        if (queryDTO.getSize() == null || queryDTO.getSize() < 1) {
+            queryDTO.setSize(10);
+        }
+        
+        IPage<Map<String, Object>> pageResult = userService.getUserPage(queryDTO);
+        
+        PageResultDTO<Map<String, Object>> result = new PageResultDTO<>(
+            pageResult.getRecords(),
+            pageResult.getTotal(),
+            queryDTO.getPage(),
+            queryDTO.getSize()
+        );
+        
+        return Result.success(result, "查询成功");
+    }
+
+    @GetMapping("/detail/{userId}")
+    public Result<Map<String, Object>> getUserDetail(@PathVariable Integer userId) {
+        Map<String, Object> userDetail = userService.getUserDetail(userId);
+        if (userDetail == null) {
+            return Result.fail("用户不存在");
+        }
+        return Result.success(userDetail, "查询成功");
+    }
+
+    @PutMapping("/update")
+    public Result<?> updateUser(@RequestBody UserUpdateDTO updateDTO, HttpServletRequest request) {
+        if (updateDTO.getUserId() == null) {
+            return Result.fail("用户ID不能为空");
+        }
+        
+        SYSTEM_LOG.info("管理员编辑用户请求: userId={}", updateDTO.getUserId());
+        
+        String ip = getClientIp(request);
+        OperationLog opLog = new OperationLog();
+        opLog.setUserId(StpUtil.getLoginIdAsInt());
+        opLog.setOperationType("修改");
+        opLog.setOperationObj("users");
+        opLog.setIpAddress(ip);
+        opLog.setRemarks("管理员编辑用户信息, userId=" + updateDTO.getUserId());
+
+        try {
+            boolean success = userService.updateUser(updateDTO);
+            if (success) {
+                opLog.setStatus("SUCCESS");
+                operationLogService.recordLog(opLog);
+                SYSTEM_LOG.info("管理员编辑用户成功: userId={}", updateDTO.getUserId());
+                return Result.success(null, "更新成功");
+            } else {
+                opLog.setStatus("FAIL");
+                operationLogService.recordLog(opLog);
+                SYSTEM_LOG.error("管理员编辑用户失败: userId={}", updateDTO.getUserId());
+                return Result.fail("更新失败");
+            }
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            opLog.setStatus("FAIL");
+            operationLogService.recordLog(opLog);
+            SYSTEM_LOG.error("管理员编辑用户异常: userId={}, error={}", updateDTO.getUserId(), e.getMessage());
+            return Result.fail("更新失败: " + e.getMessage());
+        }
+    }
+
+    @PutMapping("/status/{userId}")
+    public Result<?> toggleUserStatus(@PathVariable Integer userId, @RequestParam Boolean status, HttpServletRequest request) {
+        SYSTEM_LOG.info("管理员切换用户状态请求: userId={}, status={}", userId, status);
+        
+        String ip = getClientIp(request);
+        OperationLog opLog = new OperationLog();
+        opLog.setUserId(StpUtil.getLoginIdAsInt());
+        opLog.setOperationType("修改");
+        opLog.setOperationObj("users");
+        opLog.setRemarks("管理员切换用户状态, userId=" + userId + ", status=" + status);
+
+        try {
+            boolean success = userService.toggleUserStatus(userId, status);
+            if (success) {
+                opLog.setStatus("SUCCESS");
+                operationLogService.recordLog(opLog);
+                SYSTEM_LOG.info("管理员切换用户状态成功: userId={}", userId);
+                return Result.success(null, "状态更新成功");
+            } else {
+                opLog.setStatus("FAIL");
+                operationLogService.recordLog(opLog);
+                return Result.fail("状态更新失败");
+            }
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            opLog.setStatus("FAIL");
+            operationLogService.recordLog(opLog);
+            SYSTEM_LOG.error("管理员切换用户状态异常: userId={}, error={}", userId, e.getMessage());
+            return Result.fail("状态更新失败: " + e.getMessage());
+        }
+    }
+
     @DeleteMapping("/delete/{userId}")
     public Result<?> softDeleteUser(@PathVariable Integer userId, HttpServletRequest request) {
         SYSTEM_LOG.info("管理员删除用户请求: userId={}", userId);
@@ -124,7 +225,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("delete");
+        opLog.setOperationType("删除");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员软删除用户, userId=" + userId);
@@ -312,4 +413,3 @@ public class UserController {
         return ip;
     }
 }
-
