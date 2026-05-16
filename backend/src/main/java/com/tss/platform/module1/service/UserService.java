@@ -9,19 +9,18 @@ import java.util.List;
 import java.util.Map;
 
 public interface UserService extends IService<User> {
-    // 新增用户（自动加密密码）
     boolean addUser(User user);
-    // 重置用户密码
     boolean resetPassword(Integer userId, String newPassword);
-    // 查询用户列表（含角色名称）
     List<Map<String, Object>> getUserListWithRole();
-    // 软删除用户
     boolean softDeleteUser(Integer userId);
-    boolean registerByUsername(UserRegisterDTO dto); // 账号密码注册
-    boolean registerByMobile(UserRegisterDTO dto);   // 手机号+验证码注册
+    boolean registerByUsername(UserRegisterDTO dto);
+    boolean registerByMobile(UserRegisterDTO dto);
     boolean forgetPassword(ForgetPasswordDTO dto);
     Map<String, Object> login(LoginDTO dto);
-
-    /** 将普通用户（role_id=3）提升为普通管理员（role_id=2），业务层校验目标用户状态 */
     boolean promoteToNormalAdmin(Integer targetUserId);
+
+    IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO);
+    Map<String, Object> getUserDetail(Integer userId);
+    boolean updateUser(UserUpdateDTO updateDTO);
+    boolean toggleUserStatus(Integer userId, Boolean status);
 }
