@@ -3,7 +3,8 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
-import { registerByMobile } from '@/services/ant-design-pro/api';
+import { Footer } from '@/components';
+import { register } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
 
@@ -88,7 +89,14 @@ const Register: React.FC = () => {
 
       // 兼容不同的响应格式
       if (result.code === 200 || result.status === 'ok') {
-        messageApi.success('验证码发送成功，请使用后端生成的验证码');
+        // 开发环境显示验证码，生产环境不显示
+        if ((result as any).data?.captcha) {
+          messageApi.success(
+            `验证码发送成功！验证码为：${(result as any).data.captcha}`,
+          );
+        } else {
+          messageApi.success('验证码已发送到您的手机，请查收');
+        }
         startCountdown();
       } else {
         setRegisterState({
@@ -113,11 +121,11 @@ const Register: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
-      const response = await registerByMobile({
+      const response = await register({
+        username: values.username,
         password: values.password,
-        confirmPassword: values.confirmPassword,
-        mobile: values.phone,
-        smsCode: values.captcha,
+        phone: values.phone,
+        captcha: values.captcha,
       });
 
       if (response.code === 200) {
@@ -176,7 +184,7 @@ const Register: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <img
               alt="logo"
-              src="/estun.png"
+              src="/estun-logo.svg"
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>注册账号</h2>
@@ -199,7 +207,7 @@ const Register: React.FC = () => {
               name="username"
               rules={[
                 { required: true, message: '请输入用户名' },
-                { min: 6, max: 20, message: '用户名需为6-20位字符' },
+                { min: 3, message: '用户名至少3个字符' },
               ]}
             >
               <Input prefix={<UserOutlined />} placeholder="请输入用户名" />
@@ -209,7 +217,7 @@ const Register: React.FC = () => {
               name="password"
               rules={[
                 { required: true, message: '请输入密码' },
-                { pattern: /^\w{6,16}$/, message: '密码6-16位字母/数字/下划线' },
+                { min: 6, message: '密码长度至少6位' },
               ]}
             >
               <Input.Password
@@ -257,7 +265,7 @@ const Register: React.FC = () => {
               name="captcha"
               rules={[
                 { required: true, message: '请输入验证码！' },
-                { pattern: /^\d{6}$/, message: '验证码为6位数字' },
+                { len: 4, message: '验证码为4位数字' },
               ]}
             >
               <Input
@@ -297,6 +305,7 @@ const Register: React.FC = () => {
           </Form>
         </div>
       </div>
+      <Footer />
     </div>
   );
 };

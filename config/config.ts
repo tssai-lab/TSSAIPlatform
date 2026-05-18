@@ -7,7 +7,7 @@ import proxy from './proxy';
 
 import routes from './routes';
 
-const { REACT_APP_ENV = 'dev' } = process.env;
+const { REACT_APP_ENV = 'dev', REACT_APP_HISTORY_MODE = 'hash' } = process.env;
 
 /**
  * @name 使用公共路径
@@ -24,13 +24,11 @@ export default defineConfig({
    */
   hash: true,
 
-  publicPath: PUBLIC_PATH,
+  history: {
+    type: REACT_APP_HISTORY_MODE === 'browser' ? 'browser' : 'hash',
+  },
 
-  /**
-   * @name favicon
-   * @description 配置站点 favicon（从 public/ 下读取）
-   */
-  favicons: ['/estun.png'],
+  publicPath: PUBLIC_PATH,
 
   /**
    * @name 兼容性设置
@@ -89,7 +87,7 @@ export default defineConfig({
    * @name layout 插件
    * @doc https://umijs.org/docs/max/layout-menu
    */
-  title: 'AI训练管理',
+  title: 'AI训练平台',
   layout: {
     locale: true,
     ...defaultSettings,

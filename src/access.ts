@@ -22,21 +22,21 @@ export default function access(
 
     /** 系统管理-用户管理：超管+普管可见 */
     canAccessSystemUser: isAdmin,
-    /** 系统管理-管理员列表：仅超管（管理员账号属于敏感数据） */
-    canAccessSystemAdmin: isSuperAdmin,
+    /** 系统管理-角色管理：仅超管 */
+    canAccessSystemRole: isSuperAdmin,
+    /** 系统管理-权限管理：仅超管 */
+    canAccessSystemPermission: isSuperAdmin,
     /** 系统管理-日志管理：超管+普管可见 */
     canAccessSystemLog: isAdmin,
-    /** 系统管理-系统配置：仅超管 */
-    canAccessSystemConfig: isSuperAdmin,
 
-    /** 用户管理-删除/批量删除/导出：管理员可用 */
-    canUserDeleteOrExport: isAdmin,
-    /** 用户管理-角色筛选与分配管理员角色：仅超管（普管指定不了管理员） */
+    /** 用户管理-删除/批量删除/导出：仅超管 */
+    canUserDeleteOrExport: isSuperAdmin,
+    /** 用户管理-角色筛选与分配管理员角色：仅超管（普管只能分配非管理员角色） */
     canUserRoleFilterAndAssignAdmin: isSuperAdmin,
-    /** 日志管理-导出：管理员可用 */
-    canLogExport: isAdmin,
-    /** 日志管理-查看管理员日志及IP：管理员可用 */
-    canLogViewAdminAndIp: isAdmin,
+    /** 日志管理-导出：仅超管 */
+    canLogExport: isSuperAdmin,
+    /** 日志管理-查看管理员日志及IP：仅超管（普管仅看普通用户日志且隐藏IP） */
+    canLogViewAdminAndIp: isSuperAdmin,
 
     /** 个人中心-我的操作记录：所有登录用户 */
     canViewMyOperationLogs: !!currentUser,

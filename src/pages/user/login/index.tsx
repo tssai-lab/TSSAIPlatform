@@ -23,6 +23,7 @@ import { Alert, App, Tabs } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { Footer } from '@/components';
 import { login } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
@@ -94,14 +95,18 @@ const LoginMessage: React.FC<{
 
 const Login: React.FC = () => {
   const [userLoginState, setUserLoginState] = useState<API.LoginResult>({});
-  const [loginErrorMsg, setLoginErrorMsg] = useState<string>('');
   const [type, setType] = useState<string>('account');
   const { initialState, setInitialState } = useModel('@@initialState');
   const { styles } = useStyles();
   const { message } = App.useApp();
   const intl = useIntl();
 
-
+  // 开发阶段：已 Mock 登录，若已有 currentUser 则直接跳转首页
+  useEffect(() => {
+    if (initialState?.currentUser?.name) {
+      history.replace('/dashboard');
+    }
+  }, [initialState?.currentUser]);
 
   const fetchUserInfo = async () => {
     const userInfo = await initialState?.fetchUserInfo?.();
@@ -115,42 +120,14 @@ const Login: React.FC = () => {
     }
   };
 
-  /** 根路径默认进登录页；若本地已有有效 Token 则直接进入工作台 */
-  useEffect(() => {
-    const token = storage.get(STORAGE_KEYS.TOKEN);
-    if (!token) return;
-    (async () => {
-      const user = await initialState?.fetchUserInfo?.();
-      if (user) {
-        flushSync(() => {
-          setInitialState((s) => ({ ...s, currentUser: user }));
-        });
-        history.replace('/dashboard');
-      }
-    })();
-  }, []);
-
   const handleSubmit = async (values: API.LoginParams) => {
     try {
-      const payload: API.LoginParams =
-        type === 'mobile'
-          ? {
-              type,
-              mobile: values.mobile,
-              smsCode: values.captcha,
-            }
-          : {
-              type,
-              username: values.username,
-              password: values.password,
-            };
       // 登录
-      const msg = await login(payload);
+      const msg = await login({ ...values, type });
       // 兼容两种成功标识：status === 'ok'（旧）或 code === 200（后端 code/msg/data）
       const isSuccess =
         (msg as any)?.status === 'ok' || (msg as any)?.code === 200;
       if (isSuccess) {
-        setLoginErrorMsg('');
         // 登录成功后把 token 写入本地（使用 utils/storage），供 request 拦截器读取
         const token =
           (msg as any)?.data?.token ??
@@ -175,23 +152,14 @@ const Login: React.FC = () => {
       }
       console.log(msg);
       // 如果失败去设置用户错误信息
-      setLoginErrorMsg((msg as any)?.msg || (msg as any)?.message || '登录失败，请重试！');
       setUserLoginState(msg);
     } catch (error) {
-      console.log(error);
-      const errMsg =
-        (error as any)?.info?.message ||
-        (error as any)?.message ||
-        intl.formatMessage({
-          id: 'pages.login.failure',
-          defaultMessage: '登录失败，请重试！',
-        });
-      setLoginErrorMsg(errMsg);
-      setUserLoginState({
-        status: 'error',
-        type,
+      const defaultLoginFailureMessage = intl.formatMessage({
+        id: 'pages.login.failure',
+        defaultMessage: '登录失败，请重试！',
       });
-      message.error(errMsg);
+      console.log(error);
+      message.error(defaultLoginFailureMessage);
     }
   };
   const { status, type: loginType } = userLoginState;
@@ -222,8 +190,8 @@ const Login: React.FC = () => {
             minWidth: 280,
             maxWidth: '75vw',
           }}
-          logo={<img alt="logo" src="/estun.png" />}
-          title="AI平台"
+          logo={<img alt="logo" src="/estun-logo.svg" />}
+          title="AI训练平台"
           subTitle={intl.formatMessage({
             id: 'pages.layouts.userLayout.title',
           })}
@@ -266,13 +234,10 @@ const Login: React.FC = () => {
 
           {status === 'error' && loginType === 'account' && (
             <LoginMessage
-              content={
-                loginErrorMsg ||
-                intl.formatMessage({
-                  id: 'pages.login.accountLogin.errorMessage',
-                  defaultMessage: '账户或密码错误(admin/ant.design)',
-                })
-              }
+              content={intl.formatMessage({
+                id: 'pages.login.accountLogin.errorMessage',
+                defaultMessage: '账户或密码错误(admin/ant.design)',
+              })}
             />
           )}
           {type === 'account' && (
@@ -325,7 +290,7 @@ const Login: React.FC = () => {
           )}
 
           {status === 'error' && loginType === 'mobile' && (
-            <LoginMessage content={loginErrorMsg || '验证码错误'} />
+            <LoginMessage content="验证码错误" />
           )}
           {type === 'mobile' && (
             <>
@@ -361,11 +326,9 @@ const Login: React.FC = () => {
                 ]}
               />
               <ProFormCaptcha
-                phoneName="mobile"
                 fieldProps={{
                   size: 'large',
                   prefix: <LockOutlined />,
-                  maxLength: 6,
                 }}
                 captchaProps={{
                   size: 'large',
@@ -397,24 +360,15 @@ const Login: React.FC = () => {
                       />
                     ),
                   },
-                  {
-                    pattern: /^\d{6}$/,
-                    message: '验证码为6位数字',
-                  },
                 ]}
                 onGetCaptcha={async (phone) => {
-                  if (!phone) {
-                    message.error('请先输入正确的手机号');
-                    return;
-                  }
                   const result = await getFakeCaptcha({
                     phone,
                   });
-                  if ((result as any)?.code === 200 || (result as any)?.status === 'ok') {
-                    message.success('验证码发送成功，请使用后端生成的验证码登录');
-                  } else {
-                    message.error((result as any)?.msg || '验证码发送失败，请重试');
+                  if (!result) {
+                    return;
                   }
+                  message.success('获取验证码成功！验证码为：1234');
                 }}
               />
             </>
@@ -459,6 +413,7 @@ const Login: React.FC = () => {
           </div>
         </LoginForm>
       </div>
+      <Footer />
     </div>
   );
 };

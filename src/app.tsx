@@ -1,11 +1,10 @@
-import { LinkOutlined } from '@ant-design/icons';
 import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import { SettingDrawer } from '@ant-design/pro-components';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
-import { history, Link } from '@umijs/max';
-import { App, notification } from 'antd';
+import { history } from '@umijs/max';
+import { message, notification } from 'antd';
 import React from 'react';
-import { AvatarDropdown, AvatarName, Question } from '@/components';
+import { AvatarDropdown, AvatarName } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
@@ -13,25 +12,23 @@ import '@ant-design/v5-patch-for-react-19';
 
 const isDev = process.env.NODE_ENV === 'development';
 const loginPath = '/user/login';
+const apiBaseURL = process.env.REACT_APP_API_BASE_URL || '';
 
-/** 后端 role_id → access.ts 使用的角色码 */
-function roleIdToAccessRole(
-  roleId?: number,
-): API.UserRole | undefined {
-  if (roleId === 1) return 'super_admin';
-  if (roleId === 2) return 'normal_admin';
-  if (roleId === 3) return 'user';
-  return undefined;
+function getMockCurrentUserByRole(role: string): API.CurrentUser {
+  const roleMap: Record<string, { name: string; userid: string }> = {
+    super_admin: { name: 'admin（超管）', userid: 'admin' },
+    normal_admin: { name: 'manager1（普管）', userid: 'manager1' },
+    user: { name: 'test01（普通用户）', userid: 'test01' },
+  };
+
+  const current = roleMap[role] || roleMap.super_admin;
+  return {
+    name: current.name,
+    userid: current.userid,
+    role: role as API.UserRole,
+  };
 }
 
-// 创建全局message实例引用
-let messageInstance: any;
-
-
-
-/**
- * @see https://umijs.org/docs/api/runtime-config#getinitialstate
- * */
 export async function getInitialState(): Promise<{
   settings?: Partial<LayoutSettings>;
   currentUser?: API.CurrentUser;
@@ -43,15 +40,26 @@ export async function getInitialState(): Promise<{
       const msg = await queryCurrentUser({
         skipErrorHandler: true,
       });
-      const user = (msg as any)?.data;
-      if (!user) return undefined;
-      return {
-        ...user,
-        // 后端返回 username，这里兼容 ProLayout 默认使用的 name 字段
-        name: user.name ?? user.username,
-        role: roleIdToAccessRole(user.roleId),
-      };
+      const user = msg.data;
+
+      if (isDev && typeof window !== 'undefined') {
+        const mockRole = window.localStorage.getItem(
+          'mock_role',
+        ) as API.UserRole | null;
+        if (
+          mockRole &&
+          ['super_admin', 'normal_admin', 'user'].includes(mockRole)
+        ) {
+          return { ...user, role: mockRole } as API.CurrentUser;
+        }
+        if (user && !user.role) {
+          return { ...user, role: 'super_admin' } as API.CurrentUser;
+        }
+      }
+
+      return user;
     } catch (_error) {
+      history.push(loginPath);
       return undefined;
     }
   };
@@ -66,7 +74,21 @@ export async function getInitialState(): Promise<{
       '/user/reset-password',
     ].includes(location.pathname)
   ) {
-    const currentUser = await fetchUserInfo();
+    let currentUser = await fetchUserInfo();
+    if (isDev && typeof window !== 'undefined' && !currentUser) {
+      const mockRole = window.localStorage.getItem(
+        'mock_role',
+      ) as API.UserRole | null;
+      if (
+        mockRole &&
+        ['super_admin', 'normal_admin', 'user'].includes(mockRole)
+      ) {
+        currentUser = getMockCurrentUserByRole(mockRole);
+      } else {
+        currentUser = getMockCurrentUserByRole('super_admin');
+      }
+    }
+
     return {
       fetchUserInfo,
       currentUser,
@@ -76,53 +98,27 @@ export async function getInitialState(): Promise<{
 
   return {
     fetchUserInfo,
-    currentUser: undefined,
+    currentUser: isDev ? getMockCurrentUserByRole('super_admin') : undefined,
     settings: defaultSettings as Partial<LayoutSettings>,
   };
 }
 
-// ProLayout 支持的api https://procomponents.ant.design/components/layout
 export const layout: RunTimeLayoutConfig = ({
   initialState,
   setInitialState,
 }) => {
-  // 初始化message实例
-  if (!messageInstance) {
-    messageInstance = App.useApp().message;
-  }
   return {
-    // 顶部导航栏右侧的菜单
-    actionsRender: () => [<Question key="doc" />],
-    // 配置顶部栏右侧的用户头像
     avatarProps: {
-      // 头像图片地址
       src: initialState?.currentUser?.avatar,
-      // 头像hover时的提示（用户名）
       title: <AvatarName />,
-      // 点击/hover头像时的下拉菜单
       render: (_, avatarChildren) => {
         return <AvatarDropdown>{avatarChildren}</AvatarDropdown>;
       },
     },
-    // 页面水印（已关闭）
-    // waterMarkProps: {
-    //   content: initialState?.currentUser?.name,
-    // },
-
+    footerRender: false,
     onPageChange: () => {
-      const { pathname } = history.location;
-      const noLoginPaths = new Set([
-        loginPath,
-        '/user/register',
-        '/user/forgot-password',
-        '/user/reset-password',
-      ]);
-      if (noLoginPaths.has(pathname)) return;
-      if (!initialState?.currentUser) {
-        history.push(loginPath);
-      }
+      return;
     },
-    // 配置布局装饰背景图
     bgLayoutImgList: [
       {
         src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/D2LWSqNny4sAAAAAAAAAAAAAFl94AQBr',
@@ -143,21 +139,8 @@ export const layout: RunTimeLayoutConfig = ({
         width: '331px',
       },
     ],
-    links: isDev
-      ? [
-          <Link key="openapi" to="/umi/plugin/openapi" target="_blank">
-            <LinkOutlined />
-            <span>OpenAPI 文档</span>
-          </Link>,
-        ]
-      : [],
-    // 边栏顶部默认 Logo
     menuHeaderRender: undefined,
-    // 自定义 403 页面
-    // unAccessible: <div>unAccessible</div>,
-    // 增加一个 loading 的状态
     childrenRender: (children) => {
-      // if (initialState?.loading) return <PageLoading />;
       return (
         <>
           {children}
@@ -181,42 +164,42 @@ export const layout: RunTimeLayoutConfig = ({
   };
 };
 
-/**
- * @name request 配置，可以配置错误处理
- * 它基于 axios 和 ahooks 的 useRequest 提供了一套统一的网络请求和错误处理方案。
- * @doc https://umijs.org/docs/max/request#配置
- */
-// 全局请求配置
 export const request: RequestConfig = {
-  timeout: 10000,
-  baseURL: '/api',
+  timeout: 300000,
+  baseURL: apiBaseURL,
   headers: {
     'Content-Type': 'application/json',
   },
-
   errorConfig: {
     errorThrower: (res) => {
       const resAny = (res as any) ?? {};
-      const { code, message, msg, data } = resAny;
-      const messageText = msg ?? message;
-      const isSuccess =
-        typeof code !== 'undefined' ? code === 200 : resAny.success;
+      const { code, message, msg, data, errorMessage, success } = resAny;
+      const messageText =
+        (typeof errorMessage === 'string' && errorMessage.trim()) ||
+        (typeof msg === 'string' && msg) ||
+        (typeof message === 'string' && message) ||
+        '请求失败';
+      let isSuccess = true;
+      if (typeof success === 'boolean') {
+        isSuccess = success;
+      } else if (typeof code === 'number') {
+        isSuccess = code === 200;
+      }
       if (!isSuccess) {
-        const error = new Error(messageText || '请求失败') as any;
+        const error = new Error(messageText) as any;
         error.name = 'BizError';
-        error.info = { code, data };
+        error.info = { code, data, errorMessage };
         throw error;
       }
     },
-
     errorHandler: (error: any, opts: any) => {
       if (opts?.skipErrorHandler) return;
 
       if (error.name === 'AxiosError') {
         if (error.code === 'ECONNABORTED') {
-          messageInstance?.error('请求超时，请稍后重试');
+          message.error('请求超时，请稍后重试');
         } else {
-          messageInstance?.error(`网络错误：${error.message || '无法连接服务器'}`);
+          message.error(`网络错误：${error.message || '无法连接服务器'}`);
         }
       } else if (error.name === 'BizError') {
         const { code } = error.info ?? {};
@@ -226,18 +209,16 @@ export const request: RequestConfig = {
             history.push(loginPath);
             break;
           case 403:
-            messageInstance?.warning('暂无操作权限，请联系管理员');
+            message.warning('暂无操作权限，请联系管理员');
             break;
           default:
-            messageInstance?.error(error.message || '业务处理失败');
+            message.error(error.message || '业务处理失败');
         }
       }
     },
   },
-
   requestInterceptors: [
     (config: any) => {
-      // 与登录页 storage.set(STORAGE_KEYS.TOKEN, token) 成对
       const token = storage.get<string>(STORAGE_KEYS.TOKEN);
       if (token && config.headers) {
         config.headers.Authorization = `Bearer ${typeof token === 'string' ? token : ''}`;
@@ -245,10 +226,8 @@ export const request: RequestConfig = {
       return config;
     },
   ],
-
   responseInterceptors: [
     (response) => {
-      // 插件只有 data.success === false 时才调用 errorThrower，后端用 code 表示错误，这里把 code !== 200 转成 success: false
       const data = response?.data as
         | { code?: number; success?: boolean }
         | undefined;

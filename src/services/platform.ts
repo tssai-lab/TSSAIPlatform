@@ -10,6 +10,7 @@ export {
   fetchModelDetail,
   modelUploadInit,
   modelUploadChunk,
+  modelUploadProgress,
   modelUploadComplete,
   deleteModel,
 } from './model';
@@ -19,13 +20,20 @@ export {
   fetchDatasetDetail,
   uploadDataset,
   deleteDataset,
+  datasetUploadInit,
+  datasetUploadChunk,
+  datasetUploadProgress,
+  datasetUploadComplete,
+  datasetUploadFolder,
 } from './dataset';
 
 export {
   fetchTaskList,
   fetchTaskDetail,
-  createTaskWithParams,
-  createTaskWithTrainingCode,
+  createTask,
+  listExperimentVersions,
+  updateExperimentHyperParams,
+  createExperimentVersion,
   stopTask,
   deleteTask,
 } from './task';
@@ -35,3 +43,5 @@ export {
   fetchMlflowMetricsBulk,
   MLFLOW_METRIC_KEYS,
 } from './mlflow';
+
+export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';

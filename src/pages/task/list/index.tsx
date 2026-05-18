@@ -1,10 +1,15 @@
-import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Button, message, Popconfirm, Space, Tag } from 'antd';
+import { MoreOutlined } from '@ant-design/icons';
 import type { ProColumns } from '@ant-design/pro-components';
-import React from 'react';
+import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { fetchTaskList as fetchTaskListService, stopTask, deleteTask } from '@/services/platform';
+import { Button, Dropdown, message, Popconfirm, Space, Tag } from 'antd';
+import React from 'react';
 import { MOCK_TASKS } from '@/constants/mockData';
+import {
+  deleteTask,
+  fetchTaskList as fetchTaskListService,
+  stopTask,
+} from '@/services/platform';
 
 /**
  * 训练任务列表页 - Page 层
@@ -14,7 +19,9 @@ const TaskList: React.FC = () => {
   const fetchTaskList = async (params: any) => {
     try {
       const res = await fetchTaskListService(params);
-      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+      const list = (res as any)?.data?.data ?? [];
+      const total = (res as any)?.data?.total ?? list.length;
+      return { data: list, success: true, total };
     } catch {
       return { data: MOCK_TASKS, success: true, total: MOCK_TASKS.length };
     }
@@ -53,6 +60,21 @@ const TaskList: React.FC = () => {
 
   const columns: ProColumns<API.TaskItem>[] = [
     {
+      title: '实验ID',
+      dataIndex: 'experimentId',
+      key: 'experimentId',
+      width: 220,
+      ellipsis: true,
+      hideInSearch: true,
+    },
+    {
+      title: '版本号',
+      dataIndex: 'versionNo',
+      key: 'versionNo',
+      width: 90,
+      hideInSearch: true,
+    },
+    {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
@@ -90,32 +112,51 @@ const TaskList: React.FC = () => {
       title: '操作',
       key: 'action',
       hideInSearch: true,
+      fixed: 'right',
+      width: 120,
       render: (_, record) => (
-        <Space>
+        <Space size={4} wrap={false}>
           <Button
             type="link"
             onClick={() => history.push(`/task/detail/${record.id}`)}
           >
             查看详情
           </Button>
-          {record.status === 'running' && (
-            <Popconfirm
-              title="确定要终止任务吗？"
-              onConfirm={() => handleStop(record.id)}
-            >
-              <Button type="link" danger>
-                终止任务
-              </Button>
-            </Popconfirm>
-          )}
-          <Popconfirm
-            title="确定要删除吗？"
-            onConfirm={() => handleDelete(record.id)}
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                ...(record.status === 'running'
+                  ? [
+                      {
+                        key: 'stop',
+                        label: (
+                          <Popconfirm
+                            title="确定要终止任务吗？"
+                            onConfirm={() => handleStop(record.id)}
+                          >
+                            <span style={{ color: '#ff4d4f' }}>终止任务</span>
+                          </Popconfirm>
+                        ),
+                      },
+                    ]
+                  : []),
+                {
+                  key: 'delete',
+                  label: (
+                    <Popconfirm
+                      title="确定要删除吗？"
+                      onConfirm={() => handleDelete(record.id)}
+                    >
+                      <span style={{ color: '#ff4d4f' }}>删除</span>
+                    </Popconfirm>
+                  ),
+                },
+              ],
+            }}
           >
-            <Button type="link" danger>
-              删除
-            </Button>
-          </Popconfirm>
+            <Button type="text" size="small" icon={<MoreOutlined />} />
+          </Dropdown>
         </Space>
       ),
     },
@@ -126,6 +167,9 @@ const TaskList: React.FC = () => {
       title="训练任务"
       subTitle="管理所有训练任务，支持状态筛选、终止、删除等操作"
       extra={[
+        <Button key="compare" onClick={() => history.push('/task/compare')}>
+          模型性能对比
+        </Button>,
         <Button
           key="create"
           type="primary"
@@ -151,9 +195,3 @@ const TaskList: React.FC = () => {
 };
 
 export default TaskList;
-
-
-
-
-
-

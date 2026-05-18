@@ -1,20 +1,24 @@
-import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
-import React from 'react';
+import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { fetchModelList as fetchModelListService, deleteModel } from '@/services/platform';
+import { Button, message, Popconfirm, Space } from 'antd';
+import React from 'react';
 import { MOCK_MODELS } from '@/constants/mockData';
+import {
+  deleteModel,
+  fetchModelList as fetchModelListService,
+  getDownloadUrl,
+} from '@/services/platform';
 
-/**
- * 模型列表页 - Page 层
- * 调用 Services 层接口，适配 ProTable 的 request 格式
- */
 const ModelList: React.FC = () => {
   const fetchModelList = async (params: any) => {
     try {
       const res = await fetchModelListService(params);
-      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+      return {
+        data: res?.data || [],
+        success: true,
+        total: res?.total ?? (res?.data?.length || 0),
+      };
     } catch {
       return { data: MOCK_MODELS, success: true, total: MOCK_MODELS.length };
     }
@@ -30,17 +34,17 @@ const ModelList: React.FC = () => {
     }
   };
 
+  const handleDownload = (storagePath?: string) => {
+    if (!storagePath) {
+      message.warning('当前模型没有可下载文件');
+      return;
+    }
+    window.open(getDownloadUrl(storagePath), '_blank');
+  };
+
   const columns: ProColumns<API.ModelItem>[] = [
-    {
-      title: '模型名称',
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: '版本号',
-      dataIndex: 'version',
-      key: 'version',
-    },
+    { title: '模型名称', dataIndex: 'name', key: 'name' },
+    { title: '版本号', dataIndex: 'version', key: 'version' },
     {
       title: '类型',
       dataIndex: 'type',
@@ -55,11 +59,14 @@ const ModelList: React.FC = () => {
       dataIndex: 'uploadTime',
       key: 'uploadTime',
       valueType: 'dateTime',
+      hideInSearch: true,
     },
+    { title: '大小', dataIndex: 'size', key: 'size', hideInSearch: true },
     {
-      title: '大小',
-      dataIndex: 'size',
-      key: 'size',
+      title: '备注',
+      dataIndex: 'remark',
+      key: 'remark',
+      ellipsis: true,
       hideInSearch: true,
     },
     {
@@ -72,11 +79,16 @@ const ModelList: React.FC = () => {
             type="link"
             onClick={() => history.push(`/model/detail/${record.id}`)}
           >
-            查看详情
+            详情
           </Button>
-          <Button type="link">下载</Button>
+          <Button
+            type="link"
+            onClick={() => handleDownload(record.storagePath)}
+          >
+            下载
+          </Button>
           <Popconfirm
-            title="确定要删除吗？"
+            title="确认删除该模型？"
             onConfirm={() => handleDelete(record.id)}
           >
             <Button type="link" danger>
@@ -91,7 +103,7 @@ const ModelList: React.FC = () => {
   return (
     <PageContainer
       title="模型管理"
-      subTitle="管理所有已上传的模型，支持搜索、筛选、删除等操作"
+      subTitle="浏览已上传的模型版本"
       extra={[
         <Button
           key="upload"
@@ -106,21 +118,11 @@ const ModelList: React.FC = () => {
         columns={columns}
         request={fetchModelList}
         rowKey="id"
-        search={{
-          labelWidth: 'auto',
-        }}
-        pagination={{
-          pageSize: 10,
-        }}
+        search={{ labelWidth: 'auto' }}
+        pagination={{ pageSize: 10 }}
       />
     </PageContainer>
   );
 };
 
 export default ModelList;
-
-
-
-
-
-

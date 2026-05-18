@@ -11,7 +11,7 @@ export async function fetchTaskList(options?: {
   pageSize?: number;
   status?: string;
 }) {
-  return request<{ code: number; message: string; data: API.TaskItem[]; total?: number }>(
+  return request<{ success: boolean; data: { data: API.TaskItem[]; total: number }; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_LIST,
     {
       method: 'GET',
@@ -22,7 +22,7 @@ export async function fetchTaskList(options?: {
 
 /** 获取任务详情 */
 export async function fetchTaskDetail(id: string, options?: { [key: string]: any }) {
-  return request<{ code: number; message: string; data: API.TaskItem }>(
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_DETAIL,
     {
       method: 'GET',
@@ -32,49 +32,80 @@ export async function fetchTaskDetail(id: string, options?: { [key: string]: any
   );
 }
 
-/** 创建训练任务（表单参数） */
-export async function createTaskWithParams(params: {
-  name?: string;
-  modelId: string;
-  datasetId: string;
-  params: Record<string, unknown>;
-}) {
-  return request<{ code: number; message: string; data?: { taskId: string } }>(
+/** 发起训练任务（会自动生成 experimentId，并创建 versionNo=1） */
+export async function createTask(
+  params: {
+    name?: string;
+    modelVersionId: string;
+    codeVersionId: string;
+    datasetVersionId: string;
+    hyperParams: Record<string, unknown> | string;
+    remark?: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_CREATE,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      data: { ...params, paramsMode: 'form' },
+      data: params,
+      ...(options || {}),
     },
   );
 }
 
-/** 创建训练任务（上传训练代码） */
-export async function createTaskWithTrainingCode(params: {
-  name?: string;
-  modelId: string;
-  datasetId: string;
-  trainingCodeFile: File;
-}) {
-  const formData = new FormData();
-  if (params.name) formData.append('name', params.name);
-  formData.append('modelId', params.modelId);
-  formData.append('datasetId', params.datasetId);
-  formData.append('paramsMode', 'upload');
-  formData.append('trainingCode', params.trainingCodeFile);
-  return request<{ code: number; message: string; data?: { taskId: string } }>(
-    API_CONFIG.ENDPOINTS.TASK_CREATE,
+/** 按 experimentId 查看历史版本 */
+export async function listExperimentVersions(experimentId: string, options?: { [key: string]: any }) {
+  return request<{ success: boolean; data: API.TrainingExperimentVersion[]; errorMessage?: string }>(
+    API_CONFIG.ENDPOINTS.EXPERIMENT_VERSIONS(experimentId),
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+/** 修改指定版本的超参数 */
+export async function updateExperimentHyperParams(
+  experimentId: string,
+  versionNo: number,
+  body: { hyperParams: Record<string, unknown> | string; remark?: string },
+  options?: { [key: string]: any },
+) {
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
+    API_CONFIG.ENDPOINTS.EXPERIMENT_HYPER_PARAMS_UPDATE(experimentId, versionNo),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** 创建实验新版本（versionNo 自动递增，不传字段继承最新版本） */
+export async function createExperimentVersion(
+  experimentId: string,
+  body: {
+    codeVersionId?: string;
+    datasetVersionId?: string;
+    hyperParams?: Record<string, unknown> | string;
+    remark?: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
+    API_CONFIG.ENDPOINTS.EXPERIMENT_VERSION_CREATE(experimentId),
     {
       method: 'POST',
-      data: formData,
-      requestType: 'form',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      ...(options || {}),
     },
   );
 }
 
 /** 终止任务 */
 export async function stopTask(id: string, options?: { [key: string]: any }) {
-  return request<{ code: number; message: string; data?: any }>(
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_STOP,
     {
       method: 'POST',
@@ -86,7 +117,7 @@ export async function stopTask(id: string, options?: { [key: string]: any }) {
 
 /** 删除任务 */
 export async function deleteTask(id: string, options?: { [key: string]: any }) {
-  return request<{ code: number; message: string; data?: any }>(
+  return request<{ success: boolean; data: any; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_DELETE,
     {
       method: 'DELETE',

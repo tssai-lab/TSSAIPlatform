@@ -1,22 +1,30 @@
-import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Button, message, Popconfirm, Space } from 'antd';
 import type { ProColumns } from '@ant-design/pro-components';
-import React from 'react';
+import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { fetchDatasetList as fetchDatasetListService, deleteDataset } from '@/services/platform';
+import { Button, message, Popconfirm, Space } from 'antd';
+import React from 'react';
 import { MOCK_DATASETS } from '@/constants/mockData';
+import {
+  deleteDataset,
+  fetchDatasetList as fetchDatasetListService,
+  getDownloadUrl,
+} from '@/services/platform';
 
-/**
- * 数据集列表页 - Page 层
- * 调用 Services 层接口，适配 ProTable 的 request 格式
- */
 const DatasetList: React.FC = () => {
   const fetchDatasetList = async (params: any) => {
     try {
       const res = await fetchDatasetListService(params);
-      return { data: res?.data || [], success: true, total: res?.total ?? (res?.data?.length || 0) };
+      return {
+        data: res?.data || [],
+        success: true,
+        total: res?.total ?? (res?.data?.length || 0),
+      };
     } catch {
-      return { data: MOCK_DATASETS, success: true, total: MOCK_DATASETS.length };
+      return {
+        data: MOCK_DATASETS,
+        success: true,
+        total: MOCK_DATASETS.length,
+      };
     }
   };
 
@@ -30,12 +38,16 @@ const DatasetList: React.FC = () => {
     }
   };
 
+  const handleDownload = (storagePath?: string) => {
+    if (!storagePath) {
+      message.warning('当前数据集没有可下载文件');
+      return;
+    }
+    window.open(getDownloadUrl(storagePath), '_blank');
+  };
+
   const columns: ProColumns<API.DatasetItem>[] = [
-    {
-      title: '数据集名称',
-      dataIndex: 'name',
-      key: 'name',
-    },
+    { title: '数据集名称', dataIndex: 'name', key: 'name' },
     {
       title: '类型',
       dataIndex: 'type',
@@ -46,17 +58,19 @@ const DatasetList: React.FC = () => {
       },
     },
     {
+      title: '版本号',
+      dataIndex: 'version',
+      key: 'version',
+      hideInSearch: true,
+    },
+    {
       title: '上传时间',
       dataIndex: 'uploadTime',
       key: 'uploadTime',
       valueType: 'dateTime',
-    },
-    {
-      title: '大小',
-      dataIndex: 'size',
-      key: 'size',
       hideInSearch: true,
     },
+    { title: '大小', dataIndex: 'size', key: 'size', hideInSearch: true },
     {
       title: '文件数',
       dataIndex: 'fileCount',
@@ -69,13 +83,23 @@ const DatasetList: React.FC = () => {
       hideInSearch: true,
       render: (_, record) => (
         <Space>
-          <Button type="link" onClick={() => history.push(`/dataset/detail/${record.id}`)}>
-            查看详情
+          <Button
+            type="link"
+            onClick={() =>
+              history.push(`/dataset/detail/${record.assetId || record.id}`)
+            }
+          >
+            详情
           </Button>
-          <Button type="link">下载</Button>
+          <Button
+            type="link"
+            onClick={() => handleDownload(record.storagePath)}
+          >
+            下载
+          </Button>
           <Popconfirm
-            title="确定要删除吗？"
-            onConfirm={() => handleDelete(record.id)}
+            title="确认删除该数据集？"
+            onConfirm={() => handleDelete(record.assetId || record.id)}
           >
             <Button type="link" danger>
               删除
@@ -89,7 +113,7 @@ const DatasetList: React.FC = () => {
   return (
     <PageContainer
       title="数据集管理"
-      subTitle="管理所有已上传的数据集，支持搜索、筛选、删除等操作"
+      subTitle="浏览已上传的数据集资产和版本"
       extra={[
         <Button
           key="upload"
@@ -104,21 +128,11 @@ const DatasetList: React.FC = () => {
         columns={columns}
         request={fetchDatasetList}
         rowKey="id"
-        search={{
-          labelWidth: 'auto',
-        }}
-        pagination={{
-          pageSize: 10,
-        }}
+        search={{ labelWidth: 'auto' }}
+        pagination={{ pageSize: 10 }}
       />
     </PageContainer>
   );
 };
 
 export default DatasetList;
-
-
-
-
-
-

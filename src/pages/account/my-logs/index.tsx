@@ -9,11 +9,10 @@ import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
 import React, { useEffect, useRef } from 'react';
 import {
-  fetchLogList as fetchLogListService,
+  getLogList,
   type LogItem,
   type LogListParams,
-} from '@/services/system';
-import { toProTableFail, toProTableSuccess, withIndex } from '@/utils/proTable';
+} from '@/services/system/log';
 
 /**
  * 个人中心 - 我的操作记录
@@ -49,7 +48,7 @@ const MyOperationLogs: React.FC = () => {
     _filter: Record<string, (string | number)[] | null>,
   ) => {
     if (!currentUsername) {
-      return toProTableFail<LogItem>();
+      return { data: [], success: false, total: 0 };
     }
     try {
       const {
@@ -94,15 +93,24 @@ const MyOperationLogs: React.FC = () => {
         content: content ?? '',
       };
 
-      const response = await fetchLogListService(requestParams);
+      const response = await getLogList(requestParams);
 
       if (response.code === 200) {
-        const list = withIndex(response.data?.list ?? [], current, pageSize);
-        return toProTableSuccess(list, response.data?.total ?? 0);
+        const list = (response.data?.list ?? []).map(
+          (item: LogItem, index: number) => ({
+            ...item,
+            _index: (current! - 1) * pageSize! + index + 1,
+          }),
+        );
+        return {
+          data: list,
+          success: true,
+          total: response.data?.total ?? 0,
+        };
       }
-      return toProTableFail<LogItem>();
+      return { data: [], success: false, total: 0 };
     } catch {
-      return toProTableFail<LogItem>();
+      return { data: [], success: false, total: 0 };
     }
   };
 

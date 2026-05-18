@@ -6,10 +6,7 @@ import React from 'react';
  */
 const ApiDoc: React.FC = () => {
   return (
-    <PageContainer
-      title="API 文档"
-      subTitle="查看平台后端接口文档，便于联调与接口校验。"
-    >
+    <PageContainer title="API 文档">
       <iframe
         src="/doc.html"
         style={{

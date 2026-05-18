@@ -5,32 +5,44 @@
 
 /** API 配置 */
 export const API_CONFIG = {
-  BASE_URL: '/api',
   TIMEOUT: 30000,
   ENDPOINTS: {
-    MODEL_LIST: '/model/list',
-    MODEL_UPLOAD: '/model/upload',
+    MODEL_LIST: '/api/model/list',
+    MODEL_UPLOAD: '/api/model/upload',
     /** 分片上传（与 TSSAIPlatform-xyx 后端 ModelUploadController 对齐） */
-    MODEL_UPLOAD_INIT: '/model/upload/init',
-    MODEL_UPLOAD_CHUNK: '/model/upload/chunk',
-    MODEL_UPLOAD_COMPLETE: '/model/upload/complete',
-    MODEL_DETAIL: '/model/detail',
-    MODEL_DELETE: '/model/delete',
-    MODEL_EDIT: '/model/edit',
-    MODEL_DOWNLOAD: '/model/download',
-    DATASET_LIST: '/dataset/list',
-    DATASET_UPLOAD: '/dataset/upload',
-    DATASET_DETAIL: '/dataset/detail',
-    DATASET_DELETE: '/dataset/delete',
-    DATASET_DOWNLOAD: '/dataset/download',
-    TASK_LIST: '/task/list',
-    TASK_CREATE: '/task/create',
-    TASK_DETAIL: '/task/detail',
-    TASK_STOP: '/task/stop',
-    TASK_DELETE: '/task/delete',
-    TASK_METRICS: '/task/metrics',
-    TASK_FILES: '/task/files',
-    TASK_FILE_DOWNLOAD: '/task/file/download',
+    MODEL_UPLOAD_INIT: '/api/model/upload/init',
+    MODEL_UPLOAD_CHUNK: '/api/model/upload/chunk',
+    MODEL_UPLOAD_PROGRESS: '/api/model/upload/progress',
+    MODEL_UPLOAD_COMPLETE: '/api/model/upload/complete',
+    MODEL_DETAIL: '/api/model/detail',
+    MODEL_DELETE: '/api/model/delete',
+    MODEL_CODE_FILES: '/api/model/code-files',
+    MODEL_PREVIEW_CODE: '/api/model/previewCode',
+
+    DATASET_LIST: '/api/dataset/list',
+    /** 数据集断点续传 */
+    DATASET_UPLOAD_INIT: '/api/dataset/upload/init',
+    DATASET_UPLOAD_CHUNK: '/api/dataset/upload/chunk',
+    DATASET_UPLOAD_PROGRESS: '/api/dataset/upload/progress',
+    DATASET_UPLOAD_COMPLETE: '/api/dataset/upload/complete',
+    DATASET_UPLOAD_FOLDER: '/api/dataset/upload/folder',
+
+    TASK_LIST: '/api/task/list',
+    TASK_CREATE: '/api/task/create',
+    TASK_DETAIL: '/api/task/detail',
+    TASK_STOP: '/api/task/stop',
+    TASK_DELETE: '/api/task/delete',
+
+    /** 实验版本管理 */
+    EXPERIMENT_VERSIONS: (experimentId: string) =>
+      `/api/experiments/${encodeURIComponent(experimentId)}/versions`,
+    EXPERIMENT_VERSION_DETAIL: (experimentId: string, versionNo: number) =>
+      `/api/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}`,
+    EXPERIMENT_VERSION_CREATE: (experimentId: string) =>
+      `/api/experiments/${encodeURIComponent(experimentId)}/versions`,
+    EXPERIMENT_HYPER_PARAMS_UPDATE: (experimentId: string, versionNo: number) =>
+      `/api/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}/hyper-parameters`,
+
     /** 独立 MLflow 指标接口（经 proxy 转发） */
     MLFLOW_METRICS_HISTORY: '/mlflow-api/2.0/mlflow/metrics/get-history-bulk',
   },
@@ -41,7 +53,7 @@ export const UPLOAD_CONFIG = {
   MODEL: {
     MAX_SIZE: 2 * 1024 * 1024 * 1024, // 2GB
     /** 单文件模型：.pt/.pth/.onnx 等；千问等大模型由多文件组成，请上传 .zip 包 */
-    ACCEPT_TYPES: ['.pt', '.pth', '.onnx', '.pb', '.h5', '.keras', '.zip'],
+    ACCEPT_TYPES: ['.zip'],
     REQUIRED_FIELDS: ['file', 'name', 'version', 'type', 'remark'],
   },
   DATASET: {

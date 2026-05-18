@@ -1,55 +1,75 @@
-/**
- * 模型模块 - Services 层
- * 封装模型相关接口，供 Page 层调用
- */
 import { request } from '@umijs/max';
-import { API_CONFIG } from '@/constants/platform';
 
-/** 获取模型列表 */
-export async function fetchModelList(options?: {
-  current?: number;
-  pageSize?: number;
-  name?: string;
-  type?: string;
-}) {
-  return request<{ code: number; message: string; data: API.ModelItem[]; total?: number }>(
-    API_CONFIG.ENDPOINTS.MODEL_LIST,
-    {
-      method: 'GET',
-      params: options,
-    },
-  );
+type BackendModelItem = {
+  id: string;
+  assetId?: string;
+  name: string;
+  version: string;
+  type: 'CV' | 'NLP';
+  remark?: string;
+  storagePath?: string;
+  sizeBytes?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+function formatBytes(sizeBytes?: number) {
+  if (sizeBytes === undefined || sizeBytes === null || Number.isNaN(sizeBytes)) {
+    return '-';
+  }
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = sizeBytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(2)} ${units[unitIndex]}`;
 }
 
-/** 获取模型详情 */
-export async function fetchModelDetail(id: string, options?: { [key: string]: any }) {
-  return request<{ code: number; message: string; data: API.ModelItem }>(
-    API_CONFIG.ENDPOINTS.MODEL_DETAIL,
-    {
-      method: 'GET',
-      params: { id },
-      ...(options || {}),
-    },
-  );
+function toUnixTimestamp(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return undefined;
+  }
+  return String(Math.floor(timestamp / 1000));
 }
 
-/** 分片上传初始化 */
-export async function modelUploadInit(
-  params: { fileName: string; fileSize: number },
-  options?: { [key: string]: any },
-) {
-  return request<{ code: number; message: string; data: { uploadId: string; chunkSize?: number } }>(
-    API_CONFIG.ENDPOINTS.MODEL_UPLOAD_INIT,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      data: params,
-      ...(options || {}),
-    },
-  );
+function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
+  if (!item) {
+    return undefined;
+  }
+  return {
+    id: item.id,
+    assetId: item.assetId,
+    name: item.name,
+    version: item.version,
+    type: item.type,
+    remark: item.remark,
+    storagePath: item.storagePath,
+    sizeBytes: item.sizeBytes,
+    size: formatBytes(item.sizeBytes),
+    uploadTime: item.createdAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
 }
 
-/** 上传单个分片 */
+export async function modelUploadInit(params: API.ModelUploadInitParams, options?: { [key: string]: any }) {
+  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    data: params,
+    ...(options || {}),
+  });
+}
+
 export async function modelUploadChunk(
   uploadId: string,
   partIndex: number,
@@ -60,40 +80,127 @@ export async function modelUploadChunk(
   formData.append('uploadId', uploadId);
   formData.append('partIndex', String(partIndex));
   formData.append('file', chunk);
-  return request<{ code: number; message: string; data?: { etag?: string } }>(
-    API_CONFIG.ENDPOINTS.MODEL_UPLOAD_CHUNK,
-    {
-      method: 'POST',
-      data: formData,
-      ...(options || {}),
-    },
-  );
+  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/chunk', {
+    method: 'POST',
+    data: formData,
+    ...(options || {}),
+  });
 }
 
-/** 分片上传完成 */
+export async function modelUploadProgress(uploadId: string, options?: { [key: string]: any }) {
+  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/progress', {
+    method: 'GET',
+    params: { uploadId },
+    ...(options || {}),
+  });
+}
+
 export async function modelUploadComplete(
-  params: { uploadId: string; modelName: string; version: string; type: string; remark: string },
+  params: API.ModelUploadCompleteParams,
   options?: { [key: string]: any },
 ) {
-  return request<{ code: number; message: string; data: API.ModelItem }>(
-    API_CONFIG.ENDPOINTS.MODEL_UPLOAD_COMPLETE,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      data: params,
-      ...(options || {}),
-    },
-  );
+  return request<{ data: BackendModelItem }>('/api/model/upload/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    data: params,
+    ...(options || {}),
+  });
 }
 
-/** 删除模型 */
+export async function getModelList(options?: { [key: string]: any }) {
+  return request<{ data: { data: BackendModelItem[]; total: number } }>('/api/model/list', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+export async function getModelDetail(id: string, options?: { [key: string]: any }) {
+  return request<{ data: BackendModelItem }>('/api/model/detail', {
+    method: 'GET',
+    params: { id },
+    ...(options || {}),
+  });
+}
+
+export async function listModelCodeFiles(id: string, options?: { [key: string]: any }) {
+  return request<{ data: API.ModelCodeFile[] }>('/api/model/code-files', {
+    method: 'GET',
+    params: { id },
+    ...(options || {}),
+  });
+}
+
+export async function previewModelCode(
+  id: string,
+  path: string,
+  options?: { [key: string]: any },
+) {
+  return request<{ data: API.ModelCodePreview }>('/api/model/previewCode', {
+    method: 'GET',
+    params: { id, path },
+    ...(options || {}),
+  });
+}
+
 export async function deleteModel(id: string, options?: { [key: string]: any }) {
-  return request<{ code: number; message: string; data?: any }>(
-    API_CONFIG.ENDPOINTS.MODEL_DELETE,
-    {
-      method: 'DELETE',
-      params: { id },
-      ...(options || {}),
-    },
-  );
+  return request<Record<string, any>>('/api/model/delete', {
+    method: 'DELETE',
+    params: { id },
+    ...(options || {}),
+  });
+}
+
+export async function fetchModelList(options?: {
+  current?: number;
+  pageSize?: number;
+  name?: string;
+  type?: string;
+}) {
+  const res = await getModelList(options);
+  const inner = res?.data;
+  const list = (inner?.data ?? [])
+    .map((item) => mapModelItem(item))
+    .filter((item): item is API.ModelItem => Boolean(item));
+  const total = inner?.total ?? list.length;
+  return { data: list, total };
+}
+
+export async function fetchModelDetail(id: string, options?: { [key: string]: any }) {
+  const detailRes = await getModelDetail(id, options);
+  const base = mapModelItem(detailRes?.data);
+  if (!base) {
+    return { data: undefined };
+  }
+
+  const updateTime = base.updatedAt ?? base.createdAt;
+  const detail: API.ModelDetail = {
+    ...base,
+    updateTime,
+    timestamp: toUnixTimestamp(updateTime),
+    versionHistory: [
+      {
+        version: base.version,
+        updateTime: updateTime ?? '',
+        timestamp: toUnixTimestamp(updateTime) ?? '',
+      },
+    ],
+  };
+
+  try {
+    const codeFilesRes = await listModelCodeFiles(id, options);
+    const codeFiles = codeFilesRes?.data ?? [];
+    detail.codeFiles = codeFiles;
+    if (codeFiles.length > 0 && codeFiles[0].path) {
+      const previewRes = await previewModelCode(id, codeFiles[0].path, options);
+      if (previewRes?.data?.content) {
+        detail.codeContent = previewRes.data.content;
+        detail.codeFileName = previewRes.data.fileName || codeFiles[0].fileName || codeFiles[0].path;
+        detail.codeFilePath = previewRes.data.path || codeFiles[0].path;
+      }
+    }
+  } catch {
+    detail.codeFiles = [];
+  }
+
+  return { data: detail };
 }

@@ -12,9 +12,9 @@
 export default {
   /** 本地开发环境：api 与 mlflow 代理 */
   dev: {
-    // 平台后端（后端就绪后取消注释并修改 target）
+    /** 平台后端（backend-api.md：默认 8080） */
     '/api/': {
-      target: 'http://localhost:8080',
+      target: 'http://127.0.0.1:8080',
       changeOrigin: true,
     },
     /** 独立 MLflow 服务，用于任务详情页训练指标 */
