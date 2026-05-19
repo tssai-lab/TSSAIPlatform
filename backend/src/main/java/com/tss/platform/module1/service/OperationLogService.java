@@ -1,6 +1,8 @@
 package com.tss.platform.module1.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.tss.platform.module1.dto.OperationLogQueryDTO;
 import com.tss.platform.module1.entity.OperationLog;
 
 public interface OperationLogService extends IService<OperationLog> {

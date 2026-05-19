@@ -2,10 +2,14 @@ package com.tss.platform.module1.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.tss.platform.module1.dto.ForgetPasswordDTO;
 import com.tss.platform.module1.dto.LoginDTO;
+import com.tss.platform.module1.dto.UserQueryDTO;
 import com.tss.platform.module1.dto.UserRegisterDTO;
+import com.tss.platform.module1.dto.UserUpdateDTO;
 import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.mapper.UserMapper;
 import com.tss.platform.module1.service.UserService;
