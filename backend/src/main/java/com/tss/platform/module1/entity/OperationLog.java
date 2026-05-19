@@ -12,12 +12,28 @@ import java.time.LocalDateTime;
 public class OperationLog {
     @TableId(type = IdType.AUTO)
     private Integer id;
+    
+    @TableField("user_id")
     private Integer userId;
+    
+    @TableField("user_name")
     private String userName;
+    
+    @TableField("operation_type")
     private String operationType;
+    
+    @TableField("operation_obj")
     private String operationObj;
+    
+    @TableField("ip_address")
     private String ipAddress;
+    
+    @TableField("operation_time")
     private LocalDateTime operationTime;
+    
+    @TableField("remarks")
     private String remarks;
+    
+    @TableField("status")
     private String status;
 }
