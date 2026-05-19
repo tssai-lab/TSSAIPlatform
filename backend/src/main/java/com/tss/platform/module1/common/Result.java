@@ -1,7 +1,6 @@
 package com.tss.platform.module1.common;
 
 import lombok.Data;
-
 @Data
 public class Result<T> {
     public static final Integer SUCCESS_CODE = 200;
