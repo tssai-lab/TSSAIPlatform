@@ -59,12 +59,12 @@ public class SystemLogController {
     @GetMapping("/types")
     public Result<List<Map<String, String>>> getLogTypes() {
         List<Map<String, String>> types = List.of(
-                Map.of("key", "新增", "label", "新增"),
-                Map.of("key", "删除", "label", "删除"),
-                Map.of("key", "修改", "label", "修改"),
-                Map.of("key", "重置", "label", "重置"),
-                Map.of("key", "登录", "label", "登录"),
-                Map.of("key", "退出", "label", "退出")
+                Map.of("key", "1", "label", "新增"),
+                Map.of("key", "2", "label", "删除"),
+                Map.of("key", "3", "label", "修改"),
+                Map.of("key", "4", "label", "重置"),
+                Map.of("key", "5", "label", "登录"),
+                Map.of("key", "6", "label", "退出")
         );
         return Result.success(types, "查询成功");
     }
