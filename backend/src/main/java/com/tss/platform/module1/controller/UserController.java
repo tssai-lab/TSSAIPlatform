@@ -38,6 +38,10 @@ public class UserController {
     @Resource
     private OperationLogService operationLogService;
 
+    /** 开发环境将验证码写入日志并在接口中返回（生产环境请设为 false） */
+    @Value("${sms.expose-code:true}")
+    private boolean smsExposeCode;
+
     @PostMapping("/add")
     public Result<?> addUser(@RequestBody User user, HttpServletRequest request) {
         SYSTEM_LOG.info("管理员新增用户请求: username={}", DesensitizationUtil.maskUsername(user.getUsername()));
@@ -46,7 +50,7 @@ public class UserController {
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
         opLog.setUserName(user.getUsername() != null ? user.getUsername() : "unknown");
-        opLog.setOperationType("新增");
+        opLog.setOperationType("1");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员后台新增用户: " + DesensitizationUtil.maskUsername(user.getUsername()));
@@ -73,7 +77,7 @@ public class UserController {
     }
 
     @PostMapping("/reset-password")
-    public Result<?> resetPassword(@RequestBody ResetPasswordDTO dto, HttpServletRequest request) {
+    public Result<?> resetPassword(@Valid @RequestBody ResetPasswordDTO dto, HttpServletRequest request) {
         if (dto.getUserId() == null) {
             SYSTEM_LOG.warn("管理员重置密码请求: userId为空");
             return Result.fail("用户ID不能为空");
@@ -84,7 +88,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("重置");
+        opLog.setOperationType("4");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员重置用户密码, userId=" + dto.getUserId());
@@ -157,7 +161,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("修改");
+        opLog.setOperationType("3");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员编辑用户信息, userId=" + updateDTO.getUserId());
@@ -192,7 +196,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("修改");
+        opLog.setOperationType("3");
         opLog.setOperationObj("users");
         opLog.setRemarks("管理员切换用户状态, userId=" + userId + ", status=" + status);
 
@@ -225,7 +229,7 @@ public class UserController {
         String ip = getClientIp(request);
         OperationLog opLog = new OperationLog();
         opLog.setUserId(StpUtil.getLoginIdAsInt());
-        opLog.setOperationType("删除");
+        opLog.setOperationType("2");
         opLog.setOperationObj("users");
         opLog.setIpAddress(ip);
         opLog.setRemarks("管理员软删除用户, userId=" + userId);
@@ -277,8 +281,18 @@ public class UserController {
         try {
             String code = smsCodeUtil.genCode();
             smsCodeUtil.save(dto.getMobile(), code);
-            SYSTEM_LOG.info("验证码发送成功: mobile={}, code={}", DesensitizationUtil.maskMobile(dto.getMobile()), code);
-            USER_LOG.info("验证码发送成功: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
+            String mobile = dto.getMobile().trim();
+            // 后台日志输出完整验证码，便于开发联调（未接真实短信通道）
+            SYSTEM_LOG.info("【短信验证码】手机号={}, 验证码={}, 有效期5分钟", mobile, code);
+            USER_LOG.info("【短信验证码】手机号={}, 验证码={}", mobile, code);
+
+            if (smsExposeCode) {
+                Map<String, Object> data = new HashMap<>();
+                data.put("code", code);
+                data.put("mobile", mobile);
+                data.put("expireSeconds", 300);
+                return Result.success(data, "验证码发送成功（开发模式，验证码见后台日志）");
+            }
             return Result.success(null, "验证码发送成功");
         } catch (Exception e) {
             SYSTEM_LOG.error("验证码发送失败(系统异常): mobile={}, error={}", DesensitizationUtil.maskMobile(dto.getMobile()), e.getMessage());
@@ -298,8 +312,17 @@ public class UserController {
                 USER_LOG.warn("注册失败: 验证码为空, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
                 return Result.fail("验证码不能为空");
             }
-            userService.registerByMobile(dto);
-            return Result.success(null, "注册成功");
+            boolean ok = userService.registerByMobile(dto);
+            if (!ok) {
+                return Result.fail("注册失败");
+            }
+            Map<String, Object> data = new HashMap<>();
+            String username = dto.getUsername() != null && !dto.getUsername().isBlank()
+                    ? dto.getUsername().trim()
+                    : dto.getMobile().trim();
+            data.put("username", username);
+            data.put("mobile", dto.getMobile().trim());
+            return Result.success(data, "注册成功");
         } catch (IllegalArgumentException e) {
             return Result.fail(e.getMessage());
         } catch (Exception e) {
@@ -333,11 +356,13 @@ public class UserController {
     @PostMapping("/logout")
     public Result<?> logout() {
         try {
-            StpUtil.logout();
-            return Result.success("退出登录成功");
+            if (StpUtil.isLogin()) {
+                StpUtil.logout();
+            }
         } catch (Exception e) {
-            return Result.success("退出登录成功");
+            SYSTEM_LOG.warn("退出登录异常: {}", e.getMessage());
         }
+        return Result.success("退出登录成功");
     }
 
     /**
@@ -384,8 +409,11 @@ public class UserController {
         try {
             Integer userId = StpUtil.getLoginIdAsInt();
             User user = userService.getById(userId);
-            if (user == null) {
-                return Result.fail("用户不存在");
+            if (user == null || user.getDeletedAt() != null) {
+                return Result.unauthorized("用户不存在或已失效");
+            }
+            if (user.getStatus() != null && !user.getStatus()) {
+                return Result.fail("账号已被禁用");
             }
             Map<String, Object> data = new java.util.HashMap<>();
             data.put("id", user.getId());
@@ -393,6 +421,19 @@ public class UserController {
             data.put("mobile", user.getMobile());
             data.put("roleId", user.getRoleId());
             data.put("status", user.getStatus());
+            
+            // 添加 role 字段，用于前端权限判断
+            Integer roleId = user.getRoleId();
+            String role;
+            if (roleId == 1) {
+                role = "super_admin";
+            } else if (roleId == 2) {
+                role = "normal_admin";
+            } else {
+                role = "user";
+            }
+            data.put("role", role);
+            
             return Result.success(data, "获取当前用户成功");
         } catch (Exception e) {
             return Result.fail("获取当前用户失败");
