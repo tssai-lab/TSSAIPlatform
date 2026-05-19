@@ -22,7 +22,7 @@ export const AvatarName = () => {
   const { currentUser } = initialState || {};
   return (
     <span className="anticon">
-      {currentUser?.userid || currentUser?.name || '用户'}
+      {(currentUser as any)?.name ?? (currentUser as any)?.username}
     </span>
   );
 };
@@ -49,6 +49,9 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
   menu,
   children,
 }) => {
+  /**
+   * 退出登录，并且将当前的 url 保存
+   */
   const loginOut = async () => {
     await outLogin();
     const { search, pathname } = window.location;
@@ -56,7 +59,9 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
     const searchParams = new URLSearchParams({
       redirect: pathname + search,
     });
+    /** 此方法会跳转到 redirect 参数所在的位置 */
     const redirect = urlParams.get('redirect');
+    // Note: There may be security issues, please note
     if (window.location.pathname !== '/user/login' && !redirect) {
       history.replace({
         pathname: '/user/login',
@@ -64,8 +69,8 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
       });
     }
   };
-
   const { styles } = useStyles();
+
   const { initialState, setInitialState } = useModel('@@initialState');
 
   const onMenuClick: MenuProps['onClick'] = (event) => {
@@ -102,7 +107,10 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
 
   const { currentUser } = initialState;
 
-  if (!currentUser || !(currentUser.userid || currentUser.name)) {
+  const displayName =
+    (currentUser as any)?.name ?? (currentUser as any)?.username;
+
+  if (!currentUser || !displayName) {
     return loading;
   }
 

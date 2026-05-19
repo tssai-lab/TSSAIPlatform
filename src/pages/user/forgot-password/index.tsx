@@ -3,8 +3,7 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
-import { Footer } from '@/components';
-import { forgotPassword } from '@/services/ant-design-pro/api';
+import { getFakeCaptcha } from '@/services/ant-design-pro/login';
 import Settings from '../../../../config/defaultSettings';
 
 const useStyles = createStyles(({ token }) => {
@@ -52,27 +51,28 @@ const ForgotPassword: React.FC = () => {
   // 忘记密码 - 验证手机号并发送验证码
   const handleForgotPassword = async (values: any) => {
     try {
-      const response = await forgotPassword({
+      // 与后端 POST /api/user/sms/code（SmsCodeDTO.mobile）对齐，勿调用 forget/password
+      const response = await getFakeCaptcha({
         phone: values.phone,
       });
 
       if (response.code === 200) {
-        // 开发环境显示验证码，生产环境不显示
-        if (response.data?.captcha) {
-          messageApi.success(
-            `验证码发送成功！验证码为：${response.data.captcha}`,
-          );
-        } else {
-          messageApi.success('验证码已发送到您的手机，请查收');
-        }
-        // 跳转到重置密码页面，携带手机号参数
+        messageApi.success(
+          (response as any).msg ??
+            (response as any).message ??
+            '验证码已发送到您的手机，请查收',
+        );
         history.push(`/user/reset-password?phone=${values.phone}`);
       } else {
+        const errText =
+          (response as any).msg ??
+          (response as any).message ??
+          '验证码发送失败，请重试！';
         setForgotPasswordState({
           status: 'error',
-          message: response.msg || '验证码发送失败，请重试！',
+          message: errText,
         });
-        messageApi.error(response.msg || '验证码发送失败，请重试！');
+        messageApi.error(errText);
       }
     } catch (error: any) {
       console.error('忘记密码失败:', error);
@@ -115,7 +115,7 @@ const ForgotPassword: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <img
               alt="logo"
-              src="/estun-logo.svg"
+              src="/estun.png"
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>忘记密码</h2>
@@ -167,7 +167,6 @@ const ForgotPassword: React.FC = () => {
           </Form>
         </div>
       </div>
-      <Footer />
     </div>
   );
 };
