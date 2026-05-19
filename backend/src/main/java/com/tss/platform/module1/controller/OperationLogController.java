@@ -1,12 +1,11 @@
-
 package com.tss.platform.module1.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.tss.platform.module1.common.Result;
-import tss.platform.module1.demo.dto.OperationLogQueryDTO;
-import tss.platform.module1.demo.dto.PageResultDTO;
-import tss.platform.module1.demo.entity.OperationLog;
-import tss.platform.module1.demo.service.OperationLogService;
+import com.tss.platform.module1.dto.OperationLogQueryDTO;
+import com.tss.platform.module1.dto.PageResultDTO;
+import com.tss.platform.module1.entity.OperationLog;
+import com.tss.platform.module1.service.OperationLogService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -57,12 +56,12 @@ public class OperationLogController {
     @GetMapping("/types")
     public Result<Map<String, String>> getOperationTypes() {
         Map<String, String> types = new HashMap<>();
-        types.put("新增", "新增");
-        types.put("删除", "删除");
-        types.put("修改", "修改");
-        types.put("重置", "重置");
-        types.put("登录", "登录");
-        types.put("退出", "退出");
+        types.put("1", "新增");
+        types.put("2", "删除");
+        types.put("3", "修改");
+        types.put("4", "重置");
+        types.put("5", "登录");
+        types.put("6", "退出");
         return Result.success(types);
     }
 
