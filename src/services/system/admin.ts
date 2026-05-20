@@ -8,7 +8,7 @@ import {
   checkUsername,
   deleteUser,
   editUser,
-  fetchUserList,
+  fetchFilteredUserRows,
   toggleUserStatus,
 } from './user';
 import { SYSTEM_ROLES } from '@/constants/systemLabels';
@@ -27,24 +27,29 @@ function assertAdminRole(role: string) {
   }
 }
 
-/** 获取管理员列表（内部会过滤出管理员账号） */
+/** 获取管理员列表（先筛管理员再分页，避免在用户分页结果里漏掉管理员） */
 export async function fetchAdminList(params: AdminListParams): Promise<AdminListResponse> {
-  const res = await fetchUserList({
+  const { code, message, rows } = await fetchFilteredUserRows({
     ...params,
-    // 强制按超管视角拉取（避免后端按 normal_admin 返回范围受限导致管理员列表不完整）
     currentUserRole: 'super_admin',
   });
-  if (res.code !== 200) return res;
+  if (code !== 200) {
+    return { code, message, data: { list: [], total: 0 } };
+  }
 
-  const list = (res.data?.list ?? [])
+  const adminRows = rows
     .filter((u) => ADMIN_ROLE_NAMES.includes(u.role as AdminRoleName))
     .map((u) => ({ ...u, department: u.department ?? '默认部门' }));
+
+  const { pageNum = 1, pageSize = 10 } = params;
+  const total = adminRows.length;
+  const start = (pageNum - 1) * pageSize;
+  const list = adminRows.slice(start, start + pageSize);
+
   return {
-    ...res,
-    data: {
-      list,
-      total: list.length,
-    },
+    code: 200,
+    message: 'ok',
+    data: { list, total },
   };
 }
 

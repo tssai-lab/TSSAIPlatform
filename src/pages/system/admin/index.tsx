@@ -57,7 +57,9 @@ const AdminListPage: React.FC = () => {
     try {
       const response = await checkAdminUsername(value);
       setUsernameChecking(false);
-      if (response.code === 200) return Promise.resolve();
+      if (response.code === 200 && response.data?.available !== false) {
+        return Promise.resolve();
+      }
       return Promise.reject(new Error('用户名已存在'));
     } catch (e) {
       setUsernameChecking(false);
@@ -157,11 +159,12 @@ const AdminListPage: React.FC = () => {
           message.success('新增成功');
           setModalVisible(false);
           form.resetFields();
-          actionRef.current?.reload();
+          actionRef.current?.reloadAndRest?.();
         }
       }
     } catch (error: unknown) {
       const err = error as { message?: string };
+      message.error(err.message || '操作失败');
     }
   };
 
@@ -177,6 +180,7 @@ const AdminListPage: React.FC = () => {
       }
     } catch (error: unknown) {
       const err = error as { message?: string };
+      message.error(err.message || '删除失败');
     }
   };
 
@@ -194,6 +198,7 @@ const AdminListPage: React.FC = () => {
       }
     } catch (error: unknown) {
       const err = error as { message?: string };
+      message.error(err.message || '操作失败');
     }
   };
 
