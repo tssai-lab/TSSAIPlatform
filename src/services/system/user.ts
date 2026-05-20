@@ -78,21 +78,23 @@ function pickRoleLabel(roleId: unknown): string {
   return SYSTEM_ROLES.USER;
 }
 
-/** 查询用户列表 GET /api/user/list（后端），前端分页与筛选在本地完成 */
-export async function fetchUserList(params: UserListParams) {
+/** 拉取并筛选用户（不含分页，供列表与管理员列表复用） */
+export async function fetchFilteredUserRows(
+  params: UserListParams,
+): Promise<{ code: number; message: string; rows: UserItem[] }> {
   const res = await request<{
     code?: number;
     message?: string;
-    data?: Record<string, unknown>[];
-  }>('/user/list', {
+    data?: { list: Record<string, unknown>[]; total: number };
+  }>(SYSTEM_API_CONFIG.ENDPOINTS.USER_LIST, {
     method: 'GET',
   });
 
-  if (res.code !== 200 || !Array.isArray(res.data)) {
+  if (res.code !== 200 || !res.data?.list || !Array.isArray(res.data.list)) {
     return {
       code: res.code ?? 500,
       message: (res as any).message ?? '查询失败',
-      data: { list: [], total: 0 },
+      rows: [],
     };
   }
 
