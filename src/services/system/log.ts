@@ -376,7 +376,7 @@ export async function getLogList(params: LogListParams) {
   }
 
   // 生产环境使用真实接口
-  return request<LogListResponse>('/api/system/log/list', {
+  return request<LogListResponse>('/system/log/list', {
     method: 'GET',
     params,
   });
@@ -436,7 +436,7 @@ export async function exportLog(params: LogListParams) {
   }
 
   // 生产环境使用真实接口
-  return request<CommonResponse>('/api/system/log/export', {
+  return request<CommonResponse>('/system/log/export', {
     method: 'GET',
     params,
   });

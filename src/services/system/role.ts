@@ -55,7 +55,7 @@ export async function getRoleList(params: RoleListParams): Promise<RoleListRespo
       }, 200);
     });
   }
-  return request<RoleListResponse>('/api/system/role/list', { method: 'POST', data: params });
+  return request<RoleListResponse>('/system/role/list', { method: 'POST', data: params });
 }
 
 export async function addRole(params: AddRoleParams): Promise<{ code: number; msg: string }> {
@@ -74,7 +74,7 @@ export async function addRole(params: AddRoleParams): Promise<{ code: number; ms
       }, 200);
     });
   }
-  return request('/api/system/role/add', { method: 'POST', data: params });
+  return request('/system/role/add', { method: 'POST', data: params });
 }
 
 export async function editRole(params: EditRoleParams): Promise<{ code: number; msg: string }> {
@@ -89,7 +89,7 @@ export async function editRole(params: EditRoleParams): Promise<{ code: number; 
       }, 200);
     });
   }
-  return request('/api/system/role/edit', { method: 'PUT', data: params });
+  return request('/system/role/edit', { method: 'PUT', data: params });
 }
 
 export async function deleteRole(id: number): Promise<{ code: number; msg: string }> {
@@ -110,7 +110,7 @@ export async function deleteRole(id: number): Promise<{ code: number; msg: strin
       }, 200);
     });
   }
-  return request(`/api/system/role/delete?id=${id}`, { method: 'DELETE' });
+  return request(`/system/role/delete?id=${id}`, { method: 'DELETE' });
 }
 
 export async function assignPermission(params: AssignPermissionParams): Promise<{ code: number; msg: string }> {
@@ -119,5 +119,5 @@ export async function assignPermission(params: AssignPermissionParams): Promise<
       setTimeout(() => resolve({ code: 200, msg: '分配成功' }), 200);
     });
   }
-  return request('/api/system/role/assignPermission', { method: 'POST', data: params });
+  return request('/system/role/assignPermission', { method: 'POST', data: params });
 }

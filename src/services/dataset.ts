@@ -145,7 +145,7 @@ export type DatasetDeleteResult = {
 
 /** 创建数据集资产记录。通常上传完成接口会自动创建，手动维护时才需要直接调用。 */
 export async function createDatasetAsset(body: Partial<DatasetAsset>, options?: { [key: string]: any }) {
-  return request<{ data: DatasetAsset }>('/api/dataset-assets', {
+  return request<{ data: DatasetAsset }>('/dataset-assets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: body,
@@ -155,7 +155,7 @@ export async function createDatasetAsset(body: Partial<DatasetAsset>, options?: 
 
 /** 查询全部数据集资产记录。 */
 export async function listDatasetAssets(options?: { [key: string]: any }) {
-  return request<{ data: DatasetAsset[] }>('/api/dataset-assets', {
+  return request<{ data: DatasetAsset[] }>('/dataset-assets', {
     method: 'GET',
     ...(options || {}),
   });
@@ -163,7 +163,7 @@ export async function listDatasetAssets(options?: { [key: string]: any }) {
 
 /** 查询单个数据集资产详情。 */
 export async function getDatasetAsset(id: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetAsset }>('/api/dataset-assets/' + encodeURIComponent(id), {
+  return request<{ data: DatasetAsset }>('/dataset-assets/' + encodeURIComponent(id), {
     method: 'GET',
     ...(options || {}),
   });
@@ -175,7 +175,7 @@ export async function getDatasetAsset(id: string, options?: { [key: string]: any
  * 后端会先删除该资产下所有版本对应的 MinIO 对象，再删除数据库记录。
  */
 export async function deleteDatasetAsset(id: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetDeleteResult }>('/api/dataset-assets/' + encodeURIComponent(id), {
+  return request<{ data: DatasetDeleteResult }>('/dataset-assets/' + encodeURIComponent(id), {
     method: 'DELETE',
     ...(options || {}),
   });
@@ -183,7 +183,7 @@ export async function deleteDatasetAsset(id: string, options?: { [key: string]: 
 
 /** 创建数据集版本记录。通常上传完成接口会自动创建，手动维护时才需要直接调用。 */
 export async function createDatasetVersion(body: Partial<DatasetVersion>, options?: { [key: string]: any }) {
-  return request<{ data: DatasetVersion }>('/api/dataset-versions', {
+  return request<{ data: DatasetVersion }>('/dataset-versions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: body,
@@ -193,7 +193,7 @@ export async function createDatasetVersion(body: Partial<DatasetVersion>, option
 
 /** 查询数据集版本列表；传 assetId 时只返回指定资产下的版本。 */
 export async function listDatasetVersions(assetId?: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetVersion[] }>('/api/dataset-versions', {
+  return request<{ data: DatasetVersion[] }>('/dataset-versions', {
     method: 'GET',
     params: assetId ? { assetId } : undefined,
     ...(options || {}),
@@ -202,7 +202,7 @@ export async function listDatasetVersions(assetId?: string, options?: { [key: st
 
 /** 获取数据集列表页聚合数据，可按 CV/NLP 类型筛选。 */
 export async function getDatasetList(params?: { type?: TaskType }, options?: { [key: string]: any }) {
-  return request<{ data: { data: DatasetListItem[]; total: number } }>('/api/dataset/list', {
+  return request<{ data: { data: DatasetListItem[]; total: number } }>('/dataset/list', {
     method: 'GET',
     params,
     ...(options || {}),
@@ -218,7 +218,7 @@ export async function datasetUploadInit(
   body: DatasetUploadInitParams,
   options?: { [key: string]: any },
 ) {
-  return request<{ data: DatasetUploadProgress }>('/api/dataset/upload/init', {
+  return request<{ data: DatasetUploadProgress }>('/dataset/upload/init', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: body,
@@ -241,7 +241,7 @@ export async function datasetUploadChunk(
   formData.append('uploadId', uploadId);
   formData.append('partIndex', String(partIndex));
   formData.append('file', chunk);
-  return request<{ data: DatasetUploadProgress }>('/api/dataset/upload/chunk', {
+  return request<{ data: DatasetUploadProgress }>('/dataset/upload/chunk', {
     method: 'POST',
     data: formData,
     ...(options || {}),
@@ -250,7 +250,7 @@ export async function datasetUploadChunk(
 
 /** 查询数据集上传进度，用于刷新后恢复断点续传。 */
 export async function datasetUploadProgress(uploadId: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetUploadProgress }>('/api/dataset/upload/progress', {
+  return request<{ data: DatasetUploadProgress }>('/dataset/upload/progress', {
     method: 'GET',
     params: { uploadId },
     ...(options || {}),
@@ -263,7 +263,7 @@ export async function datasetUploadProgress(uploadId: string, options?: { [key: 
  * 后端会校验分片齐全、合并 MinIO 临时对象、创建资产和版本记录，并清理临时分片。
  */
 export async function datasetUploadComplete(uploadId: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetUploadCompleteResult }>('/api/dataset/upload/complete', {
+  return request<{ data: DatasetUploadCompleteResult }>('/dataset/upload/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: { uploadId },
@@ -292,7 +292,7 @@ export async function datasetUploadFolder(
     formData.append('files', file, file.name);
     formData.append('paths', relativePath);
   });
-  return request<{ data: DatasetUploadCompleteResult }>('/api/dataset/upload/folder', {
+  return request<{ data: DatasetUploadCompleteResult }>('/dataset/upload/folder', {
     method: 'POST',
     data: formData,
     ...(options || {}),

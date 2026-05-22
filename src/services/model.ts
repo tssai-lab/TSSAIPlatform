@@ -62,7 +62,7 @@ function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
 }
 
 export async function modelUploadInit(params: API.ModelUploadInitParams, options?: { [key: string]: any }) {
-  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/init', {
+  return request<{ data: API.ModelUploadInitResult }>('/model/upload/init', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: params,
@@ -80,7 +80,7 @@ export async function modelUploadChunk(
   formData.append('uploadId', uploadId);
   formData.append('partIndex', String(partIndex));
   formData.append('file', chunk);
-  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/chunk', {
+  return request<{ data: API.ModelUploadInitResult }>('/model/upload/chunk', {
     method: 'POST',
     data: formData,
     ...(options || {}),
@@ -88,7 +88,7 @@ export async function modelUploadChunk(
 }
 
 export async function modelUploadProgress(uploadId: string, options?: { [key: string]: any }) {
-  return request<{ data: API.ModelUploadInitResult }>('/api/model/upload/progress', {
+  return request<{ data: API.ModelUploadInitResult }>('/model/upload/progress', {
     method: 'GET',
     params: { uploadId },
     ...(options || {}),
@@ -99,7 +99,7 @@ export async function modelUploadComplete(
   params: API.ModelUploadCompleteParams,
   options?: { [key: string]: any },
 ) {
-  return request<{ data: BackendModelItem }>('/api/model/upload/complete', {
+  return request<{ data: BackendModelItem }>('/model/upload/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: params,
@@ -108,14 +108,14 @@ export async function modelUploadComplete(
 }
 
 export async function getModelList(options?: { [key: string]: any }) {
-  return request<{ data: { data: BackendModelItem[]; total: number } }>('/api/model/list', {
+  return request<{ data: { data: BackendModelItem[]; total: number } }>('/model/list', {
     method: 'GET',
     ...(options || {}),
   });
 }
 
 export async function getModelDetail(id: string, options?: { [key: string]: any }) {
-  return request<{ data: BackendModelItem }>('/api/model/detail', {
+  return request<{ data: BackendModelItem }>('/model/detail', {
     method: 'GET',
     params: { id },
     ...(options || {}),
@@ -123,7 +123,7 @@ export async function getModelDetail(id: string, options?: { [key: string]: any 
 }
 
 export async function listModelCodeFiles(id: string, options?: { [key: string]: any }) {
-  return request<{ data: API.ModelCodeFile[] }>('/api/model/code-files', {
+  return request<{ data: API.ModelCodeFile[] }>('/model/code-files', {
     method: 'GET',
     params: { id },
     ...(options || {}),
@@ -135,7 +135,7 @@ export async function previewModelCode(
   path: string,
   options?: { [key: string]: any },
 ) {
-  return request<{ data: API.ModelCodePreview }>('/api/model/previewCode', {
+  return request<{ data: API.ModelCodePreview }>('/model/previewCode', {
     method: 'GET',
     params: { id, path },
     ...(options || {}),
@@ -143,7 +143,7 @@ export async function previewModelCode(
 }
 
 export async function deleteModel(id: string, options?: { [key: string]: any }) {
-  return request<Record<string, any>>('/api/model/delete', {
+  return request<Record<string, any>>('/model/delete', {
     method: 'DELETE',
     params: { id },
     ...(options || {}),

@@ -47,7 +47,7 @@ export async function getPermissionTree(): Promise<PermissionTreeResponse> {
       setTimeout(() => resolve({ code: 200, msg: 'ok', data: mockPermissionTree }), 200);
     });
   }
-  return request<PermissionTreeResponse>('/api/system/permission/tree', { method: 'GET' });
+  return request<PermissionTreeResponse>('/system/permission/tree', { method: 'GET' });
 }
 
 export async function getRolePermission(roleId: number): Promise<RolePermissionResponse> {
@@ -62,5 +62,5 @@ export async function getRolePermission(roleId: number): Promise<RolePermissionR
       }, 200);
     });
   }
-  return request<RolePermissionResponse>(`/api/system/permission/role/${roleId}`, { method: 'GET' });
+  return request<RolePermissionResponse>(`/system/permission/role/${roleId}`, { method: 'GET' });
 }

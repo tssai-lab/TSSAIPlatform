@@ -7,41 +7,41 @@
 export const API_CONFIG = {
   TIMEOUT: 30000,
   ENDPOINTS: {
-    MODEL_LIST: '/api/model/list',
-    MODEL_UPLOAD: '/api/model/upload',
+    MODEL_LIST: '/model/list',
+    MODEL_UPLOAD: '/model/upload',
     /** 分片上传（与 TSSAIPlatform-xyx 后端 ModelUploadController 对齐） */
-    MODEL_UPLOAD_INIT: '/api/model/upload/init',
-    MODEL_UPLOAD_CHUNK: '/api/model/upload/chunk',
-    MODEL_UPLOAD_PROGRESS: '/api/model/upload/progress',
-    MODEL_UPLOAD_COMPLETE: '/api/model/upload/complete',
-    MODEL_DETAIL: '/api/model/detail',
-    MODEL_DELETE: '/api/model/delete',
-    MODEL_CODE_FILES: '/api/model/code-files',
-    MODEL_PREVIEW_CODE: '/api/model/previewCode',
+    MODEL_UPLOAD_INIT: '/model/upload/init',
+    MODEL_UPLOAD_CHUNK: '/model/upload/chunk',
+    MODEL_UPLOAD_PROGRESS: '/model/upload/progress',
+    MODEL_UPLOAD_COMPLETE: '/model/upload/complete',
+    MODEL_DETAIL: '/model/detail',
+    MODEL_DELETE: '/model/delete',
+    MODEL_CODE_FILES: '/model/code-files',
+    MODEL_PREVIEW_CODE: '/model/previewCode',
 
-    DATASET_LIST: '/api/dataset/list',
+    DATASET_LIST: '/dataset/list',
     /** 数据集断点续传 */
-    DATASET_UPLOAD_INIT: '/api/dataset/upload/init',
-    DATASET_UPLOAD_CHUNK: '/api/dataset/upload/chunk',
-    DATASET_UPLOAD_PROGRESS: '/api/dataset/upload/progress',
-    DATASET_UPLOAD_COMPLETE: '/api/dataset/upload/complete',
-    DATASET_UPLOAD_FOLDER: '/api/dataset/upload/folder',
+    DATASET_UPLOAD_INIT: '/dataset/upload/init',
+    DATASET_UPLOAD_CHUNK: '/dataset/upload/chunk',
+    DATASET_UPLOAD_PROGRESS: '/dataset/upload/progress',
+    DATASET_UPLOAD_COMPLETE: '/dataset/upload/complete',
+    DATASET_UPLOAD_FOLDER: '/dataset/upload/folder',
 
-    TASK_LIST: '/api/task/list',
-    TASK_CREATE: '/api/task/create',
-    TASK_DETAIL: '/api/task/detail',
-    TASK_STOP: '/api/task/stop',
-    TASK_DELETE: '/api/task/delete',
+    TASK_LIST: '/task/list',
+    TASK_CREATE: '/task/create',
+    TASK_DETAIL: '/task/detail',
+    TASK_STOP: '/task/stop',
+    TASK_DELETE: '/task/delete',
 
     /** 实验版本管理 */
     EXPERIMENT_VERSIONS: (experimentId: string) =>
-      `/api/experiments/${encodeURIComponent(experimentId)}/versions`,
+      `/experiments/${encodeURIComponent(experimentId)}/versions`,
     EXPERIMENT_VERSION_DETAIL: (experimentId: string, versionNo: number) =>
-      `/api/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}`,
+      `/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}`,
     EXPERIMENT_VERSION_CREATE: (experimentId: string) =>
-      `/api/experiments/${encodeURIComponent(experimentId)}/versions`,
+      `/experiments/${encodeURIComponent(experimentId)}/versions`,
     EXPERIMENT_HYPER_PARAMS_UPDATE: (experimentId: string, versionNo: number) =>
-      `/api/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}/hyper-parameters`,
+      `/experiments/${encodeURIComponent(experimentId)}/versions/${encodeURIComponent(String(versionNo))}/hyper-parameters`,
 
     /** 独立 MLflow 指标接口（经 proxy 转发） */
     MLFLOW_METRICS_HISTORY: '/mlflow-api/2.0/mlflow/metrics/get-history-bulk',

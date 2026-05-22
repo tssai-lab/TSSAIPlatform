@@ -14,7 +14,7 @@ import { request } from '@umijs/max';
  * 联调时如果上传/下载失败，可以先调用该接口确认对象存储服务是否可用。
  */
 export async function fileHealth(options?: { [key: string]: any }) {
-  return request<{ data: { minio: string } }>('/api/files/health', {
+  return request<{ data: { minio: string } }>('/files/health', {
     method: 'GET',
     ...(options || {}),
   });
@@ -36,7 +36,7 @@ export async function uploadObject(
   if (objectName) {
     formData.append('objectName', objectName);
   }
-  return request<{ data: { objectName: string; size: number; etag: string } }>('/api/files/upload', {
+  return request<{ data: { objectName: string; size: number; etag: string } }>('/files/upload', {
     method: 'POST',
     data: formData,
     ...(options || {}),
@@ -60,7 +60,7 @@ export function getDownloadUrl(objectName: string) {
  * 应优先调用对应业务删除接口，确保数据库记录和 MinIO 文件一起清理。
  */
 export async function deleteObject(objectName: string, options?: { [key: string]: any }) {
-  return request<{ data: { objectName: string; deleted: boolean } }>('/api/files/delete', {
+  return request<{ data: { objectName: string; deleted: boolean } }>('/files/delete', {
     method: 'DELETE',
     params: { objectName },
     ...(options || {}),
