@@ -15,6 +15,7 @@ import com.tss.platform.module1.mapper.UserMapper;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.SmsCodeUtil;
 import com.tss.platform.module1.util.DesensitizationUtil;
+import com.tss.platform.module1.util.UserRoleUtil;
 import jakarta.annotation.Resource;
 import org.mindrot.jbcrypt.BCrypt;
 import org.slf4j.Logger;

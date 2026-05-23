@@ -8,6 +8,7 @@ import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.DesensitizationUtil;
+import com.tss.platform.module1.util.UserRoleUtil;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import org.mindrot.jbcrypt.BCrypt;
