@@ -62,6 +62,12 @@ public class DatasetUploadService {
     private static final Set<String> NLP_ALLOWED_EXTENSIONS = Set.of(
             ".txt", ".json", ".jsonl", ".csv", ".xlsx", ".xls", ".pdf", ".docx", ".xml"
     );
+    private static final Set<String> POINT_CLOUD_EXTENSIONS = Set.of(
+            ".ply", ".pcd"
+    );
+    private static final Set<String> POINT_CLOUD_ZIP_ALLOWED_EXTENSIONS = Set.of(
+            ".ply", ".pcd", ".txt", ".json", ".yaml", ".yml"
+    );
     private static final int MAX_DATASET_ZIP_ENTRIES = 100_000;
     private static final long MAX_DATASET_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
 
@@ -702,6 +708,10 @@ public class DatasetUploadService {
     }
 
     private void validateDatasetFileName(String taskType, String fileName) {
+        validateDatasetFileNameForTask(taskType, fileName);
+    }
+
+    static void validateDatasetFileNameForTask(String taskType, String fileName) {
         String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
         if ("CV".equals(taskType)) {
             if (!lower.endsWith(".zip")) {
@@ -715,6 +725,18 @@ public class DatasetUploadService {
                         "NLP dataset only supports .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, .xml, or zip containing these files"
                 );
             }
+            return;
+        }
+        if ("POINT_CLOUD".equals(taskType)) {
+            if (!lower.endsWith(".zip") && !POINT_CLOUD_EXTENSIONS.contains(extensionOf(lower))) {
+                throw new IllegalArgumentException(
+                        "POINT_CLOUD dataset only supports .ply, .pcd, or zip containing .ply/.pcd files"
+                );
+            }
+            return;
+        }
+        if ("ROBOT".equals(taskType)) {
+            throw new IllegalArgumentException("ROBOT dataset upload is not supported yet");
         }
     }
 
@@ -728,15 +750,25 @@ public class DatasetUploadService {
         if (!lower.endsWith(".zip")) {
             return;
         }
+        try (InputStream is = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucket).object(objectName).build()
+        )) {
+            validateDatasetZipEntries(taskType, annotationFormat, is);
+        }
+    }
+
+    static void validateDatasetZipEntries(
+            String taskType,
+            String annotationFormat,
+            InputStream inputStream
+    ) throws Exception {
         boolean found = false;
         boolean foundCvImage = false;
         boolean foundCvAnnotation = false;
+        boolean foundPointCloud = false;
         int entries = 0;
         long totalUncompressedBytes = 0;
-        try (InputStream is = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucket).object(objectName).build()
-        );
-             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
+        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(inputStream))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 entries += 1;
@@ -760,17 +792,7 @@ public class DatasetUploadService {
                         foundCvAnnotation = foundCvAnnotation
                                 || CvAnnotationFormat.isAnnotationFile(annotationFormat, ext);
                         found = true;
-                        totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
-                        zip.closeEntry();
-                        continue;
-                    }
-                    if ("CV".equals(taskType)) {
-                        if (!CV_IMAGE_EXTENSIONS.contains(ext)) {
-                            throw new IllegalArgumentException("CV zip 数据集仅允许图片文件: " + entryName);
-                        }
-                        found = true;
-                    }
-                    if ("NLP".equals(taskType)) {
+                    } else if ("NLP".equals(taskType)) {
                         if (!NLP_ALLOWED_EXTENSIONS.contains(ext)) {
                             throw new IllegalArgumentException(
                                     "NLP zip dataset only allows .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, or .xml files: "
@@ -778,6 +800,17 @@ public class DatasetUploadService {
                             );
                         }
                         found = true;
+                    } else if ("POINT_CLOUD".equals(taskType)) {
+                        if (!POINT_CLOUD_ZIP_ALLOWED_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException(
+                                    "POINT_CLOUD zip dataset only allows .ply, .pcd, .txt, .json, .yaml, or .yml files: "
+                                            + entryName
+                            );
+                        }
+                        foundPointCloud = foundPointCloud || POINT_CLOUD_EXTENSIONS.contains(ext);
+                        found = true;
+                    } else {
+                        throw new IllegalArgumentException(taskType + " zip dataset format is not supported");
                     }
                     totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
                 }
@@ -794,6 +827,9 @@ public class DatasetUploadService {
                 );
             }
         }
+        if ("POINT_CLOUD".equals(taskType) && !foundPointCloud) {
+            throw new IllegalArgumentException("POINT_CLOUD zip dataset must contain .ply or .pcd files");
+        }
         if (!found) {
             if ("CV".equals(taskType)) {
                 throw new IllegalArgumentException("CV zip 数据集必须包含图片文件");
@@ -806,7 +842,7 @@ public class DatasetUploadService {
         }
     }
 
-    private long drainZipEntry(ZipInputStream zip, long currentTotal) throws Exception {
+    private static long drainZipEntry(ZipInputStream zip, long currentTotal) throws Exception {
         byte[] buffer = new byte[8192];
         long total = currentTotal;
         int len;
@@ -819,11 +855,11 @@ public class DatasetUploadService {
         return total;
     }
 
-    private String normalizeZipEntryName(String name) {
+    private static String normalizeZipEntryName(String name) {
         return name == null ? "" : name.replace('\\', '/');
     }
 
-    private boolean isSafeZipEntryPath(String path) {
+    private static boolean isSafeZipEntryPath(String path) {
         if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
             return false;
         }
@@ -835,7 +871,7 @@ public class DatasetUploadService {
         return true;
     }
 
-    private String extensionOf(String name) {
+    private static String extensionOf(String name) {
         String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
         int index = lower.lastIndexOf('.');
         return index >= 0 ? lower.substring(index) : "";

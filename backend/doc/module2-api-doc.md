@@ -51,6 +51,8 @@
 | --- | --- |
 | `CV` | 计算机视觉 |
 | `NLP` | 自然语言处理 |
+| `POINT_CLOUD` | 点云数据 |
+| `ROBOT` | 机器人数据，类型预留 |
 
 CV 子任务 `cvTaskType`：
 
@@ -195,7 +197,7 @@ POST /api/model/upload/complete
 | `uploadId` | string | 是 | 上传会话 ID |
 | `modelName` | string | 是 | 模型名称 |
 | `version` | string | 是 | 模型版本号 |
-| `type` | string | 是 | `CV` 或 `NLP` |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `remark` | string | 是 | 备注 |
 
 请求示例：
@@ -252,11 +254,18 @@ GET /api/model/list
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | string | 否 | `CV` 或 `NLP` |
+| `type` | string | 否 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `keyword` | string | 否 | 按模型名称、版本、备注、文件名模糊搜索 |
 | `page` | integer | 否 | 页码，从 `1` 开始 |
 | `current` | integer | 否 | 页码；优先级高于 `page` |
 | `pageSize` | integer | 否 | 每页数量；不传则返回全部 |
+
+前端查询对接说明：
+
+- 模型名称输入框应传 `keyword`，后端会按模型名称、版本、备注、文件名做不区分大小写的模糊搜索。
+- 类型下拉框应传 `type`，取值为 `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT`。
+- 如果前端表单字段名是 `modelName` 或 `name`，提交请求前需要映射为 `keyword`。
+- 示例：`GET /api/model/list?keyword=resnet&type=CV&page=1&pageSize=10`。
 
 响应 `data`：
 
@@ -353,7 +362,7 @@ POST /api/model-assets
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 模型资产名称 |
-| `type` | string | 是 | `CV` 或 `NLP` |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `remark` | string | 否 | 备注 |
 
 注意：即使客户端传入 `id`、`ownerUserId`、`deleted` 等字段，后端创建时也会重新生成 `id`，并使用当前登录用户作为 `ownerUserId`。
@@ -383,7 +392,7 @@ PUT /api/model-assets/{id}
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 新名称 |
-| `type` | string | 是 | `CV` 或 `NLP` |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `remark` | string | 否 | 备注 |
 
 只更新 `name`、`type`、`remark` 和 `updatedAt`。
@@ -478,9 +487,9 @@ POST /api/dataset/upload/init
 | `fileFingerprint` | string | 否 | 文件指纹 |
 | `datasetName` | string | 是 | 数据集名称 |
 | `version` | string | 否 | 版本号；不传默认为 `v1` |
-| `type` | string | 是 | `CV` 或 `NLP` |
-| `cvTaskType` | string | 否 | CV 子任务；NLP 会被置为 `null` |
-| `annotationFormat` | string | 否 | CV 标注格式；NLP 会被置为 `null` |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT`；上传流程当前实现 `CV`、`NLP`、`POINT_CLOUD` |
+| `cvTaskType` | string | 否 | CV 子任务；非 CV 会被置为 `null` |
+| `annotationFormat` | string | 否 | CV 标注格式；非 CV 会被置为 `null` |
 | `remark` | string | 否 | 备注 |
 
 文件类型规则：
@@ -489,6 +498,7 @@ POST /api/dataset/upload/init
 | --- | --- |
 | `CV` | 分片上传只支持 `.zip`；zip 内必须至少包含图片文件 |
 | `NLP` | 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，或只包含这些文件的 `.zip` |
+| `POINT_CLOUD` | 支持单文件 `.ply`、`.pcd`，或 `.zip`；zip 内至少包含一个 `.ply` 或 `.pcd`，且仅允许 `.ply`、`.pcd`、`.txt`、`.json`、`.yaml`、`.yml` |
 
 响应 `data` 字段与模型上传进度类似，额外包含 `cvTaskType`、`annotationFormat`。
 
@@ -586,11 +596,18 @@ GET /api/dataset/list
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | string | 否 | `CV` 或 `NLP` |
+| `type` | string | 否 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `keyword` | string | 否 | 按数据集名称、版本、备注、文件名模糊搜索 |
 | `page` | integer | 否 | 页码 |
 | `current` | integer | 否 | 页码；优先级高于 `page` |
 | `pageSize` | integer | 否 | 每页数量；不传则返回全部 |
+
+前端查询对接说明：
+
+- 数据集名称输入框应传 `keyword`，后端会按数据集名称、版本、数据集备注、版本备注、文件名做不区分大小写的模糊搜索。
+- 类型下拉框应传 `type`，取值为 `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT`。
+- 如果前端表单字段名是 `datasetName` 或 `name`，提交请求前需要映射为 `keyword`。
+- 示例：`GET /api/dataset/list?keyword=casting&type=CV&page=1&pageSize=10`。
 
 列表项字段：
 
@@ -599,7 +616,7 @@ GET /api/dataset/list
 | `id` | 数据集资产 ID |
 | `assetId` | 数据集资产 ID |
 | `name` | 数据集名称 |
-| `type` | `CV` 或 `NLP` |
+| `type` | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `cvTaskType` | CV 子任务 |
 | `annotationFormat` | 标注格式 |
 | `remark` | 数据集备注 |
@@ -633,9 +650,9 @@ POST /api/dataset-assets
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 数据集名称 |
-| `type` | string | 是 | `CV` 或 `NLP` |
-| `cvTaskType` | string | 否 | CV 子任务 |
-| `annotationFormat` | string | 否 | CV 标注格式 |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
+| `cvTaskType` | string | 否 | CV 子任务；非 CV 可为空 |
+| `annotationFormat` | string | 否 | CV 标注格式；非 CV 可为空 |
 | `remark` | string | 否 | 备注 |
 
 注意：创建时后端会忽略客户端传入的 `id`，重新生成 `dataset-asset-...`，并使用当前登录用户作为 `ownerUserId`。
@@ -665,9 +682,9 @@ PUT /api/dataset-assets/{id}
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 新名称 |
-| `type` | string | 是 | `CV` 或 `NLP` |
-| `cvTaskType` | string | 否 | CV 子任务 |
-| `annotationFormat` | string | 否 | CV 标注格式 |
+| `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
+| `cvTaskType` | string | 否 | CV 子任务；非 CV 可为空 |
+| `annotationFormat` | string | 否 | CV 标注格式；非 CV 可为空 |
 | `remark` | string | 否 | 备注 |
 
 ### 8.5 删除数据集资产
@@ -763,7 +780,7 @@ POST /api/task/create
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注 |
 
-后端会校验模型版本、数据集版本是否存在且当前用户可访问，并校验模型类型与数据集类型一致。
+后端会校验模型版本、数据集版本是否存在且当前用户可访问，并校验模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。
 
 响应 `data`：
 
@@ -1013,7 +1030,7 @@ DELETE /api/files/delete?objectName={objectName}
 | --- | --- |
 | 未登录 | `请先登录: ...` |
 | 无权访问资源 | `not found or no permission: ...` |
-| 任务类型非法 | `任务类型仅支持 CV 或 NLP` |
+| 任务类型非法 | `任务类型仅支持 CV, NLP, POINT_CLOUD, ROBOT` |
 | 上传会话不存在或越权 | `uploadId invalid or not accessible` |
 | 分片缺失 | `分片未上传完成` / `缺少分片: ...` |
 | 版本重复 | `model version already exists for asset: ...` / `dataset version already exists for asset: ...` |
@@ -1029,3 +1046,177 @@ DELETE /api/files/delete?objectName={objectName}
 - 模型、数据集删除均为软删除；MinIO 对象通过删除任务异步清理。
 - 模型版本或数据集版本被训练实验引用时，不允许删除。
 - zip 内路径不能包含绝对路径、盘符、`..` 或空字节。
+
+## 14. 点云三维预览接口
+
+基础路径：`/api/dataset/point-cloud`
+
+点云三维渲染由前端 Three.js、`PCDLoader`、`PLYLoader` 完成。后端只提供基于 `datasetVersionId` 的鉴权、预览元信息和点云文件流，不要求前端直接传 `storagePath` 或 MinIO 对象路径。
+
+在线预览大小限制由配置项控制：
+
+```yaml
+point-cloud:
+  preview:
+    max-size: 209715200
+```
+
+默认单个可预览点云文件不超过 `200MB`。该限制只影响在线预览，不影响上传和原始文件下载。
+
+### 14.1 查询点云预览信息
+
+```http
+GET /api/dataset/point-cloud/preview?id={datasetVersionId}
+```
+
+规则：
+- `id` 必须是数据集版本 ID。
+- 后端会查询 `dataset_version` 和 `dataset_asset`，并校验当前用户是否可访问该版本。
+- 仅允许 `dataset_asset.type=POINT_CLOUD`。
+- 原始文件为 `.pcd` 时返回 `format=PCD` 和单文件 `previewUrl`。
+- 原始文件为 `.ply` 时返回 `format=PLY` 和单文件 `previewUrl`。
+- 原始文件为 `.zip` 时，后端读取 zip 目录，只返回 zip 内 `.pcd` / `.ply` 文件列表，不直接把整个 zip 作为预览文件。
+- zip 内单个 `.pcd` / `.ply` 超过预览大小限制时，该文件仍会出现在 `pointCloudFiles` 中，但 `previewAllowed=false`，`previewUrl=null`，并返回提示信息。
+
+单文件 `.pcd` 响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "datasetVersionId": "dataset-ver-xxx",
+    "fileName": "scan.pcd",
+    "type": "POINT_CLOUD",
+    "format": "PCD",
+    "sizeBytes": 52428800,
+    "previewSupported": true,
+    "previewUrl": "/api/dataset/point-cloud/file?id=dataset-ver-xxx",
+    "pointCloudFiles": null,
+    "message": null
+  },
+  "errorMessage": null
+}
+```
+
+zip 点云包响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "datasetVersionId": "dataset-ver-xxx",
+    "fileName": "pointcloud.zip",
+    "type": "POINT_CLOUD",
+    "format": "ZIP",
+    "sizeBytes": 104857600,
+    "previewSupported": true,
+    "previewUrl": null,
+    "pointCloudFiles": [
+      {
+        "path": "clouds/scan1.pcd",
+        "fileName": "scan1.pcd",
+        "format": "PCD",
+        "sizeBytes": 12345678,
+        "previewUrl": "/api/dataset/point-cloud/zip-file?id=dataset-ver-xxx&path=clouds%2Fscan1.pcd",
+        "previewAllowed": true,
+        "message": null
+      }
+    ],
+    "message": "请选择 zip 内的点云文件进行预览"
+  },
+  "errorMessage": null
+}
+```
+
+### 14.2 单文件点云流
+
+```http
+GET /api/dataset/point-cloud/file?id={datasetVersionId}
+```
+
+用于原始数据集文件就是 `.pcd` 或 `.ply` 的场景。成功时返回文件流：
+
+- `Content-Type: application/octet-stream`
+- `Content-Disposition: inline; filename*=UTF-8''...`
+
+前端使用方式：
+
+```ts
+const preview = await request('/api/dataset/point-cloud/preview', { params: { id: datasetVersionId } });
+if (preview.data.previewUrl && preview.data.format === 'PCD') {
+  loader.load(preview.data.previewUrl, onLoad);
+}
+```
+
+### 14.3 zip 内点云文件流
+
+```http
+GET /api/dataset/point-cloud/zip-file?id={datasetVersionId}&path={zipEntryPath}
+```
+
+用于原始数据集文件是 `.zip` 的场景。`path` 必须来自 `preview` 接口返回的 `pointCloudFiles[].path`，后端会再次校验：
+
+- 原始数据集版本必须是 `POINT_CLOUD`。
+- 原始文件必须是 `.zip`。
+- `path` 不能是绝对路径，不能包含盘符，不能包含 `..`，不能包含空字节。
+- `path` 对应的 zip entry 必须存在，且必须是 `.pcd` 或 `.ply`。
+- 单个 entry 超过 `point-cloud.preview.max-size` 时拒绝在线预览。
+
+成功时同样返回 `application/octet-stream` 文件流，并设置 `Content-Disposition: inline`。
+
+### 14.4 前端对接建议
+
+前端先调用：
+
+```http
+GET /api/dataset/point-cloud/preview?id={datasetVersionId}
+```
+
+如果返回 `previewUrl`：
+- `format=PCD` 时使用 `PCDLoader` 加载 `previewUrl`。
+- `format=PLY` 时使用 `PLYLoader` 加载 `previewUrl`。
+
+如果返回 `pointCloudFiles`：
+- 前端展示 zip 内可预览点云文件列表。
+- 用户选择某个 `previewAllowed=true` 的文件后，加载该文件的 `previewUrl`。
+- `previewAllowed=false` 的文件展示 `message`，提示下载后本地查看。
+
+如果 `previewSupported=false`：
+- 前端展示 `message`。
+- 可提供普通下载按钮，但业务预览流程不应直接依赖 `storagePath`。
+
+### 14.5 错误场景
+
+| 场景 | 典型错误 |
+| --- | --- |
+| `id` 为空 | `datasetVersionId 不能为空` |
+| 数据集版本不存在或越权 | `dataset version not found or no permission` |
+| 非 `POINT_CLOUD` 数据集 | `点云预览仅支持 POINT_CLOUD 数据集` |
+| 单文件不是 `.ply` / `.pcd` | `仅支持直接预览 .ply 或 .pcd 点云文件` |
+| zip 内路径非法 | `zip entry path 非法` |
+| zip 内文件不存在 | `zip 内点云文件不存在: ...` |
+| 文件超过在线预览大小限制 | `文件过大，请下载后本地查看` |
+
+### 14.6 接口测试示例
+
+```powershell
+# 查询单文件或 zip 点云预览信息
+curl.exe -H "Authorization: Bearer <token>" `
+  "http://localhost:8080/api/dataset/point-cloud/preview?id=<datasetVersionId>"
+
+# 下载单文件 .pcd/.ply 预览流，响应头应为 inline
+curl.exe -I -H "Authorization: Bearer <token>" `
+  "http://localhost:8080/api/dataset/point-cloud/file?id=<datasetVersionId>"
+
+# 下载 zip 内指定 .pcd/.ply 预览流，path 需要 URL 编码
+curl.exe -I -H "Authorization: Bearer <token>" `
+  "http://localhost:8080/api/dataset/point-cloud/zip-file?id=<datasetVersionId>&path=clouds%2Fscan1.pcd"
+
+# 非 POINT_CLOUD 数据集调用 preview 应返回 success=false
+curl.exe -H "Authorization: Bearer <token>" `
+  "http://localhost:8080/api/dataset/point-cloud/preview?id=<cvOrNlpDatasetVersionId>"
+
+# POINT_CLOUD 列表筛选仍使用原接口
+curl.exe -H "Authorization: Bearer <token>" `
+  "http://localhost:8080/api/dataset/list?type=POINT_CLOUD"
+```

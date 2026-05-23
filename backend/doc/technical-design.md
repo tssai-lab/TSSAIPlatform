@@ -317,7 +317,7 @@ Authorization: Bearer <token>
 | --- | --- | --- |
 | `id` | string | 可空，后端自动生成 `model-asset-*` |
 | `name` | string | 模型名称，必填 |
-| `type` | string | 任务类型，支持 `CV`、`NLP` |
+| `type` | string | 任务类型，支持 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` |
 | `remark` | string | 备注 |
 
 ### 7.5 模型版本接口
@@ -366,7 +366,7 @@ Authorization: Bearer <token>
 - 相同 `fileFingerprint` 且状态为 `UPLOADING` 时，会复用最近的上传会话。
 - `/complete` 会先把会话原子切换为 `COMPLETING`，避免并发重复合并；若最终对象已写入但数据库记录保存失败，会尽力删除刚生成的 MinIO 对象。
 - 初始化时 `fileName` 必须是 `.zip`，`fileSize` 必须大于 0。
-- 完成上传时 `uploadId`、`modelName`、`version`、`type`、`remark` 都不能为空，`type` 仅支持 `CV`、`NLP`。
+- 完成上传时 `uploadId`、`modelName`、`version`、`type`、`remark` 都不能为空，`type` 支持 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`。
 - 合并后的模型 zip 必须至少包含一个文件；zip 内路径不能是绝对路径、盘符路径，不能包含 `..` 或空字节。
 - 模型 zip 条目数上限为 `100000`，解压后总体积上限为 `50GB`。
 
@@ -410,9 +410,9 @@ Authorization: Bearer <token>
 | --- | --- | --- |
 | `id` | string | 可空，后端自动生成 `dataset-asset-*` |
 | `name` | string | 数据集名称，必填 |
-| `type` | string | 任务类型，支持 `CV`、`NLP` |
-| `cvTaskType` | string | CV 子任务类型，NLP 为 `null` |
-| `annotationFormat` | string | CV 标注格式，NLP 为 `null` |
+| `type` | string | 任务类型，支持 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` |
+| `cvTaskType` | string | CV 子任务类型，非 CV 为 `null` |
+| `annotationFormat` | string | CV 标注格式，非 CV 为 `null` |
 | `remark` | string | 备注 |
 
 ### 7.9 数据集版本接口
@@ -437,7 +437,7 @@ Authorization: Bearer <token>
 | --- | --- | --- | --- |
 | `GET` | `/list` | 查询数据集列表，默认返回每个资产最新版本 | 可选 query: `type`, `keyword`, `page`/`current`, `pageSize` |
 
-`type` 支持 `CV`、`NLP`。
+`type` 支持 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`。
 
 ### 7.11 数据集分片上传接口
 
@@ -479,7 +479,7 @@ Authorization: Bearer <token>
 
 数据集格式规则：
 
-- `type` 仅支持 `CV`、`NLP`。
+- `type` 支持 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`；当前数据集上传格式完整实现 `CV`、`NLP`、`POINT_CLOUD`。
 - `CV` 仅支持 zip 或 `/folder` 文件夹上传，必须至少包含一个图片文件。
 - `CV` 额外支持 `cvTaskType`：`IMAGE_CLASSIFICATION`、`OBJECT_DETECTION`、`SEMANTIC_SEGMENTATION`、`INSTANCE_SEGMENTATION`、`UNLABELED`、`OTHER`，默认 `UNLABELED`。
 - `CV` 额外支持 `annotationFormat`：`NONE`、`FOLDER_CLASSIFICATION`、`CSV`、`YOLO`、`COCO`、`VOC`、`MASK`、`LABELME`、`OTHER`，默认 `NONE`。
@@ -487,6 +487,8 @@ Authorization: Bearer <token>
 - `CV` 标注文件按 `annotationFormat` 白名单校验：`NONE/FOLDER_CLASSIFICATION/MASK` 只允许图片；`CSV` 允许 `.csv`；`YOLO` 允许 `.txt/.yaml/.yml`；`COCO/LABELME` 允许 `.json`；`VOC` 允许 `.xml`；`OTHER` 允许 `.txt/.json/.xml/.csv/.yaml/.yml`。其中 `CSV/YOLO/COCO/VOC/LABELME` 必须至少包含一个对应标注文件。
 - `NLP` 支持单文件或 zip，允许格式：`.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`。
 - `NLP` zip 内只能包含上述 NLP 白名单格式文件。
+- `POINT_CLOUD` 支持单文件 `.ply`、`.pcd`，也支持 zip；zip 内至少包含一个 `.ply` 或 `.pcd`，且只允许 `.ply`、`.pcd`、`.txt`、`.json`、`.yaml`、`.yml`。
+- `POINT_CLOUD` 的 `cvTaskType` 和 `annotationFormat` 允许为空并会保存为 `null`。
 - 数据集 zip 会校验路径安全，不允许绝对路径、盘符、`..` 或空字节；条目数上限为 `100000`，解压后总体积上限为 `50GB`。
 
 文件夹上传规则：
@@ -622,7 +624,7 @@ Authorization: Bearer <token>
 | --- | --- | --- | --- |
 | `id` | `VARCHAR(64)` | PK | 模型资产 ID |
 | `name` | `VARCHAR(255)` | not null | 模型名称 |
-| `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP` |
+| `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP`/`POINT_CLOUD`/`ROBOT` |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
 | `owner_user_id` | `INTEGER` | nullable, index recommended | 资源归属用户 ID |
 | `created_at` | `TIMESTAMP` | nullable | 创建时间 |
@@ -681,7 +683,7 @@ Authorization: Bearer <token>
 | --- | --- | --- | --- |
 | `id` | `VARCHAR(64)` | PK | 数据集资产 ID |
 | `name` | `VARCHAR(255)` | not null | 数据集名称 |
-| `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP` |
+| `type` | `VARCHAR(64)` | nullable | 任务类型，`CV`/`NLP`/`POINT_CLOUD`/`ROBOT` |
 | `cv_task_type` | `VARCHAR(64)` | nullable | CV 子任务类型 |
 | `annotation_format` | `VARCHAR(64)` | nullable | CV 标注格式 |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
@@ -717,7 +719,7 @@ Authorization: Bearer <token>
 | `total_chunks` | `INTEGER` | not null | 总分片数 |
 | `dataset_name` | `VARCHAR(255)` | not null | 数据集名称 |
 | `dataset_version` | `VARCHAR(64)` | not null | 数据集版本号 |
-| `task_type` | `VARCHAR(16)` | not null | 任务类型，`CV`/`NLP` |
+| `task_type` | `VARCHAR(16)` | not null | 任务类型，`CV`/`NLP`/`POINT_CLOUD`/`ROBOT` |
 | `cv_task_type` | `VARCHAR(64)` | nullable | CV 子任务类型 |
 | `annotation_format` | `VARCHAR(64)` | nullable | CV 标注格式 |
 | `remark` | `VARCHAR(1024)` | nullable | 备注 |
@@ -841,6 +843,8 @@ POST /api/dataset/upload/complete
   -> 状态初始化为 pending
   -> 前端展示任务列表与详情
 ```
+
+类型匹配按资产 `type` 精确比较：`POINT_CLOUD` 模型可匹配 `POINT_CLOUD` 数据集；`CV`、`NLP`、`POINT_CLOUD` 之间的交叉错配仍会被拒绝。
 
 ## 11. 部署与验证
 

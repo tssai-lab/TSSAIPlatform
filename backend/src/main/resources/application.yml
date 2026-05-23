@@ -11,6 +11,10 @@ minio:
   secret-key: ${MINIO_SECRET_KEY}
   bucket: ${MINIO_BUCKET:models}
 
+point-cloud:
+  preview:
+    max-size: ${POINT_CLOUD_PREVIEW_MAX_SIZE:209715200}
+
 spring:
   application:
     name: tss-backend
