@@ -16,6 +16,9 @@ public interface UserService extends IService<User> {
     boolean resetPassword(Integer userId, String newPassword);
     List<Map<String, Object>> getUserListWithRole();
     boolean softDeleteUser(Integer userId);
+
+    /** 恢复软删用户（须显式将 deleted_at 置空，updateById 默认跳过 null 字段） */
+    boolean restoreDeletedUser(User user, String username, String mobile, Integer roleId, Boolean status, String passwordHash, String email);
     boolean registerByUsername(UserRegisterDTO dto);
     boolean registerByMobile(UserRegisterDTO dto);
     boolean forgetPassword(ForgetPasswordDTO dto);
