@@ -45,3 +45,15 @@ export {
 } from './mlflow';
 
 export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
+
+export {
+  getPointCloudPreview,
+  getPointCloudFile,
+  getPointCloudZipFile,
+  fetchPointCloudPreviewInfo,
+  PointCloudFileFormat,
+  PointCloudPreviewFormat,
+  type PointCloudPreviewInfo,
+  type PointCloudZipEntry,
+  type PointCloudApiResponse,
+} from './pointcloud';

@@ -24,11 +24,19 @@ import {
   LS_DATASET_UPLOAD_ID,
 } from '@/utils/uploadResume';
 
+const POINT_CLOUD_ACCEPT = '.ply,.pcd,.zip';
+
+function isPointCloudFileName(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  return ext === 'ply' || ext === 'pcd' || ext === 'zip';
+}
+
 /**
- * 数据集上传：CV/NLP、版本、备注、单文件分片（fingerprint + 进度）与多文件 CV 文件夹（backend-api.md）
+ * 数据集上传：CV/NLP/POINT_CLOUD、版本、备注、单文件分片与 CV 多文件文件夹（module2-api-doc）
  */
 const DatasetUpload: React.FC = () => {
   const [form] = Form.useForm();
+  const datasetType = Form.useWatch('type', form) as TaskType | undefined;
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [resumeHint, setResumeHint] = useState<string | null>(null);
@@ -75,6 +83,17 @@ const DatasetUpload: React.FC = () => {
       }
     }
 
+    if (type === 'POINT_CLOUD') {
+      if (files.length !== 1) {
+        message.error('点云数据集仅支持上传单个 .ply、.pcd 或 .zip 文件');
+        return;
+      }
+      if (!isPointCloudFileName(files[0].name)) {
+        message.error('点云数据集仅支持 .ply、.pcd 或 .zip 格式');
+        return;
+      }
+    }
+
     setUploading(true);
     setUploadPercent(0);
     const requestOpts = { skipErrorHandler: true } as const;
@@ -100,8 +119,12 @@ const DatasetUpload: React.FC = () => {
           requestOpts,
         );
       } else {
-        if (type === 'NLP') {
-          message.error('NLP 数据集请将多个文件打包为 zip 后作为单个文件上传');
+        if (type === 'NLP' || type === 'POINT_CLOUD') {
+          message.error(
+            type === 'POINT_CLOUD'
+              ? '点云数据集仅支持单个 .ply、.pcd 或 .zip 文件'
+              : 'NLP 数据集请将多个文件打包为 zip 后作为单个文件上传',
+          );
           setUploading(false);
           return;
         }
@@ -163,9 +186,16 @@ const DatasetUpload: React.FC = () => {
           label="任务类型"
           rules={[{ required: true, message: '请选择类型' }]}
         >
-          <Select>
+          <Select
+            onChange={() => {
+              form.setFieldValue('files', []);
+            }}
+          >
             <Select.Option value="CV">CV</Select.Option>
             <Select.Option value="NLP">NLP</Select.Option>
+            <Select.Option value="POINT_CLOUD">
+              点云（POINT_CLOUD）
+            </Select.Option>
           </Select>
         </Form.Item>
         <Form.Item name="remark" label="备注（可选）">
@@ -193,17 +223,32 @@ const DatasetUpload: React.FC = () => {
           ]}
         >
           <Upload
-            multiple
+            multiple={datasetType !== 'POINT_CLOUD' && datasetType !== 'NLP'}
+            accept={
+              datasetType === 'POINT_CLOUD' ? POINT_CLOUD_ACCEPT : undefined
+            }
             beforeUpload={() => false}
-            onChange={(e) => form.setFieldValue('files', e.fileList ?? [])}
+            onChange={(e) => {
+              let fileList = e.fileList ?? [];
+              if (datasetType === 'POINT_CLOUD' && fileList.length > 1) {
+                fileList = fileList.slice(-1);
+                message.info('点云数据集仅支持单个文件，已保留最新选择');
+              }
+              form.setFieldValue('files', fileList);
+            }}
           >
             <Button icon={<UploadOutlined />}>
-              选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）
+              {datasetType === 'POINT_CLOUD'
+                ? '选择点云文件（.ply / .pcd / .zip）'
+                : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
             单文件最大 {UPLOAD_CONFIG.DATASET.MAX_SIZE / 1024 / 1024 / 1024}
-            GB。CV 多文件将走文件夹打包接口；大 zip 请只选单个文件以便分片续传。
+            GB。
+            {datasetType === 'POINT_CLOUD'
+              ? ' 点云仅支持单个 .ply、.pcd 或 .zip；zip 内需至少包含一个 .ply 或 .pcd。'
+              : ' CV 多文件将走文件夹打包接口；大 zip 请只选单个文件以便分片续传。'}
           </div>
         </Form.Item>
         {uploading && (
