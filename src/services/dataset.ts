@@ -76,6 +76,15 @@ export type DatasetListItem = {
   updatedAt?: string;
 };
 
+/** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
+export type DatasetListQuery = {
+  type?: TaskType | 'POINT_CLOUD' | 'ROBOT';
+  keyword?: string;
+  current?: number;
+  pageSize?: number;
+  page?: number;
+};
+
 /** 初始化数据集分片上传时需要提交的元信息。 */
 export type DatasetUploadInitParams = {
   fileName: string;
@@ -200,8 +209,8 @@ export async function listDatasetVersions(assetId?: string, options?: { [key: st
   });
 }
 
-/** 获取数据集列表页聚合数据，可按 CV/NLP 类型筛选。 */
-export async function getDatasetList(params?: { type?: TaskType }, options?: { [key: string]: any }) {
+/** 获取数据集列表页聚合数据，可按 keyword、类型、分页筛选。 */
+export async function getDatasetList(params?: DatasetListQuery, options?: { [key: string]: any }) {
   return request<{ data: { data: DatasetListItem[]; total: number } }>('/dataset/list', {
     method: 'GET',
     params,
@@ -303,17 +312,31 @@ export async function datasetUploadFolder(
 
 const DEFAULT_CHUNK = 5 * 1024 * 1024;
 
-/** 获取数据集列表（兼容：返回 `{ data, total }`） */
+/** 获取数据集列表（兼容：返回 `{ data, total }`；ProTable 的 name 映射为 keyword） */
 export async function fetchDatasetList(options?: {
   current?: number;
   pageSize?: number;
   name?: string;
   type?: string;
 }) {
-  const params: { type?: TaskType } = {};
-  if (options?.type === 'CV' || options?.type === 'NLP') {
-    params.type = options.type;
+  const params: DatasetListQuery = {};
+
+  if (options?.type) {
+    params.type = options.type as DatasetListQuery['type'];
   }
+
+  const keyword = options?.name?.trim();
+  if (keyword) {
+    params.keyword = keyword;
+  }
+
+  if (options?.current) {
+    params.current = options.current;
+  }
+  if (options?.pageSize) {
+    params.pageSize = options.pageSize;
+  }
+
   const res = await getDatasetList(params);
   const inner = res?.data;
   const list = inner?.data ?? [];
