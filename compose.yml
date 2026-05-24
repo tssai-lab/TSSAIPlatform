@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: tss-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tss
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - /opt/tss-platform/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tss"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: tss-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: password123
+    command: server /data --console-address ":9011"
+    ports:
+      - "9010:9000"
+      - "9011:9011"
+    volumes:
+      - /opt/tss-platform/minio-data:/data
+
+  mlflow:
+    build:
+      context: /opt/tss-platform/training/mlflow-lite
+    container_name: tss-mlflow
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - /opt/tss-platform/mlflow-data:/mlflow

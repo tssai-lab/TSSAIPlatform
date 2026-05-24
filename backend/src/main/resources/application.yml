@@ -1,0 +1,85 @@
+server:
+  port: 8080
+  tomcat:
+    uri-encoding: UTF-8
+    use-relative-redirects: true
+
+# MinIO（与 Docker 容器 minio-tss 一致，数据持久化到仓库根目录 tss_minio_data）
+minio:
+  endpoint: http://127.0.0.1:9010
+  access-key: minioadmin
+  secret-key: password123
+  bucket: models
+
+spring:
+  application:
+    name: tss-backend
+  profiles:
+    # 默认走 PostgreSQL；本地若想用 H2 可启动时加：--spring.profiles.active=dev
+    active: ${SPRING_PROFILES_ACTIVE:default}
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+    multipart:
+      # 这里只限制单个 HTTP multipart 请求大小，不限制数据集总文件大小。
+      # 数据集上传走 /api/dataset/upload/* 分片链路，当前单分片为 5MB；
+      # 因此 10GB 数据集会被拆成约 2048 个小请求，不受传统 100MB 单次直传上限影响。
+      max-file-size: 64MB
+      max-request-size: 64MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/tss}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:password123}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+mybatis-plus:
+  type-aliases-package: com.tss.platform.module1.entity
+  configuration:
+    map-underscore-to-camel-case: true
+
+sa-token:
+  token-name: Authorization
+  timeout: 86400
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+training:
+  k8s:
+    enabled: ${TRAINING_K8S_ENABLED:true}
+    namespace: ${TRAINING_K8S_NAMESPACE:tss-training}
+    image: ${TRAINING_K8S_IMAGE:tss/yolo-trainer-cpu:latest}
+    gpu-count: ${TRAINING_K8S_GPU_COUNT:0}
+    cpu-request: ${TRAINING_K8S_CPU_REQUEST:1}
+    memory-request: ${TRAINING_K8S_MEMORY_REQUEST:2Gi}
+    pull-policy: ${TRAINING_K8S_PULL_POLICY:IfNotPresent}
+    kubeconfig-path: ${TRAINING_K8S_KUBECONFIG_PATH:}
+    poll-interval-ms: ${TRAINING_K8S_POLL_INTERVAL_MS:10000}
+  callback:
+    token: ${TRAINING_CALLBACK_TOKEN:please-change-me}
+    base-url: ${TRAINING_CALLBACK_BASE_URL:http://127.0.0.1:8080}
+  mlflow:
+    enabled: ${TRAINING_MLFLOW_ENABLED:true}
+    tracking-uri: ${TRAINING_MLFLOW_TRACKING_URI:http://127.0.0.1:5000}
+    experiment-name: ${TRAINING_MLFLOW_EXPERIMENT_NAME:tss-training}
+
+remote:
+  ssh:
+    host: ${REMOTE_SSH_HOST:47.114.84.133}
+    port: ${REMOTE_SSH_PORT:22}
+    username: ${REMOTE_SSH_USERNAME:root}
+    private-key-path: ${REMOTE_SSH_PRIVATE_KEY_PATH:}
+    password: ${REMOTE_SSH_PASSWORD:}
+    connect-timeout-ms: ${REMOTE_SSH_CONNECT_TIMEOUT_MS:15000}
+    command-timeout-ms: ${REMOTE_SSH_COMMAND_TIMEOUT_MS:180000}
