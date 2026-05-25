@@ -10,7 +10,7 @@ import type { TaskType } from './dataset';
  */
 
 /** 点云接口请求超时（覆盖 app.tsx 全局 10s，大文件拉流需更长时间） */
-const POINT_CLOUD_REQUEST_TIMEOUT = 2 * 60 * 1000;
+const POINT_CLOUD_REQUEST_TIMEOUT = 5 * 60 * 1000;
 
 /** 单文件点云格式 */
 export enum PointCloudFileFormat {
