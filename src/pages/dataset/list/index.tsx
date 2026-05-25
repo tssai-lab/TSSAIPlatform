@@ -55,6 +55,7 @@ const DatasetList: React.FC = () => {
       valueEnum: {
         CV: { text: 'CV' },
         NLP: { text: 'NLP' },
+        POINT_CLOUD: { text: '点云' },
       },
     },
     {

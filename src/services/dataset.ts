@@ -31,8 +31,8 @@ function mapDatasetVersion(version: DatasetVersion): API.DatasetVersionDetail {
  * 资产/版本管理、分片断点续传，以及 CV 图片文件夹直传打包。
  */
 
-/** 后端当前只允许两类任务类型，上传和训练创建都会做强校验。 */
-export type TaskType = 'CV' | 'NLP';
+/** 后端当前只允许两类任务类型，上传和训练创建都会做强校验。新增点云数据集类型 */
+export type TaskType = 'CV' | 'NLP'|'POINT_CLOUD';
 
 /** 数据集资产：表示一个数据集主体，不等同于某个具体文件版本。 */
 export type DatasetAsset = {
@@ -78,7 +78,7 @@ export type DatasetListItem = {
 
 /** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
 export type DatasetListQuery = {
-  type?: TaskType | 'POINT_CLOUD' | 'ROBOT';
+  type?: TaskType | 'ROBOT';
   keyword?: string;
   current?: number;
   pageSize?: number;
@@ -361,7 +361,7 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     data: {
       id: asset.id,
       name: asset.name,
-      type: asset.type as 'CV' | 'NLP',
+      type: asset.type as TaskType,
       remark: asset.remark,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,

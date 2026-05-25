@@ -67,7 +67,7 @@ declare namespace API {
     id: string;
     assetId?: string;
     name: string;
-    type: 'CV' | 'NLP';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD';
     uploadTime?: string;
     size?: string;
     fileCount: number;
