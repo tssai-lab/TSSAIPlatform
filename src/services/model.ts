@@ -107,9 +107,19 @@ export async function modelUploadComplete(
   });
 }
 
-export async function getModelList(options?: { [key: string]: any }) {
+/** GET /api/model/list 查询参数（module2-api-doc 3.1） */
+export type ModelListQuery = {
+  type?: 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
+  keyword?: string;
+  current?: number;
+  pageSize?: number;
+  page?: number;
+};
+
+export async function getModelList(params?: ModelListQuery, options?: { [key: string]: any }) {
   return request<{ data: { data: BackendModelItem[]; total: number } }>('/model/list', {
     method: 'GET',
+    params,
     ...(options || {}),
   });
 }
@@ -154,9 +164,30 @@ export async function fetchModelList(options?: {
   current?: number;
   pageSize?: number;
   name?: string;
+  version?: string;
   type?: string;
 }) {
-  const res = await getModelList(options);
+  const params: ModelListQuery = {};
+
+  if (options?.type) {
+    params.type = options.type as ModelListQuery['type'];
+  }
+
+  const name = options?.name?.trim();
+  const version = options?.version?.trim();
+  const keywordParts = [name, version].filter(Boolean);
+  if (keywordParts.length) {
+    params.keyword = keywordParts.join(' ');
+  }
+
+  if (options?.current) {
+    params.current = options.current;
+  }
+  if (options?.pageSize) {
+    params.pageSize = options.pageSize;
+  }
+
+  const res = await getModelList(params);
   const inner = res?.data;
   const list = (inner?.data ?? [])
     .map((item) => mapModelItem(item))
