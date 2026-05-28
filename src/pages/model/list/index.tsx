@@ -43,12 +43,19 @@ const ModelList: React.FC = () => {
   };
 
   const columns: ProColumns<API.ModelItem>[] = [
-    { title: '模型名称', dataIndex: 'name', key: 'name' },
-    { title: '版本号', dataIndex: 'version', key: 'version' },
+    {
+      title: '模型名称',
+      dataIndex: 'name',
+      key: 'name',
+      width: 160,
+      ellipsis: true,
+    },
+    { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
     {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
+      width: 72,
       valueEnum: {
         CV: { text: 'CV' },
         NLP: { text: 'NLP' },
@@ -59,22 +66,31 @@ const ModelList: React.FC = () => {
       dataIndex: 'uploadTime',
       key: 'uploadTime',
       valueType: 'dateTime',
+      width: 180,
       hideInSearch: true,
     },
-    { title: '大小', dataIndex: 'size', key: 'size', hideInSearch: true },
+    {
+      title: '大小',
+      dataIndex: 'size',
+      key: 'size',
+      width: 100,
+      hideInSearch: true,
+    },
     {
       title: '备注',
       dataIndex: 'remark',
       key: 'remark',
+      width: 200,
       ellipsis: true,
       hideInSearch: true,
     },
     {
       title: '操作',
       key: 'action',
+      width: 168,
       hideInSearch: true,
       render: (_, record) => (
-        <Space>
+        <Space size={4} wrap={false}>
           <Button
             type="link"
             onClick={() => history.push(`/model/detail/${record.id}`)}
@@ -120,6 +136,8 @@ const ModelList: React.FC = () => {
         rowKey="id"
         search={{ labelWidth: 'auto' }}
         pagination={{ pageSize: 10 }}
+        tableLayout="fixed"
+        scroll={{ x: 'max-content' }}
       />
     </PageContainer>
   );
