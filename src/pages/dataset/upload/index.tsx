@@ -15,7 +15,11 @@ import {
 } from 'antd';
 import React, { useEffect, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
-import type { TaskType } from '@/services/dataset';
+import type {
+  AnnotationFormat,
+  CvTaskType,
+  TaskType,
+} from '@/services/dataset';
 import { uploadDataset } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
@@ -74,6 +78,10 @@ const DatasetUpload: React.FC = () => {
     const version = (values.version || 'v1').trim();
     const type = values.type as TaskType;
     const remark = values.remark?.trim();
+    const cvTaskType = values.cvTaskType as CvTaskType | undefined;
+    const annotationFormat = values.annotationFormat as
+      | AnnotationFormat
+      | undefined;
 
     const maxBytes = UPLOAD_CONFIG.DATASET.MAX_SIZE;
     for (const f of files) {
@@ -108,6 +116,8 @@ const DatasetUpload: React.FC = () => {
             files,
             type,
             version,
+            cvTaskType,
+            annotationFormat,
             remark,
             fileFingerprint: fp,
             onProgress: (p) => setUploadPercent(p),
@@ -129,7 +139,15 @@ const DatasetUpload: React.FC = () => {
           return;
         }
         await uploadDataset(
-          { name, files, type: 'CV', version, remark },
+          {
+            name,
+            files,
+            type: 'CV',
+            version,
+            cvTaskType,
+            annotationFormat,
+            remark,
+          },
           requestOpts,
         );
         setUploadPercent(100);
@@ -189,6 +207,8 @@ const DatasetUpload: React.FC = () => {
           <Select
             onChange={() => {
               form.setFieldValue('files', []);
+              form.setFieldValue('cvTaskType', undefined);
+              form.setFieldValue('annotationFormat', undefined);
             }}
           >
             <Select.Option value="CV">CV</Select.Option>
@@ -198,6 +218,47 @@ const DatasetUpload: React.FC = () => {
             </Select.Option>
           </Select>
         </Form.Item>
+        {datasetType === 'CV' && (
+          <>
+            <Form.Item name="cvTaskType" label="CV 子任务类型">
+              <Select allowClear placeholder="请选择 CV 子任务">
+                <Select.Option value="IMAGE_CLASSIFICATION">
+                  图像分类
+                </Select.Option>
+                <Select.Option value="OBJECT_DETECTION">
+                  目标检测
+                </Select.Option>
+                <Select.Option value="SEMANTIC_SEGMENTATION">
+                  语义分割
+                </Select.Option>
+                <Select.Option value="INSTANCE_SEGMENTATION">
+                  实例分割
+                </Select.Option>
+                <Select.Option value="UNLABELED">未标注</Select.Option>
+                <Select.Option value="OTHER">其它</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="annotationFormat"
+              label="标注格式"
+              extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
+            >
+              <Select allowClear placeholder="请选择标注格式">
+                <Select.Option value="NONE">NONE（仅图片）</Select.Option>
+                <Select.Option value="FOLDER_CLASSIFICATION">
+                  FOLDER_CLASSIFICATION
+                </Select.Option>
+                <Select.Option value="YOLO">YOLO</Select.Option>
+                <Select.Option value="COCO">COCO</Select.Option>
+                <Select.Option value="VOC">VOC</Select.Option>
+                <Select.Option value="CSV">CSV</Select.Option>
+                <Select.Option value="MASK">MASK</Select.Option>
+                <Select.Option value="LABELME">LABELME</Select.Option>
+                <Select.Option value="OTHER">OTHER</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )}
         <Form.Item name="remark" label="备注（可选）">
           <Input.TextArea rows={3} placeholder="将传给后端 init 的 remark" />
         </Form.Item>
@@ -248,7 +309,7 @@ const DatasetUpload: React.FC = () => {
             GB。
             {datasetType === 'POINT_CLOUD'
               ? ' 点云仅支持单个 .ply、.pcd 或 .zip；zip 内需至少包含一个 .ply 或 .pcd。'
-              : ' CV 多文件将走文件夹打包接口；大 zip 请只选单个文件以便分片续传。'}
+              : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
           </div>
         </Form.Item>
         {uploading && (

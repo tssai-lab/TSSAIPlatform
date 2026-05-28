@@ -32,7 +32,28 @@ function mapDatasetVersion(version: DatasetVersion): API.DatasetVersionDetail {
  */
 
 /** 后端当前只允许两类任务类型，上传和训练创建都会做强校验。新增点云数据集类型 */
-export type TaskType = 'CV' | 'NLP'|'POINT_CLOUD';
+export type TaskType = 'CV' | 'NLP' | 'POINT_CLOUD';
+
+/** CV 子任务（module2-api-doc 1.3） */
+export type CvTaskType =
+  | 'IMAGE_CLASSIFICATION'
+  | 'OBJECT_DETECTION'
+  | 'SEMANTIC_SEGMENTATION'
+  | 'INSTANCE_SEGMENTATION'
+  | 'UNLABELED'
+  | 'OTHER';
+
+/** CV 标注格式（module2-api-doc 1.3） */
+export type AnnotationFormat =
+  | 'NONE'
+  | 'FOLDER_CLASSIFICATION'
+  | 'CSV'
+  | 'YOLO'
+  | 'COCO'
+  | 'VOC'
+  | 'MASK'
+  | 'LABELME'
+  | 'OTHER';
 
 /** 数据集资产：表示一个数据集主体，不等同于某个具体文件版本。 */
 export type DatasetAsset = {
@@ -93,6 +114,8 @@ export type DatasetUploadInitParams = {
   datasetName: string;
   version?: string;
   type: TaskType;
+  cvTaskType?: CvTaskType;
+  annotationFormat?: AnnotationFormat;
   remark?: string;
 };
 
@@ -140,6 +163,8 @@ export type DatasetFolderUploadParams = {
   datasetName: string;
   version?: string;
   type: 'CV';
+  cvTaskType?: CvTaskType;
+  annotationFormat?: AnnotationFormat;
   remark?: string;
   files: File[];
   paths: string[];
@@ -293,6 +318,12 @@ export async function datasetUploadFolder(
   formData.append('datasetName', body.datasetName);
   formData.append('version', body.version || 'v1');
   formData.append('type', body.type);
+  if (body.cvTaskType) {
+    formData.append('cvTaskType', body.cvTaskType);
+  }
+  if (body.annotationFormat) {
+    formData.append('annotationFormat', body.annotationFormat);
+  }
   if (body.remark) {
     formData.append('remark', body.remark);
   }
@@ -377,6 +408,8 @@ export type UploadDatasetCompatParams = {
   files: File[];
   type?: TaskType;
   version?: string;
+  cvTaskType?: CvTaskType;
+  annotationFormat?: AnnotationFormat;
   remark?: string;
   /** 与 backend-api 一致；不传则按「文件名|大小|数据集名|版本|类型」自动生成稳定指纹 */
   fileFingerprint?: string;
@@ -391,8 +424,18 @@ export type UploadDatasetCompatParams = {
  * NLP 多文件请让用户打包为 zip 后单文件上传。
  */
 export async function uploadDataset(params: UploadDatasetCompatParams, options?: { [key: string]: any }) {
-  const { name, files, type = 'CV', version = 'v1', remark, fileFingerprint, onProgress, onUploadSession } =
-    params;
+  const {
+    name,
+    files,
+    type = 'CV',
+    version = 'v1',
+    cvTaskType,
+    annotationFormat,
+    remark,
+    fileFingerprint,
+    onProgress,
+    onUploadSession,
+  } = params;
   if (!files?.length) {
     throw new Error('请选择要上传的文件');
   }
@@ -409,6 +452,8 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
         datasetName: name,
         version,
         type,
+        cvTaskType,
+        annotationFormat,
         remark,
       },
       options,
@@ -443,6 +488,8 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
         datasetName: name,
         version,
         type: 'CV',
+        cvTaskType,
+        annotationFormat,
         remark,
         files,
         paths: files.map((f) => f.webkitRelativePath || f.name),
