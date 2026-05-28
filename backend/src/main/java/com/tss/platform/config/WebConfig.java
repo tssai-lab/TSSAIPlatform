@@ -1,6 +1,7 @@
-package com.tss.platform.config;
+﻿package com.tss.platform.config;
 
 import com.tss.platform.module1.interceptor.PermissionInterceptor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -9,36 +10,26 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    private final PermissionInterceptor permissionInterceptor;
-
-    public WebConfig(PermissionInterceptor permissionInterceptor) {
-        this.permissionInterceptor = permissionInterceptor;
-    }
+    // 改用Spring原生@Autowired，兼容性更强，无需额外依赖
+    @Autowired
+    private PermissionInterceptor permissionInterceptor;
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**")
+        // 添加CORS跨域支持
+        registry.addMapping("/**")
                 .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
-                .allowCredentials(false);
+                .allowCredentials(true)
+                .maxAge(3600);
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 拦截所有/api开头的接口，实现权限校验
         registry.addInterceptor(permissionInterceptor)
-                .addPathPatterns(
-                        "/api/user/**",
-                        "/api/log/**",
-                        "/api/model/**",
-                        "/api/model-assets/**",
-                        "/api/model-versions/**",
-                        "/api/dataset/**",
-                        "/api/dataset-assets/**",
-                        "/api/dataset-versions/**",
-                        "/api/task/**",
-                        "/api/experiments/**",
-                        "/api/files/**"
-                );
+                .addPathPatterns("/api/**")
+                .excludePathPatterns("/api/user/login", "/api/user/register/**", "/api/user/sms/code", "/api/user/forget/password");
     }
 }

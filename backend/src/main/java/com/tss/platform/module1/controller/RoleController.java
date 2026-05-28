@@ -1,4 +1,4 @@
-package com.tss.platform.module1.controller;
+﻿package com.tss.platform.module1.controller;
 
 import com.tss.platform.module1.common.Result;
 import com.tss.platform.module1.entity.Role;
@@ -41,4 +41,3 @@ public class RoleController {
         return Result.success(options, "查询成功");
     }
 }
-

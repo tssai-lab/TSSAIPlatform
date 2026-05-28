@@ -1,4 +1,4 @@
-package com.tss.platform.module1.controller;
+﻿package com.tss.platform.module1.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -20,7 +20,6 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/system/user")
@@ -456,4 +455,3 @@ public class SystemUserController {
         return ip;
     }
 }
-

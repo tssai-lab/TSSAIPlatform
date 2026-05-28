@@ -1,12 +1,8 @@
-package com.tss.platform.module1.service;
+﻿package com.tss.platform.module1.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.tss.platform.module1.dto.ForgetPasswordDTO;
-import com.tss.platform.module1.dto.LoginDTO;
-import com.tss.platform.module1.dto.UserQueryDTO;
-import com.tss.platform.module1.dto.UserRegisterDTO;
-import com.tss.platform.module1.dto.UserUpdateDTO;
+import com.tss.platform.module1.dto.*;
 import com.tss.platform.module1.entity.User;
 import java.util.List;
 import java.util.Map;

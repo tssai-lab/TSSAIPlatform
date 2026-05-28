@@ -1,4 +1,4 @@
-package com.tss.platform.module1.common;
+﻿package com.tss.platform.module1.common;
 
 public class OperationType {
     public static final String ADD = "1";

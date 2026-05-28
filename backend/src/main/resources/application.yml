@@ -51,9 +51,14 @@ spring:
         format_sql: true
 
 mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.tss.platform.module1.entity
   configuration:
     map-underscore-to-camel-case: true
+
+# 短信验证码（开发环境未接真实短信网关时，验证码输出到后台日志）
+sms:
+  expose-code: true
 
 sa-token:
   token-name: Authorization

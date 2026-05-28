@@ -1,4 +1,4 @@
-package com.tss.platform.module1.dto;
+﻿package com.tss.platform.module1.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
