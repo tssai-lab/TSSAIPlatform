@@ -37,9 +37,9 @@ export async function fetchAdminList(params: AdminListParams): Promise<AdminList
     return { code, message, data: { list: [], total: 0 } };
   }
 
-  const adminRows = rows
-    .filter((u) => ADMIN_ROLE_NAMES.includes(u.role as AdminRoleName))
-    .map((u) => ({ ...u, department: u.department ?? '默认部门' }));
+  const adminRows = rows.filter((u) =>
+    ADMIN_ROLE_NAMES.includes(u.role as AdminRoleName),
+  );
 
   const { pageNum = 1, pageSize = 10 } = params;
   const total = adminRows.length;
@@ -62,7 +62,6 @@ export async function checkAdminUsername(username: string) {
 export async function addAdmin(params: {
   username: string;
   phone: string;
-  department?: string;
   role: AdminRoleName | string;
   status: string;
 }): Promise<CommonResponse<UserItem>> {
@@ -70,18 +69,16 @@ export async function addAdmin(params: {
   return addUser({
     username: params.username,
     phone: params.phone,
-    department: params.department,
     role: params.role,
     status: params.status,
   });
 }
 
-/** 编辑管理员 */
+/** 编辑管理员（支持降为普通用户） */
 export async function editAdmin(params: {
   id: number;
   username: string;
   phone: string;
-  department?: string;
   role: AdminRoleName | string;
   status: string;
 }): Promise<CommonResponse<UserItem>> {
@@ -92,7 +89,6 @@ export async function editAdmin(params: {
     id: params.id,
     username: params.username,
     phone: params.phone,
-    department: params.department,
     role: params.role,
     status: params.status,
   });

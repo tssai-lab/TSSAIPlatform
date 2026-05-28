@@ -3,7 +3,7 @@ import type { Settings as LayoutSettings } from '@ant-design/pro-components';
 import { SettingDrawer } from '@ant-design/pro-components';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history, Link } from '@umijs/max';
-import { App, notification } from 'antd';
+import { App, message, notification } from 'antd';
 import React from 'react';
 import { AvatarDropdown, AvatarName, Question } from '@/components';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
@@ -204,14 +204,13 @@ export const request: RequestConfig = {
 
     errorHandler: (error: any, opts: any) => {
       if (opts?.skipErrorHandler) return;
+      const msgApi = messageInstance ?? message;
 
       if (error.name === 'AxiosError') {
         if (error.code === 'ECONNABORTED') {
-          messageInstance?.error('请求超时，请稍后重试');
+          msgApi.error('请求超时，请稍后重试');
         } else {
-          messageInstance?.error(
-            `网络错误：${error.message || '无法连接服务器'}`,
-          );
+          msgApi.error(`网络错误：${error.message || '无法连接服务器'}`);
         }
       } else if (error.name === 'BizError') {
         const { code } = error.info ?? {};
@@ -221,10 +220,10 @@ export const request: RequestConfig = {
             history.push(loginPath);
             break;
           case 403:
-            messageInstance?.warning('暂无操作权限，请联系管理员');
+            msgApi.warning('暂无操作权限，请联系管理员');
             break;
           default:
-            messageInstance?.error(error.message || '业务处理失败');
+            msgApi.error(error.message || '业务处理失败');
         }
       }
     },

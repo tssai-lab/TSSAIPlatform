@@ -37,8 +37,6 @@ export interface UserItem {
   id: number;
   username: string;
   phone: string;
-  /** 所属部门（后端未返回时由页面兜底展示“默认部门”） */
-  department?: string;
   role: string; // SystemRoleLabel（见 constants/systemLabels.ts）
   status: string; // SystemStatusLabel（见 constants/systemLabels.ts）
   createTime: string; // YYYY-MM-DD
@@ -48,7 +46,6 @@ export interface UserItem {
 export interface AddUserParams {
   username: string;
   phone: string;
-  department?: string;
   role: string;
   status: string;
 }
@@ -58,7 +55,6 @@ export interface EditUserParams {
   id: number;
   username: string;
   phone: string;
-  department?: string;
   role: string;
   status: string;
 }
@@ -70,12 +66,31 @@ export interface CommonResponse<T = any> {
   data?: T;
 }
 
+/** 列表角色展示：仅按 roleId / role_id 映射（1 超管 2 普管 3 普通用户） */
 function pickRoleLabel(roleId: unknown): string {
   const n = Number(roleId);
   if (n === 1) return SYSTEM_ROLES.SUPER_ADMIN;
   if (n === 2) return SYSTEM_ROLES.NORMAL_ADMIN;
   if (n === 3) return SYSTEM_ROLES.USER;
   return SYSTEM_ROLES.USER;
+}
+
+/** 接口 status → 页面展示（启用 / 禁用） */
+function mapStatusFromApi(raw: unknown): string {
+  if (
+    raw === true ||
+    raw === 'true' ||
+    raw === 't' ||
+    raw === 1 ||
+    raw === '1' ||
+    raw === 'enabled' ||
+    raw === 'ENABLED' ||
+    raw === SYSTEM_STATUS.ENABLED ||
+    raw === '启用'
+  ) {
+    return SYSTEM_STATUS.ENABLED;
+  }
+  return SYSTEM_STATUS.DISABLED;
 }
 
 /** 拉取并筛选用户（不含分页，供列表与管理员列表复用） */
@@ -98,21 +113,12 @@ export async function fetchFilteredUserRows(
     };
   }
 
-  let rows: UserItem[] = res.data.map((row) => {
+  let rows: UserItem[] = res.data.list.map((row) => {
     const id = Number(row.id);
     const username = String(row.username ?? '');
     const phone = String(row.mobile ?? row.phone ?? '');
-    const roleId = row.role_id ?? row.roleId;
-    const role = pickRoleLabel(roleId);
-    const sb = row.status;
-    const status =
-      sb === true ||
-      sb === 'true' ||
-      sb === 't' ||
-      sb === 1 ||
-      sb === '1'
-        ? SYSTEM_STATUS.ENABLED
-        : SYSTEM_STATUS.DISABLED;
+    const role = pickRoleLabel(row.role_id ?? row.roleId);
+    const status = mapStatusFromApi(row.status);
     const createdRaw = row.created_at ?? row.createdAt;
     let createTime = '';
     if (createdRaw != null) {
@@ -123,7 +129,6 @@ export async function fetchFilteredUserRows(
       id,
       username,
       phone,
-      department: '默认部门',
       role,
       status,
       createTime,
@@ -134,15 +139,7 @@ export async function fetchFilteredUserRows(
     rows = rows.filter((r) => r.role === SYSTEM_ROLES.USER);
   }
 
-  const {
-    username,
-    phone,
-    role,
-    status,
-    createTime,
-    pageNum = 1,
-    pageSize = 10,
-  } = params;
+  const { username, phone, role, status, createTime } = params;
 
   if (username) {
     rows = rows.filter((r) => r.username.includes(String(username)));
@@ -160,13 +157,28 @@ export async function fetchFilteredUserRows(
     rows = rows.filter((r) => r.createTime === createTime);
   }
 
+  return {
+    code: 200,
+    message: 'ok',
+    rows,
+  };
+}
+
+/** 查询用户列表（前端分页，供用户管理页 ProTable） */
+export async function fetchUserList(params: UserListParams): Promise<UserListResponse> {
+  const { code, message, rows } = await fetchFilteredUserRows(params);
+  if (code !== 200) {
+    return { code, message, data: { list: [], total: 0 } };
+  }
+
+  const { pageNum = 1, pageSize = 10 } = params;
   const total = rows.length;
   const start = (pageNum - 1) * pageSize;
   const list = rows.slice(start, start + pageSize);
 
   return {
     code: 200,
-    message: 'ok',
+    message: message || 'ok',
     data: { list, total },
   };
 }
@@ -215,6 +227,15 @@ export async function checkUsername(username: string) {
     data: { username },
   }).catch((error) => {
     throw error;
+  });
+}
+
+/** 将普通用户设为普通管理员 POST /api/user/promote-to-admin（仅超管） */
+export async function promoteUserToNormalAdmin(body: { userId: number }) {
+  return request<CommonResponse>(SYSTEM_API_CONFIG.ENDPOINTS.USER_PROMOTE_TO_ADMIN, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    data: body,
   });
 }
 

@@ -5,32 +5,26 @@ import type {
 } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import { Button, message, Tabs } from 'antd';
+import { message } from 'antd';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-  exportLog,
   getLogList,
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
 
-type LogTypeTab = 'system' | 'operation';
-
 /**
- * 日志管理页
- * 超管：系统日志+操作日志、全部操作人（含管理员）、IP、导出
- * 普管：仅普通用户操作日志、操作人仅普通用户姓名、无IP列、无导出
+ * 日志管理页（操作日志）
+ * 超管：全部操作人（含管理员）、IP
+ * 普管：仅普通用户操作日志、无 IP 列
  */
 const LogManagement: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType>(null);
-  const [activeTab, setActiveTab] = useState<LogTypeTab>('operation');
-  const [currentParams, setCurrentParams] = useState<LogListParams>({});
 
   const isSuperAdmin = access.canLogViewAdminAndIp;
-  const canExport = access.canLogExport;
 
   useEffect(() => {
     if (!access.canAccessSystemLog) {
@@ -94,11 +88,8 @@ const LogManagement: React.FC = () => {
         operateTime: operateTimeRange,
         ip: ip ?? '',
         result: result ?? '',
-        logType: activeTab,
         currentUserRole,
       };
-
-      setCurrentParams(requestParams);
 
       const response = await getLogList(requestParams);
 
@@ -124,38 +115,7 @@ const LogManagement: React.FC = () => {
     }
   };
 
-  const handleExport = async () => {
-    if (!canExport) {
-      message.warning('无权限执行该操作');
-      return;
-    }
-    try {
-      const params = {
-        ...currentParams,
-        pageNum: 1,
-        pageSize: 10000,
-      };
-      const response = await exportLog(params);
-      if (response.code === 200) {
-        message.success(response.msg ?? '导出成功');
-        if (
-          (response as { data?: { downloadUrl?: string } })?.data?.downloadUrl
-        ) {
-          window.open(
-            (response as { data: { downloadUrl: string } }).data.downloadUrl,
-            '_blank',
-          );
-        }
-      } else {
-        message.error(response.msg ?? '导出失败');
-      }
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err?.message ?? '导出失败');
-    }
-  };
-
-  const baseColumns: ProColumns<LogItem>[] = [
+  const columns: ProColumns<LogItem>[] = [
     {
       title: '序号',
       dataIndex: '_index',
@@ -238,31 +198,10 @@ const LogManagement: React.FC = () => {
   ];
 
   return (
-    <PageContainer
-      extra={
-        canExport
-          ? [
-              <Button key="export" onClick={handleExport}>
-                导出Excel
-              </Button>,
-            ]
-          : undefined
-      }
-    >
-      <Tabs
-        activeKey={activeTab}
-        onChange={(k) => {
-          setActiveTab(k as LogTypeTab);
-          setTimeout(() => actionRef.current?.reload(), 0);
-        }}
-        items={[
-          { key: 'operation', label: '操作日志' },
-          { key: 'system', label: '系统日志' },
-        ]}
-      />
+    <PageContainer title="日志管理" subTitle="用户操作日志查询">
       <ProTable<LogItem>
         actionRef={actionRef}
-        columns={baseColumns}
+        columns={columns}
         request={fetchLogList}
         rowKey="id"
         search={{ labelWidth: 'auto' }}
