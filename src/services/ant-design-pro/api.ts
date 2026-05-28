@@ -92,21 +92,3 @@ export async function registerByMobile(
   });
 }
 
-/** 超级管理员：将普通用户设为普通管理员 POST /api/user/promote-to-admin */
-export async function promoteUserToNormalAdmin(
-  body: { userId: number },
-  options?: { [key: string]: any },
-) {
-  return request<{ code?: number; message?: string; msg?: string }>(
-    '/user/promote-to-admin',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      data: body,
-      ...(options || {}),
-    },
-  );
-}
-

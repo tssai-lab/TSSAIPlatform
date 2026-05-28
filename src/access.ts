@@ -22,12 +22,12 @@ export default function access(
 
     /** 系统管理-用户管理：超管+普管可见 */
     canAccessSystemUser: isAdmin,
-    /** 系统管理-角色管理：仅超管 */
-    canAccessSystemRole: isSuperAdmin,
-    /** 系统管理-权限管理：仅超管 */
-    canAccessSystemPermission: isSuperAdmin,
+    /** 系统管理-管理员列表：仅超管 */
+    canAccessSystemAdmin: isSuperAdmin,
     /** 系统管理-日志管理：超管+普管可见 */
     canAccessSystemLog: isAdmin,
+    /** 系统管理-系统配置：仅超管 */
+    canAccessSystemConfig: isSuperAdmin,
 
     /** 用户管理-删除/批量删除/导出：仅超管 */
     canUserDeleteOrExport: isSuperAdmin,

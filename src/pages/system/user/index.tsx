@@ -25,13 +25,13 @@ import {
   SYSTEM_STATUS,
   SYSTEM_STATUS_OPTIONS,
 } from '@/constants/systemLabels';
-import { promoteUserToNormalAdmin } from '@/services/ant-design-pro/api';
 import {
   addUser,
   checkUsername,
   deleteUser,
   editUser,
   fetchUserList as fetchUserListService,
+  promoteUserToNormalAdmin,
   toggleUserStatus,
   type UserItem,
   type UserListParams,
@@ -49,6 +49,7 @@ const UserManagement: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [usernameChecking, setUsernameChecking] = useState(false);
+  const [submitLoading, setSubmitLoading] = useState(false);
   const actionRef = useRef<ActionType>(null);
 
   useEffect(() => {
@@ -56,6 +57,17 @@ const UserManagement: React.FC = () => {
       history.replace('/403');
     }
   }, [access.canAccessSystemUser]);
+
+  /** 新增弹窗打开后重置表单并写入默认值（须在 Modal 内 Form 挂载后调用） */
+  useEffect(() => {
+    if (modalVisible && !editingUser) {
+      form.resetFields();
+      form.setFieldsValue({
+        status: SYSTEM_STATUS.ENABLED,
+        role: SYSTEM_ROLES.USER,
+      });
+    }
+  }, [modalVisible, editingUser, form]);
 
   if (!access.canAccessSystemUser) return null;
 
@@ -111,12 +123,6 @@ const UserManagement: React.FC = () => {
 
   const handleAdd = () => {
     setEditingUser(null);
-    form.resetFields();
-    form.setFieldsValue({
-      status: SYSTEM_STATUS.ENABLED,
-      role: SYSTEM_ROLES.USER,
-      department: '默认部门',
-    });
     setModalVisible(true);
   };
 
@@ -126,7 +132,6 @@ const UserManagement: React.FC = () => {
       id: record.id,
       username: record.username,
       phone: record.phone,
-      department: record.department ?? '默认部门',
       role: record.role,
       status: record.status,
     });
@@ -140,7 +145,9 @@ const UserManagement: React.FC = () => {
     try {
       const response = await checkUsername(value);
       setUsernameChecking(false);
-      if (response.code === 200) return Promise.resolve();
+      if (response.code === 200 && response.data?.available !== false) {
+        return Promise.resolve();
+      }
       return Promise.reject(new Error('用户名已存在'));
     } catch (e) {
       setUsernameChecking(false);
@@ -162,7 +169,6 @@ const UserManagement: React.FC = () => {
     try {
       const username = values.username as string;
       const phone = values.phone as string;
-      const department = values.department as string | undefined;
       const role = values.role as string;
       const status = values.status as string;
 
@@ -187,7 +193,6 @@ const UserManagement: React.FC = () => {
           id: editingUser.id,
           username,
           phone,
-          department,
           role,
           status,
         });
@@ -196,7 +201,9 @@ const UserManagement: React.FC = () => {
           setModalVisible(false);
           form.resetFields();
           actionRef.current?.reload();
+          return;
         }
+        message.error(response.message || '编辑失败');
       } else {
         if (
           !canRoleFilterAndAssignAdmin &&
@@ -213,7 +220,6 @@ const UserManagement: React.FC = () => {
         const response = await addUser({
           username,
           phone,
-          department,
           role,
           status,
         });
@@ -222,10 +228,40 @@ const UserManagement: React.FC = () => {
           setModalVisible(false);
           form.resetFields();
           actionRef.current?.reload();
+          return;
         }
+        message.error(response.message || '新增失败');
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
+      const err = error as { name?: string; message?: string };
+      if (err.name !== 'BizError') {
+        message.error(err.message || '操作失败');
+      }
+      // BizError 已由 app.tsx 全局 errorHandler 提示，勿再 throw 避免 Uncaught (in promise)
+    }
+  };
+
+  const handleModalOk = async () => {
+    if (submitLoading) return;
+    try {
+      const values = await form.validateFields();
+      setSubmitLoading(true);
+      await handleSubmit(values);
+    } catch (error: unknown) {
+      const err = error as { errorFields?: unknown[] };
+      if (err?.errorFields?.length) {
+        message.warning('请完善表单后再提交');
+        return;
+      }
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
+  const notifyRequestError = (error: unknown, fallback: string) => {
+    const err = error as { name?: string; message?: string };
+    if (err.name !== 'BizError') {
+      message.error(err.message || fallback);
     }
   };
 
@@ -245,9 +281,11 @@ const UserManagement: React.FC = () => {
       if (response.code === 200) {
         message.success('删除成功');
         actionRef.current?.reload();
+        return;
       }
+      message.error(response.message || '删除失败');
     } catch (error: unknown) {
-      const err = error as { message?: string };
+      notifyRequestError(error, '删除失败');
     }
   };
 
@@ -265,18 +303,12 @@ const UserManagement: React.FC = () => {
           newStatus === SYSTEM_STATUS.DISABLED ? '已禁用' : '已启用',
         );
         actionRef.current?.reload();
+        return;
       }
+      message.error(response.message || '状态切换失败');
     } catch (error: unknown) {
-      const err = error as { message?: string };
+      notifyRequestError(error, '状态切换失败');
     }
-  };
-
-  const handleExport = () => {
-    if (!canDeleteOrExport) {
-      message.warning('无权限执行该操作');
-      return;
-    }
-    message.info('导出功能需对接后端接口');
   };
 
   const handlePromoteToAdmin = async (record: UserItem) => {
@@ -287,10 +319,11 @@ const UserManagement: React.FC = () => {
           (res as any).msg ?? (res as any).message ?? '已设为普通管理员',
         );
         actionRef.current?.reload();
+        return;
       }
+      message.error((res as any).message ?? (res as any).msg ?? '操作失败');
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '操作失败');
+      notifyRequestError(error, '操作失败');
     }
   };
 
@@ -340,14 +373,6 @@ const UserManagement: React.FC = () => {
         placeholder: '请输入手机号',
         onPressEnter: () => actionRef.current?.reload(),
       },
-    },
-    {
-      title: '所属部门',
-      dataIndex: 'department',
-      key: 'department',
-      align: 'center',
-      hideInSearch: true,
-      renderText: (t) => t || '默认部门',
     },
     ...(canRoleFilterAndAssignAdmin
       ? [
@@ -465,16 +490,11 @@ const UserManagement: React.FC = () => {
     <>
       <PageContainer
         title="用户管理"
-        subTitle="管理平台用户账号，支持搜索筛选、新增/编辑、启用/禁用与导出等操作。"
+        subTitle="管理平台用户账号，支持搜索筛选、新增/编辑、启用/禁用等操作。"
         extra={
-          <Space>
-            <Button type="primary" onClick={handleAdd}>
-              新增用户
-            </Button>
-            {canDeleteOrExport && (
-              <Button onClick={handleExport}>导出用户</Button>
-            )}
-          </Space>
+          <Button type="primary" onClick={handleAdd}>
+            新增用户
+          </Button>
         }
       >
         <ProTable<UserItem>
@@ -482,7 +502,7 @@ const UserManagement: React.FC = () => {
           columns={columns}
           request={fetchUserList}
           rowKey="id"
-          search={{ labelWidth: 'auto', defaultCollapsed: false }}
+          search={{ labelWidth: 'auto' }}
           pagination={{
             defaultPageSize: 10,
             showSizeChanger: true,
@@ -502,22 +522,21 @@ const UserManagement: React.FC = () => {
             form.resetFields();
             setEditingUser(null);
           }}
-          onOk={() => form.submit()}
+          onOk={handleModalOk}
+          confirmLoading={submitLoading}
           okText="确定"
           cancelText="取消"
           destroyOnClose
         >
-          <Form
-            form={form}
-            onFinish={handleSubmit}
-            layout="vertical"
-            preserve={false}
-          >
+          <Form form={form} layout="vertical" preserve={false}>
             <Form.Item
               name="username"
               label="用户名"
-              rules={[{ validator: validateUsername }]}
-              validateTrigger="onBlur"
+              rules={[
+                { required: true, message: '用户名不能为空' },
+                { validator: validateUsername },
+              ]}
+              validateTrigger={['onBlur', 'onSubmit']}
             >
               <Input placeholder="请输入用户名" disabled={!!editingUser} />
             </Form.Item>
@@ -530,13 +549,6 @@ const UserManagement: React.FC = () => {
               ]}
             >
               <Input placeholder="请输入手机号" maxLength={11} />
-            </Form.Item>
-            <Form.Item
-              name="department"
-              label="所属部门"
-              rules={[{ required: true, message: '请输入所属部门' }]}
-            >
-              <Input placeholder="请输入所属部门" />
             </Form.Item>
             <Form.Item
               name="role"

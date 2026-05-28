@@ -88,7 +88,6 @@ const MyOperationLogs: React.FC = () => {
         operateType: operateType ?? '',
         operateTime: operateTimeRange,
         result: result ?? '',
-        logType: 'operation',
         currentUsername,
         content: content ?? '',
       };

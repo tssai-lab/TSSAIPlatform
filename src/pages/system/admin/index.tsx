@@ -83,7 +83,6 @@ const AdminListPage: React.FC = () => {
     form.setFieldsValue({
       status: SYSTEM_STATUS.ENABLED,
       role: SYSTEM_ROLES.NORMAL_ADMIN,
-      department: '默认部门',
     });
     setModalVisible(true);
   };
@@ -94,36 +93,33 @@ const AdminListPage: React.FC = () => {
       id: record.id,
       username: record.username,
       phone: record.phone,
-      department: record.department ?? '默认部门',
       role: record.role,
       status: record.status,
     });
     setModalVisible(true);
   };
 
+  const isEditingSuperAdmin = editingUser?.role === SYSTEM_ROLES.SUPER_ADMIN;
+
   const adminRoleOptionsForForm = useMemo(() => {
-    const base = [
-      ...ADMIN_ROLE_OPTIONS,
-      { label: SYSTEM_ROLES.USER, value: SYSTEM_ROLES.USER },
-    ] as const;
-    if (editingUser?.role === SYSTEM_ROLES.SUPER_ADMIN) {
+    if (isEditingSuperAdmin) {
       return [
-        {
-          label: SYSTEM_ROLES.SUPER_ADMIN,
-          value: SYSTEM_ROLES.SUPER_ADMIN,
-          disabled: true,
-        },
-        ...base,
+        { label: SYSTEM_ROLES.SUPER_ADMIN, value: SYSTEM_ROLES.SUPER_ADMIN },
       ];
     }
-    return base;
-  }, [editingUser?.role]);
+    if (editingUser) {
+      return [
+        ...ADMIN_ROLE_OPTIONS,
+        { label: SYSTEM_ROLES.USER, value: SYSTEM_ROLES.USER },
+      ];
+    }
+    return [...ADMIN_ROLE_OPTIONS];
+  }, [editingUser, isEditingSuperAdmin]);
 
   const handleSubmit = async (values: Record<string, unknown>) => {
     try {
       const username = values.username as string;
       const phone = values.phone as string;
-      const department = values.department as string | undefined;
       const role = values.role as string;
       const status = values.status as string;
 
@@ -133,12 +129,14 @@ const AdminListPage: React.FC = () => {
       }
 
       if (editingUser) {
+        const submitRole = isEditingSuperAdmin
+          ? SYSTEM_ROLES.SUPER_ADMIN
+          : role;
         const response = await editAdmin({
           id: editingUser.id,
           username,
           phone,
-          department,
-          role,
+          role: submitRole,
           status,
         });
         if (response.code === 200) {
@@ -151,7 +149,6 @@ const AdminListPage: React.FC = () => {
         const response = await addAdmin({
           username,
           phone,
-          department,
           role,
           status,
         });
@@ -231,21 +228,11 @@ const AdminListPage: React.FC = () => {
         },
       },
       {
-        title: '所属部门',
-        dataIndex: 'department',
-        align: 'center',
-        hideInSearch: true,
-        renderText: (t) => t || '默认部门',
-      },
-      {
         title: '角色',
         dataIndex: 'role',
         align: 'center',
-        valueType: 'select',
-        valueEnum: {
-          [SYSTEM_ROLES.NORMAL_ADMIN]: { text: SYSTEM_ROLES.NORMAL_ADMIN },
-        },
-        fieldProps: { placeholder: '请选择角色' },
+        hideInSearch: true,
+        renderText: (t) => t,
       },
       {
         title: '状态',
@@ -348,7 +335,6 @@ const AdminListPage: React.FC = () => {
               pageSize = 10,
               username,
               phone,
-              role,
               status,
               createTime,
             } = params as {
@@ -356,7 +342,6 @@ const AdminListPage: React.FC = () => {
               pageSize?: number;
               username?: string;
               phone?: string;
-              role?: string;
               status?: string;
               createTime?: string;
             };
@@ -365,7 +350,7 @@ const AdminListPage: React.FC = () => {
               pageSize,
               username: username ?? '',
               phone: phone ?? '',
-              role: role ?? '',
+              role: '',
               status: status ?? '',
               createTime: createTime
                 ? dayjs(createTime).format('YYYY-MM-DD')
@@ -376,14 +361,7 @@ const AdminListPage: React.FC = () => {
             if (res.code !== 200) {
               return toProTableFail<AdminItem>();
             }
-            const list = withIndex(
-              (res.data?.list ?? []).map((u) => ({
-                ...u,
-                department: u.department ?? '默认部门',
-              })),
-              current,
-              pageSize,
-            );
+            const list = withIndex(res.data?.list ?? [], current, pageSize);
             return toProTableSuccess(list, res.data?.total ?? list.length);
           } catch (e: any) {
             return toProTableFail<AdminItem>();
@@ -436,19 +414,13 @@ const AdminListPage: React.FC = () => {
             <Input placeholder="请输入手机号" maxLength={11} />
           </Form.Item>
           <Form.Item
-            name="department"
-            label="所属部门"
-            rules={[{ required: true, message: '请输入所属部门' }]}
-          >
-            <Input placeholder="请输入所属部门" />
-          </Form.Item>
-          <Form.Item
             name="role"
             label="角色"
             rules={[{ required: true, message: '请选择角色' }]}
           >
             <Select
               placeholder="请选择角色"
+              disabled={isEditingSuperAdmin}
               options={adminRoleOptionsForForm as any}
             />
           </Form.Item>

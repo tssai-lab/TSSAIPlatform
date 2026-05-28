@@ -15,6 +15,7 @@ export {
   deleteUser,
   toggleUserStatus,
   checkUsername,
+  promoteUserToNormalAdmin,
   type CurrentUserRoleForApi,
   type UserListParams,
   type UserListResponse,
@@ -40,7 +41,8 @@ export {
 
 export {
   fetchLogList,
-  exportLog,
+  getLogList,
+  queryOperationLogs,
   type LogListParams,
   type LogListResponse,
   type LogItem,
@@ -51,12 +53,7 @@ export {
   fetchSystemConfig,
   updateSystemConfig,
   type SystemConfig,
-  type PasswordPolicy,
 } from './config';
 
-export {
-  type RoleCode,
-  type LogType,
-  type LogOperator,
-} from './typings';
+export { type RoleCode, type LogOperator } from './typings';
 

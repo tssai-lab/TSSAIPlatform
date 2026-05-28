@@ -5,12 +5,8 @@
 import { request } from '@umijs/max';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
 
-export type PasswordPolicy = 'normal' | 'strong';
-
 export interface SystemConfig {
-  defaultDepartment: string;
   enableAuditLog: boolean;
-  passwordPolicy: PasswordPolicy;
 }
 
 /** 获取系统配置 GET /api/system/config/get */
@@ -25,7 +21,10 @@ export async function fetchSystemConfig(options?: { [key: string]: any }) {
 }
 
 /** 更新系统配置 POST /api/system/config/update */
-export async function updateSystemConfig(params: SystemConfig, options?: { [key: string]: any }) {
+export async function updateSystemConfig(
+  params: SystemConfig,
+  options?: { [key: string]: any },
+) {
   return request<{ code: number; message: string; data?: SystemConfig }>(
     SYSTEM_API_CONFIG.ENDPOINTS.CONFIG_UPDATE,
     {
@@ -36,4 +35,3 @@ export async function updateSystemConfig(params: SystemConfig, options?: { [key:
     },
   );
 }
-
