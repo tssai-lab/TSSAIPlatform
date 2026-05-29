@@ -20,6 +20,13 @@ const DEFAULT_HYPER_PARAMS = {
  * 发起训练页（按 backend-api.md 的实验/版本机制）
  * - POST /api/task/create：自动生成 experimentId，并创建 versionNo=1
  */
+/** 各步骤需校验的字段（分步切换时只校验当前步） */
+const STEP_FIELD_NAMES = [
+  ['modelVersionId'],
+  ['datasetVersionId'],
+  ['codeVersionId', 'hyperParams'],
+] as const;
+
 const TaskCreate: React.FC = () => {
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
@@ -27,6 +34,10 @@ const TaskCreate: React.FC = () => {
   const [datasetOptions, setDatasetOptions] = useState<any[]>([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
+  /** 与 Form 同步备份，避免分步卸载表单项后 id 丢失 */
+  const [selectedModelVersionId, setSelectedModelVersionId] = useState<string>();
+  const [selectedDatasetVersionId, setSelectedDatasetVersionId] =
+    useState<string>();
 
   useEffect(() => {
     setModelLoading(true);
@@ -60,6 +71,12 @@ const TaskCreate: React.FC = () => {
     try {
       const prefill = JSON.parse(raw);
       form.setFieldsValue(prefill);
+      if (prefill.modelVersionId) {
+        setSelectedModelVersionId(prefill.modelVersionId);
+      }
+      if (prefill.datasetVersionId) {
+        setSelectedDatasetVersionId(prefill.datasetVersionId);
+      }
     } catch {
       // ignore
     } finally {
@@ -67,23 +84,55 @@ const TaskCreate: React.FC = () => {
     }
   }, [form]);
 
-  const handleNext = () => {
-    form.validateFields().then(() => setCurrentStep((s) => s + 1));
+  const handleNext = async () => {
+    try {
+      await form.validateFields([...STEP_FIELD_NAMES[currentStep]]);
+      setCurrentStep((s) => s + 1);
+    } catch {
+      // 校验失败时表单项会展示错误提示
+    }
   };
 
   const handlePrev = () => setCurrentStep((s) => Math.max(0, s - 1));
 
   const handleSubmit = async (values: any) => {
     try {
-      const hyperParams = JSON.parse(values.hyperParams);
+      const allValues = form.getFieldsValue(true);
+      const modelVersionId =
+        values.modelVersionId ??
+        allValues.modelVersionId ??
+        selectedModelVersionId;
+      const datasetVersionId =
+        values.datasetVersionId ??
+        allValues.datasetVersionId ??
+        selectedDatasetVersionId;
+      const codeVersionId = values.codeVersionId ?? allValues.codeVersionId;
+      const hyperParamsRaw = values.hyperParams ?? allValues.hyperParams;
+
+      if (!modelVersionId) {
+        message.error('请选择模型版本后再提交训练');
+        setCurrentStep(0);
+        return;
+      }
+      if (!datasetVersionId) {
+        message.error('请选择数据集版本后再提交训练');
+        setCurrentStep(1);
+        return;
+      }
+      if (!codeVersionId) {
+        message.error('请填写代码版本标识');
+        return;
+      }
+
+      const hyperParams = JSON.parse(hyperParamsRaw);
       const res: any = await createTask(
         {
-          name: values.name,
-          modelVersionId: values.modelVersionId,
-          codeVersionId: values.codeVersionId,
-          datasetVersionId: values.datasetVersionId,
+          name: values.name ?? allValues.name,
+          modelVersionId,
+          codeVersionId,
+          datasetVersionId,
           hyperParams,
-          remark: values.remark,
+          remark: values.remark ?? allValues.remark,
         },
         { skipErrorHandler: true },
       );
@@ -114,6 +163,10 @@ const TaskCreate: React.FC = () => {
             showSearch
             loading={modelLoading}
             optionFilterProp="label"
+            onChange={(value: string) => {
+              setSelectedModelVersionId(value);
+              form.setFieldValue('modelVersionId', value);
+            }}
             options={modelOptions.map((m: any) => ({
               value: m.id,
               label: `${m.name} / ${m.version} / ${m.type} / ${m.id}`,
@@ -135,10 +188,18 @@ const TaskCreate: React.FC = () => {
             showSearch
             loading={datasetLoading}
             optionFilterProp="label"
-            options={datasetOptions.map((d: any) => ({
-              value: d.versionId || d.id,
-              label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${d.versionId || d.id}`,
-            }))}
+            onChange={(value: string) => {
+              setSelectedDatasetVersionId(value);
+              form.setFieldValue('datasetVersionId', value);
+            }}
+            options={datasetOptions.map((d: any) => {
+              const versionId = d.versionId;
+              if (!versionId) return null;
+              return {
+                value: versionId,
+                label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${versionId}`,
+              };
+            }).filter(Boolean)}
           />
         </Form.Item>
       ),
@@ -196,6 +257,7 @@ const TaskCreate: React.FC = () => {
     <PageContainer title="发起训练" onBack={() => history.push('/task/list')}>
       <Form
         form={form}
+        preserve
         onFinish={handleSubmit}
         layout="vertical"
         initialValues={{
@@ -205,11 +267,18 @@ const TaskCreate: React.FC = () => {
       >
         <Steps
           current={currentStep}
-          items={steps}
+          items={steps.map(({ title }) => ({ title }))}
           style={{ marginBottom: 24 }}
         />
         <div style={{ minHeight: 200, marginBottom: 24 }}>
-          {steps[currentStep].content}
+          {steps.map((step, index) => (
+            <div
+              key={step.title}
+              style={{ display: index === currentStep ? 'block' : 'none' }}
+            >
+              {step.content}
+            </div>
+          ))}
         </div>
         <div>
           {currentStep > 0 && (
