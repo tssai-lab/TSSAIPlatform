@@ -27,6 +27,8 @@ const STEP_FIELD_NAMES = [
   ['codeVersionId', 'hyperParams'],
 ] as const;
 
+const STEP_COUNT = STEP_FIELD_NAMES.length;
+
 const TaskCreate: React.FC = () => {
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
@@ -84,10 +86,13 @@ const TaskCreate: React.FC = () => {
     }
   }, [form]);
 
-  const handleNext = async () => {
+  const handleNext = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     try {
       await form.validateFields([...STEP_FIELD_NAMES[currentStep]]);
-      setCurrentStep((s) => s + 1);
+      // 延迟切步，避免「下一步」与「提交训练」同位置时同一次点击误触提交
+      setTimeout(() => setCurrentStep((s) => s + 1), 0);
     } catch {
       // 校验失败时表单项会展示错误提示
     }
@@ -146,6 +151,27 @@ const TaskCreate: React.FC = () => {
       message.error(
         error?.errorMessage || error?.message || '创建失败，请重试！',
       );
+    }
+  };
+
+  /** 仅用户点击「提交训练」时调用，不用 Form 原生 onFinish，避免 Enter/同位置点击误提交 */
+  const handleSubmitClick = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (currentStep !== STEP_COUNT - 1) {
+      return;
+    }
+    try {
+      await form.validateFields([
+        'modelVersionId',
+        'datasetVersionId',
+        'codeVersionId',
+        'hyperParams',
+      ]);
+      const values = form.getFieldsValue(true);
+      await handleSubmit(values);
+    } catch {
+      // 校验失败时表单项会展示错误提示
     }
   };
 
@@ -258,11 +284,15 @@ const TaskCreate: React.FC = () => {
       <Form
         form={form}
         preserve
-        onFinish={handleSubmit}
         layout="vertical"
         initialValues={{
           codeVersionId: 'frontend-training-demo',
           hyperParams: JSON.stringify(DEFAULT_HYPER_PARAMS, null, 2),
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && currentStep < STEP_COUNT - 1) {
+            e.preventDefault();
+          }
         }}
       >
         <Steps
@@ -282,16 +312,16 @@ const TaskCreate: React.FC = () => {
         </div>
         <div>
           {currentStep > 0 && (
-            <Button onClick={handlePrev} style={{ marginRight: 8 }}>
+            <Button htmlType="button" onClick={handlePrev} style={{ marginRight: 8 }}>
               上一步
             </Button>
           )}
-          {currentStep < steps.length - 1 ? (
-            <Button type="primary" onClick={handleNext}>
+          {currentStep < STEP_COUNT - 1 ? (
+            <Button type="primary" htmlType="button" onClick={handleNext}>
               下一步
             </Button>
           ) : (
-            <Button type="primary" htmlType="submit">
+            <Button type="primary" htmlType="button" onClick={handleSubmitClick}>
               提交训练
             </Button>
           )}
