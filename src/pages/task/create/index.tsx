@@ -2,7 +2,6 @@ import { PageContainer } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import { Button, Form, Input, message, Select, Steps } from 'antd';
 import React, { useEffect, useState } from 'react';
-import { MOCK_DATASETS, MOCK_MODELS } from '@/constants/mockData';
 import {
   createTask,
   fetchDatasetList,
@@ -26,21 +25,33 @@ const TaskCreate: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [modelOptions, setModelOptions] = useState<any[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<any[]>([]);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [datasetLoading, setDatasetLoading] = useState(false);
 
   useEffect(() => {
+    setModelLoading(true);
     fetchModelList({ pageSize: 100 } as any)
       .then((res: any) => {
         const list = res?.data?.data ?? res?.data ?? [];
-        setModelOptions(list?.length ? list : (MOCK_MODELS as any));
+        setModelOptions(list ?? []);
       })
-      .catch(() => setModelOptions(MOCK_MODELS as any));
+      .catch((error: any) => {
+        setModelOptions([]);
+        message.error(error?.message || '模型版本列表加载失败，请重新登录或检查后端服务');
+      })
+      .finally(() => setModelLoading(false));
 
+    setDatasetLoading(true);
     fetchDatasetList({ pageSize: 100 } as any)
       .then((res: any) => {
         const list = res?.data?.data ?? res?.data ?? [];
-        setDatasetOptions(list?.length ? list : (MOCK_DATASETS as any));
+        setDatasetOptions(list ?? []);
       })
-      .catch(() => setDatasetOptions(MOCK_DATASETS as any));
+      .catch((error: any) => {
+        setDatasetOptions([]);
+        message.error(error?.message || '数据集版本列表加载失败，请重新登录或检查后端服务');
+      })
+      .finally(() => setDatasetLoading(false));
   }, []);
 
   useEffect(() => {
@@ -76,6 +87,9 @@ const TaskCreate: React.FC = () => {
         },
         { skipErrorHandler: true },
       );
+      if (res?.success === false) {
+        throw new Error(res?.errorMessage || '创建训练任务失败');
+      }
       const data = res?.data;
       message.success(`创建成功，experimentId=${data?.experimentId || '-'}`);
       history.push(`/task/detail/${data?.id}`);
@@ -98,10 +112,11 @@ const TaskCreate: React.FC = () => {
           <Select
             placeholder="请选择模型版本"
             showSearch
+            loading={modelLoading}
             optionFilterProp="label"
             options={modelOptions.map((m: any) => ({
               value: m.id,
-              label: `${m.name} / ${m.version} / ${m.type}`,
+              label: `${m.name} / ${m.version} / ${m.type} / ${m.id}`,
             }))}
           />
         </Form.Item>
@@ -118,10 +133,11 @@ const TaskCreate: React.FC = () => {
           <Select
             placeholder="请选择数据集版本"
             showSearch
+            loading={datasetLoading}
             optionFilterProp="label"
             options={datasetOptions.map((d: any) => ({
               value: d.versionId || d.id,
-              label: `${d.name} / ${d.version || 'v?'} / ${d.type}`,
+              label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${d.versionId || d.id}`,
             }))}
           />
         </Form.Item>
