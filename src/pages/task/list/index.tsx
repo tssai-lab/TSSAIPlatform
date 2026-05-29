@@ -1,9 +1,9 @@
 import { MoreOutlined } from '@ant-design/icons';
-import type { ProColumns } from '@ant-design/pro-components';
+import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import { Button, Dropdown, message, Popconfirm, Space, Tag } from 'antd';
-import React from 'react';
+import React, { useRef } from 'react';
 import { MOCK_TASKS } from '@/constants/mockData';
 import {
   deleteTask,
@@ -16,6 +16,8 @@ import {
  * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const TaskList: React.FC = () => {
+  const actionRef = useRef<ActionType>();
+
   const fetchTaskList = async (params: any) => {
     try {
       const res = await fetchTaskListService(params);
@@ -31,7 +33,7 @@ const TaskList: React.FC = () => {
     try {
       await stopTask(taskId);
       message.success('任务已终止');
-      window.location.reload();
+      actionRef.current?.reload();
     } catch (error: any) {
       message.error(error?.info?.message || error?.message || '终止失败');
     }
@@ -41,7 +43,7 @@ const TaskList: React.FC = () => {
     try {
       await deleteTask(taskId);
       message.success('删除成功');
-      window.location.reload();
+      actionRef.current?.reload();
     } catch (error: any) {
       message.error(error?.info?.message || error?.message || '删除失败');
     }
@@ -50,9 +52,11 @@ const TaskList: React.FC = () => {
   const getStatusTag = (status: string) => {
     const statusMap: Record<string, { color: string; text: string }> = {
       pending: { color: 'default', text: '待执行' },
+      queued: { color: 'warning', text: '排队中' },
       running: { color: 'processing', text: '运行中' },
       success: { color: 'success', text: '成功' },
       failed: { color: 'error', text: '失败' },
+      stopped: { color: 'default', text: '已停止' },
     };
     const statusInfo = statusMap[status] || { color: 'default', text: status };
     return <Tag color={statusInfo.color}>{statusInfo.text}</Tag>;
@@ -83,11 +87,13 @@ const TaskList: React.FC = () => {
       title: '模型名称',
       dataIndex: 'modelName',
       key: 'modelName',
+      render: (_, record) => record.modelName || record.modelVersionId || '-',
     },
     {
       title: '数据集名称',
       dataIndex: 'datasetName',
       key: 'datasetName',
+      render: (_, record) => record.datasetName || record.datasetVersionId || '-',
     },
     {
       title: '创建时间',
@@ -180,8 +186,10 @@ const TaskList: React.FC = () => {
       ]}
     >
       <ProTable
+        actionRef={actionRef}
         columns={columns}
         request={fetchTaskList}
+        polling={3000}
         rowKey="id"
         search={{
           labelWidth: 'auto',

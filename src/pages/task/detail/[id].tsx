@@ -25,7 +25,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import * as echarts from 'echarts';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
   createExperimentVersion,
@@ -57,12 +57,7 @@ function saveComparePool(ids: string[]) {
 type TaskDetailInfo = API.TaskItem & {
   completeTime?: string;
   duration?: string;
-  metrics?: {
-    accuracy?: string;
-    loss?: string;
-    epochs?: string;
-    batchSize?: string;
-  };
+  metrics?: Record<string, any>;
   files?: { name: string; desc: string }[];
 };
 
@@ -144,6 +139,38 @@ function shortId(v?: string, keep = 10) {
   return `${v.slice(0, keep)}…`;
 }
 
+const ACTIVE_STATUSES = new Set(['pending', 'queued', 'running']);
+
+function isActiveStatus(status?: string) {
+  return !!status && ACTIVE_STATUSES.has(status);
+}
+
+function statusText(status?: string) {
+  const map: Record<string, string> = {
+    pending: '待执行',
+    queued: '排队中',
+    running: '运行中',
+    success: '成功',
+    failed: '失败',
+    stopped: '已停止',
+  };
+  return status ? map[status] || status : '-';
+}
+
+function statusColor(status?: string) {
+  if (status === 'success') return 'success';
+  if (status === 'running') return 'processing';
+  if (status === 'queued') return 'warning';
+  if (status === 'failed') return 'error';
+  return 'default';
+}
+
+function formatMetricValue(value: any) {
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'number') return Number.isInteger(value) ? value : value.toFixed(6);
+  return String(value);
+}
+
 const TaskDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [taskInfo, setTaskInfo] = useState<TaskDetailInfo | null>(null);
@@ -171,24 +198,40 @@ const TaskDetail: React.FC = () => {
 
   const runId = taskInfo?.runId || manualRunId;
 
-  useEffect(() => {
+  const loadTaskDetail = useCallback(async (showLoading = false) => {
     if (!id) return;
-    setLoading(true);
-    fetchTaskDetail(id, { skipErrorHandler: true })
-      .then((res) => {
-        if (res?.data) {
-          const data = res.data as TaskDetailInfo;
-          data.runId = data.runId || (res.data as any).run_id;
-          setTaskInfo(data);
-        } else {
-          setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
-        }
-      })
-      .catch(() => {
+    if (showLoading) {
+      setLoading(true);
+    }
+    try {
+      const res = await fetchTaskDetail(id, { skipErrorHandler: true });
+      if (res?.data) {
+        const data = res.data as TaskDetailInfo;
+        data.runId = data.runId || (res.data as any).run_id;
+        setTaskInfo(data);
+      } else {
         setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
-      })
-      .finally(() => setLoading(false));
+      }
+    } catch {
+      setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
+    } finally {
+      if (showLoading) {
+        setLoading(false);
+      }
+    }
   }, [id]);
+
+  useEffect(() => {
+    loadTaskDetail(true);
+  }, [loadTaskDetail]);
+
+  useEffect(() => {
+    if (!id || !isActiveStatus(taskInfo?.status)) return;
+    const timer = window.setInterval(() => {
+      loadTaskDetail(false);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [id, loadTaskDetail, taskInfo?.status]);
 
   useEffect(() => {
     if (!taskInfo) return;
@@ -473,36 +516,20 @@ const TaskDetail: React.FC = () => {
             {(taskInfo as any).versionNo ?? '-'}
           </Descriptions.Item>
           <Descriptions.Item label="模型">
-            {taskInfo.modelName}
+            {taskInfo.modelName || taskInfo.modelVersionId || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="数据集">
-            {taskInfo.datasetName}
+            {taskInfo.datasetName || taskInfo.datasetVersionId || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">
-            {taskInfo.createTime}
+            {taskInfo.createTime || (taskInfo as any).createdAt || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="完成时间">
-            {taskInfo.completeTime || '-'}
+            {taskInfo.completeTime || taskInfo.finishedAt || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Tag
-              color={
-                taskInfo.status === 'success'
-                  ? 'success'
-                  : taskInfo.status === 'running'
-                    ? 'processing'
-                    : taskInfo.status === 'failed'
-                      ? 'error'
-                      : 'default'
-              }
-            >
-              {taskInfo.status === 'success'
-                ? '成功'
-                : taskInfo.status === 'running'
-                  ? '运行中'
-                  : taskInfo.status === 'failed'
-                    ? '失败'
-                    : taskInfo.status}
+            <Tag color={statusColor(taskInfo.status)}>
+              {statusText(taskInfo.status)}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="总耗时">
@@ -828,70 +855,42 @@ const TaskDetail: React.FC = () => {
               gap: 16,
             }}
           >
-            {taskInfo.metrics.accuracy && (
-              <div
-                style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
-              >
+            {[
+              ['训练损失', taskInfo.metrics.train_loss ?? taskInfo.metrics.loss],
+              ['验证准确率', taskInfo.metrics.val_accuracy ?? taskInfo.metrics.accuracy],
+              ['验证 mAP50', taskInfo.metrics.val_mAP50],
+              ['验证 mAP50-95', taskInfo.metrics.val_mAP50_95],
+              ['训练轮数', taskInfo.metrics.epochs],
+              ['样本数', taskInfo.metrics.sample_count],
+            ]
+              .filter(([, value]) => value !== undefined && value !== null && value !== '')
+              .map(([label, value]) => (
                 <div
-                  style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
+                  key={String(label)}
+                  style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
                 >
-                  最终准确率
+                  <div
+                    style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
+                  >
+                    {label}
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 600 }}>
+                    {formatMetricValue(value)}
+                  </div>
                 </div>
-                <div style={{ fontSize: 24, fontWeight: 600 }}>
-                  {taskInfo.metrics.accuracy}
-                </div>
-              </div>
-            )}
-            {taskInfo.metrics.loss && (
-              <div
-                style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
-              >
-                <div
-                  style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
-                >
-                  最终损失值
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 600 }}>
-                  {taskInfo.metrics.loss}
-                </div>
-              </div>
-            )}
-            {taskInfo.metrics.epochs && (
-              <div
-                style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
-              >
-                <div
-                  style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
-                >
-                  训练轮数
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 600 }}>
-                  {taskInfo.metrics.epochs}
-                </div>
-              </div>
-            )}
-            {taskInfo.metrics.batchSize && (
-              <div
-                style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
-              >
-                <div
-                  style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
-                >
-                  批次大小
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 600 }}>
-                  {taskInfo.metrics.batchSize}
-                </div>
-              </div>
-            )}
+              ))}
           </div>
         )}
       </Card>
 
-      {taskInfo.files && taskInfo.files.length > 0 && (
+      {(taskInfo.files && taskInfo.files.length > 0) || taskInfo.logPath || taskInfo.outputPath ? (
         <Card title="结果文件">
           <List
-            dataSource={taskInfo.files}
+            dataSource={[
+              ...(taskInfo.files || []),
+              ...(taskInfo.logPath ? [{ name: '训练日志', desc: taskInfo.logPath }] : []),
+              ...(taskInfo.outputPath ? [{ name: '训练输出', desc: taskInfo.outputPath }] : []),
+            ]}
             renderItem={(item) => (
               <List.Item
                 actions={[
@@ -905,7 +904,7 @@ const TaskDetail: React.FC = () => {
             )}
           />
         </Card>
-      )}
+      ) : null}
     </PageContainer>
   );
 };

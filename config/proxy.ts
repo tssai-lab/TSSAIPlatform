@@ -14,12 +14,12 @@ export default {
   dev: {
     /** 平台后端（backend-api.md：默认 8080） */
     '/api/': {
-      target: 'http://47.114.84.133:8080',
+      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
       changeOrigin: true,
     },
     /** 独立 MLflow 服务，用于任务详情页训练指标 */
     '/mlflow-api/': {
-      target: 'http://47.114.84.133:5000',
+      target: process.env.DEV_MLFLOW_TARGET || 'http://47.114.84.133:5000',
       changeOrigin: true,
       pathRewrite: { '^/mlflow-api': '/ajax-api' },
     },

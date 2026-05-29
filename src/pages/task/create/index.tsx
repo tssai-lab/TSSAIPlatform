@@ -9,6 +9,14 @@ import {
   fetchModelList,
 } from '@/services/platform';
 
+const DEFAULT_HYPER_PARAMS = {
+  epochs: 5,
+  lr0: 0.05,
+  batch_size: 4,
+  imgsz: 640,
+  device: 'cpu',
+};
+
 /**
  * 发起训练页（按 backend-api.md 的实验/版本机制）
  * - POST /api/task/create：自动生成 experimentId，并创建 versionNo=1
@@ -144,11 +152,23 @@ const TaskCreate: React.FC = () => {
           <Form.Item
             name="hyperParams"
             label="超参数（JSON）"
-            rules={[{ required: true, message: '请输入超参数 JSON' }]}
+            rules={[
+              { required: true, message: '请输入超参数 JSON' },
+              {
+                validator: async (_: any, value: string) => {
+                  try {
+                    JSON.parse(value || '');
+                    return Promise.resolve();
+                  } catch {
+                    return Promise.reject(new Error('JSON 格式不正确'));
+                  }
+                },
+              },
+            ]}
           >
             <Input.TextArea
               rows={10}
-              placeholder='{"epochs": 10, "batch_size": 32, "learning_rate": 0.001}'
+              placeholder='{"epochs": 5, "lr0": 0.05, "batch_size": 4, "imgsz": 640, "device": "cpu"}'
             />
           </Form.Item>
         </>
@@ -158,7 +178,15 @@ const TaskCreate: React.FC = () => {
 
   return (
     <PageContainer title="发起训练" onBack={() => history.push('/task/list')}>
-      <Form form={form} onFinish={handleSubmit} layout="vertical">
+      <Form
+        form={form}
+        onFinish={handleSubmit}
+        layout="vertical"
+        initialValues={{
+          codeVersionId: 'frontend-training-demo',
+          hyperParams: JSON.stringify(DEFAULT_HYPER_PARAMS, null, 2),
+        }}
+      >
         <Steps
           current={currentStep}
           items={steps}
