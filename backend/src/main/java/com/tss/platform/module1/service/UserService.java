@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.service;
+package com.tss.platform.module1.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;

@@ -1,4 +1,4 @@
-﻿package com.tss.platform.config;
+package com.tss.platform.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;

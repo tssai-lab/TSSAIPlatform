@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.util;
+package com.tss.platform.module1.util;
 
 /**
  * 前后端角色文案与 role_id 映射

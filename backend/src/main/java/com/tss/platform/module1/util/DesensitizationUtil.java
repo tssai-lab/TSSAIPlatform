@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.util;
+package com.tss.platform.module1.util;
 
 public class DesensitizationUtil {
 

@@ -1,4 +1,4 @@
-﻿package com.tss.platform.config;
+package com.tss.platform.config;
 
 import com.tss.platform.module1.interceptor.PermissionInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;

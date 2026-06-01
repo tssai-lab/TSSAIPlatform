@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.dto;
+package com.tss.platform.module1.dto;
 
 import lombok.Data;
 

@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.service.impl;
+package com.tss.platform.module1.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.tss.platform.module1.entity.Role;

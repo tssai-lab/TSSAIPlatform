@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.interceptor;
+package com.tss.platform.module1.interceptor;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.tss.platform.module1.common.Result;

@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.mapper;
+package com.tss.platform.module1.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.tss.platform.module1.entity.Role;

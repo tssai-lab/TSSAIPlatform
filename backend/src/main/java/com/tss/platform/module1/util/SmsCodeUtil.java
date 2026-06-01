@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.util;
+package com.tss.platform.module1.util;
 
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.stereotype.Component;

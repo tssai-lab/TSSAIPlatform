@@ -1,4 +1,4 @@
-﻿package com.tss.platform.config;
+package com.tss.platform.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;

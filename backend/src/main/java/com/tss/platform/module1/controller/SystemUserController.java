@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.controller;
+package com.tss.platform.module1.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;

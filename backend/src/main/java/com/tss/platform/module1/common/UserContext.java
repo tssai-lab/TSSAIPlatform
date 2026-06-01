@@ -1,4 +1,4 @@
-﻿package com.tss.platform.module1.common;
+package com.tss.platform.module1.common;
 
 import com.tss.platform.module1.entity.User;
 
