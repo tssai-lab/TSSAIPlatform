@@ -18,6 +18,7 @@ public class TrainingExperimentVersionDto {
     private String status;
     private Integer progress;
     private JsonNode metrics;
+    private String runId;
     private String logPath;
     private String outputPath;
     private String errorMessage;

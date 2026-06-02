@@ -62,6 +62,9 @@ public class TrainingExperimentVersion {
     @Column(name = "metrics_json", columnDefinition = "TEXT")
     private String metricsJson;
 
+    @Column(name = "run_id", length = 128)
+    private String runId;
+
     @Column(name = "log_path", length = 1024)
     private String logPath;
 

@@ -22,6 +22,8 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -50,6 +52,7 @@ public class TrainingExperimentService {
     private final ModelAssetRepository modelAssetRepo;
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
+    private final LocalTrainingRunnerService localTrainingRunnerService;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
 
@@ -59,6 +62,7 @@ public class TrainingExperimentService {
             ModelAssetRepository modelAssetRepo,
             DatasetVersionRepository datasetVersionRepo,
             DatasetAssetRepository datasetAssetRepo,
+            LocalTrainingRunnerService localTrainingRunnerService,
             ObjectMapper objectMapper,
             AuthContext authContext
     ) {
@@ -67,6 +71,7 @@ public class TrainingExperimentService {
         this.modelAssetRepo = modelAssetRepo;
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
+        this.localTrainingRunnerService = localTrainingRunnerService;
         this.objectMapper = objectMapper;
         this.authContext = authContext;
     }
@@ -100,7 +105,9 @@ public class TrainingExperimentService {
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
-        return toDto(repo.save(version));
+        TrainingExperimentVersion saved = repo.save(version);
+        startLocalTrainingAfterCommit(saved.getId());
+        return toDto(saved);
     }
 
     @Transactional
@@ -127,7 +134,9 @@ public class TrainingExperimentService {
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
-        return toDto(repo.save(version));
+        TrainingExperimentVersion saved = repo.save(version);
+        startLocalTrainingAfterCommit(saved.getId());
+        return toDto(saved);
     }
 
     @Transactional(readOnly = true)
@@ -272,6 +281,7 @@ public class TrainingExperimentService {
         dto.setStatus(version.getStatus());
         dto.setProgress(version.getProgress() != null ? version.getProgress() : progressOf(version.getStatus()));
         dto.setMetrics(fromJson(version.getMetricsJson()));
+        dto.setRunId(version.getRunId());
         dto.setLogPath(version.getLogPath());
         dto.setOutputPath(version.getOutputPath());
         dto.setErrorMessage(version.getErrorMessage());
@@ -338,6 +348,9 @@ public class TrainingExperimentService {
         if (req.getMetrics() != null) {
             version.setMetricsJson(toResultJson(req.getMetrics(), "metrics must be valid JSON"));
         }
+        if (req.getRunId() != null) {
+            version.setRunId(blankToNull(req.getRunId()));
+        }
         if (req.getLogPath() != null) {
             version.setLogPath(blankToNull(req.getLogPath()));
         }
@@ -397,6 +410,19 @@ public class TrainingExperimentService {
             return 0;
         }
         return 0;
+    }
+
+    private void startLocalTrainingAfterCommit(String trainingId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    localTrainingRunnerService.start(trainingId);
+                }
+            });
+            return;
+        }
+        localTrainingRunnerService.start(trainingId);
     }
 
     private String newVersionId() {

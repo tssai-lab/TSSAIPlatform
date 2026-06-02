@@ -68,3 +68,9 @@ sa-token:
   is-share: false
   token-style: uuid
   is-log: false
+
+training:
+  mlflow:
+    enabled: ${TRAINING_MLFLOW_ENABLED:true}
+    tracking-uri: ${TRAINING_MLFLOW_TRACKING_URI:http://127.0.0.1:5000}
+    experiment-name: ${TRAINING_MLFLOW_EXPERIMENT_NAME:tss-training}
