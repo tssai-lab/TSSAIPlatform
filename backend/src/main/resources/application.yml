@@ -15,6 +15,13 @@ point-cloud:
   preview:
     max-size: ${POINT_CLOUD_PREVIEW_MAX_SIZE:209715200}
 
+dataset:
+  preview:
+    max-zip-entries: ${DATASET_PREVIEW_MAX_ZIP_ENTRIES:10000}
+    max-text-bytes: ${DATASET_PREVIEW_MAX_TEXT_BYTES:1048576}
+    max-image-bytes: ${DATASET_PREVIEW_MAX_IMAGE_BYTES:20971520}
+    max-page-size: ${DATASET_PREVIEW_MAX_PAGE_SIZE:200}
+
 spring:
   application:
     name: tss-backend

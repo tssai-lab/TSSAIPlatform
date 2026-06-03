@@ -1022,7 +1022,202 @@ DELETE /api/files/delete?objectName={objectName}
 | `objectName` | 对象名 |
 | `minioDeleteQueued` | 是否已加入删除任务 |
 
-## 13. 错误处理与安全规则
+## 13. 普通数据集预览接口
+
+基础路径：`/api/dataset/preview`
+
+普通数据集预览用于 CV/NLP 数据集内容查看。点云数据集仍使用 `/api/dataset/point-cloud/**`。
+
+后端只接受 `datasetVersionId`，不接受客户端直接传 `storagePath` 或 MinIO `objectName`。后端会反查 `dataset_version`、`dataset_asset`，校验当前用户是否有权限访问该数据集版本和对象路径。普通用户只能查看自己的数据集，管理员可查看全部。
+
+在线预览限制由配置项控制：
+
+```yaml
+dataset:
+  preview:
+    max-zip-entries: 10000
+    max-text-bytes: 1048576
+    max-image-bytes: 20971520
+    max-page-size: 200
+```
+
+首版支持范围：
+
+| 类型 | 支持在线预览 | 说明 |
+| --- | --- | --- |
+| CV zip 内图片 | 是 | `.jpg`、`.jpeg`、`.png`、`.bmp`、`.gif`、`.webp`、`.tif`、`.tiff` |
+| CV zip 内标注文本 | 是 | `.txt`、`.json`、`.xml`、`.csv` |
+| NLP 文本类文件 | 是 | `.txt`、`.json`、`.jsonl`、`.xml` |
+| NLP CSV | 是 | 第一行作为 `columns`，后续行分页返回 |
+| PDF / DOCX / XLS / XLSX | 否 | 文件清单中展示，提示下载后查看 |
+
+### 13.1 查询普通数据集文件清单
+
+```http
+GET /api/dataset/preview/files?id={datasetVersionId}&page=1&pageSize=100&keyword=&kind=
+```
+
+查询参数：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | string | 是 | 数据集版本 ID |
+| `page` | number | 否 | 页码，默认 `1` |
+| `pageSize` | number | 否 | 每页数量，默认 `100`，最大由 `dataset.preview.max-page-size` 控制 |
+| `keyword` | string | 否 | 按文件路径、文件名、扩展名模糊过滤 |
+| `kind` | string | 否 | `IMAGE`、`TEXT`、`TABLE`、`UNSUPPORTED` |
+
+响应 `data`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `datasetVersionId` | 数据集版本 ID |
+| `type` | `CV` 或 `NLP` |
+| `fileName` | 原始数据集文件名 |
+| `sourceArchive` | 原始文件是否为 zip |
+| `page` / `pageSize` / `total` | 分页信息 |
+| `files` | 文件清单 |
+
+`files[]` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `path` | zip 内相对路径；NLP 单文件数据集为 `null` |
+| `fileName` | 文件名 |
+| `extension` | 小写扩展名 |
+| `kind` | `IMAGE`、`TEXT`、`TABLE`、`UNSUPPORTED` |
+| `sizeBytes` | 文件大小；zip entry 无大小信息时可为 `null` |
+| `previewAllowed` | 是否允许在线预览 |
+| `previewUrl` | 可预览文件的后续预览 URL |
+| `message` | 不可预览或受限时的提示 |
+
+示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "datasetVersionId": "dataset-ver-xxx",
+    "type": "CV",
+    "fileName": "images.zip",
+    "sourceArchive": true,
+    "page": 1,
+    "pageSize": 100,
+    "total": 2,
+    "files": [
+      {
+        "path": "images/a.png",
+        "fileName": "a.png",
+        "extension": ".png",
+        "kind": "IMAGE",
+        "sizeBytes": 12345,
+        "previewAllowed": true,
+        "previewUrl": "/api/dataset/preview/image?id=dataset-ver-xxx&path=images%2Fa.png",
+        "message": null
+      },
+      {
+        "path": "labels/a.txt",
+        "fileName": "a.txt",
+        "extension": ".txt",
+        "kind": "TEXT",
+        "sizeBytes": 128,
+        "previewAllowed": true,
+        "previewUrl": "/api/dataset/preview/content?id=dataset-ver-xxx&path=labels%2Fa.txt",
+        "message": null
+      }
+    ]
+  },
+  "errorMessage": null
+}
+```
+
+### 13.2 预览文本或表格内容
+
+```http
+GET /api/dataset/preview/content?id={datasetVersionId}&path={zipEntryPath}&page=1&pageSize=100
+```
+
+规则：
+
+- `id` 必须是数据集版本 ID。
+- zip 数据集的 `path` 必须来自 `files[].path`。
+- NLP 单文件数据集可省略 `path`。
+- `.json` 会优先按 JSON 格式化；解析失败时按原文本返回。
+- `.csv` 使用第一行作为 `columns`，后续数据行按 `page` / `pageSize` 分页返回。
+- 文本读取超过 `dataset.preview.max-text-bytes` 时返回前 N 字节，`truncated=true`。
+
+文本响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "path": "labels/a.txt",
+    "fileName": "a.txt",
+    "extension": ".txt",
+    "contentType": "TEXT",
+    "content": "0 0.5 0.5 1 1",
+    "columns": null,
+    "rows": null,
+    "page": 1,
+    "pageSize": null,
+    "truncated": false,
+    "message": null
+  },
+  "errorMessage": null
+}
+```
+
+CSV 响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "path": "tables/data.csv",
+    "fileName": "data.csv",
+    "extension": ".csv",
+    "contentType": "CSV",
+    "content": null,
+    "columns": ["name", "value"],
+    "rows": [["a", "1"], ["b", "2"]],
+    "page": 1,
+    "pageSize": 100,
+    "truncated": false,
+    "message": null
+  },
+  "errorMessage": null
+}
+```
+
+### 13.3 预览 CV 图片
+
+```http
+GET /api/dataset/preview/image?id={datasetVersionId}&path={zipEntryPath}
+```
+
+规则：
+
+- 仅支持 `CV` zip 数据集内的图片文件。
+- `path` 必须来自 `files[].path`。
+- 成功时返回图片流，`Content-Disposition` 为 `inline`。
+- 单张图片超过 `dataset.preview.max-image-bytes` 时拒绝在线预览。
+
+响应头示例：
+
+```http
+Content-Type: image/png
+Content-Disposition: inline; filename*=UTF-8''a.png
+```
+
+### 13.4 安全与前端对接要求
+
+- 前端必须先调用 `/api/dataset/preview/files`，再使用返回的 `previewUrl`。
+- 前端不要直接依赖 `storagePath` 或 MinIO 对象路径。
+- zip 内路径不能是绝对路径、盘符路径，不能包含 `..` 或空字节。
+- PDF、DOCX、XLS、XLSX 首版不做在线解析，展示下载提示即可。
+
+## 14. 错误处理与安全规则
 
 常见失败原因：
 
@@ -1047,7 +1242,7 @@ DELETE /api/files/delete?objectName={objectName}
 - 模型版本或数据集版本被训练实验引用时，不允许删除。
 - zip 内路径不能包含绝对路径、盘符、`..` 或空字节。
 
-## 14. 点云三维预览接口
+## 15. 点云三维预览接口
 
 基础路径：`/api/dataset/point-cloud`
 
@@ -1063,7 +1258,7 @@ point-cloud:
 
 默认单个可预览点云文件不超过 `200MB`。该限制只影响在线预览，不影响上传和原始文件下载。
 
-### 14.1 查询点云预览信息
+### 15.1 查询点云预览信息
 
 ```http
 GET /api/dataset/point-cloud/preview?id={datasetVersionId}
@@ -1128,7 +1323,7 @@ zip 点云包响应示例：
 }
 ```
 
-### 14.2 单文件点云流
+### 15.2 单文件点云流
 
 ```http
 GET /api/dataset/point-cloud/file?id={datasetVersionId}
@@ -1148,7 +1343,7 @@ if (preview.data.previewUrl && preview.data.format === 'PCD') {
 }
 ```
 
-### 14.3 zip 内点云文件流
+### 15.3 zip 内点云文件流
 
 ```http
 GET /api/dataset/point-cloud/zip-file?id={datasetVersionId}&path={zipEntryPath}
@@ -1164,7 +1359,7 @@ GET /api/dataset/point-cloud/zip-file?id={datasetVersionId}&path={zipEntryPath}
 
 成功时同样返回 `application/octet-stream` 文件流，并设置 `Content-Disposition: inline`。
 
-### 14.4 前端对接建议
+### 15.4 前端对接建议
 
 前端先调用：
 
@@ -1185,7 +1380,7 @@ GET /api/dataset/point-cloud/preview?id={datasetVersionId}
 - 前端展示 `message`。
 - 可提供普通下载按钮，但业务预览流程不应直接依赖 `storagePath`。
 
-### 14.5 错误场景
+### 15.5 错误场景
 
 | 场景 | 典型错误 |
 | --- | --- |
@@ -1197,7 +1392,7 @@ GET /api/dataset/point-cloud/preview?id={datasetVersionId}
 | zip 内文件不存在 | `zip 内点云文件不存在: ...` |
 | 文件超过在线预览大小限制 | `文件过大，请下载后本地查看` |
 
-### 14.6 接口测试示例
+### 15.6 接口测试示例
 
 ```powershell
 # 查询单文件或 zip 点云预览信息
