@@ -83,9 +83,11 @@ export const DATASET_TYPES = {
 /** 任务状态 */
 export const TASK_STATUS = {
   PENDING: { label: '待执行', value: 'pending', color: '#595959' },
+  QUEUED: { label: '排队中', value: 'queued', color: '#faad14' },
   RUNNING: { label: '运行中', value: 'running', color: '#1890ff' },
   SUCCESS: { label: '成功', value: 'success', color: '#52c41a' },
   FAILED: { label: '失败', value: 'failed', color: '#ff4d4f' },
+  STOPPED: { label: '已停止', value: 'stopped', color: '#8c8c8c' },
 } as const;
 
 /** 训练可视化配置 */

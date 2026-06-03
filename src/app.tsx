@@ -190,14 +190,18 @@ export const request: RequestConfig = {
   errorConfig: {
     errorThrower: (res) => {
       const resAny = (res as any) ?? {};
-      const { code, message, msg, data } = resAny;
-      const messageText = msg ?? message;
+      const { code, message, msg, data, errorMessage } = resAny;
+      const messageText = msg ?? message ?? errorMessage;
       const isSuccess =
-        typeof code !== 'undefined' ? code === 200 : resAny.success;
+        typeof code !== 'undefined'
+          ? code === 200
+          : typeof resAny.success !== 'undefined'
+            ? resAny.success
+            : true;
       if (!isSuccess) {
         const error = new Error(messageText || '请求失败') as any;
         error.name = 'BizError';
-        error.info = { code, data };
+        error.info = { code, data, errorMessage };
         throw error;
       }
     },

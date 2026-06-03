@@ -91,12 +91,19 @@ declare namespace API {
     modelName?: string;
     datasetName?: string;
     createTime: string;
-    status: 'pending' | 'running' | 'success' | 'failed';
+    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
     modelVersionId?: string;
     codeVersionId?: string;
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
+    metrics?: Record<string, any>;
+    runId?: string;
+    logPath?: string;
+    outputPath?: string;
+    errorMessage?: string;
+    startedAt?: string;
+    finishedAt?: string;
     remark?: string;
   };
 
@@ -110,8 +117,15 @@ declare namespace API {
     codeVersionId: string;
     datasetVersionId: string;
     hyperParams: Record<string, any>;
-    status: 'pending' | 'running' | 'success' | 'failed' | 'stopped';
+    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress?: number;
+    metrics?: Record<string, any>;
+    runId?: string;
+    logPath?: string;
+    outputPath?: string;
+    errorMessage?: string;
+    startedAt?: string;
+    finishedAt?: string;
     remark?: string;
     createdAt?: string;
     updatedAt?: string;

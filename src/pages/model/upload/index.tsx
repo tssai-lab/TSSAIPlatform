@@ -59,7 +59,7 @@ const ModelUpload: React.FC = () => {
       return;
     }
     if (!file.name.toLowerCase().endsWith('.zip')) {
-      message.error('后端当前仅支持 zip 模型包');
+      message.error('后端当前仅支持 zip 代码或预训练包');
       return;
     }
     if (file.size > UPLOAD_CONFIG.MODEL.MAX_SIZE) {
@@ -207,7 +207,7 @@ const ModelUpload: React.FC = () => {
         </Form.Item>
         <Form.Item
           name="file"
-          label="模型包"
+          label="代码或预训练包"
           valuePropName="fileList"
           getValueFromEvent={(event) => event?.fileList ?? []}
           rules={[
@@ -218,7 +218,7 @@ const ModelUpload: React.FC = () => {
                   ? value
                   : (value?.fileList ?? []);
                 if (!list?.length || !list[0]?.originFileObj) {
-                  return Promise.reject(new Error('请上传模型包'));
+                  return Promise.reject(new Error('请上传代码或预训练包'));
                 }
                 return Promise.resolve();
               },
@@ -243,7 +243,7 @@ const ModelUpload: React.FC = () => {
           </Form.Item>
         )}
         <Form.Item
-          extra={`当前仅支持单个 zip 模型包，大小限制 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB。`}
+          extra={`当前仅支持单个 zip 代码或预训练包，大小限制 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB。`}
         >
           <Space>
             <Button
