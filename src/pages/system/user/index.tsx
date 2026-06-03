@@ -37,6 +37,7 @@ import {
   type UserListParams,
 } from '@/services/system';
 import { toProTableFail, toProTableSuccess, withIndex } from '@/utils/proTable';
+import { notifyRequestError } from '../notifyRequestError';
 
 /**
  * 用户管理页
@@ -72,7 +73,7 @@ const UserManagement: React.FC = () => {
   if (!access.canAccessSystemUser) return null;
 
   const isSuperAdmin = access.isSuperAdmin;
-  const canDeleteOrExport = access.canUserDeleteOrExport;
+  const canDelete = access.canUserDelete;
   const canRoleFilterAndAssignAdmin = access.canUserRoleFilterAndAssignAdmin;
 
   const fetchUserList = async (
@@ -173,17 +174,20 @@ const UserManagement: React.FC = () => {
       const status = values.status as string;
 
       if (editingUser) {
+        const submitRole = isEditingSuperAdmin
+          ? SYSTEM_ROLES.SUPER_ADMIN
+          : role;
         if (
           !canRoleFilterAndAssignAdmin &&
-          (role === SYSTEM_ROLES.SUPER_ADMIN ||
-            role === SYSTEM_ROLES.NORMAL_ADMIN)
+          (submitRole === SYSTEM_ROLES.SUPER_ADMIN ||
+            submitRole === SYSTEM_ROLES.NORMAL_ADMIN)
         ) {
           message.error('无权限分配管理员角色');
           return;
         }
         // 用户管理中不允许把非超管提升为“超管”
         if (
-          role === SYSTEM_ROLES.SUPER_ADMIN &&
+          submitRole === SYSTEM_ROLES.SUPER_ADMIN &&
           editingUser.role !== SYSTEM_ROLES.SUPER_ADMIN
         ) {
           message.error('不支持在用户管理中将用户设置为超管');
@@ -193,7 +197,7 @@ const UserManagement: React.FC = () => {
           id: editingUser.id,
           username,
           phone,
-          role,
+          role: submitRole,
           status,
         });
         if (response.code === 200) {
@@ -233,11 +237,8 @@ const UserManagement: React.FC = () => {
         message.error(response.message || '新增失败');
       }
     } catch (error: unknown) {
-      const err = error as { name?: string; message?: string };
-      if (err.name !== 'BizError') {
-        message.error(err.message || '操作失败');
-      }
-      // BizError 已由 app.tsx 全局 errorHandler 提示，勿再 throw 避免 Uncaught (in promise)
+      notifyRequestError(error, '操作失败');
+      // BizError 已由 app.tsx 全局 errorHandler 提示
     }
   };
 
@@ -258,15 +259,8 @@ const UserManagement: React.FC = () => {
     }
   };
 
-  const notifyRequestError = (error: unknown, fallback: string) => {
-    const err = error as { name?: string; message?: string };
-    if (err.name !== 'BizError') {
-      message.error(err.message || fallback);
-    }
-  };
-
   const handleDelete = async (record: UserItem) => {
-    if (!canDeleteOrExport) {
+    if (!canDelete) {
       message.warning('无权限执行该操作');
       return;
     }
@@ -327,23 +321,15 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  const isEditingSuperAdmin = editingUser?.role === SYSTEM_ROLES.SUPER_ADMIN;
+
   const roleOptions = canRoleFilterAndAssignAdmin
     ? SYSTEM_ROLE_OPTIONS_SUPER
     : SYSTEM_ROLE_OPTIONS_NORMAL_ADMIN;
 
-  const roleOptionsForForm = (() => {
-    if (editingUser?.role === SYSTEM_ROLES.SUPER_ADMIN) {
-      return [
-        {
-          label: SYSTEM_ROLES.SUPER_ADMIN,
-          value: SYSTEM_ROLES.SUPER_ADMIN,
-          disabled: true,
-        },
-        ...SYSTEM_ROLE_OPTIONS_SUPER,
-      ];
-    }
-    return roleOptions;
-  })();
+  const roleOptionsForForm = isEditingSuperAdmin
+    ? [{ label: SYSTEM_ROLES.SUPER_ADMIN, value: SYSTEM_ROLES.SUPER_ADMIN }]
+    : roleOptions;
 
   const columns: ProColumns<UserItem>[] = [
     {
@@ -462,7 +448,7 @@ const UserManagement: React.FC = () => {
               ? SYSTEM_STATUS.DISABLED
               : SYSTEM_STATUS.ENABLED}
           </Button>
-          {canDeleteOrExport && (
+          {canDelete && (
             <Popconfirm
               title={`确定删除用户「${record.username}」吗？`}
               description={
@@ -557,6 +543,7 @@ const UserManagement: React.FC = () => {
             >
               <Select
                 placeholder="请选择角色"
+                disabled={isEditingSuperAdmin}
                 options={roleOptionsForForm as any}
               />
             </Form.Item>

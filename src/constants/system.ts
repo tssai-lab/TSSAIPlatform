@@ -1,6 +1,6 @@
 /**
  * 系统管理配置常量
- * 避免硬编码，便于维护（与 platform.ts 风格保持一致）
+ * 避免硬编码，便于维护
  */
 export const SYSTEM_API_CONFIG = {
   ENDPOINTS: {
