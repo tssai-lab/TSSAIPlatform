@@ -7,6 +7,7 @@ import {
   type SystemConfig,
   updateSystemConfig,
 } from '@/services/system';
+import { notifyRequestError } from '../notifyRequestError';
 
 /**
  * 系统配置页（仅超管）
@@ -35,8 +36,7 @@ const SystemConfigPage: React.FC = () => {
         message.error(res.message || '加载配置失败');
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '加载配置失败');
+      notifyRequestError(error, '加载配置失败');
     } finally {
       setLoading(false);
     }
@@ -64,10 +64,7 @@ const SystemConfigPage: React.FC = () => {
         message.error(res.message || '保存失败');
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      if (err.message) {
-        message.error(err.message);
-      }
+      notifyRequestError(error, '保存失败');
     } finally {
       setSaving(false);
     }

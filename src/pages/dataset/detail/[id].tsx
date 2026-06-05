@@ -12,12 +12,27 @@ import {
   Table,
   Tag,
 } from 'antd';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import PointCloudPreviewPanel, {
+  type PointCloudPreviewPanelRef,
+} from '@/pages/dataset/components/point-cloud/PointCloudPreviewPanel';
 import {
   deleteDataset,
   fetchDatasetDetail,
   getDownloadUrl,
 } from '@/services/platform';
+
+const DATASET_TYPE_LABEL: Record<string, string> = {
+  CV: 'CV',
+  NLP: 'NLP',
+  POINT_CLOUD: '点云',
+};
+
+const DATASET_TYPE_COLOR: Record<string, string> = {
+  CV: 'blue',
+  NLP: 'green',
+  POINT_CLOUD: 'purple',
+};
 
 const DatasetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +40,8 @@ const DatasetDetail: React.FC = () => {
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [previewVersionId, setPreviewVersionId] = useState<string>();
+  const previewPanelRef = useRef<PointCloudPreviewPanelRef>(null);
 
   useEffect(() => {
     if (!id) {
@@ -65,6 +82,14 @@ const DatasetDetail: React.FC = () => {
     window.open(getDownloadUrl(storagePath), '_blank');
   };
 
+  const handleLoadPreview = async (record: API.DatasetVersionDetail) => {
+    setPreviewVersionId(record.id);
+    document
+      .getElementById('point-cloud-preview')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await previewPanelRef.current?.loadVersion(record);
+  };
+
   if (loading) {
     return (
       <PageContainer
@@ -88,6 +113,8 @@ const DatasetDetail: React.FC = () => {
       </PageContainer>
     );
   }
+
+  const isPointCloud = datasetInfo.type === 'POINT_CLOUD';
 
   return (
     <PageContainer
@@ -121,8 +148,8 @@ const DatasetDetail: React.FC = () => {
             <strong>{datasetInfo.name}</strong>
           </Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color={datasetInfo.type === 'CV' ? 'blue' : 'green'}>
-              {datasetInfo.type}
+            <Tag color={DATASET_TYPE_COLOR[datasetInfo.type] ?? 'green'}>
+              {DATASET_TYPE_LABEL[datasetInfo.type] ?? datasetInfo.type}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="最近上传时间">
@@ -143,6 +170,11 @@ const DatasetDetail: React.FC = () => {
           rowKey="id"
           pagination={false}
           locale={{ emptyText: '暂无版本记录' }}
+          rowClassName={(record) =>
+            record.id === previewVersionId
+              ? 'dataset-preview-version-row-active'
+              : ''
+          }
           columns={[
             { title: '版本号', dataIndex: 'version', key: 'version' },
             { title: '文件名', dataIndex: 'fileName', key: 'fileName' },
@@ -158,17 +190,44 @@ const DatasetDetail: React.FC = () => {
               title: '操作',
               key: 'action',
               render: (_, record: API.DatasetVersionDetail) => (
-                <Button
-                  type="link"
-                  onClick={() => handleDownload(record.storagePath)}
-                >
-                  下载
-                </Button>
+                <Space size={0}>
+                  <Button
+                    type="link"
+                    onClick={() => handleDownload(record.storagePath)}
+                  >
+                    下载
+                  </Button>
+                  {isPointCloud && (
+                    <Button
+                      type="link"
+                      onClick={() => handleLoadPreview(record)}
+                    >
+                      加载预览
+                    </Button>
+                  )}
+                </Space>
               ),
             },
           ]}
         />
       </Card>
+
+      {isPointCloud && (
+        <>
+          <style>{`
+            .dataset-preview-version-row-active > td {
+              background-color: #e6f4ff !important;
+            }
+            .dataset-preview-version-row-active:hover > td {
+              background-color: #bae0ff !important;
+            }
+          `}</style>
+          <PointCloudPreviewPanel
+            ref={previewPanelRef}
+            onSelectionChange={setPreviewVersionId}
+          />
+        </>
+      )}
     </PageContainer>
   );
 };

@@ -170,7 +170,7 @@ declare namespace API {
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;
