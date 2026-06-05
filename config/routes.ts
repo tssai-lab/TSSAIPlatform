@@ -67,11 +67,6 @@ export default [
         component: './dataset/detail/[id]',
         hideInMenu: true,
       },
-      {
-        path: '/dataset/point-cloud',
-        name: '点云查看',
-        component: './dataset/point-cloud',
-      },
     ],
   },
   {
