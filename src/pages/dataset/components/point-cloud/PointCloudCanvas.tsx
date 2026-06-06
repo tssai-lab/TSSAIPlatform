@@ -130,9 +130,24 @@ const PointCloudCanvas: React.FC<PointCloudCanvasProps> = ({
             <Descriptions.Item label="文件名">
               {result.fileName}
             </Descriptions.Item>
-            <Descriptions.Item label="点数">
+            <Descriptions.Item
+              label={result.removedPointCount > 0 ? '有效点数' : '点数'}
+            >
               {result.pointCount.toLocaleString()}
             </Descriptions.Item>
+            {result.removedPointCount > 0 && (
+              <>
+                <Descriptions.Item label="原始点数">
+                  {result.originalPointCount.toLocaleString()}
+                </Descriptions.Item>
+                <Descriptions.Item label="已过滤">
+                  {result.removedPointCount.toLocaleString()}
+                  <span style={{ color: 'rgba(0,0,0,0.45)', marginLeft: 4 }}>
+                    （无效坐标 NaN）
+                  </span>
+                </Descriptions.Item>
+              </>
+            )}
           </Descriptions>
           <div style={{ marginTop: 12 }}>
             <Button size="small" onClick={onClearPreview}>
