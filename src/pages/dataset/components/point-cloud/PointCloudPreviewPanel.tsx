@@ -21,6 +21,7 @@ import { getApiErrorMessage } from '@/utils/apiError';
 import PointCloudCanvas from './PointCloudCanvas';
 import PointCloudZipFileList from './PointCloudZipFileList';
 import {
+  filterInvalidPoints,
   makePointsMaterial,
   normalizeGeometry,
   type PointCloudLoadResult,
@@ -104,11 +105,26 @@ const PointCloudPreviewPanel = forwardRef<
       if (!geometry.getAttribute('position')) {
         throw new Error('点云缺少 position 属性');
       }
-      const { radius } = normalizeGeometry(geometry);
+
+      const filterStats = filterInvalidPoints(geometry);
+      if (filterStats.removed > 0) {
+        console.info('[PointCloud] NaN 过滤', fileName, filterStats);
+      }
+
+      const { radius } = normalizeGeometry(geometry, {
+        pcdCoordinateFix: format === PointCloudFileFormat.PCD,
+      });
       const material = makePointsMaterial(geometry);
       const pointCount = geometry.getAttribute('position').count ?? 0;
       disposeResult();
-      setResult({ fileName, geometry, material, pointCount });
+      setResult({
+        fileName,
+        geometry,
+        material,
+        pointCount,
+        originalPointCount: filterStats.total,
+        removedPointCount: filterStats.removed,
+      });
       resetView(radius);
     },
     [disposeResult, resetView],
