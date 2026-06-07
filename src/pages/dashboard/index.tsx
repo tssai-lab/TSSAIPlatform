@@ -74,7 +74,9 @@ async function loadDashboardData(): Promise<{
   return {
     stats: {
       modelCount: Array.isArray(modelRes?.data) ? modelRes.data.length : 0,
-      datasetCount: Array.isArray(datasetRes?.data) ? datasetRes.data.length : 0,
+      datasetCount: Array.isArray(datasetRes?.data)
+        ? datasetRes.data.length
+        : 0,
       taskCount: taskRes?.data?.total ?? tasks.length,
       runningCount: tasks.filter((t) => isActiveTask(t.status)).length,
     },
@@ -100,7 +102,8 @@ const Dashboard: React.FC = () => {
   const refresh = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const { stats: nextStats, recentTasks: nextTasks } = await loadDashboardData();
+      const { stats: nextStats, recentTasks: nextTasks } =
+        await loadDashboardData();
       setStats(nextStats);
       setRecentTasks(nextTasks);
       setLoadError(false);
@@ -133,7 +136,10 @@ const Dashboard: React.FC = () => {
       }
     >
       {loadError && (
-        <Typography.Text type="danger" style={{ display: 'block', marginBottom: 16 }}>
+        <Typography.Text
+          type="danger"
+          style={{ display: 'block', marginBottom: 16 }}
+        >
           部分数据加载失败，请检查登录状态与后端服务。
         </Typography.Text>
       )}
@@ -142,12 +148,20 @@ const Dashboard: React.FC = () => {
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
             <Card hoverable onClick={() => history.push('/model/list')}>
-              <Statistic title="模型资产" value={stats.modelCount} suffix="个" />
+              <Statistic
+                title="模型资产"
+                value={stats.modelCount}
+                suffix="个"
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card hoverable onClick={() => history.push('/dataset/list')}>
-              <Statistic title="数据集资产" value={stats.datasetCount} suffix="个" />
+              <Statistic
+                title="数据集资产"
+                value={stats.datasetCount}
+                suffix="个"
+              />
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -161,7 +175,9 @@ const Dashboard: React.FC = () => {
                 title="运行中 / 排队中"
                 value={stats.runningCount}
                 suffix="个"
-                valueStyle={stats.runningCount > 0 ? { color: '#1677ff' } : undefined}
+                valueStyle={
+                  stats.runningCount > 0 ? { color: '#1677ff' } : undefined
+                }
               />
             </Card>
           </Col>

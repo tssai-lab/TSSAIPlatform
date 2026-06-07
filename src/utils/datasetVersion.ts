@@ -12,7 +12,9 @@ export const DATASET_VERSION_DESC_MIN_LENGTH = 10;
 const SEMVER_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/i;
 const LEGACY_PATTERN = /^v(\d+)$/i;
 
-export function parseAssetVersion(version: string): [number, number, number] | null {
+export function parseAssetVersion(
+  version: string,
+): [number, number, number] | null {
   const trimmed = version.trim();
   const semver = trimmed.match(SEMVER_PATTERN);
   if (semver) {
@@ -49,7 +51,9 @@ export function getLatestAssetVersion(
   return max;
 }
 
-export function formatAssetVersionLabel(version: [number, number, number]): string {
+export function formatAssetVersionLabel(
+  version: [number, number, number],
+): string {
   if (version[1] === 0 && version[2] === 0) {
     return `v${version[0]}`;
   }
@@ -105,7 +109,9 @@ export function validateDatasetVersionUnique(
   return null;
 }
 
-export function validateDatasetVersionDescription(desc?: string): string | null {
+export function validateDatasetVersionDescription(
+  desc?: string,
+): string | null {
   const trimmed = desc?.trim();
   if (!trimmed) return '请填写版本描述';
   if (trimmed.length < DATASET_VERSION_DESC_MIN_LENGTH) {
@@ -115,14 +121,21 @@ export function validateDatasetVersionDescription(desc?: string): string | null 
 }
 
 /** Ant Design Form 版本号校验规则 */
-export function datasetVersionFormRules(existingVersions: string[] = [], excludeVersion?: string) {
+export function datasetVersionFormRules(
+  existingVersions: string[] = [],
+  excludeVersion?: string,
+) {
   return [
     { required: true, message: '请输入版本号' },
     {
       validator: (_: unknown, value: string) => {
         const formatError = validateDatasetVersionFormat(value);
         if (formatError) return Promise.reject(new Error(formatError));
-        const uniqueError = validateDatasetVersionUnique(value, existingVersions, excludeVersion);
+        const uniqueError = validateDatasetVersionUnique(
+          value,
+          existingVersions,
+          excludeVersion,
+        );
         if (uniqueError) return Promise.reject(new Error(uniqueError));
         return Promise.resolve();
       },

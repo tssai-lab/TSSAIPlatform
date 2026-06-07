@@ -13,7 +13,11 @@ import {
   Typography,
 } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
-import { fetchGpuResourceOverview, type GpuDevice, type GpuResourceOverview } from '@/services/gpu';
+import {
+  fetchGpuResourceOverview,
+  type GpuDevice,
+  type GpuResourceOverview,
+} from '@/services/gpu';
 
 const POLL_INTERVAL_MS = 15000;
 
@@ -93,14 +97,22 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
       style={{ marginTop: 16 }}
     >
       {overview?.isMock && (
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 12 }}>
-          后端 GPU 监控接口尚未接入，当前为样式预览。接口就绪后将自动切换为实时数据。
+        <Typography.Paragraph
+          type="secondary"
+          style={{ marginBottom: 16, fontSize: 12 }}
+        >
+          后端 GPU
+          监控接口尚未接入，当前为样式预览。接口就绪后将自动切换为实时数据。
         </Typography.Paragraph>
       )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} sm={8} md={4}>
-          <Statistic title="GPU 总数" value={overview?.totalGpus ?? 0} suffix="卡" />
+          <Statistic
+            title="GPU 总数"
+            value={overview?.totalGpus ?? 0}
+            suffix="卡"
+          />
         </Col>
         <Col xs={12} sm={8} md={4}>
           <Statistic
@@ -119,7 +131,11 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
           />
         </Col>
         <Col xs={12} sm={8} md={4}>
-          <Statistic title="离线" value={overview?.offlineGpus ?? 0} suffix="卡" />
+          <Statistic
+            title="离线"
+            value={overview?.offlineGpus ?? 0}
+            suffix="卡"
+          />
         </Col>
         <Col xs={12} sm={12} md={4}>
           <Statistic
@@ -169,9 +185,7 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
                 }}
               >
                 <div>
-                  <Typography.Text strong>
-                    GPU {device.index}
-                  </Typography.Text>
+                  <Typography.Text strong>GPU {device.index}</Typography.Text>
                   <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
                     {device.name}
                   </div>
@@ -191,7 +205,8 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
                 >
                   <span>显存</span>
                   <span>
-                    {formatMb(device.memoryUsedMb)} / {formatMb(device.memoryTotalMb)}
+                    {formatMb(device.memoryUsedMb)} /{' '}
+                    {formatMb(device.memoryTotalMb)}
                   </span>
                 </div>
                 <Progress
@@ -218,7 +233,9 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
                 <Progress
                   percent={device.utilizationPercent}
                   size="small"
-                  strokeColor={utilizationStrokeColor(device.utilizationPercent)}
+                  strokeColor={utilizationStrokeColor(
+                    device.utilizationPercent,
+                  )}
                   showInfo={false}
                 />
               </div>
@@ -227,7 +244,9 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
                 {device.temperatureC != null && (
                   <span>温度 {device.temperatureC}°C</span>
                 )}
-                {device.powerWatts != null && <span>功耗 {device.powerWatts} W</span>}
+                {device.powerWatts != null && (
+                  <span>功耗 {device.powerWatts} W</span>
+                )}
               </Space>
 
               {device.status === 'busy' && device.assignedTaskName && (
@@ -261,7 +280,12 @@ const GpuResourceOverviewPanel: React.FC<GpuResourceOverviewProps> = ({
       {overview?.updatedAt && (
         <Typography.Text
           type="secondary"
-          style={{ display: 'block', marginTop: 12, fontSize: 12, textAlign: 'right' }}
+          style={{
+            display: 'block',
+            marginTop: 12,
+            fontSize: 12,
+            textAlign: 'right',
+          }}
         >
           数据更新于 {new Date(overview.updatedAt).toLocaleString()}
         </Typography.Text>

@@ -20,8 +20,9 @@ export function getApiErrorMessage(err: any): string {
         ? url
         : `${baseURL.replace(/\/$/, '')}${url.startsWith('/') ? url : `/${url}`}`;
     const springPath = data?.path as string | undefined;
-    const isDatasetPreview404 =
-      (springPath || fullPath || url || '').includes('/dataset/preview');
+    const isDatasetPreview404 = (springPath || fullPath || url || '').includes(
+      '/dataset/preview',
+    );
 
     if (isDatasetPreview404) {
       return (

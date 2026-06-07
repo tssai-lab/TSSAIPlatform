@@ -24,9 +24,15 @@ export function modelNewVersionFormRules(existingVersions: string[] = []) {
       validator: (_: unknown, value: string) => {
         const formatError = validateModelVersionFormat(value);
         if (formatError) return Promise.reject(new Error(formatError));
-        const greaterError = validateVersionGreaterThanLatest(value, existingVersions);
+        const greaterError = validateVersionGreaterThanLatest(
+          value,
+          existingVersions,
+        );
         if (greaterError) return Promise.reject(new Error(greaterError));
-        const uniqueError = validateDatasetVersionUnique(value, existingVersions);
+        const uniqueError = validateDatasetVersionUnique(
+          value,
+          existingVersions,
+        );
         if (uniqueError) return Promise.reject(new Error(uniqueError));
         return Promise.resolve();
       },

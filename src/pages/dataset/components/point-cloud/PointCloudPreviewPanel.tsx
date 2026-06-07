@@ -278,7 +278,7 @@ const PointCloudPreviewPanel = forwardRef<
 
   const versionInfoText = activeVersion
     ? `正在预览：${activeVersion.version}${activeVersion.fileName ? ` · ${activeVersion.fileName}` : ''}`
-    : '尚未选择版本，请在上方版本列表点击【加载预览】';
+    : '尚未选择版本，请在上方版本列表点击【选中预览】';
 
   const selectedZipEntry = zipEntryPath
     ? zipEntries.find((item) => item.path === zipEntryPath)

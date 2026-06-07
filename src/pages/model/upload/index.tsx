@@ -23,6 +23,10 @@ import {
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
+  formatAssetVersionLabel,
+  getLatestAssetVersion,
+} from '@/utils/datasetVersion';
+import {
   MODEL_VERSION_FORMAT_HINT,
   modelNewVersionFormRules,
   suggestNextModelVersion,
@@ -32,7 +36,6 @@ import {
   LS_MODEL_UPLOAD_FP,
   LS_MODEL_UPLOAD_ID,
 } from '@/utils/uploadResume';
-import { formatAssetVersionLabel, getLatestAssetVersion } from '@/utils/datasetVersion';
 
 const CHUNK_FALLBACK = 5 * 1024 * 1024;
 
@@ -275,7 +278,10 @@ const ModelUpload: React.FC = () => {
           label="类型"
           rules={[{ required: true, message: '请选择类型' }]}
         >
-          <Select placeholder="请选择类型" disabled={isNewVersionUpload || prefillLoading}>
+          <Select
+            placeholder="请选择类型"
+            disabled={isNewVersionUpload || prefillLoading}
+          >
             <Select.Option value="CV">CV</Select.Option>
             <Select.Option value="NLP">NLP</Select.Option>
           </Select>
@@ -347,7 +353,11 @@ const ModelUpload: React.FC = () => {
             >
               清除续传记录
             </Button>
-            <Button type="primary" htmlType="submit" loading={uploading || prefillLoading}>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={uploading || prefillLoading}
+            >
               提交
             </Button>
           </Space>

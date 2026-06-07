@@ -15,7 +15,8 @@ export const TRAINING_MLFLOW_METRIC_KEYS = [
   'val_mAP50_95',
 ] as const;
 
-export type TrainingMlflowMetricKey = (typeof TRAINING_MLFLOW_METRIC_KEYS)[number];
+export type TrainingMlflowMetricKey =
+  (typeof TRAINING_MLFLOW_METRIC_KEYS)[number];
 
 export type MetricPoint = { step: number; value: number };
 
@@ -50,7 +51,9 @@ export function formatMetricValue(value: unknown): string {
 }
 
 export function getAvailableMetricKeys(data: MetricsDataMap): string[] {
-  return TRAINING_MLFLOW_METRIC_KEYS.filter((key) => (data[key]?.length ?? 0) > 0);
+  return TRAINING_MLFLOW_METRIC_KEYS.filter(
+    (key) => (data[key]?.length ?? 0) > 0,
+  );
 }
 
 export function getLatestMetricValue(
@@ -73,7 +76,9 @@ export function buildMlflowMetricSummaries(data: MetricsDataMap) {
 export function extractMetricSummaries(metrics?: Record<string, unknown>) {
   if (!metrics) return [];
   return METRIC_SUMMARY_FIELDS.map(({ keys, label }) => {
-    const value = keys.map((key) => metrics[key]).find((v) => v !== undefined && v !== null && v !== '');
+    const value = keys
+      .map((key) => metrics[key])
+      .find((v) => v !== undefined && v !== null && v !== '');
     return value !== undefined ? { label, value } : null;
   }).filter(Boolean) as { label: string; value: unknown }[];
 }

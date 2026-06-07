@@ -28,9 +28,9 @@ import {
   deleteModelVersion,
   fetchModelAssetDetail,
   fetchModelVersionCodePreview,
+  getDownloadUrl,
   getModelVersion,
   updateModelAsset,
-  getDownloadUrl,
 } from '@/services/platform';
 
 const TYPE_OPTIONS = [
@@ -67,7 +67,7 @@ const ModelDetail: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      let assetId = id;
+      const assetId = id;
       if (/^model-ver-/i.test(id)) {
         const verRes = await getModelVersion(id, { skipErrorHandler: true });
         const aid = verRes?.data?.assetId;
@@ -79,13 +79,17 @@ const ModelDetail: React.FC = () => {
         }
       }
 
-      const res = await fetchModelAssetDetail(assetId, { skipErrorHandler: true });
+      const res = await fetchModelAssetDetail(assetId, {
+        skipErrorHandler: true,
+      });
       const detail = res?.data ?? null;
       setAssetInfo(detail);
 
       const queryVersionId = searchParams.get('versionId') ?? undefined;
       const defaultVersionId =
-        (queryVersionId && queryVersionId !== assetId ? queryVersionId : undefined) ??
+        (queryVersionId && queryVersionId !== assetId
+          ? queryVersionId
+          : undefined) ??
         detail?.defaultVersionId ??
         resolveModelVersionId(detail?.latestVersion, assetId) ??
         detail?.versions
@@ -177,11 +181,16 @@ const ModelDetail: React.FC = () => {
     }
   };
 
-  const selectedVersion = assetInfo?.versions.find((v) => v.id === selectedVersionId);
+  const selectedVersion = assetInfo?.versions.find(
+    (v) => v.id === selectedVersionId,
+  );
 
   if (loading) {
     return (
-      <PageContainer title="模型详情" onBack={() => history.push('/model/list')}>
+      <PageContainer
+        title="模型详情"
+        onBack={() => history.push('/model/list')}
+      >
         <div style={{ textAlign: 'center', padding: 80 }}>
           <Spin size="large" />
         </div>
@@ -191,7 +200,10 @@ const ModelDetail: React.FC = () => {
 
   if (!assetInfo) {
     return (
-      <PageContainer title="模型详情" onBack={() => history.push('/model/list')}>
+      <PageContainer
+        title="模型详情"
+        onBack={() => history.push('/model/list')}
+      >
         <Empty description="未找到模型资产" />
       </PageContainer>
     );
@@ -245,14 +257,16 @@ const ModelDetail: React.FC = () => {
         description={
           <>
             <strong>模型版本</strong>
-            ：上传 zip（代码或预训练权重）时填写版本号自动创建，作为发起训练时的输入包。
+            ：上传
+            zip（代码或预训练权重）时填写版本号自动创建，作为发起训练时的输入包。
             <br />
             <strong>训练实验版本</strong>
             ：在某次训练结果上继续调参、再训练，请在「训练任务详情」使用
             <Typography.Link onClick={() => history.push('/task/list')}>
               基于此版本继续训练
             </Typography.Link>
-            ，系统会按 experimentId 记录每次迭代的超参与数据集关联（合同约定的版本管理）。
+            ，系统会按 experimentId
+            记录每次迭代的超参与数据集关联（合同约定的版本管理）。
             <br />
             如需新增模型文件版本，请使用右上角「上传新版本」并填写新的版本号，无需手动创建空记录。
           </>
@@ -295,16 +309,24 @@ const ModelDetail: React.FC = () => {
           rowKey="id"
           pagination={false}
           scroll={{ x: 960 }}
-          locale={{ emptyText: '暂无版本，请通过「上传新版本」或模型上传页首次上传' }}
+          locale={{
+            emptyText: '暂无版本，请通过「上传新版本」或模型上传页首次上传',
+          }}
           onRow={(record) => ({
             onClick: () => setSelectedVersionId(record.id),
             style: {
               cursor: 'pointer',
-              background: record.id === selectedVersionId ? '#e6f4ff' : undefined,
+              background:
+                record.id === selectedVersionId ? '#e6f4ff' : undefined,
             },
           })}
           columns={[
-            { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
+            {
+              title: '版本号',
+              dataIndex: 'version',
+              key: 'version',
+              width: 100,
+            },
             {
               title: '版本 ID',
               dataIndex: 'id',
@@ -319,9 +341,20 @@ const ModelDetail: React.FC = () => {
                 </Tooltip>
               ),
             },
-            { title: '文件名', dataIndex: 'fileName', key: 'fileName', width: 140, ellipsis: true },
+            {
+              title: '文件名',
+              dataIndex: 'fileName',
+              key: 'fileName',
+              width: 140,
+              ellipsis: true,
+            },
             { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
-            { title: '上传时间', dataIndex: 'createdAt', key: 'createdAt', width: 180 },
+            {
+              title: '上传时间',
+              dataIndex: 'createdAt',
+              key: 'createdAt',
+              width: 180,
+            },
             {
               title: '操作',
               key: 'action',
@@ -341,7 +374,10 @@ const ModelDetail: React.FC = () => {
                   >
                     选中
                   </Button>
-                  <Button type="link" onClick={() => handleDownload(record.storagePath)}>
+                  <Button
+                    type="link"
+                    onClick={() => handleDownload(record.storagePath)}
+                  >
                     下载
                   </Button>
                   <Popconfirm
@@ -357,8 +393,12 @@ const ModelDetail: React.FC = () => {
             },
           ]}
         />
-        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-          每个版本对应一次上传的 zip 文件；发起训练时在创建任务页选择 modelVersionId（版本 ID）。
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', marginTop: 8 }}
+        >
+          每个版本对应一次上传的 zip 文件；发起训练时在创建任务页选择
+          modelVersionId（版本 ID）。
         </Typography.Text>
       </Card>
 
@@ -372,7 +412,10 @@ const ModelDetail: React.FC = () => {
         }
       >
         {!selectedVersionId && (
-          <Empty description="请从版本列表选择一个版本" style={{ padding: 48 }} />
+          <Empty
+            description="请从版本列表选择一个版本"
+            style={{ padding: 48 }}
+          />
         )}
         {selectedVersionId && codeLoading && (
           <div style={{ textAlign: 'center', padding: 48 }}>
@@ -419,18 +462,16 @@ const ModelDetail: React.FC = () => {
             </Space>
           </>
         )}
-        {selectedVersionId &&
-          !codeLoading &&
-          !versionCode?.codeContent && (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={
-                selectedVersion?.storagePath
-                  ? '当前版本包中没有可预览的代码文件'
-                  : '该版本尚未绑定模型文件，请先上传'
-              }
-            />
-          )}
+        {selectedVersionId && !codeLoading && !versionCode?.codeContent && (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              selectedVersion?.storagePath
+                ? '当前版本包中没有可预览的代码文件'
+                : '该版本尚未绑定模型文件，请先上传'
+            }
+          />
+        )}
       </Card>
 
       {codePreviewVisible && versionCode?.codeContent && (

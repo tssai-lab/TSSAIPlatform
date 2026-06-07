@@ -281,7 +281,9 @@ const TaskCompare: React.FC = () => {
               );
             }
             setTaskList(
-              await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+              await enrichTaskItemsWithDisplayNames(list, {
+                skipErrorHandler: true,
+              }),
             );
             return;
           } catch {
@@ -321,7 +323,9 @@ const TaskCompare: React.FC = () => {
               );
             }
             setTaskList(
-              await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+              await enrichTaskItemsWithDisplayNames(list, {
+                skipErrorHandler: true,
+              }),
             );
             return;
           }
@@ -348,7 +352,9 @@ const TaskCompare: React.FC = () => {
         }
 
         setTaskList(
-          await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+          await enrichTaskItemsWithDisplayNames(list, {
+            skipErrorHandler: true,
+          }),
         );
       } catch {
         // 后端不可用/超时：仍要保证 URL 带入的 id 能展示并可对比
@@ -357,9 +363,12 @@ const TaskCompare: React.FC = () => {
           placeholderTaskRow(id, hint),
         );
         setTaskList(
-          await enrichTaskItemsWithDisplayNames([...placeholders, ...MOCK_TASKS], {
-            skipErrorHandler: true,
-          }),
+          await enrichTaskItemsWithDisplayNames(
+            [...placeholders, ...MOCK_TASKS],
+            {
+              skipErrorHandler: true,
+            },
+          ),
         );
       } finally {
         setLoading(false);

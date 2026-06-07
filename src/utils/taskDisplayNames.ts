@@ -150,7 +150,9 @@ export function getModelVersionDisplayLabel(modelVersionId?: string): string {
   );
 }
 
-export function getDatasetVersionDisplayLabel(datasetVersionId?: string): string {
+export function getDatasetVersionDisplayLabel(
+  datasetVersionId?: string,
+): string {
   if (!datasetVersionId) return '-';
   return formatVersionDisplayLabel(
     datasetDisplayCache.get(datasetVersionId),
@@ -181,8 +183,12 @@ export async function preloadDatasetVersionDisplayNames(
 ) {
   const unique = [
     ...new Set(
-      datasetVersionIds.filter((id): id is string => typeof id === 'string' && id.length > 0),
+      datasetVersionIds.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      ),
     ),
   ];
-  await Promise.all(unique.map((id) => resolveDatasetVersionDisplay(id, options)));
+  await Promise.all(
+    unique.map((id) => resolveDatasetVersionDisplay(id, options)),
+  );
 }

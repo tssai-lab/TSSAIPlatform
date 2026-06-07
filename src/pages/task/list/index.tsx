@@ -29,7 +29,9 @@ const TaskList: React.FC = () => {
           String(item.experimentId || '').includes(experimentKeyword),
         );
       }
-      const total = experimentKeyword ? list.length : (res as any)?.data?.total ?? list.length;
+      const total = experimentKeyword
+        ? list.length
+        : ((res as any)?.data?.total ?? list.length);
       const enriched = await enrichTaskItemsWithDisplayNames(list, {
         skipErrorHandler: true,
       });

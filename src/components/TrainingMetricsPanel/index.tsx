@@ -11,7 +11,14 @@ import {
   Typography,
 } from 'antd';
 import * as echarts from 'echarts';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { fetchMlflowMetricsBulk } from '@/services/platform';
 import {
   buildMetricsChartOption,
@@ -53,7 +60,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string>('');
   const [chartStyle, setChartStyle] = useState<ChartStyle>(() => {
-    const saved = localStorage.getItem(CHART_STYLE_STORAGE_KEY) as ChartStyle | null;
+    const saved = localStorage.getItem(
+      CHART_STYLE_STORAGE_KEY,
+    ) as ChartStyle | null;
     return saved && CHART_STYLE_OPTIONS.some((o) => o.value === saved)
       ? saved
       : 'combined-line';
@@ -64,7 +73,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   const combinedChartRef = useRef<HTMLDivElement>(null);
   const combinedChartInstance = useRef<echarts.ECharts | null>(null);
   const splitChartRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const splitChartInstances = useRef<Record<string, echarts.ECharts | null>>({});
+  const splitChartInstances = useRef<Record<string, echarts.ECharts | null>>(
+    {},
+  );
 
   const isActive = isActiveTaskStatus(taskStatus);
   const shouldPoll = !!runId && autoRefresh && isActive;
@@ -141,7 +152,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   }, []);
 
   const disposeSplitCharts = useCallback(() => {
-    Object.values(splitChartInstances.current).forEach((inst) => inst?.dispose());
+    Object.values(splitChartInstances.current).forEach((inst) => {
+      inst?.dispose();
+    });
     splitChartInstances.current = {};
     splitChartRefs.current = {};
   }, []);
@@ -172,12 +185,17 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     for (const key of effectiveSelected) {
       const el = splitChartRefs.current[key];
       if (!el) continue;
-      const option = buildMetricsChartOption(metricsData, effectiveSelected, 'split-line', key);
+      const option = buildMetricsChartOption(
+        metricsData,
+        effectiveSelected,
+        'split-line',
+        key,
+      );
       if (!splitChartInstances.current[key]) {
         splitChartInstances.current[key] = echarts.init(el);
       }
-      splitChartInstances.current[key]!.setOption(option, { notMerge: true });
-      splitChartInstances.current[key]!.resize();
+      splitChartInstances.current[key]?.setOption(option, { notMerge: true });
+      splitChartInstances.current[key]?.resize();
     }
   }, [metricsData, effectiveSelected]);
 
@@ -206,7 +224,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   useEffect(() => {
     const onResize = () => {
       combinedChartInstance.current?.resize();
-      Object.values(splitChartInstances.current).forEach((inst) => inst?.resize());
+      Object.values(splitChartInstances.current).forEach((inst) => {
+        inst?.resize();
+      });
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -226,7 +246,8 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     return (
       <div style={{ padding: 24, background: '#fafafa', borderRadius: 8 }}>
         <div style={{ marginBottom: 12, color: '#8c8c8c' }}>
-          任务详情未包含 run_id，或后端尚未返回。可手动输入 MLflow Run ID 进行联调：
+          任务详情未包含 run_id，或后端尚未返回。可手动输入 MLflow Run ID
+          进行联调：
         </div>
         <Input.Search
           placeholder="输入 MLflow Run ID（如 abc123...）"
@@ -237,7 +258,10 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
           style={{ maxWidth: 480 }}
         />
         {metricSummaries.length > 0 && (
-          <MetricSummaryGrid summaries={metricSummaries} style={{ marginTop: 24 }} />
+          <MetricSummaryGrid
+            summaries={metricSummaries}
+            style={{ marginTop: 24 }}
+          />
         )}
       </div>
     );
@@ -300,13 +324,18 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
           </Typography.Text>
         )}
         {isActive && (
-          <Tag color="processing">训练中 · 指标 {METRICS_POLL_INTERVAL_MS / 1000}s 刷新</Tag>
+          <Tag color="processing">
+            训练中 · 指标 {METRICS_POLL_INTERVAL_MS / 1000}s 刷新
+          </Tag>
         )}
       </Space>
 
       {runId && (
         <div style={{ marginBottom: 16 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+          >
             MLflow 指标末值（训练写入后自动更新）
           </Typography.Text>
           <MlflowMetricSummaryGrid summaries={mlflowMetricSummaries} />
@@ -351,7 +380,10 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
                   padding: 12,
                 }}
               >
-                <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+                <Typography.Text
+                  strong
+                  style={{ display: 'block', marginBottom: 8 }}
+                >
                   {METRIC_LABELS[key] || key}
                 </Typography.Text>
                 <div
@@ -384,7 +416,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
           }}
         >
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 16, marginBottom: 8 }}>暂无 MLflow 指标数据</div>
+            <div style={{ fontSize: 16, marginBottom: 8 }}>
+              暂无 MLflow 指标数据
+            </div>
             <div style={{ fontSize: 12 }}>
               {isActive
                 ? '训练进行中，指标写入后将自动刷新；也可点击「刷新」手动拉取'
@@ -395,7 +429,10 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       )}
 
       {metricSummaries.length > 0 && (
-        <MetricSummaryGrid summaries={metricSummaries} style={{ marginTop: 24 }} />
+        <MetricSummaryGrid
+          summaries={metricSummaries}
+          style={{ marginTop: 24 }}
+        />
       )}
     </div>
   );
@@ -424,7 +461,9 @@ function MlflowMetricSummaryGrid({
             borderRadius: 6,
           }}
         >
-          <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 6 }}>{label}</div>
+          <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 6 }}>
+            {label}
+          </div>
           <div
             style={{
               fontSize: hasData ? 20 : 14,
@@ -461,8 +500,12 @@ function MetricSummaryGrid({
           key={label}
           style={{ background: '#fafafa', padding: 14, borderRadius: 6 }}
         >
-          <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 6 }}>{label}</div>
-          <div style={{ fontSize: 22, fontWeight: 600 }}>{formatMetricValue(value)}</div>
+          <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 6 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 600 }}>
+            {formatMetricValue(value)}
+          </div>
         </div>
       ))}
     </div>

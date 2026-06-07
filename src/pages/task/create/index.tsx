@@ -41,7 +41,8 @@ const TaskCreate: React.FC = () => {
   const [modelLoading, setModelLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
   /** 与 Form 同步备份，避免分步卸载表单项后 id 丢失 */
-  const [selectedModelVersionId, setSelectedModelVersionId] = useState<string>();
+  const [selectedModelVersionId, setSelectedModelVersionId] =
+    useState<string>();
   const [selectedDatasetVersionId, setSelectedDatasetVersionId] =
     useState<string>();
 
@@ -54,7 +55,9 @@ const TaskCreate: React.FC = () => {
       })
       .catch((error: any) => {
         setModelOptions([]);
-        message.error(error?.message || '模型版本列表加载失败，请重新登录或检查后端服务');
+        message.error(
+          error?.message || '模型版本列表加载失败，请重新登录或检查后端服务',
+        );
       })
       .finally(() => setModelLoading(false));
 
@@ -66,7 +69,9 @@ const TaskCreate: React.FC = () => {
       })
       .catch((error: any) => {
         setDatasetOptions([]);
-        message.error(error?.message || '数据集版本列表加载失败，请重新登录或检查后端服务');
+        message.error(
+          error?.message || '数据集版本列表加载失败，请重新登录或检查后端服务',
+        );
       })
       .finally(() => setDatasetLoading(false));
   }, []);
@@ -257,18 +262,20 @@ const TaskCreate: React.FC = () => {
               setSelectedDatasetVersionId(value);
               form.setFieldValue('datasetVersionId', value);
             }}
-            options={datasetOptions.map((d: any) => {
-              const versionId = d.versionId;
-              if (!versionId) return null;
-              const desc = d.versionRemark?.trim();
-              const descPart = desc
-                ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
-                : '';
-              return {
-                value: versionId,
-                label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
-              };
-            }).filter(Boolean)}
+            options={datasetOptions
+              .map((d: any) => {
+                const versionId = d.versionId;
+                if (!versionId) return null;
+                const desc = d.versionRemark?.trim();
+                const descPart = desc
+                  ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
+                  : '';
+                return {
+                  value: versionId,
+                  label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
+                };
+              })
+              .filter(Boolean)}
           />
         </Form.Item>
       ),
@@ -378,7 +385,11 @@ const TaskCreate: React.FC = () => {
         </div>
         <div>
           {currentStep > 0 && (
-            <Button htmlType="button" onClick={handlePrev} style={{ marginRight: 8 }}>
+            <Button
+              htmlType="button"
+              onClick={handlePrev}
+              style={{ marginRight: 8 }}
+            >
               上一步
             </Button>
           )}
@@ -387,7 +398,11 @@ const TaskCreate: React.FC = () => {
               下一步
             </Button>
           ) : (
-            <Button type="primary" htmlType="button" onClick={handleSubmitClick}>
+            <Button
+              type="primary"
+              htmlType="button"
+              onClick={handleSubmitClick}
+            >
               {isExperimentContinue ? '提交并创建新版本' : '提交训练'}
             </Button>
           )}
