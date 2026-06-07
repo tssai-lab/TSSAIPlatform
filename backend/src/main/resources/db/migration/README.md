@@ -68,3 +68,13 @@ Flyway repair 或重新基线化。
 - 删除并重建 `dataset_asset.type` 的 check 约束，使数据集资产类型允许同样四种类型。
 - 删除并重建 `dataset_upload_session.task_type` 的 check 约束，使数据集上传会话允许同样四种类型。
 - 该迁移用于配合 Java 侧 `TaskType` 枚举扩展；否则后端即使允许 `POINT_CLOUD`，数据库仍会因为旧约束拒绝写入。
+
+## V7__dataset_version_enterprise_versioning.sql
+
+数据集版本管理企业化改造。
+- 为 `dataset_version` 增加 `version_no`、`version_label`、`description`、`change_log`、`parent_version_id`、`status`、`file_fingerprint`、`published_at`、`created_by`。
+- 为 `dataset_asset` 增加 `current_version_id`，用于标记当前推荐版本。
+- 为历史数据按 `asset_id` 和创建时间回填连续 `version_no`，并将旧 `version` 回填为 `version_label`。
+- 将历史版本状态回填为 `READY`，并将每个资产当前版本指向未删除且 `version_no` 最大的版本。
+- 增加 `(asset_id, version_no)` 唯一索引、版本状态约束、父版本外键和当前版本外键。
+- 为 `dataset_upload_session` 增加版本说明和父版本字段，支持上传过程中保留版本元数据。

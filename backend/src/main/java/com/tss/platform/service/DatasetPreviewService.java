@@ -443,9 +443,17 @@ public class DatasetPreviewService {
 
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "dataset not found or no permission");
+        requirePreviewableStatus(version);
         requireStoragePath(version);
         authContext.requireObjectAccess(version.getStoragePath(), ownerUserId, "dataset object not found or no permission");
         return new DatasetSource(version, asset, sourceName(version));
+    }
+
+    private void requirePreviewableStatus(DatasetVersion version) {
+        String status = version.getStatus();
+        if ("DRAFT".equals(status) || "ARCHIVED".equals(status)) {
+            throw new IllegalArgumentException("dataset version status must be READY or DEPRECATED for preview");
+        }
     }
 
     private void requireStoragePath(DatasetVersion version) {

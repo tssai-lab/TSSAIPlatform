@@ -5,6 +5,7 @@ import lombok.Data;
 @Data
 public class UploadCompleteRequest {
     private String uploadId;
+    private String assetId;
     private String modelName;
     private String version;
     private String type;

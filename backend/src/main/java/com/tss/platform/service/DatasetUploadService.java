@@ -42,6 +42,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -56,6 +58,7 @@ public class DatasetUploadService {
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String VERSION_STATUS_READY = "READY";
     private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
@@ -103,10 +106,18 @@ public class DatasetUploadService {
     @Transactional
     public DatasetUploadProgressDto init(DatasetUploadInitRequest req) {
         validateInit(req);
-        Integer ownerUserId = authContext.currentUserId();
+        Integer operatorUserId = authContext.currentUserId();
         String taskType = TaskType.normalize(req.getType());
         String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
+        DatasetAsset targetAsset = resolveTargetAsset(req.getAssetId(), taskType, cvTaskType, annotationFormat);
+        Integer ownerUserId = targetAsset != null ? targetAsset.getOwnerUserId() : operatorUserId;
+        String targetAssetId = targetAsset != null ? targetAsset.getId() : null;
+        String datasetName = targetAsset != null ? targetAsset.getName() : req.getDatasetName().trim();
+        Integer previewVersionNo = previewVersionNo(targetAssetId);
+        boolean versionLabelGenerated = isVersionLabelGenerated(req.getVersionLabel(), req.getVersion());
+        String requestedLabel = defaultVersionLabel(req.getVersionLabel(), req.getVersion(), previewVersionNo);
+        String parentVersionId = resolveParentVersionId(req.getParentVersionId(), targetAsset);
         validateDatasetFileName(taskType, req.getFileName());
         String fingerprint = normalizeText(req.getFileFingerprint());
         if (fingerprint != null) {
@@ -117,7 +128,7 @@ public class DatasetUploadService {
                             ownerUserId
                     )
                     .orElse(null);
-            if (existing != null && sameUpload(existing, req, taskType)) {
+            if (existing != null && sameUpload(existing, req, taskType, parentVersionId)) {
                 existing.setRemark(req.getRemark());
                 existing.setUpdatedAt(Instant.now());
                 return progress(sessionRepo.save(existing));
@@ -132,12 +143,19 @@ public class DatasetUploadService {
         session.setFileSize(req.getFileSize());
         session.setChunkSize(CHUNK_SIZE);
         session.setTotalChunks((int) Math.ceil(req.getFileSize() / (double) CHUNK_SIZE));
-        session.setDatasetName(req.getDatasetName().trim());
-        session.setVersion(defaultVersion(req.getVersion()));
+        session.setDatasetName(datasetName);
+        session.setVersion(requestedLabel);
+        session.setVersionLabel(requestedLabel);
+        session.setVersionNo(previewVersionNo);
+        session.setVersionLabelGenerated(versionLabelGenerated);
         session.setType(taskType);
         session.setCvTaskType(cvTaskType);
         session.setAnnotationFormat(annotationFormat);
         session.setRemark(req.getRemark());
+        session.setDescription(req.getDescription());
+        session.setChangeLog(req.getChangeLog());
+        session.setParentVersionId(parentVersionId);
+        session.setAssetId(targetAssetId);
         session.setStatus(STATUS_UPLOADING);
         session.setOwnerUserId(ownerUserId);
         Instant now = Instant.now();
@@ -220,10 +238,15 @@ public class DatasetUploadService {
             }
         }
 
-        String assetId = "dataset-asset-" + UUID.randomUUID().toString().replace("-", "");
+        boolean createAsset = session.getAssetId() == null || session.getAssetId().isBlank();
+        String assetId = createAsset
+                ? "dataset-asset-" + UUID.randomUUID().toString().replace("-", "")
+                : session.getAssetId();
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
+        VersionAllocation allocation = allocateVersion(session, assetId, createAsset);
+        requireUniqueVersionLabel(assetId, allocation.versionLabel());
         String destName = "users/" + session.getOwnerUserId()
-                + "/datasets/" + assetId + "/" + sanitizeSegment(session.getVersion())
+                + "/datasets/" + assetId + "/" + sanitizeSegment("v" + allocation.versionNo())
                 + "/" + sanitizeSegment(session.getFileName());
         try {
             List<ComposeSource> sources = chunks.stream()
@@ -247,38 +270,56 @@ public class DatasetUploadService {
 
         try {
             Instant now = Instant.now();
-            DatasetAsset asset = new DatasetAsset();
-            asset.setId(assetId);
-            asset.setName(session.getDatasetName());
-            asset.setType(session.getType());
-            asset.setCvTaskType(session.getCvTaskType());
-            asset.setAnnotationFormat(session.getAnnotationFormat());
-            asset.setRemark(session.getRemark());
-            asset.setOwnerUserId(session.getOwnerUserId());
-            asset.setCreatedAt(now);
-            asset.setUpdatedAt(now);
-            assetRepo.saveAndFlush(asset);
+            DatasetAsset asset = allocation.asset();
+            if (createAsset) {
+                asset.setId(assetId);
+                asset.setName(session.getDatasetName());
+                asset.setType(session.getType());
+                asset.setCvTaskType(session.getCvTaskType());
+                asset.setAnnotationFormat(session.getAnnotationFormat());
+                asset.setRemark(session.getRemark());
+                asset.setOwnerUserId(session.getOwnerUserId());
+                asset.setCreatedAt(now);
+                asset.setUpdatedAt(now);
+                assetRepo.saveAndFlush(asset);
+            }
 
             DatasetVersion version = new DatasetVersion();
             version.setId(versionId);
             version.setAssetId(assetId);
-            version.setVersion(session.getVersion());
+            version.setVersionNo(allocation.versionNo());
+            version.setVersionLabel(allocation.versionLabel());
+            version.setVersion(allocation.versionLabel());
             version.setFileName(session.getFileName());
             version.setStoragePath(destName);
             version.setSizeBytes(session.getFileSize());
             version.setCvTaskType(session.getCvTaskType());
             version.setAnnotationFormat(session.getAnnotationFormat());
             version.setRemark(session.getRemark());
+            version.setDescription(session.getDescription());
+            version.setChangeLog(session.getChangeLog());
+            version.setParentVersionId(allocation.parentVersionId());
+            version.setStatus(VERSION_STATUS_READY);
+            version.setFileFingerprint(session.getFileFingerprint());
             version.setOwnerUserId(session.getOwnerUserId());
+            version.setCreatedBy(authContext.currentUserId());
             version.setCreatedAt(now);
+            version.setPublishedAt(now);
             versionRepo.saveAndFlush(version);
 
             session.setStatus(STATUS_COMPLETED);
             session.setStoragePath(destName);
             session.setAssetId(assetId);
             session.setVersionId(versionId);
+            session.setVersionNo(allocation.versionNo());
+            session.setVersionLabel(allocation.versionLabel());
+            session.setVersion(allocation.versionLabel());
+            session.setParentVersionId(allocation.parentVersionId());
             session.setUpdatedAt(now);
             sessionRepo.saveAndFlush(session);
+            asset.setCurrentVersionId(versionId);
+            asset.setUpdatedAt(now);
+            assetRepo.saveAndFlush(asset);
         } catch (RuntimeException e) {
             removeObjectQuietly(destName);
             throw new IllegalArgumentException("保存数据集上传记录失败: " + rootMessage(e));
@@ -290,19 +331,27 @@ public class DatasetUploadService {
 
     @Transactional
     public Map<String, Object> uploadCvFolder(
+            String assetIdValue,
             String datasetName,
             String versionValue,
+            String versionLabelValue,
             String type,
             String cvTaskTypeValue,
             String annotationFormatValue,
             String remark,
+            String description,
+            String changeLog,
+            String parentVersionIdValue,
             List<MultipartFile> files,
             List<String> paths
     ) {
-        requireText(datasetName, "datasetName 不能为空");
         String taskType = TaskType.normalize(type);
         String cvTaskType = CvTaskType.normalizeForTask(taskType, cvTaskTypeValue);
         String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, annotationFormatValue);
+        DatasetAsset targetAsset = resolveTargetAsset(assetIdValue, taskType, cvTaskType, annotationFormat);
+        if (targetAsset == null) {
+            requireText(datasetName, "datasetName 不能为空");
+        }
         if (!"CV".equals(taskType)) {
             throw new IllegalArgumentException("图片文件夹上传仅支持 CV 数据集");
         }
@@ -313,12 +362,22 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("paths 必须与 files 一一对应");
         }
 
-        String version = defaultVersion(versionValue);
-        Integer ownerUserId = authContext.currentUserId();
-        String assetId = "dataset-asset-" + UUID.randomUUID().toString().replace("-", "");
+        Integer operatorUserId = authContext.currentUserId();
+        boolean createAsset = targetAsset == null;
+        Integer ownerUserId = createAsset ? operatorUserId : targetAsset.getOwnerUserId();
+        String assetId = createAsset ? "dataset-asset-" + UUID.randomUUID().toString().replace("-", "") : targetAsset.getId();
+        String effectiveDatasetName = createAsset ? datasetName.trim() : targetAsset.getName();
+        String parentVersionId = resolveParentVersionId(parentVersionIdValue, targetAsset);
+        VersionAllocation allocation = allocateVersion(
+                assetId,
+                createAsset,
+                defaultVersionLabel(versionLabelValue, versionValue, createAsset ? 1 : null),
+                parentVersionId
+        );
+        requireUniqueVersionLabel(assetId, allocation.versionLabel());
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeSegment(datasetName) + "-" + sanitizeSegment(version) + "-folder.zip";
-        String destName = "users/" + ownerUserId + "/datasets/" + assetId + "/" + sanitizeSegment(version) + "/" + fileName;
+        String fileName = sanitizeSegment(effectiveDatasetName) + "-" + sanitizeSegment("v" + allocation.versionNo()) + "-folder.zip";
+        String destName = "users/" + ownerUserId + "/datasets/" + assetId + "/" + sanitizeSegment("v" + allocation.versionNo()) + "/" + fileName;
         Path tempZip = null;
 
         try {
@@ -341,38 +400,56 @@ public class DatasetUploadService {
             validateDatasetObjectFormat(taskType, annotationFormat, fileName, destName);
 
             Instant now = Instant.now();
-            DatasetAsset asset = new DatasetAsset();
-            asset.setId(assetId);
-            asset.setName(datasetName.trim());
-            asset.setType(taskType);
-            asset.setCvTaskType(cvTaskType);
-            asset.setAnnotationFormat(annotationFormat);
-            asset.setRemark(remark);
-            asset.setOwnerUserId(ownerUserId);
-            asset.setCreatedAt(now);
-            asset.setUpdatedAt(now);
-            assetRepo.saveAndFlush(asset);
+            DatasetAsset asset = allocation.asset();
+            if (createAsset) {
+                asset.setId(assetId);
+                asset.setName(effectiveDatasetName);
+                asset.setType(taskType);
+                asset.setCvTaskType(cvTaskType);
+                asset.setAnnotationFormat(annotationFormat);
+                asset.setRemark(remark);
+                asset.setOwnerUserId(ownerUserId);
+                asset.setCreatedAt(now);
+                asset.setUpdatedAt(now);
+                assetRepo.saveAndFlush(asset);
+            }
 
             DatasetVersion versionEntity = new DatasetVersion();
             versionEntity.setId(versionId);
             versionEntity.setAssetId(assetId);
-            versionEntity.setVersion(version);
+            versionEntity.setVersionNo(allocation.versionNo());
+            versionEntity.setVersionLabel(allocation.versionLabel());
+            versionEntity.setVersion(allocation.versionLabel());
             versionEntity.setFileName(fileName);
             versionEntity.setStoragePath(destName);
             versionEntity.setSizeBytes(sizeBytes);
             versionEntity.setCvTaskType(cvTaskType);
             versionEntity.setAnnotationFormat(annotationFormat);
             versionEntity.setRemark(remark);
+            versionEntity.setDescription(description);
+            versionEntity.setChangeLog(changeLog);
+            versionEntity.setParentVersionId(allocation.parentVersionId());
+            versionEntity.setStatus(VERSION_STATUS_READY);
             versionEntity.setOwnerUserId(ownerUserId);
+            versionEntity.setCreatedBy(operatorUserId);
             versionEntity.setCreatedAt(now);
+            versionEntity.setPublishedAt(now);
             versionRepo.saveAndFlush(versionEntity);
+            asset.setCurrentVersionId(versionId);
+            asset.setUpdatedAt(now);
+            assetRepo.saveAndFlush(asset);
 
             return completedPayload(
                     null,
                     assetId,
                     versionId,
-                    datasetName.trim(),
-                    version,
+                    effectiveDatasetName,
+                    allocation.versionLabel(),
+                    allocation.versionNo(),
+                    allocation.versionLabel(),
+                    description,
+                    changeLog,
+                    allocation.parentVersionId(),
                     taskType,
                     cvTaskType,
                     annotationFormat,
@@ -380,6 +457,7 @@ public class DatasetUploadService {
                     fileName,
                     destName,
                     sizeBytes,
+                    ownerUserId,
                     now,
                     now
             );
@@ -408,7 +486,9 @@ public class DatasetUploadService {
         if (req.getFileSize() == null || req.getFileSize() <= 0) {
             throw new IllegalArgumentException("fileSize 必须大于 0");
         }
-        requireText(req.getDatasetName(), "datasetName 不能为空");
+        if (req.getAssetId() == null || req.getAssetId().isBlank()) {
+            requireText(req.getDatasetName(), "datasetName 不能为空");
+        }
         String taskType = TaskType.normalize(req.getType());
         CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
@@ -477,6 +557,11 @@ public class DatasetUploadService {
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setVersionNo(session.getVersionNo());
+        dto.setVersionLabel(displayVersionLabel(session.getVersionLabel(), session.getVersion(), session.getVersionNo()));
+        dto.setDescription(session.getDescription());
+        dto.setChangeLog(session.getChangeLog());
+        dto.setParentVersionId(session.getParentVersionId());
         dto.setCvTaskType(session.getCvTaskType());
         dto.setAnnotationFormat(session.getAnnotationFormat());
         dto.setCreatedAt(session.getCreatedAt());
@@ -499,6 +584,11 @@ public class DatasetUploadService {
         data.put("assetId", session.getAssetId());
         data.put("name", session.getDatasetName());
         data.put("version", session.getVersion());
+        data.put("versionNo", session.getVersionNo());
+        data.put("versionLabel", displayVersionLabel(session.getVersionLabel(), session.getVersion(), session.getVersionNo()));
+        data.put("description", session.getDescription());
+        data.put("changeLog", session.getChangeLog());
+        data.put("parentVersionId", session.getParentVersionId());
         data.put("type", session.getType());
         data.put("cvTaskType", session.getCvTaskType());
         data.put("annotationFormat", session.getAnnotationFormat());
@@ -519,6 +609,11 @@ public class DatasetUploadService {
             String versionId,
             String datasetName,
             String version,
+            Integer versionNo,
+            String versionLabel,
+            String description,
+            String changeLog,
+            String parentVersionId,
             String type,
             String cvTaskType,
             String annotationFormat,
@@ -526,6 +621,7 @@ public class DatasetUploadService {
             String fileName,
             String storagePath,
             Long sizeBytes,
+            Integer ownerUserId,
             Instant createdAt,
             Instant updatedAt
     ) {
@@ -535,6 +631,11 @@ public class DatasetUploadService {
         data.put("assetId", assetId);
         data.put("name", datasetName);
         data.put("version", version);
+        data.put("versionNo", versionNo);
+        data.put("versionLabel", displayVersionLabel(versionLabel, version, versionNo));
+        data.put("description", description);
+        data.put("changeLog", changeLog);
+        data.put("parentVersionId", parentVersionId);
         data.put("type", type);
         data.put("cvTaskType", cvTaskType);
         data.put("annotationFormat", annotationFormat);
@@ -543,7 +644,7 @@ public class DatasetUploadService {
         data.put("storagePath", storagePath);
         data.put("sizeBytes", sizeBytes);
         data.put("status", STATUS_COMPLETED);
-        data.put("ownerUserId", authContext.currentUserId());
+        data.put("ownerUserId", ownerUserId);
         data.put("createdAt", createdAt);
         data.put("updatedAt", updatedAt);
         return data;
@@ -677,16 +778,30 @@ public class DatasetUploadService {
         }
     }
 
-    private boolean sameUpload(DatasetUploadSession session, DatasetUploadInitRequest req, String taskType) {
+    private boolean sameUpload(
+            DatasetUploadSession session,
+            DatasetUploadInitRequest req,
+            String taskType,
+            String resolvedParentVersionId
+    ) {
         String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
+        String requestAssetId = normalizeText(req.getAssetId());
+        String requestLabel = defaultVersionLabel(req.getVersionLabel(), req.getVersion(),
+                requestAssetId == null ? 1 : session.getVersionNo());
+        boolean requestLabelGenerated = isVersionLabelGenerated(req.getVersionLabel(), req.getVersion());
         return session.getFileName().equals(req.getFileName().trim())
                 && session.getFileSize().equals(req.getFileSize())
-                && session.getDatasetName().equals(req.getDatasetName().trim())
-                && session.getVersion().equals(defaultVersion(req.getVersion()))
+                && Objects.equals(session.getAssetId(), requestAssetId)
+                && (requestAssetId != null || session.getDatasetName().equals(req.getDatasetName().trim()))
+                && Objects.equals(displayVersionLabel(session.getVersionLabel(), session.getVersion(), session.getVersionNo()), requestLabel)
+                && Boolean.TRUE.equals(session.getVersionLabelGenerated()) == requestLabelGenerated
                 && session.getType().equals(taskType)
                 && equalsNullable(session.getCvTaskType(), cvTaskType)
-                && equalsNullable(session.getAnnotationFormat(), annotationFormat);
+                && equalsNullable(session.getAnnotationFormat(), annotationFormat)
+                && equalsNullable(session.getDescription(), req.getDescription())
+                && equalsNullable(session.getChangeLog(), req.getChangeLog())
+                && equalsNullable(session.getParentVersionId(), resolvedParentVersionId);
     }
 
     private boolean equalsNullable(String left, String right) {
@@ -695,6 +810,172 @@ public class DatasetUploadService {
 
     private String defaultVersion(String value) {
         return value == null || value.isBlank() ? "v1" : value.trim();
+    }
+
+    private String defaultVersionLabel(String versionLabel, String version, Integer defaultVersionNo) {
+        String label = normalizeText(versionLabel);
+        if (label != null) {
+            return label;
+        }
+        label = normalizeText(version);
+        if (label != null) {
+            return label;
+        }
+        return defaultVersionNo == null ? null : "v" + defaultVersionNo;
+    }
+
+    private String displayVersionLabel(String versionLabel, String version, Integer defaultVersionNo) {
+        String label = normalizeText(versionLabel);
+        if (label != null) {
+            return label;
+        }
+        label = normalizeText(version);
+        if (label != null) {
+            return label;
+        }
+        return defaultVersionNo == null ? defaultVersion(version) : "v" + defaultVersionNo;
+    }
+
+    private boolean isVersionLabelGenerated(String versionLabel, String version) {
+        return normalizeText(versionLabel) == null && normalizeText(version) == null;
+    }
+
+    private Integer previewVersionNo(String assetId) {
+        if (assetId == null) {
+            return 1;
+        }
+        Integer maxVersionNo = versionRepo.findMaxVersionNoByAssetId(assetId);
+        return (maxVersionNo == null ? 0 : maxVersionNo) + 1;
+    }
+
+    private DatasetAsset resolveTargetAsset(
+            String assetIdValue,
+            String taskType,
+            String cvTaskType,
+            String annotationFormat
+    ) {
+        String assetId = normalizeText(assetIdValue);
+        if (assetId == null) {
+            return null;
+        }
+        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(assetId)
+                .orElseThrow(() -> new IllegalArgumentException("dataset asset not found: " + assetId));
+        if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
+            throw new IllegalArgumentException("no permission for asset: " + assetId);
+        }
+        String assetTaskType = TaskType.normalize(asset.getType());
+        if (!taskType.equals(assetTaskType)) {
+            throw new IllegalArgumentException("dataset asset type mismatch");
+        }
+        String assetCvTaskType = CvTaskType.normalizeForTask(assetTaskType, asset.getCvTaskType());
+        if (!Objects.equals(cvTaskType, assetCvTaskType)) {
+            throw new IllegalArgumentException("dataset asset cvTaskType mismatch");
+        }
+        String assetAnnotationFormat = CvAnnotationFormat.normalizeForTask(assetTaskType, asset.getAnnotationFormat());
+        if (!Objects.equals(annotationFormat, assetAnnotationFormat)) {
+            throw new IllegalArgumentException("dataset asset annotationFormat mismatch");
+        }
+        return asset;
+    }
+
+    private String resolveParentVersionId(String parentVersionIdValue, DatasetAsset targetAsset) {
+        if (targetAsset == null) {
+            if (normalizeText(parentVersionIdValue) != null) {
+                throw new IllegalArgumentException("parentVersionId is not allowed when creating a new dataset asset");
+            }
+            return null;
+        }
+        String parentVersionId = normalizeText(parentVersionIdValue);
+        if (parentVersionId == null) {
+            parentVersionId = normalizeText(targetAsset.getCurrentVersionId());
+        }
+        if (parentVersionId == null) {
+            return null;
+        }
+        String resolvedParentVersionId = parentVersionId;
+        DatasetVersion parent = versionRepo.findByIdAndDeletedFalse(resolvedParentVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("parent dataset version not found: " + resolvedParentVersionId));
+        if (!targetAsset.getId().equals(parent.getAssetId())) {
+            throw new IllegalArgumentException("parentVersionId must belong to target asset");
+        }
+        return parentVersionId;
+    }
+
+    private VersionAllocation allocateVersion(DatasetUploadSession session, String assetId, boolean createAsset) {
+        VersionAllocation allocation = allocateVersion(
+                assetId,
+                createAsset,
+                requestedSessionLabel(session),
+                normalizeText(session.getParentVersionId())
+        );
+        if (!createAsset) {
+            validateTargetAssetMetadata(
+                    allocation.asset(),
+                    session.getType(),
+                    session.getCvTaskType(),
+                    session.getAnnotationFormat()
+            );
+        }
+        return allocation;
+    }
+
+    private String requestedSessionLabel(DatasetUploadSession session) {
+        if (Boolean.TRUE.equals(session.getVersionLabelGenerated())) {
+            return null;
+        }
+        String label = normalizeText(session.getVersionLabel());
+        return label != null ? label : normalizeText(session.getVersion());
+    }
+
+    private VersionAllocation allocateVersion(
+            String assetId,
+            boolean createAsset,
+            String requestedLabel,
+            String parentVersionId
+    ) {
+        if (createAsset) {
+            String label = requestedLabel == null ? "v1" : requestedLabel;
+            return new VersionAllocation(new DatasetAsset(), 1, label, parentVersionId);
+        }
+        Optional<DatasetAsset> locked = assetRepo.findByIdAndDeletedFalseForUpdate(assetId);
+        if (locked == null) {
+            locked = Optional.empty();
+        }
+        DatasetAsset asset = locked.orElseThrow(
+                () -> new IllegalArgumentException("dataset asset not found: " + assetId)
+        );
+        Integer maxVersionNo = versionRepo.findMaxVersionNoByAssetId(assetId);
+        int nextVersionNo = (maxVersionNo == null ? 0 : maxVersionNo) + 1;
+        String label = requestedLabel == null ? "v" + nextVersionNo : requestedLabel;
+        return new VersionAllocation(asset, nextVersionNo, label, parentVersionId);
+    }
+
+    private void validateTargetAssetMetadata(
+            DatasetAsset asset,
+            String taskType,
+            String cvTaskType,
+            String annotationFormat
+    ) {
+        String assetTaskType = TaskType.normalize(asset.getType());
+        if (!taskType.equals(assetTaskType)) {
+            throw new IllegalArgumentException("dataset asset type mismatch");
+        }
+        String assetCvTaskType = CvTaskType.normalizeForTask(assetTaskType, asset.getCvTaskType());
+        if (!Objects.equals(cvTaskType, assetCvTaskType)) {
+            throw new IllegalArgumentException("dataset asset cvTaskType mismatch");
+        }
+        String assetAnnotationFormat = CvAnnotationFormat.normalizeForTask(assetTaskType, asset.getAnnotationFormat());
+        if (!Objects.equals(annotationFormat, assetAnnotationFormat)) {
+            throw new IllegalArgumentException("dataset asset annotationFormat mismatch");
+        }
+    }
+
+    private void requireUniqueVersionLabel(String assetId, String versionLabel) {
+        if (versionRepo.existsByAssetIdAndVersion(assetId, versionLabel)) {
+            throw new IllegalArgumentException(
+                    "dataset version label already exists for asset: " + versionLabel
+            );
+        }
     }
 
     private String normalizeText(String value) {
@@ -893,5 +1174,13 @@ public class DatasetUploadService {
         return normalized
                 .replaceAll("[\\\\/:*?\"<>|]", "_")
                 .toLowerCase(Locale.ROOT);
+    }
+
+    private record VersionAllocation(
+            DatasetAsset asset,
+            Integer versionNo,
+            String versionLabel,
+            String parentVersionId
+    ) {
     }
 }

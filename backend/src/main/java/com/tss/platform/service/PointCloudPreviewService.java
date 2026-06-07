@@ -249,6 +249,7 @@ public class PointCloudPreviewService {
 
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "dataset version not found or no permission");
+        requirePreviewableStatus(version);
 
         if (!"POINT_CLOUD".equalsIgnoreCase(asset.getType())) {
             throw new IllegalArgumentException("点云预览仅支持 POINT_CLOUD 数据集");
@@ -256,6 +257,13 @@ public class PointCloudPreviewService {
         requireStoragePath(version);
         authContext.requireObjectAccess(version.getStoragePath(), ownerUserId, "dataset object not found or no permission");
         return new PointCloudDataset(version, asset);
+    }
+
+    private void requirePreviewableStatus(DatasetVersion version) {
+        String status = version.getStatus();
+        if ("DRAFT".equals(status) || "ARCHIVED".equals(status)) {
+            throw new IllegalArgumentException("dataset version status must be READY or DEPRECATED for preview");
+        }
     }
 
     private PointCloudPreviewDto basePreview(DatasetVersion version, String sourceName) {

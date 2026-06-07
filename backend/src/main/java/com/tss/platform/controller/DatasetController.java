@@ -90,12 +90,7 @@ public class DatasetController {
     }
 
     private Map<String, Object> toListItem(DatasetAsset asset, List<DatasetVersion> versions) {
-        Optional<DatasetVersion> latest = versions.stream()
-                .max(Comparator.comparing(
-                        DatasetVersion::getCreatedAt,
-                        Comparator.nullsLast(Comparator.naturalOrder())
-                ));
-        DatasetVersion version = latest.orElse(null);
+        DatasetVersion version = currentVersion(asset, versions);
 
         Map<String, Object> item = new HashMap<>();
         item.put("id", asset.getId());
@@ -111,7 +106,12 @@ public class DatasetController {
         item.put("remark", asset.getRemark());
         item.put("ownerUserId", asset.getOwnerUserId());
         item.put("versionId", version != null ? version.getId() : null);
-        item.put("version", version != null ? version.getVersion() : null);
+        item.put("version", version != null ? displayVersionLabel(version) : null);
+        item.put("currentVersionId", version != null ? version.getId() : null);
+        item.put("currentVersionNo", version != null ? version.getVersionNo() : null);
+        item.put("currentVersionLabel", version != null ? displayVersionLabel(version) : null);
+        item.put("versionStatus", version != null ? version.getStatus() : null);
+        item.put("versionDescription", version != null ? version.getDescription() : null);
         item.put("fileName", version != null ? version.getFileName() : null);
         item.put("storagePath", version != null ? version.getStoragePath() : null);
         item.put("sizeBytes", version != null ? version.getSizeBytes() : null);
@@ -130,6 +130,32 @@ public class DatasetController {
         return keyword == null || keyword.isBlank() ? null : keyword.trim().toLowerCase();
     }
 
+    private DatasetVersion currentVersion(DatasetAsset asset, List<DatasetVersion> versions) {
+        String currentVersionId = asset.getCurrentVersionId();
+        if (currentVersionId != null && !currentVersionId.isBlank()) {
+            Optional<DatasetVersion> current = versions.stream()
+                    .filter(version -> currentVersionId.equals(version.getId()))
+                    .filter(version -> "READY".equals(version.getStatus()))
+                    .findFirst();
+            if (current.isPresent()) {
+                return current.get();
+            }
+        }
+        return versions.stream()
+                .filter(version -> "READY".equals(version.getStatus()))
+                .max(Comparator
+                        .comparing(DatasetVersion::getVersionNo, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(DatasetVersion::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                .orElse(null);
+    }
+
+    private String displayVersionLabel(DatasetVersion version) {
+        if (version.getVersionLabel() != null && !version.getVersionLabel().isBlank()) {
+            return version.getVersionLabel();
+        }
+        return version.getVersion();
+    }
+
     private boolean matchesKeyword(Map<String, Object> item, String keyword) {
         if (keyword == null) {
             return true;
@@ -138,6 +164,7 @@ public class DatasetController {
                 || containsIgnoreCase(item.get("version"), keyword)
                 || containsIgnoreCase(item.get("remark"), keyword)
                 || containsIgnoreCase(item.get("versionRemark"), keyword)
+                || containsIgnoreCase(item.get("versionDescription"), keyword)
                 || containsIgnoreCase(item.get("fileName"), keyword);
     }
 

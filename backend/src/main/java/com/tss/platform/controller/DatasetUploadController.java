@@ -64,18 +64,35 @@ public class DatasetUploadController {
 
     @PostMapping(value = "/folder", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Map<String, Object>> folder(
-            @RequestParam String datasetName,
+            @RequestParam(required = false) String assetId,
+            @RequestParam(required = false) String datasetName,
             @RequestParam(required = false) String version,
+            @RequestParam(required = false) String versionLabel,
             @RequestParam String type,
             @RequestParam(required = false) String cvTaskType,
             @RequestParam(required = false) String annotationFormat,
             @RequestParam(required = false) String remark,
+            @RequestParam(required = false) String description,
+            @RequestParam(required = false) String changeLog,
+            @RequestParam(required = false) String parentVersionId,
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("paths") List<String> paths
     ) {
         try {
             return ApiResponse.ok(service.uploadCvFolder(
-                    datasetName, version, type, cvTaskType, annotationFormat, remark, files, paths
+                    assetId,
+                    datasetName,
+                    version,
+                    versionLabel,
+                    type,
+                    cvTaskType,
+                    annotationFormat,
+                    remark,
+                    description,
+                    changeLog,
+                    parentVersionId,
+                    files,
+                    paths
             ));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());

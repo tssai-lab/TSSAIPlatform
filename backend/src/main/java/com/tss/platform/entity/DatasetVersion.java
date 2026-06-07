@@ -34,6 +34,12 @@ public class DatasetVersion {
     @Column(name = "version", nullable = false, length = 64)
     private String version;
 
+    @Column(name = "version_no")
+    private Integer versionNo;
+
+    @Column(name = "version_label", length = 64)
+    private String versionLabel;
+
     @Column(name = "file_name", length = 255)
     private String fileName;
 
@@ -51,6 +57,27 @@ public class DatasetVersion {
 
     @Column(name = "remark", length = 1024)
     private String remark;
+
+    @Column(name = "description", length = 2048)
+    private String description;
+
+    @Column(name = "change_log")
+    private String changeLog;
+
+    @Column(name = "parent_version_id", length = 64)
+    private String parentVersionId;
+
+    @Column(name = "status", nullable = false, length = 32)
+    private String status;
+
+    @Column(name = "file_fingerprint", length = 512)
+    private String fileFingerprint;
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "created_by")
+    private Integer createdBy;
 
     @Column(name = "owner_user_id")
     private Integer ownerUserId;

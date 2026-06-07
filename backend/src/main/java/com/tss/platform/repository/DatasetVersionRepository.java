@@ -2,6 +2,8 @@ package com.tss.platform.repository;
 
 import com.tss.platform.entity.DatasetVersion;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -29,6 +31,15 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
     Optional<DatasetVersion> findByIdAndDeletedFalse(String id);
 
     Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseOrderByCreatedAtDesc(String assetId);
+
+    Optional<DatasetVersion> findByAssetIdAndVersionNoAndDeletedFalse(String assetId, Integer versionNo);
+
+    List<DatasetVersion> findByAssetIdAndDeletedFalseOrderByVersionNoDesc(String assetId);
+
+    Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(String assetId, String status);
+
+    @Query("select coalesce(max(v.versionNo), 0) from DatasetVersion v where v.assetId = :assetId")
+    Integer findMaxVersionNoByAssetId(@Param("assetId") String assetId);
 
     boolean existsByAssetIdAndVersion(String assetId, String version);
 

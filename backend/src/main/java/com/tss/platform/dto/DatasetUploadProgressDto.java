@@ -19,6 +19,11 @@ public class DatasetUploadProgressDto {
     private String storagePath;
     private String assetId;
     private String versionId;
+    private Integer versionNo;
+    private String versionLabel;
+    private String description;
+    private String changeLog;
+    private String parentVersionId;
     private String cvTaskType;
     private String annotationFormat;
     private Instant createdAt;

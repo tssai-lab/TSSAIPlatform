@@ -110,6 +110,36 @@ public class DatasetAssetCrudController {
         return ApiResponse.ok(repo.save(e));
     }
 
+    @PutMapping("/{id}/current-version")
+    public ApiResponse<DatasetAsset> setCurrentVersion(
+            @PathVariable String id,
+            @RequestBody Map<String, String> body
+    ) {
+        Optional<DatasetAsset> existing = repo.findByIdAndDeletedFalse(id);
+        if (existing.isEmpty() || !authContext.canAccessOwner(existing.get().getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + id);
+        }
+        String versionId = body == null ? null : body.get("versionId");
+        if (versionId == null || versionId.isBlank()) {
+            return ApiResponse.fail("versionId cannot be empty");
+        }
+        Optional<DatasetVersion> target = versionRepo.findByIdAndDeletedFalse(versionId.trim());
+        if (target.isEmpty()) {
+            return ApiResponse.fail("dataset version not found: " + versionId);
+        }
+        DatasetVersion version = target.get();
+        if (!id.equals(version.getAssetId())) {
+            return ApiResponse.fail("version must belong to asset: " + id);
+        }
+        if (!"READY".equals(version.getStatus())) {
+            return ApiResponse.fail("current version must be READY");
+        }
+        DatasetAsset asset = existing.get();
+        asset.setCurrentVersionId(version.getId());
+        asset.setUpdatedAt(Instant.now());
+        return ApiResponse.ok(repo.save(asset));
+    }
+
     @DeleteMapping("/{id}")
     @Transactional
     public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {

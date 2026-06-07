@@ -481,6 +481,12 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("数据集资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "dataset version not found or no permission");
+        if (!"READY".equals(version.getStatus())) {
+            throw new IllegalArgumentException("dataset version must be READY for training");
+        }
+        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
+            throw new IllegalArgumentException("dataset version storage path is required for training");
+        }
         return TaskType.normalize(asset.getType());
     }
 

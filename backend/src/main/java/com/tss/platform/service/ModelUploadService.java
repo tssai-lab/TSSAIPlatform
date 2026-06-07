@@ -36,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -171,12 +172,13 @@ public class ModelUploadService {
 
     @Transactional
     public Map<String, Object> complete(UploadCompleteRequest req) {
-        String taskType = validateComplete(req);
+        validateCompleteRequest(req);
         ModelUploadSession session = claimCompleting(req.getUploadId());
         if (STATUS_COMPLETED.equals(session.getStatus())) {
             return completedPayload(session);
         }
 
+        CompletionTarget target = resolveCompletionTarget(req, session);
         List<ModelUploadChunk> chunks = chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId());
         if (chunks.size() != session.getTotalChunks()) {
             throw new IllegalArgumentException("分片未上传完成");
@@ -187,11 +189,15 @@ public class ModelUploadService {
             }
         }
 
-        String assetId = "model-asset-" + UUID.randomUUID().toString().replace("-", "");
+        String assetId = target.assetId();
+        String version = req.getVersion().trim();
+        if (modelVersionRepo.existsByAssetIdAndVersion(assetId, version)) {
+            throw duplicateVersion(assetId, version);
+        }
         String versionId = "model-ver-" + UUID.randomUUID().toString().replace("-", "");
-        String destName = "users/" + session.getOwnerUserId()
+        String destName = "users/" + target.ownerUserId()
                 + "/models/" + assetId
-                + "/" + sanitizeSegment(req.getVersion())
+                + "/" + sanitizeSegment(version)
                 + "/" + sanitizeSegment(session.getFileName());
         try {
             List<ComposeSource> sources = chunks.stream()
@@ -217,24 +223,26 @@ public class ModelUploadService {
         ModelVersion ver;
         try {
             Instant now = Instant.now();
-            asset = new ModelAsset();
-            asset.setId(assetId);
-            asset.setName(req.getModelName().trim());
-            asset.setType(taskType);
-            asset.setRemark(req.getRemark().trim());
-            asset.setOwnerUserId(session.getOwnerUserId());
-            asset.setCreatedAt(now);
-            asset.setUpdatedAt(now);
-            modelAssetRepo.saveAndFlush(asset);
+            asset = target.asset();
+            if (target.createAsset()) {
+                asset.setId(assetId);
+                asset.setName(req.getModelName().trim());
+                asset.setType(target.taskType());
+                asset.setRemark(req.getRemark().trim());
+                asset.setOwnerUserId(target.ownerUserId());
+                asset.setCreatedAt(now);
+                asset.setUpdatedAt(now);
+                modelAssetRepo.saveAndFlush(asset);
+            }
 
             ver = new ModelVersion();
             ver.setId(versionId);
             ver.setAssetId(assetId);
-            ver.setVersion(req.getVersion().trim());
+            ver.setVersion(version);
             ver.setFileName(session.getFileName());
             ver.setStoragePath(destName);
             ver.setSizeBytes(session.getFileSize());
-            ver.setOwnerUserId(session.getOwnerUserId());
+            ver.setOwnerUserId(target.ownerUserId());
             ver.setCreatedAt(now);
             modelVersionRepo.saveAndFlush(ver);
 
@@ -246,6 +254,9 @@ public class ModelUploadService {
             sessionRepo.saveAndFlush(session);
         } catch (RuntimeException e) {
             removeObjectQuietly(destName);
+            if (isDuplicateVersionError(e)) {
+                throw duplicateVersion(assetId, version);
+            }
             throw new IllegalArgumentException("保存模型上传记录失败: " + rootMessage(e));
         }
         registerChunkCleanup(session.getId(), chunks);
@@ -253,15 +264,54 @@ public class ModelUploadService {
         return completedPayload(session, asset.getName(), ver.getVersion(), asset.getType(), asset.getRemark());
     }
 
-    private String validateComplete(UploadCompleteRequest req) {
+    private void validateCompleteRequest(UploadCompleteRequest req) {
         if (req == null) {
             throw new IllegalArgumentException("请求体不能为空");
         }
         requireText(req.getUploadId(), "uploadId 不能为空");
-        requireText(req.getModelName(), "modelName 不能为空");
+    }
+
+    private CompletionTarget resolveCompletionTarget(UploadCompleteRequest req, ModelUploadSession session) {
         requireText(req.getVersion(), "version 不能为空");
-        requireText(req.getRemark(), "remark 不能为空");
-        return TaskType.normalize(req.getType());
+        String requestedAssetId = normalizeText(req.getAssetId());
+        if (requestedAssetId == null) {
+            requireText(req.getModelName(), "modelName 不能为空");
+            requireText(req.getRemark(), "remark 不能为空");
+            String taskType = TaskType.normalize(req.getType());
+            String assetId = "model-asset-" + UUID.randomUUID().toString().replace("-", "");
+            return new CompletionTarget(
+                    new ModelAsset(),
+                    assetId,
+                    session.getOwnerUserId(),
+                    taskType,
+                    true
+            );
+        }
+
+        ModelAsset asset = modelAssetRepo.findByIdAndDeletedFalseForUpdate(requestedAssetId)
+                .orElseThrow(() -> new IllegalArgumentException("model asset not found: " + requestedAssetId));
+        Integer currentUserId = authContext.currentUserId();
+        if (!Objects.equals(currentUserId, session.getOwnerUserId())
+                || !Objects.equals(currentUserId, asset.getOwnerUserId())) {
+            throw new IllegalArgumentException("no permission for asset: " + requestedAssetId);
+        }
+
+        String modelName = normalizeText(req.getModelName());
+        if (modelName != null && !modelName.equals(asset.getName())) {
+            throw new IllegalArgumentException("modelName does not match existing asset");
+        }
+        String assetTaskType = TaskType.normalize(asset.getType());
+        String requestedType = normalizeText(req.getType());
+        if (requestedType != null && !TaskType.normalize(requestedType).equals(assetTaskType)) {
+            throw new IllegalArgumentException("model type does not match existing asset");
+        }
+        return new CompletionTarget(
+                asset,
+                asset.getId(),
+                asset.getOwnerUserId(),
+                assetTaskType,
+                false
+        );
     }
 
     private void validateInit(UploadInitRequest req) {
@@ -534,6 +584,29 @@ public class ModelUploadService {
         return current.getMessage() == null ? e.getMessage() : current.getMessage();
     }
 
+    private boolean isDuplicateVersionError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+                if (normalized.contains("uk_model_version_asset_version")
+                        || normalized.contains("duplicate key")
+                        || normalized.contains("unique constraint")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private IllegalArgumentException duplicateVersion(String assetId, String version) {
+        return new IllegalArgumentException(
+                "model version already exists for asset: " + assetId + ", version: " + version
+        );
+    }
+
     private String sanitizeSegment(String value) {
         String normalized = value == null ? "" : value.trim();
         if (normalized.isEmpty()) {
@@ -542,5 +615,14 @@ public class ModelUploadService {
         return normalized
                 .replaceAll("[\\\\/:*?\"<>|]", "_")
                 .toLowerCase(Locale.ROOT);
+    }
+
+    private record CompletionTarget(
+            ModelAsset asset,
+            String assetId,
+            Integer ownerUserId,
+            String taskType,
+            boolean createAsset
+    ) {
     }
 }

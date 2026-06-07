@@ -47,6 +47,15 @@ public class DatasetUploadSession {
     @Column(name = "dataset_version", nullable = false, length = 64)
     private String version;
 
+    @Column(name = "version_label", length = 64)
+    private String versionLabel;
+
+    @Column(name = "version_no")
+    private Integer versionNo;
+
+    @Column(name = "version_label_generated", nullable = false)
+    private Boolean versionLabelGenerated = false;
+
     @Column(name = "task_type", nullable = false, length = 16)
     private String type;
 
@@ -58,6 +67,15 @@ public class DatasetUploadSession {
 
     @Column(name = "remark", length = 1024)
     private String remark;
+
+    @Column(name = "description", length = 2048)
+    private String description;
+
+    @Column(name = "change_log")
+    private String changeLog;
+
+    @Column(name = "parent_version_id", length = 64)
+    private String parentVersionId;
 
     @Column(name = "status", nullable = false, length = 32)
     private String status;

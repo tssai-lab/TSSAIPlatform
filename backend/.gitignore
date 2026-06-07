@@ -35,3 +35,6 @@ build/
 /target/
 !.mvn/wrapper/maven-wrapper.jar
 *.log
+
+# Local API/upload test artifacts
+archive-upload-test-result.json
