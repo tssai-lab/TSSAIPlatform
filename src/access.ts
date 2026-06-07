@@ -20,8 +20,12 @@ export default function access(
     /** 是否任意管理员（用于显示系统管理一级菜单） */
     isAdmin,
 
-    /** 训练调度-算力资源监控：超管可见 */
-    canAccessResourceMonitor: isSuperAdmin,
+    /** 训练调度-算力状态：所有登录用户可见 */
+    canViewResourceStatus: !!currentUser,
+    /** 算力状态-纳管/删除服务器：仅超管 */
+    canManageResourceNodes: isSuperAdmin,
+    /** 算力状态-调整排队顺序、取消排队：仅超管 */
+    canManageResourceQueue: isSuperAdmin,
 
     /** 系统管理-用户管理：超管+普管可见 */
     canAccessSystemUser: isAdmin,

@@ -5,7 +5,7 @@ import {
   RightOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
+import { history, useAccess } from '@umijs/max';
 import {
   Button,
   Card,
@@ -35,7 +35,7 @@ import { getUsageColor, getUsageStatus } from './constants';
 const { Search } = Input;
 const { Text } = Typography;
 
-const ServerCard = ({ server, onClick, onDelete }) => {
+const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
   const usageItems = [
     { label: 'CPU', value: server.cpuRate },
     { label: '内存', value: server.memRate },
@@ -74,26 +74,28 @@ const ServerCard = ({ server, onClick, onDelete }) => {
           <Tag color={server.status === 'online' ? 'success' : 'warning'}>
             {server.status === 'online' ? '在线' : '告警'}
           </Tag>
-          <Popconfirm
-            title="确认删除该服务器？"
-            description={
-              hasRunningTasks
-                ? '该服务器有运行中任务，无法删除。'
-                : '删除后将不再纳入监控，排队任务将一并清除。'
-            }
-            okText="删除"
-            okButtonProps={{ danger: true, disabled: hasRunningTasks }}
-            cancelText="取消"
-            onConfirm={() => onDelete(server.serverIp)}
-          >
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              disabled={hasRunningTasks}
-            />
-          </Popconfirm>
+          {canManageNodes && (
+            <Popconfirm
+              title="确认删除该服务器？"
+              description={
+                hasRunningTasks
+                  ? '该服务器有运行中任务，无法删除。'
+                  : '删除后将不再纳入监控，排队任务将一并清除。'
+              }
+              okText="删除"
+              okButtonProps={{ danger: true, disabled: hasRunningTasks }}
+              cancelText="取消"
+              onConfirm={() => onDelete(server.serverIp)}
+            >
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                disabled={hasRunningTasks}
+              />
+            </Popconfirm>
+          )}
           <RightOutlined style={{ color: '#bfbfbf', fontSize: 12 }} />
         </Space>
       </div>
@@ -168,6 +170,7 @@ const ServerCard = ({ server, onClick, onDelete }) => {
 };
 
 const ResourceMonitor = () => {
+  const { canManageResourceNodes } = useAccess();
   const [servers, setServers] = useState([]);
   const [summary, setSummary] = useState({
     total: 0,
@@ -273,7 +276,7 @@ const ResourceMonitor = () => {
 
   return (
     <PageContainer
-      title="算力资源监控"
+      title="算力状态"
       subTitle="实时查看集群服务器资源占用与任务调度情况"
     >
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
@@ -317,13 +320,15 @@ const ResourceMonitor = () => {
         loading={loading}
         extra={
           <Space wrap>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setAddModalOpen(true)}
-            >
-              添加服务器
-            </Button>
+            {canManageResourceNodes && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setAddModalOpen(true)}
+              >
+                添加服务器
+              </Button>
+            )}
             <Search
               placeholder="搜索 IP / 主机名 / 任务名"
               allowClear
@@ -352,6 +357,7 @@ const ResourceMonitor = () => {
                 server={server}
                 onClick={() => handleServerClick(server.serverIp)}
                 onDelete={handleDeleteServer}
+                canManageNodes={canManageResourceNodes}
               />
             </Col>
           ))}

@@ -4,7 +4,7 @@ import {
   CloseOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history, useParams } from '@umijs/max';
+import { history, useAccess, useParams } from '@umijs/max';
 import {
   Button,
   Card,
@@ -43,6 +43,7 @@ import ResourceTrendChart from '../ResourceTrendChart';
 const { Text } = Typography;
 
 const ServerDetail = () => {
+  const { canManageResourceNodes, canManageResourceQueue } = useAccess();
   const { serverIp: encodedIp } = useParams();
   const serverIp = decodeURIComponent(encodedIp || '');
   const [server, setServer] = useState(null);
@@ -187,8 +188,8 @@ const ServerDetail = () => {
     [],
   );
 
-  const queuedColumns = useMemo(
-    () => [
+  const queuedColumns = useMemo(() => {
+    const columns = [
       {
         title: '排队序号',
         key: 'queueOrder',
@@ -214,7 +215,10 @@ const ServerDetail = () => {
           return <Tag color={colorMap[val]}>{val}</Tag>;
         },
       },
-      {
+    ];
+
+    if (canManageResourceQueue) {
+      columns.push({
         title: '操作',
         key: 'action',
         width: 100,
@@ -267,10 +271,16 @@ const ServerDetail = () => {
             </Popconfirm>
           </Space>
         ),
-      },
-    ],
-    [handleMoveQueueTask, handleCancelQueueTask, queuedTasks.length],
-  );
+      });
+    }
+
+    return columns;
+  }, [
+    canManageResourceQueue,
+    handleMoveQueueTask,
+    handleCancelQueueTask,
+    queuedTasks.length,
+  ]);
 
   if (loading) {
     return (
@@ -314,22 +324,24 @@ const ServerDetail = () => {
           <Tag color={server.status === 'online' ? 'success' : 'warning'}>
             {server.status === 'online' ? '在线' : '告警'}
           </Tag>
-          <Popconfirm
-            title="确认删除该服务器？"
-            description={
-              server.runTask > 0
-                ? '该服务器有运行中任务，无法删除。'
-                : '删除后将不再纳入监控，当前排队任务将一并清除。'
-            }
-            okText="删除"
-            okButtonProps={{ danger: true, disabled: server.runTask > 0 }}
-            cancelText="取消"
-            onConfirm={handleDeleteServer}
-          >
-            <Button danger disabled={server.runTask > 0}>
-              删除服务器
-            </Button>
-          </Popconfirm>
+          {canManageResourceNodes && (
+            <Popconfirm
+              title="确认删除该服务器？"
+              description={
+                server.runTask > 0
+                  ? '该服务器有运行中任务，无法删除。'
+                  : '删除后将不再纳入监控，当前排队任务将一并清除。'
+              }
+              okText="删除"
+              okButtonProps={{ danger: true, disabled: server.runTask > 0 }}
+              cancelText="取消"
+              onConfirm={handleDeleteServer}
+            >
+              <Button danger disabled={server.runTask > 0}>
+                删除服务器
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       }
     >

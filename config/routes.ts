@@ -86,14 +86,15 @@ export default [
       { path: '/task/list', name: '任务列表', component: './task/list' },
       {
         path: '/task/resourceMonitor',
-        name: '算力资源监控',
+        name: '算力状态',
         component: './task/resourceMonitor',
-        access: 'canAccessResourceMonitor',
+        access: 'canViewResourceStatus',
       },
       {
         path: '/task/resourceMonitor/detail/:serverIp',
         name: '服务器详情',
         component: './task/resourceMonitor/detail/[serverIp]',
+        access: 'canViewResourceStatus',
         hideInMenu: true,
       },
       {

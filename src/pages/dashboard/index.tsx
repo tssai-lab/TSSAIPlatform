@@ -1,5 +1,5 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { history, useAccess, useModel } from '@umijs/max';
+import { history, useModel } from '@umijs/max';
 import {
   Button,
   Card,
@@ -89,7 +89,6 @@ const statProps = {
  */
 const Dashboard: React.FC = () => {
   const { initialState } = useModel('@@initialState');
-  const access = useAccess();
   const userName =
     initialState?.currentUser?.name || initialState?.currentUser?.username;
 
@@ -217,15 +216,13 @@ const Dashboard: React.FC = () => {
           styles={cardStyles}
           style={{ marginTop: 12 }}
           extra={
-            access.canAccessResourceMonitor ? (
-              <Button
-                type="link"
-                size="small"
-                onClick={() => history.push('/task/resourceMonitor')}
-              >
-                算力资源监控
-              </Button>
-            ) : null
+            <Button
+              type="link"
+              size="small"
+              onClick={() => history.push('/task/resourceMonitor')}
+            >
+              算力状态
+            </Button>
           }
         >
           {resourceSummary ? (
