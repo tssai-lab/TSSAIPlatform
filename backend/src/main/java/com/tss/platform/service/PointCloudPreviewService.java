@@ -163,7 +163,7 @@ public class PointCloudPreviewService {
                 }
                 String entryPath = normalizeZipEntryPath(entry.getName());
                 if (!entry.isDirectory() && POINT_CLOUD_EXTENSIONS.contains(extensionOf(entryPath))) {
-                    files.add(toPreviewFile(version.getId(), entryPath, entry));
+                    files.add(toPreviewFile(version.getId(), entryPath, readEntrySize(zip)));
                 }
                 zip.closeEntry();
             }
@@ -186,9 +186,8 @@ public class PointCloudPreviewService {
         dto.setMessage(hasAllowedFile ? "请选择 zip 内的点云文件进行预览" : tooLargeMessage());
     }
 
-    private PointCloudPreviewFileDto toPreviewFile(String datasetVersionId, String entryPath, ZipEntry entry) {
+    private PointCloudPreviewFileDto toPreviewFile(String datasetVersionId, String entryPath, long sizeBytes) {
         String ext = extensionOf(entryPath);
-        Long sizeBytes = entry.getSize() >= 0 ? entry.getSize() : null;
         boolean previewAllowed = isPreviewAllowed(sizeBytes);
 
         PointCloudPreviewFileDto dto = new PointCloudPreviewFileDto();
@@ -200,6 +199,16 @@ public class PointCloudPreviewService {
         dto.setPreviewUrl(previewAllowed ? zipFilePreviewUrl(datasetVersionId, entryPath) : null);
         dto.setMessage(previewAllowed ? null : tooLargeMessage());
         return dto;
+    }
+
+    private long readEntrySize(ZipInputStream zip) throws IOException {
+        long total = 0;
+        byte[] buffer = new byte[8192];
+        int len;
+        while ((len = zip.read(buffer)) != -1) {
+            total += len;
+        }
+        return total;
     }
 
     private PointCloudFileStream extractEntryToTempStream(ZipInputStream zip, ZipEntry entry, String entryPath)
