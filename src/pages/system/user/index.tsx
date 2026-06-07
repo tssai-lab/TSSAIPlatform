@@ -49,7 +49,7 @@ const UserManagement: React.FC = () => {
   const [form] = Form.useForm();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
-  const [usernameChecking, setUsernameChecking] = useState(false);
+  const [_usernameChecking, setUsernameChecking] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
   const actionRef = useRef<ActionType>(null);
 
@@ -117,7 +117,7 @@ const UserManagement: React.FC = () => {
       }
       const list = withIndex(response.data?.list ?? [], current, pageSize);
       return toProTableSuccess(list, response.data?.total ?? 0);
-    } catch (error: unknown) {
+    } catch (_error: unknown) {
       return toProTableFail<UserItem>();
     }
   };
@@ -473,95 +473,91 @@ const UserManagement: React.FC = () => {
   ];
 
   return (
-    <>
-      <PageContainer
-        title="用户管理"
-        subTitle="管理平台用户账号，支持搜索筛选、新增/编辑、启用/禁用等操作。"
-        extra={
-          <Button type="primary" onClick={handleAdd}>
-            新增用户
-          </Button>
-        }
-      >
-        <ProTable<UserItem>
-          actionRef={actionRef}
-          columns={columns}
-          request={fetchUserList}
-          rowKey="id"
-          search={{ labelWidth: 'auto' }}
-          pagination={{
-            defaultPageSize: 10,
-            showSizeChanger: true,
-            showQuickJumper: true,
-          }}
-          toolBarRender={false}
-          dateFormatter="string"
-        />
+    <PageContainer
+      title="用户管理"
+      subTitle="管理平台用户账号，支持搜索筛选、新增/编辑、启用/禁用等操作。"
+      extra={
+        <Button type="primary" onClick={handleAdd}>
+          新增用户
+        </Button>
+      }
+    >
+      <ProTable<UserItem>
+        actionRef={actionRef}
+        columns={columns}
+        request={fetchUserList}
+        rowKey="id"
+        search={{ labelWidth: 'auto' }}
+        pagination={{
+          defaultPageSize: 10,
+          showSizeChanger: true,
+          showQuickJumper: true,
+        }}
+        toolBarRender={false}
+        dateFormatter="string"
+      />
 
-        <Modal
-          title={
-            editingUser ? `编辑用户 - ${editingUser.username}` : '新增用户'
-          }
-          open={modalVisible}
-          onCancel={() => {
-            setModalVisible(false);
-            form.resetFields();
-            setEditingUser(null);
-          }}
-          onOk={handleModalOk}
-          confirmLoading={submitLoading}
-          okText="确定"
-          cancelText="取消"
-          destroyOnClose
-        >
-          <Form form={form} layout="vertical" preserve={false}>
-            <Form.Item
-              name="username"
-              label="用户名"
-              rules={[
-                { required: true, message: '用户名不能为空' },
-                { validator: validateUsername },
-              ]}
-              validateTrigger={['onBlur', 'onSubmit']}
-            >
-              <Input placeholder="请输入用户名" disabled={!!editingUser} />
-            </Form.Item>
-            <Form.Item
-              name="phone"
-              label="手机号"
-              rules={[
-                { required: true, message: '手机号不能为空' },
-                { pattern: /^1\d{10}$/, message: '手机号格式错误' },
-              ]}
-            >
-              <Input placeholder="请输入手机号" maxLength={11} />
-            </Form.Item>
-            <Form.Item
-              name="role"
-              label="角色"
-              rules={[{ required: true, message: '请选择角色' }]}
-            >
-              <Select
-                placeholder="请选择角色"
-                disabled={isEditingSuperAdmin}
-                options={roleOptionsForForm as any}
-              />
-            </Form.Item>
-            <Form.Item
-              name="status"
-              label="状态"
-              rules={[{ required: true, message: '请选择状态' }]}
-              initialValue={SYSTEM_STATUS.ENABLED}
-            >
-              <Select
-                placeholder="请选择状态"
-                options={SYSTEM_STATUS_OPTIONS as any}
-              />
-            </Form.Item>
-          </Form>
-        </Modal>
-      </PageContainer>
-    </>
+      <Modal
+        title={editingUser ? `编辑用户 - ${editingUser.username}` : '新增用户'}
+        open={modalVisible}
+        onCancel={() => {
+          setModalVisible(false);
+          form.resetFields();
+          setEditingUser(null);
+        }}
+        onOk={handleModalOk}
+        confirmLoading={submitLoading}
+        okText="确定"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" preserve={false}>
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[
+              { required: true, message: '用户名不能为空' },
+              { validator: validateUsername },
+            ]}
+            validateTrigger={['onBlur', 'onSubmit']}
+          >
+            <Input placeholder="请输入用户名" disabled={!!editingUser} />
+          </Form.Item>
+          <Form.Item
+            name="phone"
+            label="手机号"
+            rules={[
+              { required: true, message: '手机号不能为空' },
+              { pattern: /^1\d{10}$/, message: '手机号格式错误' },
+            ]}
+          >
+            <Input placeholder="请输入手机号" maxLength={11} />
+          </Form.Item>
+          <Form.Item
+            name="role"
+            label="角色"
+            rules={[{ required: true, message: '请选择角色' }]}
+          >
+            <Select
+              placeholder="请选择角色"
+              disabled={isEditingSuperAdmin}
+              options={roleOptionsForForm as any}
+            />
+          </Form.Item>
+          <Form.Item
+            name="status"
+            label="状态"
+            rules={[{ required: true, message: '请选择状态' }]}
+            initialValue={SYSTEM_STATUS.ENABLED}
+          >
+            <Select
+              placeholder="请选择状态"
+              options={SYSTEM_STATUS_OPTIONS as any}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </PageContainer>
   );
 };
 

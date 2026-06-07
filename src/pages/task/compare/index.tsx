@@ -85,7 +85,7 @@ type ComparableGroup = {
 function lastPoint(series?: { step: number; value: number }[]) {
   if (!series?.length) return null;
   const sorted = [...series].sort((a, b) => a.step - b.step);
-  return sorted[sorted.length - 1]!;
+  return sorted[sorted.length - 1] ?? null;
 }
 
 function formatNum(v: number | null | undefined, digits = 4) {
@@ -97,7 +97,7 @@ function formatNum(v: number | null | undefined, digits = 4) {
 function toRelativeImprovement(series: { step: number; value: number }[]) {
   if (!series.length) return [];
   const sorted = [...series].sort((a, b) => a.step - b.step);
-  const base = sorted[0]!.value;
+  const base = sorted[0]?.value;
   if (Math.abs(base) < 1e-9)
     return sorted.map((p) => ({ step: p.step, value: 0 }));
   return sorted.map((p) => ({
@@ -469,8 +469,10 @@ const TaskCompare: React.FC = () => {
       for (const t of withRunId) {
         const meta = byId.get(String(t.id)) || t;
         try {
+          const runId = t.runId;
+          if (!runId) continue;
           const metrics = await fetchMlflowMetricsBulk(
-            t.runId!,
+            runId,
             MLFLOW_METRIC_KEYS as unknown as string[],
           );
           results.push({
@@ -478,7 +480,7 @@ const TaskCompare: React.FC = () => {
             taskName: t.name,
             modelName: meta.modelName || '-',
             datasetName: meta.datasetName || '-',
-            runId: t.runId!,
+            runId,
             metrics,
           });
         } catch {
@@ -492,7 +494,7 @@ const TaskCompare: React.FC = () => {
         idx += 1;
       }
       setMetricsData(results);
-    } catch (e: any) {
+    } catch (_e: any) {
       const base =
         (selectedRowKeys as string[]).map((id) =>
           placeholderTaskRow(
@@ -561,18 +563,21 @@ const TaskCompare: React.FC = () => {
     for (const r of metricsData) {
       const k = comparableGroupKey(r);
       if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(r);
+      map.get(k)?.push(r);
     }
     return [...map.entries()]
       .filter(([, list]) => list.length >= 2)
-      .map(([, tasks]) => {
-        const head = tasks[0]!;
-        return {
-          slug: comparableGroupSlug(head.modelName, head.datasetName),
-          modelName: head.modelName,
-          datasetName: head.datasetName,
-          tasks,
-        };
+      .flatMap(([, tasks]) => {
+        const head = tasks[0];
+        if (!head) return [];
+        return [
+          {
+            slug: comparableGroupSlug(head.modelName, head.datasetName),
+            modelName: head.modelName,
+            datasetName: head.datasetName,
+            tasks,
+          },
+        ];
       });
   }, [metricsData]);
 
@@ -600,7 +605,7 @@ const TaskCompare: React.FC = () => {
       if (!chartInstances.current[metricKey]) {
         chartInstances.current[metricKey] = echarts.init(el);
       }
-      chartInstances.current[metricKey]!.setOption({
+      chartInstances.current[metricKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {
@@ -641,7 +646,7 @@ const TaskCompare: React.FC = () => {
           name: t.taskName,
           type: 'line' as const,
           smooth: true,
-          data: t.metrics[metric]!.map((p) => [p.step, p.value]),
+          data: t.metrics[metric]?.map((p) => [p.step, p.value]),
           itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
         }));
       const seriesImp = list
@@ -650,7 +655,7 @@ const TaskCompare: React.FC = () => {
           name: t.taskName,
           type: 'line' as const,
           smooth: true,
-          data: toRelativeImprovement(t.metrics[metric]!).map((p) => [
+          data: toRelativeImprovement(t.metrics[metric] ?? []).map((p) => [
             p.step,
             p.value,
           ]),
@@ -664,7 +669,7 @@ const TaskCompare: React.FC = () => {
         sameModelImpCharts.current[impKey] = echarts.init(elImp);
       }
       const label = METRIC_LABELS[metric] || metric;
-      sameModelRawCharts.current[rawKey]!.setOption({
+      sameModelRawCharts.current[rawKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {
@@ -678,7 +683,7 @@ const TaskCompare: React.FC = () => {
         yAxis: { type: 'value', name: label },
         series: seriesRaw,
       });
-      sameModelImpCharts.current[impKey]!.setOption({
+      sameModelImpCharts.current[impKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {

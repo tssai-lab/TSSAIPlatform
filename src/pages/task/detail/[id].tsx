@@ -75,7 +75,7 @@ type TaskDetailInfo = API.TaskItem & {
   codeVersionId?: string;
 };
 
-function shortId(v?: string, keep = 10) {
+function _shortId(v?: string, keep = 10) {
   if (!v) return '-';
   if (v.length <= keep) return v;
   return `${v.slice(0, keep)}…`;
@@ -351,13 +351,17 @@ const TaskDetail: React.FC = () => {
       return;
     }
     if (versions.length >= 2) {
-      const first = versions[0]!;
-      const last = versions[versions.length - 1]!;
-      setCompareVersionKeys([first.id, last.id]);
+      const first = versions[0];
+      const last = versions[versions.length - 1];
+      if (first && last) {
+        setCompareVersionKeys([first.id, last.id]);
+      }
       return;
     }
-    const one = versions[0]!;
-    setCompareVersionKeys(taskInfo?.id === one.id ? [one.id] : [one.id]);
+    const one = versions[0];
+    if (one) {
+      setCompareVersionKeys([one.id]);
+    }
   }, [versions, taskInfo?.id]);
 
   if (loading) {

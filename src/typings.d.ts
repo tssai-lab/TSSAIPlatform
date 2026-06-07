@@ -239,4 +239,77 @@ declare namespace API {
     content: string;
     result: 'success' | 'failed';
   };
+
+  // 算力资源监控
+  type ResourceMonitorServerSpecs = {
+    cpu: string;
+    memory: string;
+    gpu: string;
+    os: string;
+  };
+
+  type ResourceMonitorRunningTask = {
+    id: string;
+    name: string;
+    model: string;
+    dataset: string;
+    startTime: string;
+    progress: number;
+    cpuUsage: number;
+    memUsage: number;
+    gpuUsage: number;
+  };
+
+  type ResourceMonitorQueuedTask = {
+    id: string;
+    name: string;
+    model: string;
+    dataset: string;
+    submitTime: string;
+    /** 业务优先级，默认「中」；上下移动不会改变；预留后续多优先级需求 */
+    priority: '高' | '中' | '低' | string;
+    /** 人工排序标记：0=无干预，非 0=超管手动指定槽位（越小越靠前） */
+    queueSortIndex: number;
+  };
+
+  type ResourceMonitorServerItem = {
+    serverIp: string;
+    hostname: string;
+    status: 'online' | 'warning';
+    cpuRate: number;
+    memRate: number;
+    gpuRate: number;
+    diskRate?: number;
+    networkIn?: number;
+    networkOut?: number;
+    gpuMemRate?: number;
+    gpuTemp?: number;
+    runTask: number;
+    waitTask: number;
+    runningTasks: API.ResourceMonitorRunningTask[];
+    queuedTasks: API.ResourceMonitorQueuedTask[];
+    specs?: API.ResourceMonitorServerSpecs;
+  };
+
+  type ResourceMonitorSummary = {
+    total: number;
+    online: number;
+    runningTasks: number;
+    queuedTasks: number;
+    avgGpu: string | number;
+  };
+
+  type ResourceMonitorMetricPoint = {
+    tickIndex: number;
+    fullTime: string;
+    time: string;
+    type: string;
+    value: number;
+  };
+
+  type ResourceMonitorMetrics = {
+    interval: string;
+    spanLabel: string;
+    points: API.ResourceMonitorMetricPoint[];
+  };
 }

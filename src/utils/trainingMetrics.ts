@@ -60,7 +60,7 @@ export function getLatestMetricValue(
   points?: MetricPoint[],
 ): number | undefined {
   if (!points?.length) return undefined;
-  return points[points.length - 1]!.value;
+  return points[points.length - 1]?.value;
 }
 
 /** 标准 MLflow 指标末值摘要（无数据时 value 为 undefined） */
@@ -108,7 +108,7 @@ export function buildMetricsChartOption(
     const categories = keys.map((k) => METRIC_LABELS[k] || k);
     const values = keys.map((key) => {
       const points = metricsData[key] ?? [];
-      return points.length ? points[points.length - 1]!.value : 0;
+      return points.length ? points[points.length - 1]?.value : 0;
     });
     return {
       tooltip: { trigger: 'axis' },

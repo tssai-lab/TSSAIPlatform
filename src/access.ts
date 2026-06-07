@@ -20,6 +20,9 @@ export default function access(
     /** 是否任意管理员（用于显示系统管理一级菜单） */
     isAdmin,
 
+    /** 训练调度-算力资源监控：超管可见 */
+    canAccessResourceMonitor: isSuperAdmin,
+
     /** 系统管理-用户管理：超管+普管可见 */
     canAccessSystemUser: isAdmin,
     /** 系统管理-管理员列表：仅超管 */

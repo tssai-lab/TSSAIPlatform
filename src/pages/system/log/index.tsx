@@ -98,7 +98,7 @@ const LogManagement: React.FC = () => {
         const list = (response.data?.list ?? []).map(
           (item: LogItem, index: number) => ({
             ...item,
-            _index: (current! - 1) * pageSize! + index + 1,
+            _index: ((current ?? 1) - 1) * (pageSize ?? 10) + index + 1,
           }),
         );
         return {

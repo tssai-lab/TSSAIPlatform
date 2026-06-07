@@ -361,7 +361,7 @@ const AdminListPage: React.FC = () => {
             }
             const list = withIndex(res.data?.list ?? [], current, pageSize);
             return toProTableSuccess(list, res.data?.total ?? list.length);
-          } catch (e: any) {
+          } catch (_e: any) {
             return toProTableFail<AdminItem>();
           }
         }}

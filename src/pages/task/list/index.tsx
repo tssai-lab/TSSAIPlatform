@@ -156,7 +156,7 @@ const TaskList: React.FC = () => {
                         label: '追溯历史版本',
                         onClick: () =>
                           history.push(
-                            `/task/detail/${encodeURIComponent(record.experimentId!)}#version-history`,
+                            `/task/detail/${encodeURIComponent(record.experimentId)}#version-history`,
                           ),
                       },
                     ]

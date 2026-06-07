@@ -306,7 +306,7 @@ export function genMockTaskMetrics(
   metrics: Record<string, { step: number; value: number }[]>;
 } {
   const steps = 50;
-  const s = (x: number) => (seed * 0.1 + 1) * x; // 不同任务略有差异
+  const _s = (x: number) => (seed * 0.1 + 1) * x; // 不同任务略有差异
   return {
     taskId,
     taskName,
