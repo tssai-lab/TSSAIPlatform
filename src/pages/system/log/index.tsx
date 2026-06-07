@@ -14,6 +14,7 @@ import {
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
+import { notifyRequestError } from '../notifyRequestError';
 
 /**
  * 日志管理页（操作日志）
@@ -109,8 +110,7 @@ const LogManagement: React.FC = () => {
       message.error(response.msg ?? '查询失败');
       return { data: [], success: false, total: 0 };
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err?.message ?? '查询失败');
+      notifyRequestError(error, '查询失败');
       return { data: [], success: false, total: 0 };
     }
   };

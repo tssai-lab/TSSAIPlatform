@@ -22,6 +22,9 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
 import { resolveDatasetVersionId } from '@/services/dataset';
+import PointCloudPreviewPanel, {
+  type PointCloudPreviewPanelRef,
+} from '@/pages/dataset/components/point-cloud/PointCloudPreviewPanel';
 import {
   createDatasetVersion,
   deleteDataset,
@@ -38,6 +41,18 @@ import {
   suggestNextDatasetVersion,
 } from '@/utils/datasetVersion';
 
+const DATASET_TYPE_LABEL: Record<string, string> = {
+  CV: 'CV',
+  NLP: 'NLP',
+  POINT_CLOUD: '点云',
+};
+
+const DATASET_TYPE_COLOR: Record<string, string> = {
+  CV: 'blue',
+  NLP: 'green',
+  POINT_CLOUD: 'purple',
+};
+
 const DatasetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -47,6 +62,7 @@ const DatasetDetail: React.FC = () => {
   );
   const [loading, setLoading] = useState(true);
   const [previewVersionId, setPreviewVersionId] = useState<string>();
+
 
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [versionModalMode, setVersionModalMode] = useState<'create' | 'edit'>(
@@ -94,6 +110,9 @@ const DatasetDetail: React.FC = () => {
     }
   }, [id, searchParams]);
 
+  const previewPanelRef = useRef<PointCloudPreviewPanelRef>(null);
+
+
   useEffect(() => {
     loadDetail();
   }, [loadDetail]);
@@ -118,6 +137,7 @@ const DatasetDetail: React.FC = () => {
     }
     window.open(getDownloadUrl(storagePath), '_blank');
   };
+
 
   const handleUploadNewVersion = () => {
     if (!datasetInfo || !id) return;
@@ -195,10 +215,12 @@ const DatasetDetail: React.FC = () => {
     }
   };
 
-  const datasetTypeColor: Record<string, string> = {
-    CV: 'blue',
-    NLP: 'green',
-    POINT_CLOUD: 'purple',
+  const handleLoadPreview = async (record: API.DatasetVersionDetail) => {
+    setPreviewVersionId(record.id);
+    document
+      .getElementById('point-cloud-preview')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await previewPanelRef.current?.loadVersion(record);
   };
 
   const selectPreviewVersion = (
@@ -221,7 +243,8 @@ const DatasetDetail: React.FC = () => {
 
   const handleVersionFullscreenPreview = (versionId: string) => {
     if (datasetInfo?.type === 'POINT_CLOUD') {
-      history.push(`/dataset/point-cloud?versionId=${encodeURIComponent(versionId)}`);
+      const record = datasetInfo.versions.find((v) => v.id === versionId);
+      if (record) void handleLoadPreview(record);
       return;
     }
     history.push(`/dataset/preview/${encodeURIComponent(versionId)}`);
@@ -236,6 +259,9 @@ const DatasetDetail: React.FC = () => {
     () => datasetVersionFormRules(existingVersionNames),
     [existingVersionNames],
   );
+
+
+
 
   if (loading) {
     return (
@@ -296,8 +322,8 @@ const DatasetDetail: React.FC = () => {
             <strong>{datasetInfo.name}</strong>
           </Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color={datasetTypeColor[datasetInfo.type] ?? 'default'}>
-              {datasetInfo.type}
+            <Tag color={DATASET_TYPE_COLOR[datasetInfo.type] ?? 'green'}>
+              {DATASET_TYPE_LABEL[datasetInfo.type] ?? datasetInfo.type}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="最近上传时间">
@@ -338,6 +364,11 @@ const DatasetDetail: React.FC = () => {
                   : undefined,
             },
           })}
+          rowClassName={(record) =>
+            record.id === previewVersionId
+              ? 'dataset-preview-version-row-active'
+              : ''
+          }
           columns={[
             { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
             { title: '文件名', dataIndex: 'fileName', key: 'fileName', width: 140, ellipsis: true },
@@ -399,6 +430,14 @@ const DatasetDetail: React.FC = () => {
                   >
                     下载
                   </Button>
+                  {isPointCloud && (
+                    <Button
+                      type="link"
+                      onClick={() => handleLoadPreview(record)}
+                    >
+                      加载预览
+                    </Button>
+                  )}
                   <Popconfirm
                     title="确认删除该版本？"
                     onConfirm={() => handleDeleteVersion(record.id)}
@@ -417,57 +456,60 @@ const DatasetDetail: React.FC = () => {
         </Typography.Text>
       </Card>
 
-      <div ref={previewSectionRef}>
-        <Card
-          title="内容预览"
-          extra={
-            previewVersion ? (
-              <Space>
-                <Typography.Text type="secondary">
-                  当前版本：{previewVersion.version}
-                  {previewVersion.fileName ? ` · ${previewVersion.fileName}` : ''}
-                </Typography.Text>
-                {previewVersionId && (
-                  <Button
-                    size="small"
-                    onClick={() => handleVersionFullscreenPreview(previewVersionId)}
-                  >
-                    全屏预览
-                  </Button>
-                )}
-              </Space>
-            ) : null
-          }
-        >
-          {isPointCloud ? (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Alert
-                type="info"
-                showIcon
-                message="点云数据集需在专用页面中加载三维预览（体积较大，未内嵌于详情页）。"
+      {!isPointCloud && (
+        <div ref={previewSectionRef}>
+          <Card
+            title="内容预览"
+            extra={
+              previewVersion ? (
+                <Space>
+                  <Typography.Text type="secondary">
+                    当前版本：{previewVersion.version}
+                    {previewVersion.fileName ? ` · ${previewVersion.fileName}` : ''}
+                  </Typography.Text>
+                  {previewVersionId && (
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        handleVersionFullscreenPreview(previewVersionId)
+                      }
+                    >
+                      全屏预览
+                    </Button>
+                  )}
+                </Space>
+              ) : null
+            }
+          >
+            {supportsInlinePreview ? (
+              <DatasetPreviewPanel
+                key={previewVersionId}
+                versionId={previewVersionId}
+                compact
               />
-              {previewVersionId ? (
-                <Button
-                  type="primary"
-                  onClick={() => handleVersionFullscreenPreview(previewVersionId)}
-                >
-                  打开点云预览
-                </Button>
-              ) : (
-                <Empty description="请先选择版本" />
-              )}
-            </Space>
-          ) : supportsInlinePreview ? (
-            <DatasetPreviewPanel
-              key={previewVersionId}
-              versionId={previewVersionId}
-              compact
-            />
-          ) : (
-            <Empty description="当前类型不支持在线预览" />
-          )}
-        </Card>
-      </div>
+            ) : (
+              <Empty description="当前类型不支持在线预览" />
+            )}
+          </Card>
+        </div>
+      )}
+
+      {isPointCloud && (
+        <>
+          <style>{`
+            .dataset-preview-version-row-active > td {
+              background-color: #e6f4ff !important;
+            }
+            .dataset-preview-version-row-active:hover > td {
+              background-color: #bae0ff !important;
+            }
+          `}</style>
+          <PointCloudPreviewPanel
+            ref={previewPanelRef}
+            onSelectionChange={setPreviewVersionId}
+          />
+        </>
+      )}
 
       <Modal
         title={versionModalMode === 'create' ? '新建版本记录' : '编辑版本描述'}
