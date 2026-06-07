@@ -5,16 +5,17 @@
 /**
  * 布局组件
  */
+
+import ChartPanel from './ChartPanel';
+import CodePreview from './CodePreview';
 import Footer from './Footer';
-import { Question, SelectLang } from './RightContent';
-import { AvatarDropdown, AvatarName } from './RightContent/AvatarDropdown';
 
 /**
  * 公共业务组件
  */
 import JsonEditor from './JsonEditor';
-import ChartPanel from './ChartPanel';
-import CodePreview from './CodePreview';
+import { Question, SelectLang } from './RightContent';
+import { AvatarDropdown, AvatarName } from './RightContent/AvatarDropdown';
 
 export { AvatarDropdown, AvatarName, Footer, Question, SelectLang };
 export { JsonEditor, ChartPanel, CodePreview };

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
 import { Spin } from 'antd';
+import React, { useEffect, useRef } from 'react';
 
 export interface ChartPanelProps {
   metricsData?: any;
@@ -10,7 +10,10 @@ export interface ChartPanelProps {
  * ChartPanel 组件
  * 功能：渲染训练指标折线图，支持切换指标、显示图例、下载图片
  */
-const ChartPanel: React.FC<ChartPanelProps> = ({ metricsData, loading = false }) => {
+const ChartPanel: React.FC<ChartPanelProps> = ({
+  metricsData,
+  loading = false,
+}) => {
   const chartRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,7 +53,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ metricsData, loading = false })
         </div>
       </div>
       <div style={{ marginTop: 16 }}>
-        <button>下载图片</button>
+        <button type="button">下载图片</button>
         <span style={{ marginLeft: 16, fontSize: 12, color: '#999' }}>
           提示：需要安装 echarts 并实现图表渲染逻辑
         </span>
@@ -60,9 +63,3 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ metricsData, loading = false })
 };
 
 export default ChartPanel;
-
-
-
-
-
-

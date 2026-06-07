@@ -219,26 +219,29 @@ const DatasetDetail: React.FC = () => {
     }
   };
 
-  const handleLoadPreview = async (record: API.DatasetVersionDetail) => {
-    setPreviewVersionId(record.id);
-    document
-      .getElementById('point-cloud-preview')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    await previewPanelRef.current?.loadVersion(record);
-  };
-
-  const selectPreviewVersion = (
-    version: API.DatasetVersionDetail,
-    scrollToPreview?: boolean,
+  const handleSelectPreview = async (
+    record: API.DatasetVersionDetail,
+    scrollToPreview = true,
   ) => {
     const versionId =
-      resolveDatasetVersionId(version, datasetInfo?.id) ?? version.id;
+      resolveDatasetVersionId(record, datasetInfo?.id) ?? record.id;
     if (!versionId || versionId === datasetInfo?.id) {
       message.warning('无法识别数据集版本 ID，请确认后端返回的版本 id 字段');
       return;
     }
     setPreviewVersionId(versionId);
-    if (scrollToPreview) {
+
+    if (!scrollToPreview) return;
+
+    if (datasetInfo?.type === 'POINT_CLOUD') {
+      document
+        .getElementById('point-cloud-preview')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      await previewPanelRef.current?.loadVersion(record);
+      return;
+    }
+
+    if (datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP') {
       requestAnimationFrame(() => {
         previewSectionRef.current?.scrollIntoView({
           behavior: 'smooth',
@@ -246,15 +249,6 @@ const DatasetDetail: React.FC = () => {
         });
       });
     }
-  };
-
-  const handleVersionFullscreenPreview = (versionId: string) => {
-    if (datasetInfo?.type === 'POINT_CLOUD') {
-      const record = datasetInfo.versions.find((v) => v.id === versionId);
-      if (record) void handleLoadPreview(record);
-      return;
-    }
-    history.push(`/dataset/preview/${encodeURIComponent(versionId)}`);
   };
 
   const previewVersion = datasetInfo?.versions.find(
@@ -364,7 +358,7 @@ const DatasetDetail: React.FC = () => {
           scroll={{ x: 1040 }}
           locale={{ emptyText: '暂无版本记录' }}
           onRow={(record) => ({
-            onClick: () => selectPreviewVersion(record, supportsInlinePreview),
+            onClick: () => handleSelectPreview(record),
             style: {
               cursor: 'pointer',
               background:
@@ -418,7 +412,7 @@ const DatasetDetail: React.FC = () => {
             {
               title: '操作',
               key: 'action',
-              width: 360,
+              width: 280,
               fixed: 'right',
               align: 'left',
               render: (_, record: API.DatasetVersionDetail) => (
@@ -431,11 +425,9 @@ const DatasetDetail: React.FC = () => {
                   <Button
                     type="link"
                     style={{ paddingLeft: 0 }}
-                    onClick={() =>
-                      selectPreviewVersion(record, supportsInlinePreview)
-                    }
+                    onClick={() => handleSelectPreview(record)}
                   >
-                    {supportsInlinePreview ? '选中预览' : '选中'}
+                    选中预览
                   </Button>
                   <Button
                     type="link"
@@ -446,24 +438,10 @@ const DatasetDetail: React.FC = () => {
                   </Button>
                   <Button
                     type="link"
-                    onClick={() => handleVersionFullscreenPreview(record.id)}
-                  >
-                    全屏预览
-                  </Button>
-                  <Button
-                    type="link"
                     onClick={() => handleDownload(record.storagePath)}
                   >
                     下载
                   </Button>
-                  {isPointCloud && (
-                    <Button
-                      type="link"
-                      onClick={() => handleLoadPreview(record)}
-                    >
-                      加载预览
-                    </Button>
-                  )}
                   <Popconfirm
                     title="确认删除该版本？"
                     onConfirm={() => handleDeleteVersion(record.id)}
@@ -492,24 +470,12 @@ const DatasetDetail: React.FC = () => {
             title="内容预览"
             extra={
               previewVersion ? (
-                <Space>
-                  <Typography.Text type="secondary">
-                    当前版本：{previewVersion.version}
-                    {previewVersion.fileName
-                      ? ` · ${previewVersion.fileName}`
-                      : ''}
-                  </Typography.Text>
-                  {previewVersionId && (
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        handleVersionFullscreenPreview(previewVersionId)
-                      }
-                    >
-                      全屏预览
-                    </Button>
-                  )}
-                </Space>
+                <Typography.Text type="secondary">
+                  当前版本：{previewVersion.version}
+                  {previewVersion.fileName
+                    ? ` · ${previewVersion.fileName}`
+                    : ''}
+                </Typography.Text>
               ) : null
             }
           >
