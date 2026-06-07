@@ -152,9 +152,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   }, []);
 
   const disposeSplitCharts = useCallback(() => {
-    for (const inst of Object.values(splitChartInstances.current)) {
+    Object.values(splitChartInstances.current).forEach((inst) => {
       inst?.dispose();
-    }
+    });
     splitChartInstances.current = {};
     splitChartRefs.current = {};
   }, []);
@@ -224,9 +224,9 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   useEffect(() => {
     const onResize = () => {
       combinedChartInstance.current?.resize();
-      for (const inst of Object.values(splitChartInstances.current)) {
+      Object.values(splitChartInstances.current).forEach((inst) => {
         inst?.resize();
-      }
+      });
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);

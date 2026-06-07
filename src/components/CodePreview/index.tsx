@@ -1,7 +1,6 @@
-import React from 'react';
-import { Modal, Button } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
-import { message } from 'antd';
+import { Button, Modal, message } from 'antd';
+import React from 'react';
 
 export interface CodePreviewProps {
   codeText?: string;
@@ -64,9 +63,3 @@ const CodePreview: React.FC<CodePreviewProps> = ({
 };
 
 export default CodePreview;
-
-
-
-
-
-

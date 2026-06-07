@@ -1,5 +1,5 @@
-import React from 'react';
 import { Input } from 'antd';
+import React from 'react';
 
 const { TextArea } = Input;
 
@@ -56,7 +56,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       setError('');
       onValidate?.(true);
       onChange?.(formatted);
-    } catch (err) {
+    } catch (_err) {
       setError('无法格式化：JSON格式错误');
     }
   };
@@ -80,7 +80,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         </div>
       )}
       <div style={{ marginTop: 8 }}>
-        <button onClick={handleFormat} style={{ marginRight: 8 }}>
+        <button type="button" onClick={handleFormat} style={{ marginRight: 8 }}>
           格式化
         </button>
         <span style={{ fontSize: 12, color: '#999' }}>
@@ -92,9 +92,3 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 };
 
 export default JsonEditor;
-
-
-
-
-
-
