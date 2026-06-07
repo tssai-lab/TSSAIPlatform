@@ -21,6 +21,7 @@ import {
   fetchResourceMonitorSummary,
   fetchTaskList,
 } from '@/services/platform';
+import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 type ResourceSummary = {
   total: number;
@@ -132,6 +133,9 @@ const Dashboard: React.FC = () => {
 
       const allTasks = parseTaskList(taskRes);
       const runningTasks = parseTaskList(runningRes);
+      const enrichedTasks = await enrichTaskItemsWithDisplayNames(allTasks, {
+        skipErrorHandler: true,
+      });
 
       if (summaryRes?.success && summaryRes.data) {
         setResourceSummary(summaryRes.data);
@@ -147,7 +151,7 @@ const Dashboard: React.FC = () => {
           ? countTasksByStatus(runningTasks, 'running')
           : countTasksByStatus(allTasks, 'running'),
       });
-      setLatestTask(pickLatestTask(allTasks));
+      setLatestTask(pickLatestTask(enrichedTasks));
     } finally {
       setLoading(false);
     }
@@ -317,10 +321,10 @@ const Dashboard: React.FC = () => {
                   {latestTask.createTime}
                 </Descriptions.Item>
                 <Descriptions.Item label="模型">
-                  {latestTask.modelName || latestTask.modelVersionId || '-'}
+                  {latestTask.modelName || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="数据集">
-                  {latestTask.datasetName || latestTask.datasetVersionId || '-'}
+                  {latestTask.datasetName || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="进度">
                   {latestTask.progress ?? 0}%
