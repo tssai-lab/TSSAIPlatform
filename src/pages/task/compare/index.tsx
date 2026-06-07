@@ -35,6 +35,7 @@ import {
   fetchTaskList,
   listExperimentVersions,
 } from '@/services/platform';
+import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -59,9 +60,6 @@ const METRIC_LABELS: Record<string, string> = {
   val_accuracy: '验证准确率',
   val_mAP50: '验证 mAP50',
   val_mAP50_95: '验证 mAP50-95',
-  box_loss: '边界框损失',
-  cls_loss: '分类损失',
-  dfl_loss: '分布焦点损失',
 };
 
 /** 任务项（带 runId） */
@@ -161,8 +159,16 @@ function experimentVersionToTaskRow(d: any, hint?: API.TaskItem): API.TaskItem {
     createTime: d.createTime || d.createdAt || '',
     status: d.status || 'pending',
     progress: typeof d.progress === 'number' ? d.progress : 0,
-    modelName: d.modelName || hint?.modelName || '-',
-    datasetName: d.datasetName || hint?.datasetName || '-',
+    modelVersionId: d.modelVersionId || hint?.modelVersionId,
+    datasetVersionId: d.datasetVersionId || hint?.datasetVersionId,
+    modelName:
+      d.modelName && !/^(model-ver-|dataset-ver-)/i.test(d.modelName)
+        ? d.modelName
+        : hint?.modelName,
+    datasetName:
+      d.datasetName && !/^(model-ver-|dataset-ver-)/i.test(d.datasetName)
+        ? d.datasetName
+        : hint?.datasetName,
     experimentId: d.experimentId,
     versionNo: d.versionNo,
   };
@@ -274,7 +280,9 @@ const TaskCompare: React.FC = () => {
                 ),
               );
             }
-            setTaskList(list);
+            setTaskList(
+              await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+            );
             return;
           } catch {
             const list: API.TaskItem[] = [
@@ -312,7 +320,9 @@ const TaskCompare: React.FC = () => {
                 ),
               );
             }
-            setTaskList(list);
+            setTaskList(
+              await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+            );
             return;
           }
         }
@@ -337,14 +347,20 @@ const TaskCompare: React.FC = () => {
           }
         }
 
-        setTaskList(list);
+        setTaskList(
+          await enrichTaskItemsWithDisplayNames(list, { skipErrorHandler: true }),
+        );
       } catch {
         // 后端不可用/超时：仍要保证 URL 带入的 id 能展示并可对比
         const hint = MOCK_TASKS.find((t) => t.modelName && t.datasetName);
         const placeholders = idsFromUrl.map((id) =>
           placeholderTaskRow(id, hint),
         );
-        setTaskList([...placeholders, ...MOCK_TASKS]);
+        setTaskList(
+          await enrichTaskItemsWithDisplayNames([...placeholders, ...MOCK_TASKS], {
+            skipErrorHandler: true,
+          }),
+        );
       } finally {
         setLoading(false);
       }

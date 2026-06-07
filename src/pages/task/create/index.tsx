@@ -1,8 +1,9 @@
 import { PageContainer } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
-import { Button, Form, Input, message, Select, Steps } from 'antd';
-import React, { useEffect, useState } from 'react';
+import { history, useSearchParams } from '@umijs/max';
+import { Alert, Button, Form, Input, message, Select, Steps } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  createExperimentVersion,
   createTask,
   fetchDatasetList,
   fetchModelList,
@@ -30,6 +31,9 @@ const STEP_FIELD_NAMES = [
 const STEP_COUNT = STEP_FIELD_NAMES.length;
 
 const TaskCreate: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const experimentId = searchParams.get('experimentId')?.trim() || '';
+  const isExperimentContinue = !!experimentId;
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
   const [modelOptions, setModelOptions] = useState<any[]>([]);
@@ -69,6 +73,11 @@ const TaskCreate: React.FC = () => {
 
   useEffect(() => {
     const raw = localStorage.getItem('taskCreatePrefill');
+    const queryModelVersionId = searchParams.get('modelVersionId');
+    if (queryModelVersionId) {
+      form.setFieldValue('modelVersionId', queryModelVersionId);
+      setSelectedModelVersionId(queryModelVersionId);
+    }
     if (!raw) return;
     try {
       const prefill = JSON.parse(raw);
@@ -84,7 +93,12 @@ const TaskCreate: React.FC = () => {
     } finally {
       localStorage.removeItem('taskCreatePrefill');
     }
-  }, [form]);
+  }, [form, searchParams]);
+
+  const pageTitle = useMemo(
+    () => (isExperimentContinue ? '基于此版本继续训练' : '发起训练'),
+    [isExperimentContinue],
+  );
 
   const handleNext = async (e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -130,22 +144,47 @@ const TaskCreate: React.FC = () => {
       }
 
       const hyperParams = JSON.parse(hyperParamsRaw);
-      const res: any = await createTask(
-        {
-          name: values.name ?? allValues.name,
-          modelVersionId,
-          codeVersionId,
-          datasetVersionId,
-          hyperParams,
-          remark: values.remark ?? allValues.remark,
-        },
-        { skipErrorHandler: true },
-      );
-      if (res?.success === false) {
-        throw new Error(res?.errorMessage || '创建训练任务失败');
+      let data: API.TrainingExperimentVersion | undefined;
+
+      if (isExperimentContinue) {
+        const res: any = await createExperimentVersion(
+          experimentId,
+          {
+            name: values.name ?? allValues.name,
+            modelVersionId,
+            codeVersionId,
+            datasetVersionId,
+            hyperParams,
+            remark: values.remark ?? allValues.remark,
+          },
+          { skipErrorHandler: true },
+        );
+        if (res?.success === false) {
+          throw new Error(res?.errorMessage || '创建实验新版本失败');
+        }
+        data = res?.data;
+        message.success(
+          `已在实验 ${experimentId} 下创建 v${data?.versionNo ?? '?'}，experimentId 不变`,
+        );
+      } else {
+        const res: any = await createTask(
+          {
+            name: values.name ?? allValues.name,
+            modelVersionId,
+            codeVersionId,
+            datasetVersionId,
+            hyperParams,
+            remark: values.remark ?? allValues.remark,
+          },
+          { skipErrorHandler: true },
+        );
+        if (res?.success === false) {
+          throw new Error(res?.errorMessage || '创建训练任务失败');
+        }
+        data = res?.data;
+        message.success(`创建成功，experimentId=${data?.experimentId || '-'}`);
       }
-      const data = res?.data;
-      message.success(`创建成功，experimentId=${data?.experimentId || '-'}`);
+
       history.push(`/task/detail/${data?.id}`);
     } catch (error: any) {
       message.error(
@@ -221,9 +260,13 @@ const TaskCreate: React.FC = () => {
             options={datasetOptions.map((d: any) => {
               const versionId = d.versionId;
               if (!versionId) return null;
+              const desc = d.versionRemark?.trim();
+              const descPart = desc
+                ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
+                : '';
               return {
                 value: versionId,
-                label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${versionId}`,
+                label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
               };
             }).filter(Boolean)}
           />
@@ -280,7 +323,30 @@ const TaskCreate: React.FC = () => {
   ];
 
   return (
-    <PageContainer title="发起训练" onBack={() => history.push('/task/list')}>
+    <PageContainer
+      title={pageTitle}
+      subTitle={
+        isExperimentContinue
+          ? `在同一 experimentId（${experimentId}）下创建新版本，versionNo 自动递增`
+          : '将自动生成唯一 experimentId，并创建 versionNo=1'
+      }
+      onBack={() =>
+        history.push(
+          isExperimentContinue
+            ? `/task/detail/${encodeURIComponent(experimentId)}`
+            : '/task/list',
+        )
+      }
+    >
+      {isExperimentContinue && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="基于此版本继续训练"
+          description="已预填所选历史版本的模型、数据集、代码与超参数。提交后将在同一 experimentId 下创建下一版（versionNo 自动递增）；历史版本的超参数记录不会被修改。"
+        />
+      )}
       <Form
         form={form}
         preserve
@@ -322,7 +388,7 @@ const TaskCreate: React.FC = () => {
             </Button>
           ) : (
             <Button type="primary" htmlType="button" onClick={handleSubmitClick}>
-              提交训练
+              {isExperimentContinue ? '提交并创建新版本' : '提交训练'}
             </Button>
           )}
         </div>

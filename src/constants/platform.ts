@@ -45,6 +45,9 @@ export const API_CONFIG = {
 
     /** 独立 MLflow 指标接口（经 proxy 转发） */
     MLFLOW_METRICS_HISTORY: '/mlflow-api/2.0/mlflow/metrics/get-history-bulk',
+
+    /** GPU 资源概况（待后端实现） */
+    GPU_OVERVIEW: '/resource/gpu/overview',
   },
 } as const;
 
@@ -92,7 +95,9 @@ export const TASK_STATUS = {
 
 /** 训练可视化配置 */
 export const VISUALIZATION_CONFIG = {
-  REALTIME: false,
+  REALTIME: true,
+  METRICS_POLL_INTERVAL_MS: 4000,
+  TASK_STATUS_POLL_INTERVAL_MS: 3000,
   GENERATE_AFTER_TRAINING: true,
   STORAGE_TYPE: 'cloud',
   SUPPORT_DISTRIBUTED: true,

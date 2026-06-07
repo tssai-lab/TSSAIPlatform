@@ -30,6 +30,7 @@ export default [
     name: '模型管理',
     icon: 'database',
     routes: [
+      { path: '/model', redirect: '/model/list' },
       { path: '/model/list', name: '模型列表', component: './model/list' },
       {
         path: '/model/upload',
@@ -50,6 +51,7 @@ export default [
     name: '数据集管理',
     icon: 'file',
     routes: [
+      { path: '/dataset', redirect: '/dataset/list' },
       {
         path: '/dataset/list',
         name: '数据集列表',
@@ -68,6 +70,12 @@ export default [
         hideInMenu: true,
       },
       {
+        path: '/dataset/preview/:versionId',
+        name: '数据集预览',
+        component: './dataset/preview/[versionId]',
+        hideInMenu: true,
+      },
+      {
         path: '/dataset/point-cloud',
         name: '点云查看',
         component: './dataset/point-cloud',
@@ -79,6 +87,7 @@ export default [
     name: '训练调度',
     icon: 'thunderbolt',
     routes: [
+      { path: '/task', redirect: '/task/list' },
       { path: '/task/list', name: '任务列表', component: './task/list' },
       {
         path: '/task/create',

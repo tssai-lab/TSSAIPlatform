@@ -1,7 +1,7 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { history } from '@umijs/max';
+import { history, useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -97,6 +97,8 @@ const PointCloudMesh: React.FC<{
 );
 
 const DatasetPointCloudViewer: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const queryVersionApplied = useRef(false);
   const [datasetsLoading, setDatasetsLoading] = useState(false);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
   const [versionId, setVersionId] = useState<string>();
@@ -277,6 +279,23 @@ const DatasetPointCloudViewer: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const fromQuery = searchParams.get('versionId');
+    if (
+      !fromQuery ||
+      queryVersionApplied.current ||
+      datasetsLoading ||
+      datasets.length === 0
+    ) {
+      return;
+    }
+    if (!datasets.some((d) => d.versionId === fromQuery)) {
+      return;
+    }
+    queryVersionApplied.current = true;
+    void handleVersionChange(fromQuery);
+  }, [searchParams, datasets, datasetsLoading]);
 
   const handleZipEntryLoad = async () => {
     if (!versionId || !zipEntryPath || !previewInfo) return;

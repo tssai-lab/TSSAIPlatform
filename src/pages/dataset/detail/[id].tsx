@@ -1,48 +1,102 @@
+import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history, useParams } from '@umijs/max';
+import { history, useParams, useSearchParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  Modal,
   message,
   Popconfirm,
   Space,
   Spin,
   Table,
   Tag,
+  Tooltip,
+  Typography,
 } from 'antd';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
+import { resolveDatasetVersionId } from '@/services/dataset';
 import {
+  createDatasetVersion,
   deleteDataset,
+  deleteDatasetVersion,
   fetchDatasetDetail,
   getDownloadUrl,
+  updateDatasetVersion,
 } from '@/services/platform';
+import {
+  DATASET_VERSION_DESC_PLACEHOLDER,
+  DATASET_VERSION_FORMAT_HINT,
+  datasetVersionDescFormRules,
+  datasetVersionFormRules,
+  suggestNextDatasetVersion,
+} from '@/utils/datasetVersion';
 
 const DatasetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const previewSectionRef = useRef<HTMLDivElement>(null);
   const [datasetInfo, setDatasetInfo] = useState<API.DatasetDetail | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [previewVersionId, setPreviewVersionId] = useState<string>();
+
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [versionModalMode, setVersionModalMode] = useState<'create' | 'edit'>(
+    'create',
+  );
+  const [versionModalLoading, setVersionModalLoading] = useState(false);
+  const [editingVersion, setEditingVersion] =
+    useState<API.DatasetVersionDetail | null>(null);
+  const [versionForm] = Form.useForm();
+
+  const existingVersionNames = useMemo(
+    () => datasetInfo?.versions.map((v) => v.version).filter(Boolean) ?? [],
+    [datasetInfo],
+  );
+
+  const loadDetail = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const res = await fetchDatasetDetail(id, { skipErrorHandler: true });
+      const detail =
+        (res?.data as (API.DatasetDetail & { defaultVersionId?: string }) | undefined) ??
+        null;
+      setDatasetInfo(detail);
+      const assetId = detail?.id;
+      const queryVersionId = searchParams.get('versionId') ?? undefined;
+      const defaultVersionId =
+        (queryVersionId && queryVersionId !== assetId
+          ? queryVersionId
+          : undefined) ??
+        detail?.defaultVersionId ??
+        resolveDatasetVersionId(detail?.latestVersion, assetId) ??
+        detail?.versions
+          .map((v) => resolveDatasetVersionId(v, assetId))
+          .find(Boolean);
+      setPreviewVersionId(defaultVersionId);
+    } catch (error: any) {
+      message.error(
+        error?.info?.message || error?.message || '加载数据集详情失败',
+      );
+      setDatasetInfo(null);
+      setPreviewVersionId(undefined);
+    } finally {
+      setLoading(false);
+    }
+  }, [id, searchParams]);
 
   useEffect(() => {
-    if (!id) {
-      return;
-    }
-    setLoading(true);
-    fetchDatasetDetail(id, { skipErrorHandler: true })
-      .then((res) => {
-        setDatasetInfo((res?.data as API.DatasetDetail | undefined) ?? null);
-      })
-      .catch((error: any) => {
-        message.error(
-          error?.info?.message || error?.message || '加载数据集详情失败',
-        );
-        setDatasetInfo(null);
-      })
-      .finally(() => setLoading(false));
-  }, [id]);
+    loadDetail();
+  }, [loadDetail]);
 
   const handleDelete = async () => {
     if (!id) {
@@ -64,6 +118,124 @@ const DatasetDetail: React.FC = () => {
     }
     window.open(getDownloadUrl(storagePath), '_blank');
   };
+
+  const handleUploadNewVersion = () => {
+    if (!datasetInfo || !id) return;
+    const params = new URLSearchParams({
+      assetId: id,
+      datasetName: datasetInfo.name,
+      type: datasetInfo.type,
+    });
+    history.push(`/dataset/upload?${params.toString()}`);
+  };
+
+  const openCreateVersion = () => {
+    setVersionModalMode('create');
+    setEditingVersion(null);
+    versionForm.setFieldsValue({
+      version: suggestNextDatasetVersion(existingVersionNames),
+      remark: '',
+    });
+    setVersionModalOpen(true);
+  };
+
+  const openEditVersion = (record: API.DatasetVersionDetail) => {
+    setVersionModalMode('edit');
+    setEditingVersion(record);
+    versionForm.setFieldsValue({
+      remark: record.remark ?? '',
+    });
+    setVersionModalOpen(true);
+  };
+
+  const submitVersionModal = async () => {
+    if (!id) return;
+    try {
+      const values =
+        versionModalMode === 'create'
+          ? await versionForm.validateFields()
+          : await versionForm.validateFields(['remark']);
+      setVersionModalLoading(true);
+      const remark = values.remark?.trim();
+      if (versionModalMode === 'create') {
+        const version = values.version.trim();
+        await createDatasetVersion(
+          { assetId: id, version, remark },
+          { skipErrorHandler: true },
+        );
+        message.success('版本记录已创建，请通过「上传新版本」绑定数据文件');
+      } else if (editingVersion) {
+        await updateDatasetVersion(
+          editingVersion.id,
+          { version: editingVersion.version, remark },
+          { skipErrorHandler: true },
+        );
+        message.success('版本描述已更新');
+      }
+      setVersionModalOpen(false);
+      await loadDetail();
+    } catch (error: any) {
+      if (error?.errorFields) return;
+      message.error(error?.info?.message || error?.message || '操作失败');
+    } finally {
+      setVersionModalLoading(false);
+    }
+  };
+
+  const handleDeleteVersion = async (versionId: string) => {
+    try {
+      await deleteDatasetVersion(versionId);
+      message.success('版本已删除');
+      if (previewVersionId === versionId) {
+        setPreviewVersionId(undefined);
+      }
+      await loadDetail();
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '删除失败');
+    }
+  };
+
+  const datasetTypeColor: Record<string, string> = {
+    CV: 'blue',
+    NLP: 'green',
+    POINT_CLOUD: 'purple',
+  };
+
+  const selectPreviewVersion = (
+    version: API.DatasetVersionDetail,
+    scrollToPreview?: boolean,
+  ) => {
+    const versionId =
+      resolveDatasetVersionId(version, datasetInfo?.id) ?? version.id;
+    if (!versionId || versionId === datasetInfo?.id) {
+      message.warning('无法识别数据集版本 ID，请确认后端返回的版本 id 字段');
+      return;
+    }
+    setPreviewVersionId(versionId);
+    if (scrollToPreview) {
+      requestAnimationFrame(() => {
+        previewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  };
+
+  const handleVersionFullscreenPreview = (versionId: string) => {
+    if (datasetInfo?.type === 'POINT_CLOUD') {
+      history.push(`/dataset/point-cloud?versionId=${encodeURIComponent(versionId)}`);
+      return;
+    }
+    history.push(`/dataset/preview/${encodeURIComponent(versionId)}`);
+  };
+
+  const previewVersion = datasetInfo?.versions.find((v) => v.id === previewVersionId);
+  const isPointCloud = datasetInfo?.type === 'POINT_CLOUD';
+  const supportsInlinePreview =
+    datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP';
+
+  const versionFormRules = useMemo(
+    () => datasetVersionFormRules(existingVersionNames),
+    [existingVersionNames],
+  );
 
   if (loading) {
     return (
@@ -92,10 +264,13 @@ const DatasetDetail: React.FC = () => {
   return (
     <PageContainer
       title="数据集详情"
-      subTitle="查看与后端对齐的数据集资产和版本信息"
+      subTitle="数据集资产与版本管理；版本号采用 vX.Y.Z，版本描述记录更新原因与内容"
       onBack={() => history.push('/dataset/list')}
       extra={
         <Space>
+          <Button type="primary" onClick={handleUploadNewVersion}>
+            上传新版本
+          </Button>
           <Button
             onClick={() =>
               handleDownload(datasetInfo.latestVersion?.storagePath)
@@ -121,7 +296,7 @@ const DatasetDetail: React.FC = () => {
             <strong>{datasetInfo.name}</strong>
           </Descriptions.Item>
           <Descriptions.Item label="类型">
-            <Tag color={datasetInfo.type === 'CV' ? 'blue' : 'green'}>
+            <Tag color={datasetTypeColor[datasetInfo.type] ?? 'default'}>
               {datasetInfo.type}
             </Tag>
           </Descriptions.Item>
@@ -131,44 +306,218 @@ const DatasetDetail: React.FC = () => {
           <Descriptions.Item label="版本数量">
             {datasetInfo.versions.length}
           </Descriptions.Item>
-          <Descriptions.Item label="备注" span={2}>
+          <Descriptions.Item label="资产备注" span={2}>
             {datasetInfo.remark || '-'}
           </Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card title="版本列表">
+      <Card
+        title="版本列表"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button type="dashed" icon={<PlusOutlined />} onClick={openCreateVersion}>
+            新建版本记录
+          </Button>
+        }
+      >
         <Table
           dataSource={datasetInfo.versions}
           rowKey="id"
           pagination={false}
+          scroll={{ x: 1040 }}
           locale={{ emptyText: '暂无版本记录' }}
+          onRow={(record) => ({
+            onClick: () => selectPreviewVersion(record, supportsInlinePreview),
+            style: {
+              cursor: 'pointer',
+              background:
+                (resolveDatasetVersionId(record, datasetInfo.id) ?? record.id) ===
+                previewVersionId
+                  ? '#e6f4ff'
+                  : undefined,
+            },
+          })}
           columns={[
-            { title: '版本号', dataIndex: 'version', key: 'version' },
-            { title: '文件名', dataIndex: 'fileName', key: 'fileName' },
-            { title: '大小', dataIndex: 'size', key: 'size' },
-            { title: '上传时间', dataIndex: 'createdAt', key: 'createdAt' },
+            { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
+            { title: '文件名', dataIndex: 'fileName', key: 'fileName', width: 140, ellipsis: true },
+            { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
+            { title: '上传时间', dataIndex: 'createdAt', key: 'createdAt', width: 180 },
             {
-              title: '备注',
+              title: '版本描述',
               dataIndex: 'remark',
               key: 'remark',
+              width: 160,
               ellipsis: true,
+              render: (text: string) =>
+                text ? (
+                  <Tooltip title={text}>
+                    <span>{text}</span>
+                  </Tooltip>
+                ) : (
+                  <Typography.Text type="secondary">未填写</Typography.Text>
+                ),
             },
             {
               title: '操作',
               key: 'action',
+              width: 360,
+              fixed: 'right',
+              align: 'left',
               render: (_, record: API.DatasetVersionDetail) => (
-                <Button
-                  type="link"
-                  onClick={() => handleDownload(record.storagePath)}
+                <Space
+                  size={0}
+                  wrap
+                  split={<span style={{ color: '#f0f0f0' }}>|</span>}
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  下载
-                </Button>
+                  <Button
+                    type="link"
+                    style={{ paddingLeft: 0 }}
+                    onClick={() =>
+                      selectPreviewVersion(record, supportsInlinePreview)
+                    }
+                  >
+                    {supportsInlinePreview ? '选中预览' : '选中'}
+                  </Button>
+                  <Button
+                    type="link"
+                    icon={<EditOutlined />}
+                    onClick={() => openEditVersion(record)}
+                  >
+                    编辑描述
+                  </Button>
+                  <Button
+                    type="link"
+                    onClick={() => handleVersionFullscreenPreview(record.id)}
+                  >
+                    全屏预览
+                  </Button>
+                  <Button
+                    type="link"
+                    onClick={() => handleDownload(record.storagePath)}
+                  >
+                    下载
+                  </Button>
+                  <Popconfirm
+                    title="确认删除该版本？"
+                    onConfirm={() => handleDeleteVersion(record.id)}
+                  >
+                    <Button type="link" danger>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
               ),
             },
           ]}
         />
+        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+          版本号须为 vX.Y.Z 格式；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
+        </Typography.Text>
       </Card>
+
+      <div ref={previewSectionRef}>
+        <Card
+          title="内容预览"
+          extra={
+            previewVersion ? (
+              <Space>
+                <Typography.Text type="secondary">
+                  当前版本：{previewVersion.version}
+                  {previewVersion.fileName ? ` · ${previewVersion.fileName}` : ''}
+                </Typography.Text>
+                {previewVersionId && (
+                  <Button
+                    size="small"
+                    onClick={() => handleVersionFullscreenPreview(previewVersionId)}
+                  >
+                    全屏预览
+                  </Button>
+                )}
+              </Space>
+            ) : null
+          }
+        >
+          {isPointCloud ? (
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Alert
+                type="info"
+                showIcon
+                message="点云数据集需在专用页面中加载三维预览（体积较大，未内嵌于详情页）。"
+              />
+              {previewVersionId ? (
+                <Button
+                  type="primary"
+                  onClick={() => handleVersionFullscreenPreview(previewVersionId)}
+                >
+                  打开点云预览
+                </Button>
+              ) : (
+                <Empty description="请先选择版本" />
+              )}
+            </Space>
+          ) : supportsInlinePreview ? (
+            <DatasetPreviewPanel
+              key={previewVersionId}
+              versionId={previewVersionId}
+              compact
+            />
+          ) : (
+            <Empty description="当前类型不支持在线预览" />
+          )}
+        </Card>
+      </div>
+
+      <Modal
+        title={versionModalMode === 'create' ? '新建版本记录' : '编辑版本描述'}
+        open={versionModalOpen}
+        onCancel={() => setVersionModalOpen(false)}
+        onOk={submitVersionModal}
+        confirmLoading={versionModalLoading}
+        destroyOnClose
+        width={560}
+      >
+        <Form form={versionForm} layout="vertical">
+          {versionModalMode === 'create' ? (
+            <Form.Item
+              name="version"
+              label="版本号"
+              rules={versionFormRules}
+              extra={DATASET_VERSION_FORMAT_HINT}
+            >
+              <Input placeholder="例如 v1.0.0" />
+            </Form.Item>
+          ) : (
+            <Form.Item label="版本号">
+              <Typography.Text strong>{editingVersion?.version || '-'}</Typography.Text>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#8c8c8c' }}>
+                版本号创建后不可修改；如需新版本请使用「上传新版本」。
+              </div>
+            </Form.Item>
+          )}
+          <Form.Item
+            name="remark"
+            label="版本描述"
+            rules={datasetVersionDescFormRules()}
+            extra="说明本版本的更新原因与内容"
+          >
+            <Input.TextArea
+              rows={4}
+              placeholder={DATASET_VERSION_DESC_PLACEHOLDER}
+              showCount
+              maxLength={2000}
+            />
+          </Form.Item>
+          {versionModalMode === 'create' && (
+            <Alert
+              type="info"
+              showIcon
+              message="创建版本记录后，请通过「上传新版本」上传数据文件完成绑定。"
+            />
+          )}
+        </Form>
+      </Modal>
     </PageContainer>
   );
 };

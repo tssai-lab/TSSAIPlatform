@@ -5,7 +5,8 @@ import { Button, message, Popconfirm, Space } from 'antd';
 import React from 'react';
 import { MOCK_MODELS } from '@/constants/mockData';
 import {
-  deleteModel,
+  deleteModelAsset,
+  deleteModelVersion,
   fetchModelList as fetchModelListService,
   getDownloadUrl,
 } from '@/services/platform';
@@ -24,9 +25,14 @@ const ModelList: React.FC = () => {
     }
   };
 
-  const handleDelete = async (modelId: string) => {
+  const handleDeleteAsset = async (record: API.ModelItem) => {
+    const assetId = record.assetId || record.id;
     try {
-      await deleteModel(modelId);
+      if (record.assetId) {
+        await deleteModelAsset(assetId);
+      } else {
+        await deleteModelVersion(record.id);
+      }
       message.success('删除成功');
       window.location.reload();
     } catch (error: any) {
@@ -55,10 +61,11 @@ const ModelList: React.FC = () => {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
-      width: 72,
+      width: 88,
       valueEnum: {
         CV: { text: 'CV' },
         NLP: { text: 'NLP' },
+        POINT_CLOUD: { text: '点云' },
       },
     },
     {
@@ -87,27 +94,41 @@ const ModelList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 168,
+      width: 180,
+      align: 'left',
       hideInSearch: true,
       render: (_, record) => (
-        <Space size={4} wrap={false}>
+        <Space size={0} wrap={false}>
           <Button
             type="link"
-            onClick={() => history.push(`/model/detail/${record.id}`)}
+            style={{ paddingLeft: 0 }}
+            onClick={() => {
+              const assetId = record.assetId || record.id;
+              const query =
+                record.assetId && record.id !== record.assetId
+                  ? `?versionId=${encodeURIComponent(record.id)}`
+                  : '';
+              history.push(`/model/detail/${assetId}${query}`);
+            }}
           >
             详情
           </Button>
           <Button
             type="link"
+            style={{ paddingInline: 4 }}
             onClick={() => handleDownload(record.storagePath)}
           >
             下载
           </Button>
           <Popconfirm
-            title="确认删除该模型？"
-            onConfirm={() => handleDelete(record.id)}
+            title={
+              record.assetId
+                ? '确认删除该模型资产及全部版本？'
+                : '确认删除该模型版本？'
+            }
+            onConfirm={() => handleDeleteAsset(record)}
           >
-            <Button type="link" danger>
+            <Button type="link" danger style={{ paddingInline: 4 }}>
               删除
             </Button>
           </Popconfirm>
@@ -119,16 +140,12 @@ const ModelList: React.FC = () => {
   return (
     <PageContainer
       title="模型管理"
-      subTitle="浏览已上传的模型版本"
-      extra={[
-        <Button
-          key="upload"
-          type="primary"
-          onClick={() => history.push('/model/upload')}
-        >
+      subTitle="浏览模型资产与版本（列表展示各资产最新版本）"
+      extra={
+        <Button type="primary" onClick={() => history.push('/model/upload')}>
           + 上传模型
-        </Button>,
-      ]}
+        </Button>
+      }
     >
       <ProTable
         columns={columns}

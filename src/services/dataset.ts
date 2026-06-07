@@ -17,9 +17,60 @@ function formatBytes(sizeBytes?: number) {
   return `${value.toFixed(2)} ${units[unitIndex]}`;
 }
 
-function mapDatasetVersion(version: DatasetVersion): API.DatasetVersionDetail {
+/** 从版本记录解析数据集版本 ID（预览/训练必须用版本 ID，不能用资产 ID） */
+export function resolveDatasetVersionId(
+  version?: Partial<DatasetVersion> | null,
+  assetId?: string,
+): string | undefined {
+  if (!version) {
+    return undefined;
+  }
+  const extra = version as DatasetVersion & {
+    datasetVersionId?: string;
+    versionId?: string;
+  };
+  const candidates = [
+    version.id,
+    extra.datasetVersionId,
+    extra.versionId,
+  ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+
+  for (const candidate of candidates) {
+    if (assetId && candidate === assetId) {
+      continue;
+    }
+    return candidate;
+  }
+  return undefined;
+}
+
+function normalizeDatasetVersionList(raw: unknown): DatasetVersion[] {
+  if (Array.isArray(raw)) {
+    return raw as DatasetVersion[];
+  }
+  if (raw && typeof raw === 'object') {
+    const obj = raw as { data?: unknown; list?: unknown; records?: unknown };
+    if (Array.isArray(obj.data)) {
+      return obj.data as DatasetVersion[];
+    }
+    if (Array.isArray(obj.list)) {
+      return obj.list as DatasetVersion[];
+    }
+    if (Array.isArray(obj.records)) {
+      return obj.records as DatasetVersion[];
+    }
+  }
+  return [];
+}
+
+function mapDatasetVersion(
+  version: DatasetVersion,
+  assetId?: string,
+): API.DatasetVersionDetail {
+  const versionId = resolveDatasetVersionId(version, assetId) ?? version.id;
   return {
     ...version,
+    id: versionId,
     size: formatBytes(version.sizeBytes),
   };
 }
@@ -234,6 +285,45 @@ export async function listDatasetVersions(assetId?: string, options?: { [key: st
   });
 }
 
+/** 查询单个数据集版本详情。 */
+export async function getDatasetVersion(id: string, options?: { [key: string]: any }) {
+  return request<{ data: DatasetVersion }>(
+    '/dataset-versions/' + encodeURIComponent(id),
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
+}
+
+/** 更新数据集版本号与版本描述（remark）。 */
+export async function updateDatasetVersion(
+  id: string,
+  body: Partial<Pick<DatasetVersion, 'version' | 'remark' | 'assetId'>>,
+  options?: { [key: string]: any },
+) {
+  return request<{ data: DatasetVersion }>(
+    '/dataset-versions/' + encodeURIComponent(id),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** 删除数据集版本。若被训练实验引用会失败。 */
+export async function deleteDatasetVersion(id: string, options?: { [key: string]: any }) {
+  return request<{ data: unknown }>(
+    '/dataset-versions/' + encodeURIComponent(id),
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
+}
+
 /** 获取数据集列表页聚合数据，可按 keyword、类型、分页筛选。 */
 export async function getDatasetList(params?: DatasetListQuery, options?: { [key: string]: any }) {
   return request<{ data: { data: DatasetListItem[]; total: number } }>('/dataset/list', {
@@ -316,7 +406,7 @@ export async function datasetUploadFolder(
 ) {
   const formData = new FormData();
   formData.append('datasetName', body.datasetName);
-  formData.append('version', body.version || 'v1');
+  formData.append('version', body.version || 'v1.0.0');
   formData.append('type', body.type);
   if (body.cvTaskType) {
     formData.append('cvTaskType', body.cvTaskType);
@@ -385,9 +475,46 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
   if (!asset) {
     return { data: undefined };
   }
-  const versions = (versionRes?.data ?? [])
-    .map((version) => mapDatasetVersion(version))
-    .sort((left, right) => (left.createdAt && right.createdAt ? right.createdAt.localeCompare(left.createdAt) : 0));
+  let listLatestVersionId: string | undefined;
+  try {
+    const listRes = await getDatasetList(
+      { pageSize: 200, type: asset.type as TaskType },
+      options,
+    );
+    const row = (listRes?.data?.data ?? []).find(
+      (item) => (item.assetId || item.id) === asset.id,
+    );
+    listLatestVersionId = row?.versionId;
+  } catch {
+    // 列表兜底失败不影响详情主流程
+  }
+
+  const versions = normalizeDatasetVersionList(versionRes?.data)
+    .map((version) => mapDatasetVersion(version, asset.id))
+    .filter((v) => !!v.id)
+    .sort((left, right) =>
+      left.createdAt && right.createdAt
+        ? right.createdAt.localeCompare(left.createdAt)
+        : 0,
+    );
+
+  const pickDefaultVersionId = (): string | undefined => {
+    for (const v of versions) {
+      const vid = resolveDatasetVersionId(v, asset.id);
+      if (vid) {
+        return vid;
+      }
+    }
+    if (listLatestVersionId && listLatestVersionId !== asset.id) {
+      return listLatestVersionId;
+    }
+    return undefined;
+  };
+
+  const defaultVersionId = pickDefaultVersionId();
+  const latestVersion =
+    versions.find((v) => v.id === defaultVersionId) ?? versions[0];
+
   return {
     data: {
       id: asset.id,
@@ -396,10 +523,12 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
       remark: asset.remark,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,
-      uploadTime: versions[0]?.createdAt ?? asset.createdAt,
-      latestVersion: versions[0],
+      uploadTime: latestVersion?.createdAt ?? asset.createdAt,
+      latestVersion,
       versions,
-    } as API.DatasetDetail,
+      /** 列表接口返回的最新版本 ID，供预览兜底 */
+      defaultVersionId,
+    } as API.DatasetDetail & { defaultVersionId?: string },
   };
 }
 
