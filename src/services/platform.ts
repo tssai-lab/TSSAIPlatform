@@ -80,13 +80,6 @@ export {
 export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
 
 export {
-  fetchGpuResourceOverview,
-  type GpuDevice,
-  type GpuDeviceStatus,
-  type GpuResourceOverview,
-} from './gpu';
-
-export {
   getPointCloudPreview,
   getPointCloudFile,
   getPointCloudZipFile,
