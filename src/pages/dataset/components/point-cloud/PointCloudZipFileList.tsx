@@ -32,7 +32,7 @@ export type PointCloudZipFileListProps = {
   onPreview: (entry: PointCloudZipEntry) => void;
 };
 
-const DEFAULT_PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 10;
 /** 表体固定高度，超出部分在列表内滚动 */
 const TABLE_BODY_SCROLL_HEIGHT = 200;
 
@@ -157,7 +157,13 @@ const PointCloudZipFileList: React.FC<PointCloudZipFileListProps> = ({
           showTotal: (total) => `共 ${total} 条`,
         }}
         onChange={handleTableChange}
-        locale={{ emptyText: keyword ? '无匹配文件' : 'zip 内未找到点云文件' }}
+        locale={{
+          emptyText: loading
+            ? '正在加载 zip 内点云文件列表…'
+            : keyword
+              ? '无匹配文件'
+              : 'zip 内未找到点云文件',
+        }}
         rowClassName={(record) =>
           record.path === selectedPath ? 'point-cloud-zip-row-selected' : ''
         }

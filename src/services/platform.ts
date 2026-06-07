@@ -81,8 +81,8 @@ export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files'
 
 export {
   getPointCloudPreview,
-  getPointCloudFile,
-  getPointCloudZipFile,
+  fetchPointCloudPreviewBlob,
+  pointCloudBlobToArrayBuffer,
   fetchPointCloudPreviewInfo,
   PointCloudFileFormat,
   PointCloudPreviewFormat,

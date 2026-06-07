@@ -9,13 +9,13 @@ import React, {
   useState,
 } from 'react';
 import {
+  fetchPointCloudPreviewBlob,
   fetchPointCloudPreviewInfo,
-  getPointCloudFile,
-  getPointCloudZipFile,
   PointCloudFileFormat,
   PointCloudPreviewFormat,
   type PointCloudPreviewInfo,
   type PointCloudZipEntry,
+  pointCloudBlobToArrayBuffer,
 } from '@/services/pointcloud';
 import { getApiErrorMessage } from '@/utils/apiError';
 import PointCloudCanvas from './PointCloudCanvas';
@@ -30,12 +30,16 @@ import {
 
 export type PointCloudPreviewPanelRef = {
   loadVersion: (version: API.DatasetVersionDetail) => Promise<void>;
-  clearSelection: () => void;
+  cancelPreview: () => void;
 };
 
 export type PointCloudPreviewPanelProps = {
   onSelectionChange?: (versionId?: string) => void;
 };
+
+function isZipFileName(fileName?: string | null) {
+  return !!fileName?.toLowerCase().endsWith('.zip');
+}
 
 const PointCloudPreviewPanel = forwardRef<
   PointCloudPreviewPanelRef,
@@ -47,12 +51,19 @@ const PointCloudPreviewPanel = forwardRef<
     null,
   );
   const [zipEntryPath, setZipEntryPath] = useState<string>();
-  const [loading, setLoading] = useState(false);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PointCloudLoadResult | null>(null);
+  const [previewIdleHint, setPreviewIdleHint] = useState<
+    'cancelled' | 'cleared' | null
+  >(null);
   const controlsRef = useRef<any>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
   const viewRadiusRef = useRef(1);
+
+  const loading = metaLoading || fileLoading;
 
   const disposeResult = useCallback(() => {
     setResult((prev) => {
@@ -130,9 +141,9 @@ const PointCloudPreviewPanel = forwardRef<
     [disposeResult, resetView],
   );
 
-  const loadSingleFile = useCallback(
+  const loadFromPreviewUrl = useCallback(
     async (
-      datasetVersionId: string,
+      previewUrl: string,
       format: PointCloudFileFormat,
       fileName: string,
     ) => {
@@ -140,55 +151,83 @@ const PointCloudPreviewPanel = forwardRef<
       const controller = new AbortController();
       loadAbortRef.current = controller;
 
-      setLoading(true);
+      setPreviewIdleHint(null);
+      setFileLoading(true);
       setError(null);
       try {
-        const blob = await getPointCloudFile(datasetVersionId, {
+        const blob = await fetchPointCloudPreviewBlob(previewUrl, {
           signal: controller.signal,
           skipErrorHandler: true,
         });
-        const buffer = await blob.arrayBuffer();
+        if (cancelledRef.current) return;
+
+        const buffer = await pointCloudBlobToArrayBuffer(blob);
+        if (cancelledRef.current) return;
+
         await loadGeometry(fileName, format, buffer);
+        if (cancelledRef.current) return;
+
         message.success('点云加载成功');
       } catch (e: unknown) {
-        if ((e as Error)?.name !== 'AbortError') {
+        if ((e as Error)?.name !== 'AbortError' && !cancelledRef.current) {
           setError(getApiErrorMessage(e));
         }
       } finally {
-        setLoading(false);
+        if (!cancelledRef.current) {
+          setFileLoading(false);
+        }
       }
     },
     [loadGeometry],
   );
 
-  const clearSelection = useCallback(() => {
-    loadAbortRef.current?.abort();
-    setActiveVersion(null);
-    setZipEntryPath(undefined);
-    setPreviewInfo(null);
-    setError(null);
-    disposeResult();
-    onSelectionChange?.(undefined);
-  }, [disposeResult, onSelectionChange]);
+  const cancelPreview = useCallback(
+    (options?: { silent?: boolean }) => {
+      cancelledRef.current = true;
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
+      setMetaLoading(false);
+      setFileLoading(false);
+      setError(null);
+      disposeResult();
+      setPreviewIdleHint('cancelled');
+
+      if (!options?.silent) {
+        const isZip =
+          previewInfo?.format === PointCloudPreviewFormat.ZIP ||
+          isZipFileName(activeVersion?.fileName);
+        message.info(
+          isZip
+            ? '预览已取消，可再次点击「开始预览」重新预览'
+            : '预览已取消，可再次点击版本列表【选中预览】重新预览',
+        );
+      }
+    },
+    [activeVersion?.fileName, disposeResult, previewInfo?.format],
+  );
 
   const loadVersion = useCallback(
     async (version: API.DatasetVersionDetail) => {
+      cancelledRef.current = false;
       loadAbortRef.current?.abort();
       setActiveVersion(version);
       onSelectionChange?.(version.id);
       setZipEntryPath(undefined);
       setPreviewInfo(null);
+      setPreviewIdleHint(null);
       setError(null);
       disposeResult();
 
-      setLoading(true);
+      setMetaLoading(true);
       try {
         const info = await fetchPointCloudPreviewInfo(version.id, {
           skipErrorHandler: true,
         });
+        if (cancelledRef.current) return;
+
         setPreviewInfo(info);
 
-        if (info.previewSupported === false) {
+        if (!info.previewSupported) {
           setError(info.message || '当前文件不支持在线预览');
           return;
         }
@@ -197,34 +236,40 @@ const PointCloudPreviewPanel = forwardRef<
           return;
         }
 
-        if (info.previewUrl && info.format === PointCloudPreviewFormat.PCD) {
-          await loadSingleFile(
-            version.id,
+        if (!info.previewUrl) {
+          setError(info.message || '缺少 previewUrl，无法加载点云');
+          return;
+        }
+
+        if (info.format === PointCloudPreviewFormat.PCD) {
+          await loadFromPreviewUrl(
+            info.previewUrl,
             PointCloudFileFormat.PCD,
             info.fileName,
           );
-        } else if (
-          info.previewUrl &&
-          info.format === PointCloudPreviewFormat.PLY
-        ) {
-          await loadSingleFile(
-            version.id,
+        } else if (info.format === PointCloudPreviewFormat.PLY) {
+          await loadFromPreviewUrl(
+            info.previewUrl,
             PointCloudFileFormat.PLY,
             info.fileName,
           );
         }
       } catch (e: unknown) {
-        setError(getApiErrorMessage(e));
+        if (!cancelledRef.current) {
+          setError(getApiErrorMessage(e));
+        }
       } finally {
-        setLoading(false);
+        if (!cancelledRef.current) {
+          setMetaLoading(false);
+        }
       }
     },
-    [disposeResult, loadSingleFile, onSelectionChange],
+    [disposeResult, loadFromPreviewUrl, onSelectionChange],
   );
 
-  useImperativeHandle(ref, () => ({ loadVersion, clearSelection }), [
+  useImperativeHandle(ref, () => ({ loadVersion, cancelPreview }), [
     loadVersion,
-    clearSelection,
+    cancelPreview,
   ]);
 
   const zipEntries: PointCloudZipEntry[] = useMemo(
@@ -245,39 +290,60 @@ const PointCloudPreviewPanel = forwardRef<
       return;
     }
 
+    if (!entry.previewUrl) {
+      setError(entry.message || '缺少 previewUrl，无法加载点云');
+      return;
+    }
+
     setZipEntryPath(entry.path);
+    cancelledRef.current = false;
+    setPreviewIdleHint(null);
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
 
-    setLoading(true);
+    setFileLoading(true);
     setError(null);
     disposeResult();
     try {
-      const blob = await getPointCloudZipFile(activeVersion.id, entry.path, {
+      const blob = await fetchPointCloudPreviewBlob(entry.previewUrl, {
         signal: controller.signal,
         skipErrorHandler: true,
       });
-      const buffer = await blob.arrayBuffer();
+      if (cancelledRef.current) return;
+
+      const buffer = await pointCloudBlobToArrayBuffer(blob);
+      if (cancelledRef.current) return;
+
       await loadGeometry(entry.fileName, entry.format, buffer);
+      if (cancelledRef.current) return;
+
       message.success('点云加载成功');
     } catch (e: unknown) {
-      if ((e as Error)?.name !== 'AbortError') {
+      if ((e as Error)?.name !== 'AbortError' && !cancelledRef.current) {
         setError(getApiErrorMessage(e));
       }
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) {
+        setFileLoading(false);
+      }
     }
   };
 
   const handleClearPreview = () => {
-    loadAbortRef.current?.abort();
     setError(null);
     disposeResult();
+    setPreviewIdleHint('cleared');
   };
 
+  const isZipContext =
+    previewInfo?.format === PointCloudPreviewFormat.ZIP ||
+    isZipFileName(activeVersion?.fileName);
+
+  const isActivelyPreviewing = !previewIdleHint && (loading || !!result);
+
   const versionInfoText = activeVersion
-    ? `正在预览：${activeVersion.version}${activeVersion.fileName ? ` · ${activeVersion.fileName}` : ''}`
+    ? `${isActivelyPreviewing ? '正在预览' : '已选版本'}：${activeVersion.version}${activeVersion.fileName ? ` · ${activeVersion.fileName}` : ''}`
     : '尚未选择版本，请在上方版本列表点击【选中预览】';
 
   const selectedZipEntry = zipEntryPath
@@ -291,18 +357,31 @@ const PointCloudPreviewPanel = forwardRef<
   const isZipPreview =
     previewInfo?.format === PointCloudPreviewFormat.ZIP &&
     !result &&
-    !zipEntryPath;
+    !zipEntryPath &&
+    !previewIdleHint;
   const zipHintText = isZipPreview
     ? previewInfo?.message || '请选择包内文件后点击「开始预览」'
     : null;
 
-  const isZipContext = previewInfo?.format === PointCloudPreviewFormat.ZIP;
+  const showZipFileList = !!activeVersion && isZipContext;
+
+  const cancelledHintText = isZipContext
+    ? '预览已取消，可再次点击「开始预览」重新预览'
+    : '预览已取消，可再次点击版本列表【选中预览】重新预览';
+
+  const clearedHintText = isZipContext
+    ? '预览已清除，可再次点击「开始预览」重新查看'
+    : '预览已清除，可再次点击版本列表【选中预览】重新加载';
 
   const canvasPlaceholder = !activeVersion
-    ? '请在版本列表点击【加载预览】'
-    : previewInfo?.format === PointCloudPreviewFormat.ZIP && !result
-      ? '请在上方列表选择文件并点击「开始预览」'
-      : '预览已清除，可再次点击版本列表【加载预览】重新加载';
+    ? '请在版本列表点击【选中预览】'
+    : previewIdleHint === 'cancelled'
+      ? cancelledHintText
+      : previewIdleHint === 'cleared'
+        ? clearedHintText
+        : previewInfo?.format === PointCloudPreviewFormat.ZIP && !result
+          ? '请在上方列表选择文件并点击「开始预览」'
+          : '';
 
   return (
     <Card
@@ -369,14 +448,16 @@ const PointCloudPreviewPanel = forwardRef<
       }
       extra={
         activeVersion ? (
-          <Button onClick={clearSelection}>清除选择</Button>
+          <Button onClick={() => cancelPreview()}>取消预览</Button>
         ) : undefined
       }
     >
-      {previewInfo?.format === PointCloudPreviewFormat.ZIP && (
+      {showZipFileList && activeVersion && (
         <PointCloudZipFileList
+          key={activeVersion.id}
           files={zipEntries}
           selectedPath={zipEntryPath}
+          loading={metaLoading}
           onSelect={handleZipEntrySelect}
           onPreview={handleZipEntryPreview}
         />

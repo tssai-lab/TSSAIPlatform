@@ -368,11 +368,6 @@ const DatasetDetail: React.FC = () => {
                   : undefined,
             },
           })}
-          rowClassName={(record) =>
-            record.id === previewVersionId
-              ? 'dataset-preview-version-row-active'
-              : ''
-          }
           columns={[
             {
               title: '版本号',
@@ -493,20 +488,10 @@ const DatasetDetail: React.FC = () => {
       )}
 
       {isPointCloud && (
-        <>
-          <style>{`
-            .dataset-preview-version-row-active > td {
-              background-color: #e6f4ff !important;
-            }
-            .dataset-preview-version-row-active:hover > td {
-              background-color: #bae0ff !important;
-            }
-          `}</style>
-          <PointCloudPreviewPanel
-            ref={previewPanelRef}
-            onSelectionChange={setPreviewVersionId}
-          />
-        </>
+        <PointCloudPreviewPanel
+          ref={previewPanelRef}
+          onSelectionChange={setPreviewVersionId}
+        />
       )}
 
       <Modal

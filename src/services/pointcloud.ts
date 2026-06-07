@@ -7,6 +7,7 @@ import type { TaskType } from './dataset';
  * 基础路径：/dataset/point-cloud（全局 baseURL 已配置 /api）。
  * 渲染由前端 Three.js、PCDLoader、PLYLoader 完成；
  * 后端提供鉴权、预览元信息与点云文件流，不依赖 storagePath。
+ * 文件流须使用 preview 接口返回的 previewUrl，不自行拼接路径。
  */
 
 /** 点云接口请求超时（覆盖 app.tsx 全局 10s，大文件拉流需更长时间） */
@@ -66,6 +67,21 @@ function unwrapPointCloudResponse<T>(res: PointCloudApiResponse<T>): T {
   return res.data;
 }
 
+/** preview 接口返回的 previewUrl 转为 umi request 路径（全局 baseURL 为 /api） */
+function normalizePointCloudPreviewUrl(previewUrl: string): string {
+  const trimmed = previewUrl.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/api/')) {
+    return trimmed.slice('/api'.length);
+  }
+  if (trimmed.startsWith('/api')) {
+    return trimmed.slice(4) || '/';
+  }
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
 /**
  * 15.1 查询点云预览信息。
  *
@@ -87,40 +103,45 @@ export async function getPointCloudPreview(
 }
 
 /**
- * 15.2 单文件点云流（原始文件为 .pcd 或 .ply）。
- *
- * GET /dataset/point-cloud/file?id={datasetVersionId}
+ * 15.2 / 15.3 按 preview 元信息返回的 previewUrl 拉取点云文件流。
  */
-export async function getPointCloudFile(
-  datasetVersionId: string,
+export async function fetchPointCloudPreviewBlob(
+  previewUrl: string,
   options?: { [key: string]: any },
-) {
-  return request<Blob>('/dataset/point-cloud/file', {
+): Promise<Blob> {
+  if (!previewUrl?.trim()) {
+    throw new Error('缺少 previewUrl，无法加载点云');
+  }
+  return request<Blob>(normalizePointCloudPreviewUrl(previewUrl), {
     method: 'GET',
-    params: { id: datasetVersionId },
     responseType: 'blob',
     timeout: POINT_CLOUD_REQUEST_TIMEOUT,
     ...(options || {}),
   });
 }
 
-/**
- * 15.3 zip 内点云文件流。
- *
- * GET /dataset/point-cloud/zip-file?id={datasetVersionId}&path={zipEntryPath}
- */
-export async function getPointCloudZipFile(
-  datasetVersionId: string,
-  zipEntryPath: string,
-  options?: { [key: string]: any },
-) {
-  return request<Blob>('/dataset/point-cloud/zip-file', {
-    method: 'GET',
-    params: { id: datasetVersionId, path: zipEntryPath },
-    responseType: 'blob',
-    timeout: POINT_CLOUD_REQUEST_TIMEOUT,
-    ...(options || {}),
-  });
+/** 文件流 blob 转 ArrayBuffer；若 Content-Type 为 JSON 则解析后端错误信息 */
+export async function pointCloudBlobToArrayBuffer(
+  blob: Blob,
+): Promise<ArrayBuffer> {
+  if (blob.type.includes('json')) {
+    const text = await blob.text();
+    try {
+      const json = JSON.parse(text) as {
+        errorMessage?: string | null;
+        message?: string | null;
+      };
+      throw new Error(
+        json.errorMessage || json.message || '点云文件读取失败',
+      );
+    } catch (e) {
+      if (e instanceof Error && !e.message.startsWith('Unexpected')) {
+        throw e;
+      }
+      throw new Error('点云文件读取失败');
+    }
+  }
+  return blob.arrayBuffer();
 }
 
 /** 查询点云预览信息并返回 data（页面层便捷方法） */
