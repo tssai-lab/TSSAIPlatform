@@ -2,10 +2,10 @@ import { request } from '@umijs/max';
 import type { TaskType } from './dataset';
 
 /**
- * 点云三维预览服务（module2-api-doc 第 14 章）。
+ * 点云三维预览服务（module2-api-doc 第 15 章）。
  *
- * 对接模块二 `/dataset/point-cloud/**`（全局 baseURL 已配置 `/api`）。
- * 渲染由前端 Three.js、`PCDLoader`、`PLYLoader` 完成；
+ * 基础路径：/dataset/point-cloud（全局 baseURL 已配置 /api）。
+ * 渲染由前端 Three.js、PCDLoader、PLYLoader 完成；
  * 后端提供鉴权、预览元信息与点云文件流，不依赖 storagePath。
  */
 
@@ -25,19 +25,19 @@ export enum PointCloudPreviewFormat {
   ZIP = 'ZIP',
 }
 
-/** 模块二点云 preview 接口响应（success + data + errorMessage） */
+/** 点云 preview 接口统一响应：{ success, data, errorMessage } */
 export type PointCloudApiResponse<T> = {
-  success?: boolean;
-  data?: T;
+  success: boolean;
+  data: T;
   errorMessage?: string | null;
 };
 
-/** zip 包内点云文件项 */
+/** zip 包内点云文件项（pointCloudFiles[]） */
 export type PointCloudZipEntry = {
   path: string;
   fileName: string;
   format: PointCloudFileFormat;
-  sizeBytes?: number;
+  sizeBytes?: number | null;
   previewUrl?: string | null;
   previewAllowed?: boolean;
   message?: string | null;
@@ -47,30 +47,27 @@ export type PointCloudZipEntry = {
 export type PointCloudPreviewInfo = {
   datasetVersionId: string;
   fileName: string;
-  type: Extract<TaskType, 'POINT_CLOUD'> | 'POINT_CLOUD';
+  type: Extract<TaskType, 'POINT_CLOUD'>;
   format: PointCloudPreviewFormat;
-  sizeBytes?: number;
+  sizeBytes?: number | null;
   previewSupported?: boolean;
   previewUrl?: string | null;
   pointCloudFiles?: PointCloudZipEntry[] | null;
   message?: string | null;
 };
 
-function unwrapPointCloudResponse<T>(res?: PointCloudApiResponse<T>): T {
-  if (!res) {
-    throw new Error('响应为空');
-  }
-  if (res.success === false) {
+function unwrapPointCloudResponse<T>(res: PointCloudApiResponse<T>): T {
+  if (!res.success) {
     throw new Error(res.errorMessage || '请求失败');
   }
-  if (res.data === undefined || res.data === null) {
+  if (res.data == null) {
     throw new Error(res.errorMessage || '响应数据为空');
   }
   return res.data;
 }
 
 /**
- * 14.1 查询点云预览信息。
+ * 15.1 查询点云预览信息。
  *
  * GET /dataset/point-cloud/preview?id={datasetVersionId}
  */
@@ -90,7 +87,7 @@ export async function getPointCloudPreview(
 }
 
 /**
- * 14.2 单文件点云流（原始文件为 .pcd 或 .ply）。
+ * 15.2 单文件点云流（原始文件为 .pcd 或 .ply）。
  *
  * GET /dataset/point-cloud/file?id={datasetVersionId}
  */
@@ -108,7 +105,7 @@ export async function getPointCloudFile(
 }
 
 /**
- * 14.3 zip 内点云文件流。
+ * 15.3 zip 内点云文件流。
  *
  * GET /dataset/point-cloud/zip-file?id={datasetVersionId}&path={zipEntryPath}
  */
@@ -125,8 +122,6 @@ export async function getPointCloudZipFile(
     ...(options || {}),
   });
 }
-
-// ——— 兼容页面层：直接返回 data ———
 
 /** 查询点云预览信息并返回 data（页面层便捷方法） */
 export async function fetchPointCloudPreviewInfo(

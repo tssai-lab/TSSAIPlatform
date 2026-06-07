@@ -43,4 +43,18 @@ export default {
       pathRewrite: { '^': '' },
     },
   },
+  /**
+   * 本地以 prod 环境启动 dev / preview 时仍需代理到模块二（与 dev 相同目标）
+   */
+  prod: {
+    '/api/': {
+      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      changeOrigin: true,
+    },
+    '/mlflow-api/': {
+      target: process.env.DEV_MLFLOW_TARGET || 'http://47.114.84.133:5000',
+      changeOrigin: true,
+      pathRewrite: { '^/mlflow-api': '/ajax-api' },
+    },
+  },
 };

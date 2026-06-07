@@ -306,7 +306,7 @@ export function genMockTaskMetrics(
   metrics: Record<string, { step: number; value: number }[]>;
 } {
   const steps = 50;
-  const s = (x: number) => (seed * 0.1 + 1) * x; // 不同任务略有差异
+  const _s = (x: number) => (seed * 0.1 + 1) * x; // 不同任务略有差异
   return {
     taskId,
     taskName,
@@ -322,9 +322,6 @@ export function genMockTaskMetrics(
       ),
       val_mAP50: genMockCurve(steps, 0.05, 0.78 - seed * 0.03, 'up', 0.02),
       val_mAP50_95: genMockCurve(steps, 0.02, 0.55 - seed * 0.05, 'up', 0.02),
-      box_loss: genMockCurve(steps, 1.5, 0.08 + seed * 0.01, 'down', 0.02),
-      cls_loss: genMockCurve(steps, 0.8, 0.05 + seed * 0.005, 'down', 0.015),
-      dfl_loss: genMockCurve(steps, 1.2, 0.06 + seed * 0.008, 'down', 0.02),
     },
   };
 }

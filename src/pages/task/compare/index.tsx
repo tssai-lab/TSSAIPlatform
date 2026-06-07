@@ -35,6 +35,7 @@ import {
   fetchTaskList,
   listExperimentVersions,
 } from '@/services/platform';
+import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -59,9 +60,6 @@ const METRIC_LABELS: Record<string, string> = {
   val_accuracy: '验证准确率',
   val_mAP50: '验证 mAP50',
   val_mAP50_95: '验证 mAP50-95',
-  box_loss: '边界框损失',
-  cls_loss: '分类损失',
-  dfl_loss: '分布焦点损失',
 };
 
 /** 任务项（带 runId） */
@@ -87,7 +85,7 @@ type ComparableGroup = {
 function lastPoint(series?: { step: number; value: number }[]) {
   if (!series?.length) return null;
   const sorted = [...series].sort((a, b) => a.step - b.step);
-  return sorted[sorted.length - 1]!;
+  return sorted[sorted.length - 1] ?? null;
 }
 
 function formatNum(v: number | null | undefined, digits = 4) {
@@ -99,7 +97,7 @@ function formatNum(v: number | null | undefined, digits = 4) {
 function toRelativeImprovement(series: { step: number; value: number }[]) {
   if (!series.length) return [];
   const sorted = [...series].sort((a, b) => a.step - b.step);
-  const base = sorted[0]!.value;
+  const base = sorted[0]?.value;
   if (Math.abs(base) < 1e-9)
     return sorted.map((p) => ({ step: p.step, value: 0 }));
   return sorted.map((p) => ({
@@ -161,8 +159,16 @@ function experimentVersionToTaskRow(d: any, hint?: API.TaskItem): API.TaskItem {
     createTime: d.createTime || d.createdAt || '',
     status: d.status || 'pending',
     progress: typeof d.progress === 'number' ? d.progress : 0,
-    modelName: d.modelName || hint?.modelName || '-',
-    datasetName: d.datasetName || hint?.datasetName || '-',
+    modelVersionId: d.modelVersionId || hint?.modelVersionId,
+    datasetVersionId: d.datasetVersionId || hint?.datasetVersionId,
+    modelName:
+      d.modelName && !/^(model-ver-|dataset-ver-)/i.test(d.modelName)
+        ? d.modelName
+        : hint?.modelName,
+    datasetName:
+      d.datasetName && !/^(model-ver-|dataset-ver-)/i.test(d.datasetName)
+        ? d.datasetName
+        : hint?.datasetName,
     experimentId: d.experimentId,
     versionNo: d.versionNo,
   };
@@ -274,7 +280,11 @@ const TaskCompare: React.FC = () => {
                 ),
               );
             }
-            setTaskList(list);
+            setTaskList(
+              await enrichTaskItemsWithDisplayNames(list, {
+                skipErrorHandler: true,
+              }),
+            );
             return;
           } catch {
             const list: API.TaskItem[] = [
@@ -312,7 +322,11 @@ const TaskCompare: React.FC = () => {
                 ),
               );
             }
-            setTaskList(list);
+            setTaskList(
+              await enrichTaskItemsWithDisplayNames(list, {
+                skipErrorHandler: true,
+              }),
+            );
             return;
           }
         }
@@ -337,14 +351,25 @@ const TaskCompare: React.FC = () => {
           }
         }
 
-        setTaskList(list);
+        setTaskList(
+          await enrichTaskItemsWithDisplayNames(list, {
+            skipErrorHandler: true,
+          }),
+        );
       } catch {
         // 后端不可用/超时：仍要保证 URL 带入的 id 能展示并可对比
         const hint = MOCK_TASKS.find((t) => t.modelName && t.datasetName);
         const placeholders = idsFromUrl.map((id) =>
           placeholderTaskRow(id, hint),
         );
-        setTaskList([...placeholders, ...MOCK_TASKS]);
+        setTaskList(
+          await enrichTaskItemsWithDisplayNames(
+            [...placeholders, ...MOCK_TASKS],
+            {
+              skipErrorHandler: true,
+            },
+          ),
+        );
       } finally {
         setLoading(false);
       }
@@ -444,8 +469,10 @@ const TaskCompare: React.FC = () => {
       for (const t of withRunId) {
         const meta = byId.get(String(t.id)) || t;
         try {
+          const runId = t.runId;
+          if (!runId) continue;
           const metrics = await fetchMlflowMetricsBulk(
-            t.runId!,
+            runId,
             MLFLOW_METRIC_KEYS as unknown as string[],
           );
           results.push({
@@ -453,7 +480,7 @@ const TaskCompare: React.FC = () => {
             taskName: t.name,
             modelName: meta.modelName || '-',
             datasetName: meta.datasetName || '-',
-            runId: t.runId!,
+            runId,
             metrics,
           });
         } catch {
@@ -467,7 +494,7 @@ const TaskCompare: React.FC = () => {
         idx += 1;
       }
       setMetricsData(results);
-    } catch (e: any) {
+    } catch (_e: any) {
       const base =
         (selectedRowKeys as string[]).map((id) =>
           placeholderTaskRow(
@@ -536,18 +563,21 @@ const TaskCompare: React.FC = () => {
     for (const r of metricsData) {
       const k = comparableGroupKey(r);
       if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(r);
+      map.get(k)?.push(r);
     }
     return [...map.entries()]
       .filter(([, list]) => list.length >= 2)
-      .map(([, tasks]) => {
-        const head = tasks[0]!;
-        return {
-          slug: comparableGroupSlug(head.modelName, head.datasetName),
-          modelName: head.modelName,
-          datasetName: head.datasetName,
-          tasks,
-        };
+      .flatMap(([, tasks]) => {
+        const head = tasks[0];
+        if (!head) return [];
+        return [
+          {
+            slug: comparableGroupSlug(head.modelName, head.datasetName),
+            modelName: head.modelName,
+            datasetName: head.datasetName,
+            tasks,
+          },
+        ];
       });
   }, [metricsData]);
 
@@ -575,7 +605,7 @@ const TaskCompare: React.FC = () => {
       if (!chartInstances.current[metricKey]) {
         chartInstances.current[metricKey] = echarts.init(el);
       }
-      chartInstances.current[metricKey]!.setOption({
+      chartInstances.current[metricKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {
@@ -616,7 +646,7 @@ const TaskCompare: React.FC = () => {
           name: t.taskName,
           type: 'line' as const,
           smooth: true,
-          data: t.metrics[metric]!.map((p) => [p.step, p.value]),
+          data: t.metrics[metric]?.map((p) => [p.step, p.value]),
           itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
         }));
       const seriesImp = list
@@ -625,7 +655,7 @@ const TaskCompare: React.FC = () => {
           name: t.taskName,
           type: 'line' as const,
           smooth: true,
-          data: toRelativeImprovement(t.metrics[metric]!).map((p) => [
+          data: toRelativeImprovement(t.metrics[metric] ?? []).map((p) => [
             p.step,
             p.value,
           ]),
@@ -639,7 +669,7 @@ const TaskCompare: React.FC = () => {
         sameModelImpCharts.current[impKey] = echarts.init(elImp);
       }
       const label = METRIC_LABELS[metric] || metric;
-      sameModelRawCharts.current[rawKey]!.setOption({
+      sameModelRawCharts.current[rawKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {
@@ -653,7 +683,7 @@ const TaskCompare: React.FC = () => {
         yAxis: { type: 'value', name: label },
         series: seriesRaw,
       });
-      sameModelImpCharts.current[impKey]!.setOption({
+      sameModelImpCharts.current[impKey]?.setOption({
         tooltip: { trigger: 'axis' },
         legend: { bottom: 0 },
         grid: {

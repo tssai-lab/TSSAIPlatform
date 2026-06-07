@@ -8,18 +8,38 @@
 export {
   fetchModelList,
   fetchModelDetail,
+  fetchModelAssetDetail,
+  fetchModelVersionCodePreview,
   modelUploadInit,
   modelUploadChunk,
   modelUploadProgress,
   modelUploadComplete,
+  createModelAsset,
+  getModelAsset,
+  listModelAssets,
+  updateModelAsset,
+  deleteModelAsset,
+  createModelVersion,
+  getModelVersion,
+  listModelVersions,
+  updateModelVersion,
+  deleteModelVersion,
   deleteModel,
+  resolveModelVersionId,
+  type ModelAsset,
+  type ModelVersion,
+  type ModelTaskType,
 } from './model';
 
 export {
   fetchDatasetList,
   fetchDatasetDetail,
+  listDatasetAssets,
   uploadDataset,
   deleteDataset,
+  createDatasetVersion,
+  updateDatasetVersion,
+  deleteDatasetVersion,
   datasetUploadInit,
   datasetUploadChunk,
   datasetUploadProgress,
@@ -32,6 +52,7 @@ export {
   fetchTaskDetail,
   createTask,
   listExperimentVersions,
+  getExperimentVersion,
   updateExperimentHyperParams,
   createExperimentVersion,
   stopTask,
@@ -59,6 +80,13 @@ export {
 export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
 
 export {
+  fetchGpuResourceOverview,
+  type GpuDevice,
+  type GpuDeviceStatus,
+  type GpuResourceOverview,
+} from './gpu';
+
+export {
   getPointCloudPreview,
   getPointCloudFile,
   getPointCloudZipFile,
@@ -69,3 +97,16 @@ export {
   type PointCloudZipEntry,
   type PointCloudApiResponse,
 } from './pointcloud';
+
+export {
+  getDatasetPreviewFiles,
+  getDatasetPreviewContent,
+  getDatasetPreviewImage,
+  fetchDatasetPreviewFiles,
+  fetchDatasetPreviewContent,
+  DatasetPreviewFileKind,
+  type DatasetPreviewFilesData,
+  type DatasetPreviewFileItem,
+  type DatasetPreviewContentData,
+  type DatasetPreviewApiResponse,
+} from './datasetPreview';

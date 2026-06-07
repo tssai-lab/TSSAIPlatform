@@ -32,8 +32,8 @@ export default function access(
     /** 系统管理-系统配置：仅超管 */
     canAccessSystemConfig: isSuperAdmin,
 
-    /** 用户管理-删除/批量删除/导出：仅超管 */
-    canUserDeleteOrExport: isSuperAdmin,
+    /** 用户管理-删除：超管+普管（普管列表仅含普通用户） */
+    canUserDelete: isAdmin,
     /** 用户管理-角色筛选与分配管理员角色：仅超管（普管只能分配非管理员角色） */
     canUserRoleFilterAndAssignAdmin: isSuperAdmin,
     /** 日志管理-导出：仅超管 */

@@ -10,12 +10,16 @@ export async function fetchTaskList(options?: {
   current?: number;
   pageSize?: number;
   status?: string;
+  skipErrorHandler?: boolean;
+  [key: string]: unknown;
 }) {
+  const { current, pageSize, status, ...rest } = options || {};
   return request<{ success: boolean; data: { data: API.TaskItem[]; total: number }; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_LIST,
     {
       method: 'GET',
-      params: options,
+      params: { current, pageSize, status },
+      ...rest,
     },
   );
 }
@@ -63,6 +67,18 @@ export async function listExperimentVersions(experimentId: string, options?: { [
   );
 }
 
+/** 查询指定实验版本详情 */
+export async function getExperimentVersion(
+  experimentId: string,
+  versionNo: number,
+  options?: { [key: string]: any },
+) {
+  return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
+    API_CONFIG.ENDPOINTS.EXPERIMENT_VERSION_DETAIL(experimentId, versionNo),
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
 /** 修改指定版本的超参数 */
 export async function updateExperimentHyperParams(
   experimentId: string,
@@ -85,6 +101,8 @@ export async function updateExperimentHyperParams(
 export async function createExperimentVersion(
   experimentId: string,
   body: {
+    name?: string;
+    modelVersionId?: string;
     codeVersionId?: string;
     datasetVersionId?: string;
     hyperParams?: Record<string, unknown> | string;

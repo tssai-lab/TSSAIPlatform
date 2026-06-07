@@ -85,7 +85,7 @@ const statProps = {
 };
 
 /**
- * 首页/仪表盘
+ * 首页/仪表盘 — 从后端拉取资产与任务统计
  */
 const Dashboard: React.FC = () => {
   const { initialState } = useModel('@@initialState');

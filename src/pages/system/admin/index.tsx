@@ -32,6 +32,7 @@ import {
   toggleAdminStatus,
 } from '@/services/system';
 import { toProTableFail, toProTableSuccess, withIndex } from '@/utils/proTable';
+import { notifyRequestError } from '../notifyRequestError';
 
 // 前端不提供“超管”选项；若数据中存在超管，仅用于回显（禁用）
 const ADMIN_ROLE_OPTIONS = SYSTEM_ADMIN_ROLE_OPTIONS;
@@ -160,8 +161,7 @@ const AdminListPage: React.FC = () => {
         }
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '操作失败');
+      notifyRequestError(error, '操作失败');
     }
   };
 
@@ -176,8 +176,7 @@ const AdminListPage: React.FC = () => {
         actionRef.current?.reload();
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '删除失败');
+      notifyRequestError(error, '删除失败');
     }
   };
 
@@ -194,8 +193,7 @@ const AdminListPage: React.FC = () => {
         actionRef.current?.reload();
       }
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      message.error(err.message || '操作失败');
+      notifyRequestError(error, '操作失败');
     }
   };
 
@@ -363,7 +361,7 @@ const AdminListPage: React.FC = () => {
             }
             const list = withIndex(res.data?.list ?? [], current, pageSize);
             return toProTableSuccess(list, res.data?.total ?? list.length);
-          } catch (e: any) {
+          } catch (_e: any) {
             return toProTableFail<AdminItem>();
           }
         }}

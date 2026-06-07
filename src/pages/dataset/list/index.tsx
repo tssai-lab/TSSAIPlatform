@@ -63,6 +63,15 @@ const DatasetList: React.FC = () => {
       dataIndex: 'version',
       key: 'version',
       hideInSearch: true,
+      width: 100,
+    },
+    {
+      title: '版本描述',
+      dataIndex: 'versionRemark',
+      key: 'versionRemark',
+      hideInSearch: true,
+      ellipsis: true,
+      render: (_, record) => record.versionRemark || '-',
     },
     {
       title: '上传时间',
@@ -81,19 +90,29 @@ const DatasetList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
+      width: 180,
+      align: 'left',
       hideInSearch: true,
       render: (_, record) => (
-        <Space>
+        <Space size={0} wrap={false}>
           <Button
             type="link"
-            onClick={() =>
-              history.push(`/dataset/detail/${record.assetId || record.id}`)
-            }
+            style={{ paddingLeft: 0 }}
+            onClick={() => {
+              const assetId = record.assetId || record.id;
+              const versionId = record.versionId;
+              const query =
+                versionId && versionId !== assetId
+                  ? `?versionId=${encodeURIComponent(versionId)}`
+                  : '';
+              history.push(`/dataset/detail/${assetId}${query}`);
+            }}
           >
             详情
           </Button>
           <Button
             type="link"
+            style={{ paddingInline: 4 }}
             onClick={() => handleDownload(record.storagePath)}
           >
             下载
@@ -102,7 +121,7 @@ const DatasetList: React.FC = () => {
             title="确认删除该数据集？"
             onConfirm={() => handleDelete(record.assetId || record.id)}
           >
-            <Button type="link" danger>
+            <Button type="link" danger style={{ paddingInline: 4 }}>
               删除
             </Button>
           </Popconfirm>

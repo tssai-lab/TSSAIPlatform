@@ -1,8 +1,8 @@
 const express = require('express');
-const http = require('http');
-const https = require('https');
-const path = require('path');
-const { URL } = require('url');
+const http = require('node:http');
+const https = require('node:https');
+const path = require('node:path');
+const { URL } = require('node:url');
 
 const app = express();
 const host = process.env.HOST || '0.0.0.0';
@@ -10,22 +10,23 @@ const port = Number(process.env.PORT || 8000);
 const distDir = path.join(__dirname, '..', 'dist');
 const indexFile = path.join(distDir, 'index.html');
 
-const backendTarget = process.env.BACKEND_PROXY_TARGET || 'http://127.0.0.1:8080';
+const backendTarget =
+  process.env.BACKEND_PROXY_TARGET ||
+  process.env.DEV_API_TARGET ||
+  'http://47.114.84.133:8080';
 const mlflowTarget = process.env.MLFLOW_PROXY_TARGET || 'http://127.0.0.1:5000';
 
 function createProxyMiddleware(target, options = {}) {
   const targetUrl = new URL(target);
   const client = targetUrl.protocol === 'https:' ? https : http;
-  const {
-    prefix = '',
-    rewritePrefix = '',
-  } = options;
+  const { prefix = '', rewritePrefix = '' } = options;
 
   return (req, res) => {
     const originalPath = req.originalUrl || req.url;
-    const proxiedPath = prefix && rewritePrefix !== undefined
-      ? originalPath.replace(prefix, rewritePrefix)
-      : originalPath;
+    const proxiedPath =
+      prefix && rewritePrefix !== undefined
+        ? originalPath.replace(prefix, rewritePrefix)
+        : originalPath;
 
     const proxyReq = client.request(
       {
@@ -62,10 +63,7 @@ function createProxyMiddleware(target, options = {}) {
   };
 }
 
-app.use(
-  '/api',
-  createProxyMiddleware(backendTarget),
-);
+app.use('/api', createProxyMiddleware(backendTarget));
 
 app.use(
   '/mlflow-api',

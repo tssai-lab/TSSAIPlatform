@@ -4,15 +4,46 @@ declare namespace API {
     id: string;
     name: string;
     version: string;
-    type: 'CV' | 'NLP';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
     uploadTime?: string;
     size?: string;
     sizeBytes?: number;
     remark?: string;
     storagePath?: string;
+    fileName?: string;
     createdAt?: string;
     updatedAt?: string;
     assetId?: string;
+  };
+
+  type ModelVersionDetail = {
+    id: string;
+    assetId: string;
+    version: string;
+    name?: string;
+    type?: ModelItem['type'];
+    fileName?: string;
+    storagePath?: string;
+    sizeBytes?: number;
+    size?: string;
+    createdAt?: string;
+    codeContent?: string;
+    codeFileName?: string;
+    codeFilePath?: string;
+    codeFiles?: API.ModelCodeFile[];
+  };
+
+  type ModelAssetDetail = {
+    id: string;
+    name: string;
+    type: ModelItem['type'];
+    remark?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    uploadTime?: string;
+    latestVersion?: ModelVersionDetail;
+    versions: ModelVersionDetail[];
+    defaultVersionId?: string;
   };
 
   /** 分片上传初始化请求 */
@@ -170,7 +201,7 @@ declare namespace API {
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;
