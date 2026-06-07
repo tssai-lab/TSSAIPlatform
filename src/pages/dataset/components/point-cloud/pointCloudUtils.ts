@@ -122,7 +122,7 @@ export function normalizeGeometry(
   if (options?.pcdCoordinateFix) {
     applyPcdCoordinateSystem(geometry);
     geometry.computeBoundingBox();
-    geometry.boundingBox!.getSize(size);
+    geometry.boundingBox?.getSize(size);
   }
 
   const radius = Math.max(size.x, size.y, size.z) / 2 || 1;

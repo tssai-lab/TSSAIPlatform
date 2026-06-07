@@ -250,8 +250,9 @@ const DatasetUpload: React.FC = () => {
         message="版本命名规范"
         description={
           <>
-            {DATASET_VERSION_FORMAT_HINT}。每个版本须填写「版本描述」，说明更新原因与内容（存入后端
-            remark 字段）。
+            {DATASET_VERSION_FORMAT_HINT}
+            。每个版本须填写「版本描述」，说明更新原因与内容（存入后端 remark
+            字段）。
           </>
         }
         style={{ marginBottom: 16 }}
@@ -313,9 +314,7 @@ const DatasetUpload: React.FC = () => {
                 <Select.Option value="IMAGE_CLASSIFICATION">
                   图像分类
                 </Select.Option>
-                <Select.Option value="OBJECT_DETECTION">
-                  目标检测
-                </Select.Option>
+                <Select.Option value="OBJECT_DETECTION">目标检测</Select.Option>
                 <Select.Option value="SEMANTIC_SEGMENTATION">
                   语义分割
                 </Select.Option>

@@ -19,12 +19,17 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
-import { resolveDatasetVersionId } from '@/services/dataset';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import PointCloudPreviewPanel, {
   type PointCloudPreviewPanelRef,
 } from '@/pages/dataset/components/point-cloud/PointCloudPreviewPanel';
+import { resolveDatasetVersionId } from '@/services/dataset';
 import {
   createDatasetVersion,
   deleteDataset,
@@ -40,6 +45,7 @@ import {
   datasetVersionFormRules,
   suggestNextDatasetVersion,
 } from '@/utils/datasetVersion';
+import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
 
 const DATASET_TYPE_LABEL: Record<string, string> = {
   CV: 'CV',
@@ -63,7 +69,6 @@ const DatasetDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [previewVersionId, setPreviewVersionId] = useState<string>();
 
-
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [versionModalMode, setVersionModalMode] = useState<'create' | 'edit'>(
     'create',
@@ -84,8 +89,9 @@ const DatasetDetail: React.FC = () => {
     try {
       const res = await fetchDatasetDetail(id, { skipErrorHandler: true });
       const detail =
-        (res?.data as (API.DatasetDetail & { defaultVersionId?: string }) | undefined) ??
-        null;
+        (res?.data as
+          | (API.DatasetDetail & { defaultVersionId?: string })
+          | undefined) ?? null;
       setDatasetInfo(detail);
       const assetId = detail?.id;
       const queryVersionId = searchParams.get('versionId') ?? undefined;
@@ -112,7 +118,6 @@ const DatasetDetail: React.FC = () => {
 
   const previewPanelRef = useRef<PointCloudPreviewPanelRef>(null);
 
-
   useEffect(() => {
     loadDetail();
   }, [loadDetail]);
@@ -137,7 +142,6 @@ const DatasetDetail: React.FC = () => {
     }
     window.open(getDownloadUrl(storagePath), '_blank');
   };
-
 
   const handleUploadNewVersion = () => {
     if (!datasetInfo || !id) return;
@@ -236,7 +240,10 @@ const DatasetDetail: React.FC = () => {
     setPreviewVersionId(versionId);
     if (scrollToPreview) {
       requestAnimationFrame(() => {
-        previewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        previewSectionRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
       });
     }
   };
@@ -250,7 +257,9 @@ const DatasetDetail: React.FC = () => {
     history.push(`/dataset/preview/${encodeURIComponent(versionId)}`);
   };
 
-  const previewVersion = datasetInfo?.versions.find((v) => v.id === previewVersionId);
+  const previewVersion = datasetInfo?.versions.find(
+    (v) => v.id === previewVersionId,
+  );
   const isPointCloud = datasetInfo?.type === 'POINT_CLOUD';
   const supportsInlinePreview =
     datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP';
@@ -259,9 +268,6 @@ const DatasetDetail: React.FC = () => {
     () => datasetVersionFormRules(existingVersionNames),
     [existingVersionNames],
   );
-
-
-
 
   if (loading) {
     return (
@@ -342,7 +348,11 @@ const DatasetDetail: React.FC = () => {
         title="版本列表"
         style={{ marginBottom: 16 }}
         extra={
-          <Button type="dashed" icon={<PlusOutlined />} onClick={openCreateVersion}>
+          <Button
+            type="dashed"
+            icon={<PlusOutlined />}
+            onClick={openCreateVersion}
+          >
             新建版本记录
           </Button>
         }
@@ -358,8 +368,8 @@ const DatasetDetail: React.FC = () => {
             style: {
               cursor: 'pointer',
               background:
-                (resolveDatasetVersionId(record, datasetInfo.id) ?? record.id) ===
-                previewVersionId
+                (resolveDatasetVersionId(record, datasetInfo.id) ??
+                  record.id) === previewVersionId
                   ? '#e6f4ff'
                   : undefined,
             },
@@ -370,10 +380,26 @@ const DatasetDetail: React.FC = () => {
               : ''
           }
           columns={[
-            { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
-            { title: '文件名', dataIndex: 'fileName', key: 'fileName', width: 140, ellipsis: true },
+            {
+              title: '版本号',
+              dataIndex: 'version',
+              key: 'version',
+              width: 100,
+            },
+            {
+              title: '文件名',
+              dataIndex: 'fileName',
+              key: 'fileName',
+              width: 140,
+              ellipsis: true,
+            },
             { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
-            { title: '上传时间', dataIndex: 'createdAt', key: 'createdAt', width: 180 },
+            {
+              title: '上传时间',
+              dataIndex: 'createdAt',
+              key: 'createdAt',
+              width: 180,
+            },
             {
               title: '版本描述',
               dataIndex: 'remark',
@@ -451,8 +477,12 @@ const DatasetDetail: React.FC = () => {
             },
           ]}
         />
-        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-          版本号须为 vX.Y.Z 格式；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', marginTop: 8 }}
+        >
+          版本号须为 vX.Y.Z
+          格式；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
         </Typography.Text>
       </Card>
 
@@ -465,7 +495,9 @@ const DatasetDetail: React.FC = () => {
                 <Space>
                   <Typography.Text type="secondary">
                     当前版本：{previewVersion.version}
-                    {previewVersion.fileName ? ` · ${previewVersion.fileName}` : ''}
+                    {previewVersion.fileName
+                      ? ` · ${previewVersion.fileName}`
+                      : ''}
                   </Typography.Text>
                   {previewVersionId && (
                     <Button
@@ -532,7 +564,9 @@ const DatasetDetail: React.FC = () => {
             </Form.Item>
           ) : (
             <Form.Item label="版本号">
-              <Typography.Text strong>{editingVersion?.version || '-'}</Typography.Text>
+              <Typography.Text strong>
+                {editingVersion?.version || '-'}
+              </Typography.Text>
               <div style={{ marginTop: 4, fontSize: 12, color: '#8c8c8c' }}>
                 版本号创建后不可修改；如需新版本请使用「上传新版本」。
               </div>

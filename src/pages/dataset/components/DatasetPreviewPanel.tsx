@@ -15,13 +15,13 @@ import {
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  type DatasetPreviewContentData,
+  type DatasetPreviewFileItem,
   DatasetPreviewFileKind,
+  type DatasetPreviewFilesData,
   fetchDatasetPreviewContent,
   fetchDatasetPreviewFiles,
   getDatasetPreviewImage,
-  type DatasetPreviewContentData,
-  type DatasetPreviewFileItem,
-  type DatasetPreviewFilesData,
 } from '@/services/datasetPreview';
 import { getApiErrorMessage } from '@/utils/apiError';
 
@@ -65,7 +65,9 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
-  const [kindFilter, setKindFilter] = useState<DatasetPreviewFileKind | undefined>();
+  const [kindFilter, setKindFilter] = useState<
+    DatasetPreviewFileKind | undefined
+  >();
   const [filePage, setFilePage] = useState(1);
   const [filePageSize, setFilePageSize] = useState(compact ? 20 : 50);
   const [fileTotal, setFileTotal] = useState(0);
@@ -73,9 +75,8 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   const [selected, setSelected] = useState<DatasetPreviewFileItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [contentData, setContentData] = useState<DatasetPreviewContentData | null>(
-    null,
-  );
+  const [contentData, setContentData] =
+    useState<DatasetPreviewContentData | null>(null);
   const [contentPage, setContentPage] = useState(1);
   const [contentPageSize, setContentPageSize] = useState(50);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -120,10 +121,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const loadFiles = useCallback(async () => {
     if (!versionId) return;
-    if (
-      /^dataset-asset-/i.test(versionId) ||
-      /^\d+$/.test(versionId)
-    ) {
+    if (/^dataset-asset-/i.test(versionId) || /^\d+$/.test(versionId)) {
       setFilesError(
         `当前 ID「${versionId}」是资产 ID 或 Mock 数据，不能用于预览。请使用 dataset-ver-... 版本 ID（从数据集列表进入详情会自动带上 ?versionId=）。`,
       );
@@ -187,10 +185,14 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const loadImagePreview = useCallback(
     async (file: DatasetPreviewFileItem, signal: AbortSignal) => {
-      const blob = await getDatasetPreviewImage(versionId as string, file.path, {
-        skipErrorHandler: true,
-        signal,
-      });
+      const blob = await getDatasetPreviewImage(
+        versionId as string,
+        file.path,
+        {
+          skipErrorHandler: true,
+          signal,
+        },
+      );
       revokeImageUrl();
       const url = URL.createObjectURL(blob);
       imageUrlRef.current = url;
@@ -227,7 +229,9 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         ) {
           await loadContentPreview(file, 1, 50, controller.signal);
         } else {
-          setPreviewError(file.message || '该文件类型暂不支持在线预览，请下载后查看');
+          setPreviewError(
+            file.message || '该文件类型暂不支持在线预览，请下载后查看',
+          );
         }
       } catch (e: unknown) {
         if ((e as Error)?.name !== 'AbortError') {
@@ -240,8 +244,14 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     [versionId, loadContentPreview, loadImagePreview, revokeImageUrl],
   );
 
-  const handleContentTableChange = async (pagination: TablePaginationConfig) => {
-    if (!selected || !versionId || selected.kind !== DatasetPreviewFileKind.TABLE) {
+  const handleContentTableChange = async (
+    pagination: TablePaginationConfig,
+  ) => {
+    if (
+      !selected ||
+      !versionId ||
+      selected.kind !== DatasetPreviewFileKind.TABLE
+    ) {
       return;
     }
     const page = pagination.current ?? 1;
@@ -339,17 +349,28 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   return (
     <div>
       {metaHint && (
-        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', marginBottom: 12 }}
+        >
           {metaHint}
         </Typography.Text>
       )}
       {filesError && (
-        <Alert type="error" showIcon message={filesError} style={{ marginBottom: 16 }} />
+        <Alert
+          type="error"
+          showIcon
+          message={filesError}
+          style={{ marginBottom: 16 }}
+        />
       )}
 
       <Row gutter={16}>
         <Col xs={24} lg={10}>
-          <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
+          <Space
+            direction="vertical"
+            style={{ width: '100%', marginBottom: 12 }}
+          >
             <Input.Search
               allowClear
               placeholder="按路径 / 文件名 / 扩展名搜索"
@@ -369,7 +390,9 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                 setFilePage(1);
               }}
             />
-            <Typography.Text type="secondary">共 {fileTotal} 项</Typography.Text>
+            <Typography.Text type="secondary">
+              共 {fileTotal} 项
+            </Typography.Text>
           </Space>
           <Table<DatasetPreviewFileItem>
             size="small"
@@ -437,7 +460,11 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                   overflow: 'auto',
                 }}
               >
-                <Image src={imageUrl} alt={selected.fileName} style={{ maxWidth: '100%' }} />
+                <Image
+                  src={imageUrl}
+                  alt={selected.fileName}
+                  style={{ maxWidth: '100%' }}
+                />
               </div>
             )}
           {selected &&
