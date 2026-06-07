@@ -6,8 +6,9 @@
 
 import { MoreOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history, useParams } from '@umijs/max';
+import { history, useParams, useSearchParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Descriptions,
@@ -17,23 +18,34 @@ import {
   List,
   Modal,
   message,
+  Select,
   Space,
   Spin,
   Table,
   Tag,
   Tooltip,
+  Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import * as echarts from 'echarts';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
-  createExperimentVersion,
-  fetchMlflowMetricsBulk,
   fetchTaskDetail,
+  getExperimentVersion,
   listExperimentVersions,
   updateExperimentHyperParams,
 } from '@/services/platform';
+import {
+  isActiveTaskStatus,
+  TASK_STATUS_POLL_INTERVAL_MS,
+} from '@/utils/trainingMetrics';
+import {
+  getDatasetVersionDisplayLabel,
+  getModelVersionDisplayLabel,
+  preloadDatasetVersionDisplayNames,
+  preloadTaskVersionDisplayNames,
+} from '@/utils/taskDisplayNames';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -59,79 +71,9 @@ type TaskDetailInfo = API.TaskItem & {
   duration?: string;
   metrics?: Record<string, any>;
   files?: { name: string; desc: string }[];
+  hyperParams?: Record<string, any>;
+  codeVersionId?: string;
 };
-
-const METRIC_LABELS: Record<string, string> = {
-  train_loss: '训练损失',
-  val_accuracy: '验证准确率',
-  val_mAP50: '验证 mAP50',
-  val_mAP50_95: '验证 mAP50-95',
-  box_loss: '边界框损失',
-  cls_loss: '分类损失',
-  dfl_loss: '分布焦点损失',
-};
-
-function buildDemoVersions(taskInfo: any): API.TrainingExperimentVersion[] {
-  const experimentId = taskInfo?.experimentId || `exp-demo-${Date.now()}`;
-  const modelVersionId =
-    taskInfo?.modelVersionId || taskInfo?.modelId || 'model-ver-demo-001';
-  const datasetVersionId =
-    taskInfo?.datasetVersionId || taskInfo?.datasetId || 'dataset-ver-demo-001';
-  const base: Omit<API.TrainingExperimentVersion, 'id' | 'versionNo'> = {
-    experimentId,
-    name: taskInfo?.name || 'ResNet50 · CIFAR10 训练',
-    modelVersionId,
-    datasetVersionId,
-    codeVersionId: taskInfo?.codeVersionId || '代码 v0.1（baseline）',
-    hyperParams: taskInfo?.hyperParams || {
-      epochs: 10,
-      batch_size: 32,
-      learning_rate: 0.001,
-    },
-    status: taskInfo?.status || 'success',
-    progress: 100,
-    remark: taskInfo?.remark || '演示数据',
-    createdAt: taskInfo?.createdAt || taskInfo?.createTime,
-    updatedAt: taskInfo?.updatedAt || taskInfo?.createTime,
-    createTime: taskInfo?.createTime,
-  };
-  return [
-    {
-      id: `${experimentId}-v1`,
-      versionNo: 1,
-      ...base,
-      codeVersionId: base.codeVersionId,
-      hyperParams: base.hyperParams,
-      remark: 'baseline（演示）',
-    },
-    {
-      id: `${experimentId}-v2`,
-      versionNo: 2,
-      ...base,
-      codeVersionId: '代码 v0.2（增大 epochs）',
-      hyperParams: {
-        ...(base.hyperParams || {}),
-        epochs: 20,
-        batch_size: 64,
-        learning_rate: 0.0005,
-      },
-      remark: '调参版本（演示）',
-    },
-    {
-      id: `${experimentId}-v3`,
-      versionNo: 3,
-      ...base,
-      codeVersionId: '代码 v0.3（调低 lr）',
-      hyperParams: {
-        ...(base.hyperParams || {}),
-        epochs: 30,
-        batch_size: 64,
-        learning_rate: 0.0003,
-      },
-      remark: '进一步调参（演示）',
-    },
-  ];
-}
 
 function shortId(v?: string, keep = 10) {
   if (!v) return '-';
@@ -139,10 +81,29 @@ function shortId(v?: string, keep = 10) {
   return `${v.slice(0, keep)}…`;
 }
 
-const ACTIVE_STATUSES = new Set(['pending', 'queued', 'running']);
+function renderHyperParamsCell(hp: any) {
+  const epochs = hp?.epochs ?? hp?.num_epochs;
+  const batch = hp?.batch_size ?? hp?.batch;
+  const lr = hp?.learning_rate ?? hp?.lr0;
+  const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
+  return (
+    <Tooltip title={JSON.stringify(hp ?? {}, null, 2)}>
+      <span>{txt}</span>
+    </Tooltip>
+  );
+}
 
-function isActiveStatus(status?: string) {
-  return !!status && ACTIVE_STATUSES.has(status);
+function saveContinueTrainingPrefill(record: API.TrainingExperimentVersion) {
+  localStorage.setItem(
+    'taskCreatePrefill',
+    JSON.stringify({
+      modelVersionId: record.modelVersionId,
+      datasetVersionId: record.datasetVersionId,
+      codeVersionId: record.codeVersionId,
+      hyperParams: JSON.stringify(record.hyperParams ?? {}, null, 2),
+      remark: record.remark ? `基于 v${record.versionNo}：${record.remark}` : `基于 v${record.versionNo} 继续训练`,
+    }),
+  );
 }
 
 function statusText(status?: string) {
@@ -165,38 +126,39 @@ function statusColor(status?: string) {
   return 'default';
 }
 
-function formatMetricValue(value: any) {
-  if (value === undefined || value === null || value === '') return '-';
-  if (typeof value === 'number') return Number.isInteger(value) ? value : value.toFixed(6);
-  return String(value);
+function isExperimentId(value?: string) {
+  return !!value && /^exp-/i.test(value);
+}
+
+function mapVersionToTaskDetail(data: API.TrainingExperimentVersion): TaskDetailInfo {
+  return {
+    ...data,
+    createTime: data.createTime || data.createdAt || '',
+    runId: data.runId || (data as any).run_id,
+  };
 }
 
 const TaskDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const versionNoParam = searchParams.get('versionNo');
   const [taskInfo, setTaskInfo] = useState<TaskDetailInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [runIdInput, setRunIdInput] = useState('');
   const [manualRunId, setManualRunId] = useState('');
-  const [metricsData, setMetricsData] = useState<
-    Record<string, { step: number; value: number }[]>
-  >({});
-  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [taskLastUpdatedAt, setTaskLastUpdatedAt] = useState('');
   const [versions, setVersions] = useState<API.TrainingExperimentVersion[]>([]);
-  const [versionModalOpen, setVersionModalOpen] = useState(false);
-  const [versionModalMode, setVersionModalMode] = useState<'create' | 'remark'>(
-    'create',
-  );
-  const [versionModalLoading, setVersionModalLoading] = useState(false);
-  const [versionBase, setVersionBase] =
+  const [remarkModalOpen, setRemarkModalOpen] = useState(false);
+  const [remarkModalLoading, setRemarkModalLoading] = useState(false);
+  const [remarkBase, setRemarkBase] =
     useState<API.TrainingExperimentVersion | null>(null);
-  const [versionForm] = Form.useForm();
+  const [remarkForm] = Form.useForm();
   /** 同一实验下多版本对比：勾选版本记录 id */
   const [compareVersionKeys, setCompareVersionKeys] = useState<React.Key[]>([]);
-  const chartRef = useRef<HTMLDivElement>(null);
-  const chartInstance = useRef<echarts.ECharts | null>(null);
-  const demoExperimentIdRef = useRef<string>('');
+  const [, setDisplayNamesReady] = useState(0);
 
   const runId = taskInfo?.runId || manualRunId;
+  const experimentId = taskInfo?.experimentId;
 
   const loadTaskDetail = useCallback(async (showLoading = false) => {
     if (!id) return;
@@ -204,195 +166,165 @@ const TaskDetail: React.FC = () => {
       setLoading(true);
     }
     try {
-      const res = await fetchTaskDetail(id, { skipErrorHandler: true });
-      if (res?.data) {
-        const data = res.data as TaskDetailInfo;
-        data.runId = data.runId || (res.data as any).run_id;
+      const parsedVersionNo = versionNoParam ? Number(versionNoParam) : NaN;
+      let data: TaskDetailInfo | null = null;
+
+      if (isExperimentId(id) && Number.isFinite(parsedVersionNo) && parsedVersionNo > 0) {
+        const res = await getExperimentVersion(id, parsedVersionNo, {
+          skipErrorHandler: true,
+        });
+        if (res?.data) {
+          data = mapVersionToTaskDetail(res.data);
+        }
+      } else {
+        const res = await fetchTaskDetail(id, { skipErrorHandler: true });
+        if (res?.data) {
+          data = res.data as TaskDetailInfo;
+          data.runId = data.runId || (res.data as any).run_id;
+        }
+      }
+
+      if (data) {
         setTaskInfo(data);
+        await preloadTaskVersionDisplayNames(
+          data.modelVersionId,
+          data.datasetVersionId,
+          { skipErrorHandler: true },
+        );
+        setDisplayNamesReady((t) => t + 1);
       } else {
         setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
       }
+      setTaskLastUpdatedAt(new Date().toLocaleTimeString());
     } catch {
       setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
+      setTaskLastUpdatedAt(new Date().toLocaleTimeString());
     } finally {
       if (showLoading) {
         setLoading(false);
       }
     }
-  }, [id]);
+  }, [id, versionNoParam]);
 
   useEffect(() => {
     loadTaskDetail(true);
   }, [loadTaskDetail]);
 
   useEffect(() => {
-    if (!id || !isActiveStatus(taskInfo?.status)) return;
+    if (loading || !experimentId) return;
+    if (window.location.hash === '#version-history') {
+      window.requestAnimationFrame(() => {
+        document.getElementById('version-history')?.scrollIntoView({ behavior: 'smooth' });
+      });
+    }
+  }, [loading, experimentId]);
+
+  useEffect(() => {
+    if (!id || !isActiveTaskStatus(taskInfo?.status)) return;
     const timer = window.setInterval(() => {
       loadTaskDetail(false);
-    }, 2000);
+    }, TASK_STATUS_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [id, loadTaskDetail, taskInfo?.status]);
 
   useEffect(() => {
-    if (!taskInfo) return;
-    const experimentId = (taskInfo as any)?.experimentId;
-    // 没有 experimentId 时也给演示数据，便于纯前端看效果
     if (!experimentId) {
-      if (!demoExperimentIdRef.current) {
-        demoExperimentIdRef.current = `exp-demo-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-      }
-      const patched = {
-        ...(taskInfo as any),
-        experimentId: demoExperimentIdRef.current,
-      };
-      // 让页面“任务信息”里也能看到 experimentId，并用于跳转对比页
-      setTaskInfo(patched);
-      setVersions(buildDemoVersions(patched));
+      setVersions([]);
       return;
     }
     listExperimentVersions(experimentId, { skipErrorHandler: true })
-      .then((res: any) => {
-        const list = res?.data ?? [];
-        setVersions(list?.length ? list : buildDemoVersions(taskInfo));
+      .then(async (res: any) => {
+        const list = Array.isArray(res?.data) ? res.data : [];
+        setVersions(list);
+        await preloadDatasetVersionDisplayNames(
+          list.map((item: API.TrainingExperimentVersion) => item.datasetVersionId),
+          { skipErrorHandler: true },
+        );
+        setDisplayNamesReady((t) => t + 1);
       })
-      .catch(() => setVersions(buildDemoVersions(taskInfo)));
-  }, [taskInfo]);
+      .catch(() => setVersions([]));
+  }, [experimentId]);
 
-  const refreshVersions = async (experimentId: string) => {
+  const refreshVersions = async (expId: string) => {
     try {
-      const res: any = await listExperimentVersions(experimentId, {
+      const res: any = await listExperimentVersions(expId, {
         skipErrorHandler: true,
       });
-      const list = res?.data ?? [];
-      setVersions(list?.length ? list : buildDemoVersions(taskInfo));
+      setVersions(Array.isArray(res?.data) ? res.data : []);
     } catch {
-      setVersions(buildDemoVersions(taskInfo));
+      setVersions([]);
     }
   };
 
-  const openCreateNextVersion = (record: API.TrainingExperimentVersion) => {
-    setVersionModalMode('create');
-    setVersionBase(record);
-    versionForm.setFieldsValue({
-      codeVersionId: record.codeVersionId,
-      datasetVersionId: record.datasetVersionId,
-      remark: `基于 v${record.versionNo} 迭代`,
-      hyperParams: JSON.stringify(record.hyperParams ?? {}, null, 2),
-    });
-    setVersionModalOpen(true);
+  const handleContinueSameExperiment = (record?: API.TrainingExperimentVersion) => {
+    if (!experimentId) {
+      message.warning('缺少 experimentId');
+      return;
+    }
+    const base =
+      record ||
+      versions.find((v) => v.id === taskInfo?.id) ||
+      versions[versions.length - 1];
+    if (!base) {
+      message.warning('暂无可用版本配置');
+      return;
+    }
+    saveContinueTrainingPrefill(base);
+    history.push(`/task/create?experimentId=${encodeURIComponent(experimentId)}`);
+  };
+
+  const handleTraceVersion = (versionRecordId: string) => {
+    const target = versions.find((v) => v.id === versionRecordId);
+    if (!target) return;
+    history.push(`/task/detail/${encodeURIComponent(target.id)}`);
+  };
+
+  const handleJumpToLatestVersion = () => {
+    if (!experimentId) return;
+    const latest = versions[versions.length - 1];
+    if (latest) {
+      history.push(`/task/detail/${encodeURIComponent(latest.id)}`);
+      return;
+    }
+    history.push(`/task/detail/${encodeURIComponent(experimentId)}`);
   };
 
   const openUpdateRemark = (record: API.TrainingExperimentVersion) => {
-    setVersionModalMode('remark');
-    setVersionBase(record);
-    versionForm.setFieldsValue({
+    setRemarkBase(record);
+    remarkForm.setFieldsValue({
       remark: record.remark || '',
     });
-    setVersionModalOpen(true);
+    setRemarkModalOpen(true);
   };
 
-  const submitVersionModal = async () => {
-    const experimentId =
-      (taskInfo as any)?.experimentId || versionBase?.experimentId;
-    if (!experimentId || !versionBase) {
-      message.warning('缺少 experimentId，无法迭代版本');
+  const submitRemarkModal = async () => {
+    const expId = experimentId || remarkBase?.experimentId;
+    if (!expId || !remarkBase) {
+      message.warning('缺少 experimentId，无法操作');
       return;
     }
     try {
-      const values = await versionForm.validateFields();
-      const hyperParams = values.hyperParams
-        ? JSON.parse(values.hyperParams)
-        : undefined;
-      setVersionModalLoading(true);
-
-      if (versionModalMode === 'create') {
-        const res: any = await createExperimentVersion(
-          experimentId,
-          {
-            codeVersionId: values.codeVersionId,
-            datasetVersionId: values.datasetVersionId,
-            hyperParams,
-            remark: values.remark,
-          },
-          { skipErrorHandler: true },
-        );
-        message.success(`已创建新版本：v${res?.data?.versionNo ?? ''}`);
-      } else {
-        await updateExperimentHyperParams(
-          experimentId,
-          versionBase.versionNo,
-          // 仅允许修改备注；超参数变更请走“迭代新版本”
-          { hyperParams: versionBase.hyperParams, remark: values.remark },
-          { skipErrorHandler: true },
-        );
-        message.success('已更新备注');
-      }
-
-      setVersionModalOpen(false);
-      setVersionBase(null);
-      versionForm.resetFields();
-      await refreshVersions(experimentId);
+      const values = await remarkForm.validateFields();
+      setRemarkModalLoading(true);
+      await updateExperimentHyperParams(
+        expId,
+        remarkBase.versionNo,
+        { hyperParams: remarkBase.hyperParams, remark: values.remark },
+        { skipErrorHandler: true },
+      );
+      message.success('已更新备注');
+      setRemarkModalOpen(false);
+      setRemarkBase(null);
+      remarkForm.resetFields();
+      await refreshVersions(expId);
+      await loadTaskDetail(false);
     } catch (e: any) {
       if (e?.errorFields) return;
       message.error(e?.errorMessage || e?.message || '操作失败，请重试');
     } finally {
-      setVersionModalLoading(false);
+      setRemarkModalLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (!runId) return;
-    setMetricsLoading(true);
-    fetchMlflowMetricsBulk(runId)
-      .then((data) => {
-        setMetricsData(data);
-      })
-      .catch(() => {
-        setMetricsData({});
-      })
-      .finally(() => setMetricsLoading(false));
-  }, [runId]);
-
-  useEffect(() => {
-    if (!chartRef.current || !Object.keys(metricsData).length) return;
-
-    const series = Object.entries(metricsData)
-      .filter(([, points]) => points.length > 0)
-      .map(([key, points]) => ({
-        name: METRIC_LABELS[key] || key,
-        type: 'line',
-        smooth: true,
-        data: points.map((p) => [p.step, p.value]),
-      }));
-
-    if (series.length === 0) return;
-
-    if (!chartInstance.current) {
-      chartInstance.current = echarts.init(chartRef.current);
-    }
-
-    chartInstance.current.setOption({
-      tooltip: { trigger: 'axis' },
-      legend: { bottom: 0 },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '15%',
-        top: '10%',
-        containLabel: true,
-      },
-      xAxis: { type: 'value', name: 'Step' },
-      yAxis: { type: 'value', name: 'Value' },
-      series,
-    });
-  }, [metricsData]);
-
-  useEffect(() => {
-    return () => {
-      chartInstance.current?.dispose();
-      chartInstance.current = null;
-    };
-  }, []);
 
   useEffect(() => {
     if (!versions.length) {
@@ -409,15 +341,6 @@ const TaskDetail: React.FC = () => {
     setCompareVersionKeys(taskInfo?.id === one.id ? [one.id] : [one.id]);
   }, [versions, taskInfo?.id]);
 
-  const handleLoadByRunId = () => {
-    const rid = runIdInput.trim();
-    if (!rid) {
-      message.warning('请输入 Run ID');
-      return;
-    }
-    setManualRunId(rid);
-  };
-
   if (loading) {
     return (
       <PageContainer
@@ -433,7 +356,13 @@ const TaskDetail: React.FC = () => {
 
   if (!taskInfo) return null;
 
-  const hasCharts = Object.values(metricsData).some((arr) => arr.length > 0);
+  const latestVersion = versions.length ? versions[versions.length - 1] : undefined;
+  const viewingVersionNo = (taskInfo as any).versionNo as number | undefined;
+  const isTracingHistorical =
+    !!latestVersion && !!taskInfo.id && latestVersion.id !== taskInfo.id;
+  const tracedVersionRecord =
+    versions.find((v) => v.id === taskInfo.id) ||
+    versions.find((v) => v.versionNo === viewingVersionNo);
 
   const compareVersionColumns: ColumnsType<API.TrainingExperimentVersion> = [
     {
@@ -458,20 +387,20 @@ const TaskDetail: React.FC = () => {
       ),
     },
     {
+      title: '数据集版本',
+      dataIndex: 'datasetVersionId',
+      ellipsis: true,
+      render: (v: any) => (
+        <Tooltip title={v || ''}>
+          <span>{getDatasetVersionDisplayLabel(v ? String(v) : undefined)}</span>
+        </Tooltip>
+      ),
+    },
+    {
       title: '超参数',
       dataIndex: 'hyperParams',
       ellipsis: true,
-      render: (hp: any) => {
-        const epochs = hp?.epochs ?? hp?.num_epochs;
-        const batch = hp?.batch_size ?? hp?.batch;
-        const lr = hp?.learning_rate ?? hp?.lr0;
-        const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
-        return (
-          <Tooltip title={JSON.stringify(hp ?? {}, null, 2)}>
-            <span>{txt}</span>
-          </Tooltip>
-        );
-      },
+      render: (hp: any) => renderHyperParamsCell(hp),
     },
     {
       title: '备注',
@@ -488,7 +417,6 @@ const TaskDetail: React.FC = () => {
       message.warning('请至少选择 2 个版本进行对比');
       return;
     }
-    const experimentId = (taskInfo as any)?.experimentId;
     const qs = new URLSearchParams();
     if (experimentId) qs.set('experimentId', String(experimentId));
     qs.set('ids', (compareVersionKeys as string[]).join(','));
@@ -498,29 +426,127 @@ const TaskDetail: React.FC = () => {
   return (
     <PageContainer
       title="训练结果详情"
-      subTitle="查看训练任务的详细信息和 MLflow 训练指标"
+      subTitle="按 experimentId 追溯各次训练：代码版本、数据集版本与超参数为只读快照"
       onBack={() => history.push('/task/list')}
       extra={
-        <Button onClick={() => history.push('/task/list')}>返回列表</Button>
+        <Space wrap>
+          {experimentId && versions.length > 0 && (
+            <Space size={8}>
+              <Typography.Text type="secondary">追溯版本</Typography.Text>
+              <Select
+                style={{ minWidth: 160 }}
+                value={taskInfo.id}
+                options={versions.map((v) => ({
+                  value: v.id,
+                  label: `v${v.versionNo}${v.id === latestVersion?.id ? '（最新）' : ''}`,
+                }))}
+                onChange={handleTraceVersion}
+              />
+            </Space>
+          )}
+          {experimentId && (
+            <Button type="primary" onClick={() => handleContinueSameExperiment(tracedVersionRecord)}>
+              基于此版本继续训练
+            </Button>
+          )}
+          {isTracingHistorical && (
+            <Button onClick={handleJumpToLatestVersion}>回到最新版本</Button>
+          )}
+          <Button onClick={() => history.push('/task/list')}>返回列表</Button>
+        </Space>
       }
     >
+      {isTracingHistorical && viewingVersionNo != null && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`正在追溯历史版本 v${viewingVersionNo}`}
+          description={
+            <>
+              下方展示的是该次训练提交时的配置快照（代码版本、数据集版本、超参数），不会被修改。
+              {latestVersion ? (
+                <>
+                  {' '}
+                  该实验最新版本为 v{latestVersion.versionNo}。
+                </>
+              ) : null}
+            </>
+          }
+        />
+      )}
+
+      {experimentId && versions.length > 1 && !isTracingHistorical && viewingVersionNo != null && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`当前为最新版本 v${viewingVersionNo}`}
+          description="可在右上角「追溯版本」下拉框切换到历史版本，查看各次训练的配置对应关系。"
+        />
+      )}
+
       <Card title="任务信息" style={{ marginBottom: 16 }}>
         <Descriptions column={2}>
           <Descriptions.Item label="任务名称">
             <strong>{taskInfo.name}</strong>
           </Descriptions.Item>
           <Descriptions.Item label="实验ID">
-            {(taskInfo as any).experimentId || '-'}
+            <Space>
+              <span style={{ fontFamily: 'monospace' }}>{experimentId || '-'}</span>
+              {experimentId && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(experimentId);
+                    message.success('已复制 experimentId');
+                  }}
+                >
+                  复制
+                </Button>
+              )}
+            </Space>
           </Descriptions.Item>
           <Descriptions.Item label="版本号">
-            {(taskInfo as any).versionNo ?? '-'}
+            <Space>
+              <Tag color="blue">v{viewingVersionNo ?? '-'}</Tag>
+              {isTracingHistorical && <Tag>历史追溯</Tag>}
+              {latestVersion?.id === taskInfo.id && <Tag color="green">最新</Tag>}
+            </Space>
           </Descriptions.Item>
-          <Descriptions.Item label="模型">
-            {taskInfo.modelName || taskInfo.modelVersionId || '-'}
+          <Descriptions.Item label="模型版本">
+            <Tooltip title={taskInfo.modelVersionId || ''}>
+              {getModelVersionDisplayLabel(taskInfo.modelVersionId)}
+            </Tooltip>
           </Descriptions.Item>
-          <Descriptions.Item label="数据集">
-            {taskInfo.datasetName || taskInfo.datasetVersionId || '-'}
+          <Descriptions.Item label="数据集版本">
+            <Tooltip title={taskInfo.datasetVersionId || ''}>
+              {getDatasetVersionDisplayLabel(taskInfo.datasetVersionId)}
+            </Tooltip>
           </Descriptions.Item>
+          <Descriptions.Item label="代码版本标识" span={2}>
+            {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="该版本超参数" span={2}>
+            {renderHyperParamsCell((taskInfo as TaskDetailInfo).hyperParams)}
+          </Descriptions.Item>
+          {(taskInfo as TaskDetailInfo).hyperParams && (
+            <Descriptions.Item label="超参数完整 JSON" span={2}>
+              <Typography.Paragraph
+                copyable
+                style={{
+                  margin: 0,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {JSON.stringify((taskInfo as TaskDetailInfo).hyperParams, null, 2)}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label="创建时间">
             {taskInfo.createTime || (taskInfo as any).createdAt || '-'}
           </Descriptions.Item>
@@ -528,13 +554,28 @@ const TaskDetail: React.FC = () => {
             {taskInfo.completeTime || taskInfo.finishedAt || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Tag color={statusColor(taskInfo.status)}>
-              {statusText(taskInfo.status)}
-            </Tag>
+            <Space size={8}>
+              <Tag color={statusColor(taskInfo.status)}>
+                {statusText(taskInfo.status)}
+              </Tag>
+              {isActiveTaskStatus(taskInfo.status) && (
+                <Tag color="processing">
+                  自动刷新 · {TASK_STATUS_POLL_INTERVAL_MS / 1000}s
+                </Tag>
+              )}
+            </Space>
+          </Descriptions.Item>
+          <Descriptions.Item label="训练进度">
+            {typeof taskInfo.progress === 'number' ? `${taskInfo.progress}%` : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="总耗时">
             {taskInfo.duration || '-'}
           </Descriptions.Item>
+          {taskLastUpdatedAt && (
+            <Descriptions.Item label="状态更新时间">
+              {taskLastUpdatedAt}
+            </Descriptions.Item>
+          )}
           {runId && (
             <Descriptions.Item label="MLflow Run ID" span={2}>
               <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
@@ -545,14 +586,57 @@ const TaskDetail: React.FC = () => {
         </Descriptions>
       </Card>
 
-      <Card title="版本历史（按 experimentId）" style={{ marginBottom: 16 }}>
+      <Card
+        id="version-history"
+        title="版本历史（按 experimentId）"
+        extra={
+          experimentId ? (
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              共 {versions.length} 个版本 · experimentId={experimentId}
+            </span>
+          ) : null
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {!experimentId && (
+          <Alert type="warning" showIcon message="当前记录缺少 experimentId，无法加载版本历史" />
+        )}
+        {experimentId && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="版本与超参数说明"
+            description="选择「追溯到此版本」可查看该次训练的配置快照。超参数为只读记录；需基于某一历史版本调整配置再训时，请使用「基于此版本继续训练」。"
+          />
+        )}
         <Table
           rowKey="id"
           size="small"
           pagination={false}
           dataSource={versions}
+          rowClassName={(record) => (record.id === taskInfo.id ? 'ant-table-row-selected' : '')}
+          locale={{ emptyText: experimentId ? '暂无版本记录' : '缺少 experimentId' }}
           columns={[
-            { title: '版本', dataIndex: 'versionNo', width: 70 },
+            {
+              title: '版本',
+              dataIndex: 'versionNo',
+              width: 80,
+              render: (v, record) => (
+                <Space size={4}>
+                  {`v${v}`}
+                  {record.id === taskInfo.id ? <Tag color="blue">当前</Tag> : null}
+                </Space>
+              ),
+            },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 90,
+              render: (s: string) => (
+                <Tag color={statusColor(s)}>{statusText(s)}</Tag>
+              ),
+            },
             {
               title: '代码版本',
               dataIndex: 'codeVersionId',
@@ -568,8 +652,8 @@ const TaskDetail: React.FC = () => {
               dataIndex: 'datasetVersionId',
               ellipsis: true,
               render: (v: any) => (
-                <Tooltip title={`内部ID：${v || '-'}`}>
-                  <span>{v ? `版本ID：${shortId(String(v), 12)}` : '-'}</span>
+                <Tooltip title={v || ''}>
+                  <span>{getDatasetVersionDisplayLabel(v ? String(v) : undefined)}</span>
                 </Tooltip>
               ),
             },
@@ -577,58 +661,46 @@ const TaskDetail: React.FC = () => {
               title: '超参数',
               dataIndex: 'hyperParams',
               ellipsis: true,
-              render: (hp: any) => {
-                const epochs = hp?.epochs ?? hp?.num_epochs;
-                const batch = hp?.batch_size ?? hp?.batch;
-                const lr = hp?.learning_rate ?? hp?.lr0;
-                const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
-                return (
-                  <Tooltip title={JSON.stringify(hp ?? {}, null, 2)}>
-                    <span>{txt}</span>
-                  </Tooltip>
-                );
-              },
+              render: (hp: any) => renderHyperParamsCell(hp),
             },
             {
               title: '备注',
               dataIndex: 'remark',
-              width: 160,
+              width: 140,
               ellipsis: true,
               render: (v: any) => v || '-',
             },
-            { title: '时间', dataIndex: 'createdAt', width: 180 },
+            { title: '时间', dataIndex: 'createdAt', width: 170 },
             {
               title: '操作',
               key: 'action',
-              width: 120,
+              width: 240,
               fixed: 'right',
-              render: (_: any, record: any) => (
-                <Space size={4} wrap={false}>
+              render: (_: any, record: API.TrainingExperimentVersion) => (
+                <Space size={0} wrap={false}>
                   <Button
                     type="link"
-                    onClick={() => {
-                      localStorage.setItem(
-                        'taskCreatePrefill',
-                        JSON.stringify({
-                          modelVersionId: record.modelVersionId,
-                          datasetVersionId: record.datasetVersionId,
-                          codeVersionId: record.codeVersionId,
-                          hyperParams: JSON.stringify(
-                            record.hyperParams ?? {},
-                            null,
-                            2,
-                          ),
-                        }),
-                      );
-                      history.push('/task/create');
-                    }}
+                    style={{ paddingLeft: 0 }}
+                    onClick={() => handleTraceVersion(record.id)}
                   >
-                    回填
+                    {record.id === taskInfo.id ? '当前追溯' : '追溯到此版本'}
+                  </Button>
+                  <Button
+                    type="link"
+                    style={{ paddingInline: 4 }}
+                    onClick={() => handleContinueSameExperiment(record)}
+                  >
+                    基于此版本继续训练
                   </Button>
                   <Dropdown
                     trigger={['click']}
                     menu={{
                       items: [
+                        {
+                          key: 'remark',
+                          label: '修改备注',
+                          onClick: () => openUpdateRemark(record),
+                        },
                         {
                           key: 'pool',
                           label: '加入对比池',
@@ -637,20 +709,8 @@ const TaskDetail: React.FC = () => {
                               record.id,
                               ...loadComparePool(),
                             ]);
-                            message.success(
-                              `已加入对比池（共 ${next.length} 条）`,
-                            );
+                            message.success(`已加入对比池（共 ${next.length} 条）`);
                           },
-                        },
-                        {
-                          key: 'iterate',
-                          label: '迭代新版本',
-                          onClick: () => openCreateNextVersion(record),
-                        },
-                        {
-                          key: 'remark',
-                          label: '修改备注',
-                          onClick: () => openUpdateRemark(record),
                         },
                       ],
                     }}
@@ -665,78 +725,26 @@ const TaskDetail: React.FC = () => {
       </Card>
 
       <Modal
-        title={
-          versionModalMode === 'create' ? '迭代新版本（同一实验）' : '修改备注'
-        }
-        open={versionModalOpen}
+        title={`修改 v${remarkBase?.versionNo ?? ''} 备注`}
+        open={remarkModalOpen}
         onCancel={() => {
-          setVersionModalOpen(false);
-          setVersionBase(null);
-          versionForm.resetFields();
+          setRemarkModalOpen(false);
+          setRemarkBase(null);
+          remarkForm.resetFields();
         }}
-        onOk={submitVersionModal}
-        confirmLoading={versionModalLoading}
-        okText={versionModalMode === 'create' ? '创建新版本' : '保存备注'}
+        onOk={submitRemarkModal}
+        confirmLoading={remarkModalLoading}
+        okText="保存备注"
         cancelText="取消"
-        width={720}
+        destroyOnClose
       >
         <div style={{ marginBottom: 12, color: '#8c8c8c', fontSize: 12 }}>
-          {versionModalMode === 'create'
-            ? '修改超参数会产生新版本（versionNo 递增）。未填写的字段后端会继承最新版本。'
-            : '仅用于修正说明文本，不会产生新版本。超参数变更请使用“迭代新版本”。'}
+          仅更新备注说明，不会修改该版本已记录的超参数配置。
         </div>
-        <Form form={versionForm} layout="vertical">
-          {versionModalMode === 'create' && (
-            <>
-              <Form.Item
-                name="codeVersionId"
-                label="代码版本"
-                rules={[{ required: true, message: '请输入代码版本' }]}
-              >
-                <Input placeholder="例如：代码 v0.2（增大 epochs）" />
-              </Form.Item>
-              <Form.Item
-                name="datasetVersionId"
-                label="数据集版本（ID）"
-                rules={[{ required: true, message: '请输入数据集版本ID' }]}
-              >
-                <Input placeholder="例如：dataset-ver-xxxx（后续可改成下拉选择）" />
-              </Form.Item>
-            </>
-          )}
-          <Form.Item name="remark" label="备注（可选）">
-            <Input
-              placeholder={
-                versionModalMode === 'create'
-                  ? '例如：基于 v1 迭代'
-                  : '例如：修正备注描述'
-              }
-            />
+        <Form form={remarkForm} layout="vertical">
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={3} placeholder="版本说明" />
           </Form.Item>
-          {versionModalMode === 'create' && (
-            <Form.Item
-              name="hyperParams"
-              label="超参数（JSON）"
-              rules={[
-                { required: true, message: '请输入超参数 JSON' },
-                {
-                  validator: async (_: any, v: any) => {
-                    try {
-                      JSON.parse(v || '');
-                      return Promise.resolve();
-                    } catch {
-                      return Promise.reject(new Error('JSON 格式不正确'));
-                    }
-                  },
-                },
-              ]}
-            >
-              <Input.TextArea
-                rows={10}
-                placeholder='{"epochs": 10, "batch_size": 32, "learning_rate": 0.001}'
-              />
-            </Form.Item>
-          )}
         </Form>
       </Modal>
 
@@ -785,102 +793,26 @@ const TaskDetail: React.FC = () => {
         title="训练指标可视化"
         extra={
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-            数据来自独立 MLflow 服务，需启动 mlflow server 并写入指标
+            支持多种图表样式；训练中自动刷新 MLflow 指标
           </span>
         }
         style={{ marginBottom: 16 }}
       >
-        {!runId ? (
-          <div style={{ padding: 24, background: '#fafafa', borderRadius: 8 }}>
-            <div style={{ marginBottom: 12, color: '#8c8c8c' }}>
-              任务详情未包含 run_id，或后端尚未返回。可手动输入 MLflow Run ID
-              进行联调：
-            </div>
-            <Input.Search
-              placeholder="输入 MLflow Run ID（如 abc123...）"
-              value={runIdInput}
-              onChange={(e) => setRunIdInput(e.target.value)}
-              onSearch={handleLoadByRunId}
-              enterButton="加载指标"
-              style={{ maxWidth: 480 }}
-            />
-          </div>
-        ) : (
-          <>
-            {metricsLoading ? (
-              <div
-                style={{
-                  height: 400,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Spin size="large" />
-              </div>
-            ) : hasCharts ? (
-              <div ref={chartRef} style={{ height: 400, width: '100%' }} />
-            ) : (
-              <div
-                style={{
-                  height: 400,
-                  background: '#fafafa',
-                  borderRadius: 8,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#8c8c8c',
-                }}
-              >
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 16, marginBottom: 8 }}>
-                    暂无指标数据
-                  </div>
-                  <div style={{ fontSize: 12 }}>
-                    请确保 MLflow 服务已启动，且该 run_id 下已写入 metrics（如
-                    train_loss、val_accuracy）
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {taskInfo.metrics && (
-          <div
-            style={{
-              marginTop: 24,
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-              gap: 16,
-            }}
-          >
-            {[
-              ['训练损失', taskInfo.metrics.train_loss ?? taskInfo.metrics.loss],
-              ['验证准确率', taskInfo.metrics.val_accuracy ?? taskInfo.metrics.accuracy],
-              ['验证 mAP50', taskInfo.metrics.val_mAP50],
-              ['验证 mAP50-95', taskInfo.metrics.val_mAP50_95],
-              ['训练轮数', taskInfo.metrics.epochs],
-              ['样本数', taskInfo.metrics.sample_count],
-            ]
-              .filter(([, value]) => value !== undefined && value !== null && value !== '')
-              .map(([label, value]) => (
-                <div
-                  key={String(label)}
-                  style={{ background: '#fafafa', padding: 16, borderRadius: 6 }}
-                >
-                  <div
-                    style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}
-                  >
-                    {label}
-                  </div>
-                  <div style={{ fontSize: 24, fontWeight: 600 }}>
-                    {formatMetricValue(value)}
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
+        <TrainingMetricsPanel
+          runId={runId}
+          taskStatus={taskInfo.status}
+          progress={taskInfo.progress}
+          backendMetrics={taskInfo.metrics}
+          runIdInput={runIdInput}
+          onRunIdInputChange={setRunIdInput}
+          onManualRunId={(rid) => {
+            if (!rid) {
+              message.warning('请输入 Run ID');
+              return;
+            }
+            setManualRunId(rid);
+          }}
+        />
       </Card>
 
       {(taskInfo.files && taskInfo.files.length > 0) || taskInfo.logPath || taskInfo.outputPath ? (

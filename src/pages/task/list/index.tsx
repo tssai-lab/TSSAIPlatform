@@ -10,6 +10,7 @@ import {
   fetchTaskList as fetchTaskListService,
   stopTask,
 } from '@/services/platform';
+import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 /**
  * 训练任务列表页 - Page 层
@@ -21,9 +22,18 @@ const TaskList: React.FC = () => {
   const fetchTaskList = async (params: any) => {
     try {
       const res = await fetchTaskListService(params);
-      const list = (res as any)?.data?.data ?? [];
-      const total = (res as any)?.data?.total ?? list.length;
-      return { data: list, success: true, total };
+      let list = (res as any)?.data?.data ?? [];
+      const experimentKeyword = params.experimentId?.trim?.();
+      if (experimentKeyword) {
+        list = list.filter((item: API.TaskItem) =>
+          String(item.experimentId || '').includes(experimentKeyword),
+        );
+      }
+      const total = experimentKeyword ? list.length : (res as any)?.data?.total ?? list.length;
+      const enriched = await enrichTaskItemsWithDisplayNames(list, {
+        skipErrorHandler: true,
+      });
+      return { data: enriched, success: true, total };
     } catch {
       return { data: MOCK_TASKS, success: true, total: MOCK_TASKS.length };
     }
@@ -69,7 +79,7 @@ const TaskList: React.FC = () => {
       key: 'experimentId',
       width: 220,
       ellipsis: true,
-      hideInSearch: true,
+      copyable: true,
     },
     {
       title: '版本号',
@@ -87,13 +97,13 @@ const TaskList: React.FC = () => {
       title: '模型名称',
       dataIndex: 'modelName',
       key: 'modelName',
-      render: (_, record) => record.modelName || record.modelVersionId || '-',
+      render: (_, record) => record.modelName || '-',
     },
     {
       title: '数据集名称',
       dataIndex: 'datasetName',
       key: 'datasetName',
-      render: (_, record) => record.datasetName || record.datasetVersionId || '-',
+      render: (_, record) => record.datasetName || '-',
     },
     {
       title: '创建时间',
@@ -119,12 +129,17 @@ const TaskList: React.FC = () => {
       key: 'action',
       hideInSearch: true,
       fixed: 'right',
-      width: 120,
+      width: 160,
       render: (_, record) => (
         <Space size={4} wrap={false}>
           <Button
             type="link"
-            onClick={() => history.push(`/task/detail/${record.id}`)}
+            style={{ paddingLeft: 0 }}
+            onClick={() =>
+              history.push(
+                `/task/detail/${encodeURIComponent(record.id || record.experimentId || '')}`,
+              )
+            }
           >
             查看详情
           </Button>
@@ -132,6 +147,18 @@ const TaskList: React.FC = () => {
             trigger={['click']}
             menu={{
               items: [
+                ...(record.experimentId
+                  ? [
+                      {
+                        key: 'trace-history',
+                        label: '追溯历史版本',
+                        onClick: () =>
+                          history.push(
+                            `/task/detail/${encodeURIComponent(record.experimentId!)}#version-history`,
+                          ),
+                      },
+                    ]
+                  : []),
                 ...(record.status === 'running'
                   ? [
                       {
@@ -171,7 +198,7 @@ const TaskList: React.FC = () => {
   return (
     <PageContainer
       title="训练任务"
-      subTitle="管理所有训练任务，支持状态筛选、终止、删除等操作"
+      subTitle="管理所有训练任务；列表展示各实验最新版本，可进入详情追溯历史"
       extra={[
         <Button key="compare" onClick={() => history.push('/task/compare')}>
           模型性能对比

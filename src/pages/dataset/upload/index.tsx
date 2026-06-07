@@ -1,6 +1,6 @@
 import { UploadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
+import { history, useSearchParams } from '@umijs/max';
 import type { UploadFile } from 'antd';
 import {
   Alert,
@@ -13,15 +13,22 @@ import {
   Space,
   Upload,
 } from 'antd';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import type {
   AnnotationFormat,
   CvTaskType,
   TaskType,
 } from '@/services/dataset';
-import { uploadDataset } from '@/services/platform';
+import { fetchDatasetDetail, uploadDataset } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import {
+  DATASET_VERSION_DESC_PLACEHOLDER,
+  DATASET_VERSION_FORMAT_HINT,
+  datasetVersionDescFormRules,
+  datasetVersionFormRules,
+  suggestNextDatasetVersion,
+} from '@/utils/datasetVersion';
 import {
   buildDatasetFileFingerprint,
   LS_DATASET_UPLOAD_FP,
@@ -36,14 +43,20 @@ function isPointCloudFileName(fileName: string) {
 }
 
 /**
- * 数据集上传：CV/NLP/POINT_CLOUD、版本、备注、单文件分片与 CV 多文件文件夹（module2-api-doc）
+ * 数据集上传：CV/NLP/POINT_CLOUD、版本、版本描述、单文件分片与 CV 多文件文件夹（module2-api-doc）
  */
 const DatasetUpload: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
   const datasetType = Form.useWatch('type', form) as TaskType | undefined;
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [resumeHint, setResumeHint] = useState<string | null>(null);
+  const [existingVersions, setExistingVersions] = useState<string[]>([]);
+  const [prefillLoading, setPrefillLoading] = useState(false);
+
+  const assetId = searchParams.get('assetId') ?? undefined;
+  const isNewVersionUpload = !!assetId;
 
   useEffect(() => {
     const id = localStorage.getItem(LS_DATASET_UPLOAD_ID);
@@ -54,6 +67,45 @@ const DatasetUpload: React.FC = () => {
       );
     }
   }, []);
+
+  useEffect(() => {
+    const datasetName = searchParams.get('datasetName');
+    const type = searchParams.get('type') as TaskType | null;
+    if (datasetName) {
+      form.setFieldValue('name', datasetName);
+    }
+    if (type && ['CV', 'NLP', 'POINT_CLOUD'].includes(type)) {
+      form.setFieldValue('type', type);
+    }
+
+    if (!assetId) {
+      setExistingVersions([]);
+      return;
+    }
+
+    setPrefillLoading(true);
+    fetchDatasetDetail(assetId, { skipErrorHandler: true })
+      .then((res) => {
+        const detail = res?.data;
+        if (!detail) return;
+        form.setFieldsValue({
+          name: detail.name,
+          type: detail.type,
+        });
+        const versions = detail.versions.map((v) => v.version).filter(Boolean);
+        setExistingVersions(versions);
+        form.setFieldValue('version', suggestNextDatasetVersion(versions));
+      })
+      .catch(() => {
+        message.warning('未能加载已有版本信息，请手动填写版本号');
+      })
+      .finally(() => setPrefillLoading(false));
+  }, [assetId, form, searchParams]);
+
+  const versionRules = useMemo(
+    () => datasetVersionFormRules(existingVersions),
+    [existingVersions],
+  );
 
   const clearResumeStorage = () => {
     localStorage.removeItem(LS_DATASET_UPLOAD_ID);
@@ -75,7 +127,7 @@ const DatasetUpload: React.FC = () => {
       message.error('请输入数据集名称');
       return;
     }
-    const version = (values.version || 'v1').trim();
+    const version = (values.version || 'v1.0.0').trim();
     const type = values.type as TaskType;
     const remark = values.remark?.trim();
     const cvTaskType = values.cvTaskType as CvTaskType | undefined;
@@ -154,7 +206,11 @@ const DatasetUpload: React.FC = () => {
       }
       clearResumeStorage();
       message.success('上传成功！');
-      history.push('/dataset/list');
+      if (assetId) {
+        history.push(`/dataset/detail/${encodeURIComponent(assetId)}`);
+      } else {
+        history.push('/dataset/list');
+      }
     } catch (error: any) {
       message.error(getApiErrorMessage(error));
     } finally {
@@ -163,10 +219,19 @@ const DatasetUpload: React.FC = () => {
     }
   };
 
+  const backPath = assetId
+    ? `/dataset/detail/${encodeURIComponent(assetId)}`
+    : '/dataset/list';
+
   return (
     <PageContainer
-      title="上传数据集"
-      onBack={() => history.push('/dataset/list')}
+      title={isNewVersionUpload ? '上传新版本' : '上传数据集'}
+      subTitle={
+        isNewVersionUpload
+          ? '为已有数据集资产上传新版本文件，版本号须符合 vX.Y.Z 规范且不可重复'
+          : '首次上传将创建数据集资产；版本号采用 vX.Y.Z 语义化命名'
+      }
+      onBack={() => history.push(backPath)}
     >
       {resumeHint && (
         <Alert
@@ -179,25 +244,47 @@ const DatasetUpload: React.FC = () => {
           style={{ marginBottom: 16 }}
         />
       )}
+      <Alert
+        type="info"
+        showIcon
+        message="版本命名规范"
+        description={
+          <>
+            {DATASET_VERSION_FORMAT_HINT}。每个版本须填写「版本描述」，说明更新原因与内容（存入后端
+            remark 字段）。
+          </>
+        }
+        style={{ marginBottom: 16 }}
+      />
       <Form
         form={form}
         onFinish={handleSubmit}
         layout="vertical"
-        initialValues={{ type: 'CV', version: 'v1' }}
+        initialValues={{ type: 'CV', version: 'v1.0.0' }}
       >
         <Form.Item
           name="name"
           label="数据集名称"
           rules={[{ required: true, message: '请输入数据集名称' }]}
+          extra={
+            isNewVersionUpload
+              ? '上传新版本时须与已有资产名称一致，否则将创建新数据集'
+              : undefined
+          }
         >
-          <Input placeholder="请输入数据集名称" />
+          <Input
+            placeholder="请输入数据集名称"
+            readOnly={isNewVersionUpload}
+            disabled={prefillLoading}
+          />
         </Form.Item>
         <Form.Item
           name="version"
           label="版本号"
-          rules={[{ required: true, message: '请输入版本号' }]}
+          rules={versionRules}
+          extra={DATASET_VERSION_FORMAT_HINT}
         >
-          <Input placeholder="默认 v1" />
+          <Input placeholder="例如 v1.0.0" disabled={prefillLoading} />
         </Form.Item>
         <Form.Item
           name="type"
@@ -205,6 +292,7 @@ const DatasetUpload: React.FC = () => {
           rules={[{ required: true, message: '请选择类型' }]}
         >
           <Select
+            disabled={isNewVersionUpload || prefillLoading}
             onChange={() => {
               form.setFieldValue('files', []);
               form.setFieldValue('cvTaskType', undefined);
@@ -259,8 +347,18 @@ const DatasetUpload: React.FC = () => {
             </Form.Item>
           </>
         )}
-        <Form.Item name="remark" label="备注（可选）">
-          <Input.TextArea rows={3} placeholder="将传给后端 init 的 remark" />
+        <Form.Item
+          name="remark"
+          label="版本描述"
+          rules={datasetVersionDescFormRules()}
+          extra="记录本版本的更新原因与内容，便于长期维护与训练选型"
+        >
+          <Input.TextArea
+            rows={4}
+            placeholder={DATASET_VERSION_DESC_PLACEHOLDER}
+            showCount
+            maxLength={2000}
+          />
         </Form.Item>
         <Form.Item
           name="files"
@@ -319,10 +417,7 @@ const DatasetUpload: React.FC = () => {
         )}
         <Form.Item>
           <Space>
-            <Button
-              onClick={() => history.push('/dataset/list')}
-              disabled={uploading}
-            >
+            <Button onClick={() => history.push(backPath)} disabled={uploading}>
               取消
             </Button>
             <Button
