@@ -33,6 +33,20 @@ export const API_CONFIG = {
     TASK_STOP: '/task/stop',
     TASK_DELETE: '/task/delete',
 
+    /** 算力资源监控 */
+    RESOURCE_MONITOR_SUMMARY: '/resource-monitor/summary',
+    RESOURCE_MONITOR_SERVERS: '/resource-monitor/servers',
+    RESOURCE_MONITOR_SERVER: (serverIp: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}`,
+    RESOURCE_MONITOR_METRICS: (serverIp: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}/metrics`,
+    RESOURCE_MONITOR_QUEUE_REORDER: (serverIp: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}/queue/reorder`,
+    RESOURCE_MONITOR_QUEUE_PRIORITY: (serverIp: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}/queue/priority`,
+    RESOURCE_MONITOR_QUEUE_TASK: (serverIp: string, taskId: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}/queue/${encodeURIComponent(taskId)}`,
+
     /** 实验版本管理 */
     EXPERIMENT_VERSIONS: (experimentId: string) =>
       `/experiments/${encodeURIComponent(experimentId)}/versions`,

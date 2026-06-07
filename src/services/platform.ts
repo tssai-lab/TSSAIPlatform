@@ -44,6 +44,18 @@ export {
   MLFLOW_METRIC_KEYS,
 } from './mlflow';
 
+export {
+  fetchResourceMonitorSummary,
+  fetchResourceMonitorServers,
+  fetchResourceMonitorServerDetail,
+  fetchResourceMonitorMetrics,
+  createResourceMonitorServer,
+  deleteResourceMonitorServer,
+  reorderResourceQueueTask,
+  updateResourceQueuePriority,
+  cancelResourceQueueTask,
+} from './resourceMonitor';
+
 export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
 
 export {

@@ -81,6 +81,18 @@ export default [
     routes: [
       { path: '/task/list', name: '任务列表', component: './task/list' },
       {
+        path: '/task/resourceMonitor',
+        name: '算力资源监控',
+        component: './task/resourceMonitor',
+        access: 'canAccessResourceMonitor',
+      },
+      {
+        path: '/task/resourceMonitor/detail/:serverIp',
+        name: '服务器详情',
+        component: './task/resourceMonitor/detail/[serverIp]',
+        hideInMenu: true,
+      },
+      {
         path: '/task/create',
         name: '发起训练',
         component: './task/create',
