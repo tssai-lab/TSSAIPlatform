@@ -64,6 +64,11 @@ export type DatasetPreviewContentData = {
   rows?: string[][] | null;
   page?: number;
   pageSize?: number | null;
+  /** 是否支持分页；为 true 时通常附带 total / totalPages */
+  pageable?: boolean;
+  /** 可预览范围内的数据行总数（不含表头） */
+  total?: number | null;
+  totalPages?: number | null;
   truncated?: boolean;
   message?: string | null;
 };
