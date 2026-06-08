@@ -283,6 +283,9 @@ public class DatasetPreviewService {
         if (".csv".equals(extension)) {
             return csvPreview(path, name, extension, text, page, pageSize);
         }
+        if (isLinePageable(extension)) {
+            return linePreview(path, name, extension, text, page, pageSize);
+        }
         return textPreview(path, name, extension, text);
     }
 
@@ -309,6 +312,30 @@ public class DatasetPreviewService {
         dto.setRows(null);
         dto.setPage(1);
         dto.setPageSize(null);
+        setNonPageable(dto);
+        dto.setMessage(text.truncated() ? "content was truncated to the preview size limit" : null);
+        return dto;
+    }
+
+    private DatasetContentPreviewDto linePreview(
+            String path,
+            String name,
+            String extension,
+            LimitedText text,
+            Integer page,
+            Integer pageSize
+    ) {
+        int pageNo = resolvePage(page);
+        int size = resolvePageSize(pageSize);
+        List<String> lines = text.content().lines()
+                .filter(line -> !".jsonl".equals(extension) || !line.isBlank())
+                .toList();
+
+        DatasetContentPreviewDto dto = baseContentPreview(path, name, extension, contentTypeOf(extension), text.truncated());
+        dto.setContent(String.join("\n", paginate(lines, pageNo, size)));
+        dto.setColumns(null);
+        dto.setRows(null);
+        setPageable(dto, pageNo, size, lines.size());
         dto.setMessage(text.truncated() ? "content was truncated to the preview size limit" : null);
         return dto;
     }
@@ -344,6 +371,7 @@ public class DatasetPreviewService {
         dto.setRows(paginate(rows, pageNo, size));
         dto.setPage(pageNo);
         dto.setPageSize(size);
+        setPageable(dto, pageNo, size, rows.size());
         dto.setMessage(text.truncated() ? "content was truncated to the preview size limit" : null);
         return dto;
     }
@@ -370,6 +398,31 @@ public class DatasetPreviewService {
             values.add(value);
         }
         return values;
+    }
+
+    private boolean isLinePageable(String extension) {
+        return ".txt".equals(extension) || ".jsonl".equals(extension);
+    }
+
+    private void setPageable(DatasetContentPreviewDto dto, int page, int pageSize, int total) {
+        dto.setPage(page);
+        dto.setPageSize(pageSize);
+        dto.setPageable(true);
+        dto.setTotal(total);
+        dto.setTotalPages(totalPages(total, pageSize));
+    }
+
+    private void setNonPageable(DatasetContentPreviewDto dto) {
+        dto.setPageable(false);
+        dto.setTotal(null);
+        dto.setTotalPages(null);
+    }
+
+    private int totalPages(int total, int pageSize) {
+        if (total <= 0) {
+            return 0;
+        }
+        return (total + pageSize - 1) / pageSize;
     }
 
     private LimitedText readLimitedText(InputStream inputStream) {

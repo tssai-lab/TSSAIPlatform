@@ -1536,9 +1536,12 @@ GET /api/dataset/preview/content?id={datasetVersionId}&path={zipEntryPath}&page=
 - zip 数据集的 `path` 必须来自 `files[].path`。
 - NLP 单文件数据集可省略 `path`。
 - `.json` 会优先按 JSON 格式化；解析失败时按原文本返回。
-- `.csv` 使用第一行作为 `columns`，后续数据行按 `page` / `pageSize` 分页返回。
+- `.csv` 使用第一行作为 `columns`，后续数据行按 `page` / `pageSize` 分页返回，`rows` 只包含当前页。
+- `.txt` 和 `.jsonl` 按行分页返回，`content` 只包含当前页行内容；`.jsonl` 会忽略空行。
+- `.json` 和 `.xml` 保持结构化内容预览，不做分页，`pageable=false`。
+- `pageable=true` 时返回 `total` 和 `totalPages`，前端可据此渲染分页器。
 - 文本读取超过 `dataset.preview.max-text-bytes` 时返回前 N 字节，`truncated=true`。
-- 文本和 CSV 都先按最大文本字节数截断；大型 CSV 的 `rows` 分页只发生在截断后的内容中，不代表完整文件总行数。
+- 文本、JSONL 和 CSV 都先按最大文本字节数截断；`truncated=true` 时 `total` 只代表本次可预览内容中的数量，不代表完整文件总行数。
 
 文本响应示例：
 
@@ -1554,7 +1557,10 @@ GET /api/dataset/preview/content?id={datasetVersionId}&path={zipEntryPath}&page=
     "columns": null,
     "rows": null,
     "page": 1,
-    "pageSize": null,
+    "pageSize": 100,
+    "pageable": true,
+    "total": 1,
+    "totalPages": 1,
     "truncated": false,
     "message": null
   },
@@ -1577,6 +1583,9 @@ CSV 响应示例：
     "rows": [["a", "1"], ["b", "2"]],
     "page": 1,
     "pageSize": 100,
+    "pageable": true,
+    "total": 2,
+    "totalPages": 1,
     "truncated": false,
     "message": null
   },
