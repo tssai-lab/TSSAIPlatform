@@ -1,5 +1,6 @@
 import {
   Alert,
+  Button,
   Col,
   Empty,
   Image,
@@ -46,6 +47,34 @@ function formatBytes(size?: number | null): string {
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+const DEFAULT_CSV_PAGE_SIZE = 50;
+const CSV_PAGE_SIZE_OPTIONS = ['20', '50', '100', '200'];
+
+function isCsvBackendPagination(
+  data: DatasetPreviewContentData | null | undefined,
+): data is DatasetPreviewContentData & { total: number } {
+  return (
+    !!data?.pageable &&
+    data.total != null &&
+    typeof data.total === 'number' &&
+    data.total >= 0
+  );
+}
+
+/** 后端未返回 total 时的兜底：固定展示 2 个页码 */
+function getCsvFallbackVisiblePageNumbers(
+  currentPage: number,
+  hasMoreRows: boolean,
+): number[] {
+  if (hasMoreRows) {
+    return [currentPage, currentPage + 1];
+  }
+  if (currentPage > 1) {
+    return [currentPage - 1, currentPage];
+  }
+  return [1];
+}
+
 export type DatasetPreviewPanelProps = {
   versionId?: string;
   /** 嵌入详情页时使用较小高度 */
@@ -78,7 +107,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   const [contentData, setContentData] =
     useState<DatasetPreviewContentData | null>(null);
   const [contentPage, setContentPage] = useState(1);
-  const [contentPageSize, setContentPageSize] = useState(50);
+  const [contentPageSize, setContentPageSize] = useState(DEFAULT_CSV_PAGE_SIZE);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   const imageUrlRef = useRef<string | null>(null);
@@ -177,8 +206,8 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         { skipErrorHandler: true, signal },
       );
       setContentData(data);
-      setContentPage(page);
-      setContentPageSize(pageSize);
+      setContentPage(data.page ?? page);
+      setContentPageSize(data.pageSize ?? pageSize);
     },
     [versionId],
   );
@@ -227,7 +256,8 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
           file.kind === DatasetPreviewFileKind.TEXT ||
           file.kind === DatasetPreviewFileKind.TABLE
         ) {
-          await loadContentPreview(file, 1, 50, controller.signal);
+          setContentPage(1);
+          await loadContentPreview(file, 1, contentPageSize, controller.signal);
         } else {
           setPreviewError(
             file.message || '该文件类型暂不支持在线预览，请下载后查看',
@@ -241,36 +271,41 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         setPreviewLoading(false);
       }
     },
-    [versionId, loadContentPreview, loadImagePreview, revokeImageUrl],
+    [
+      versionId,
+      loadContentPreview,
+      loadImagePreview,
+      revokeImageUrl,
+      contentPageSize,
+    ],
   );
 
-  const handleContentTableChange = async (
-    pagination: TablePaginationConfig,
-  ) => {
-    if (
-      !selected ||
-      !versionId ||
-      selected.kind !== DatasetPreviewFileKind.TABLE
-    ) {
-      return;
-    }
-    const page = pagination.current ?? 1;
-    const pageSize = pagination.pageSize ?? contentPageSize;
-    loadAbortRef.current?.abort();
-    const controller = new AbortController();
-    loadAbortRef.current = controller;
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      await loadContentPreview(selected, page, pageSize, controller.signal);
-    } catch (e: unknown) {
-      if ((e as Error)?.name !== 'AbortError') {
-        setPreviewError(getApiErrorMessage(e));
+  const goToContentPage = useCallback(
+    async (page: number, pageSize: number) => {
+      if (
+        !selected ||
+        !versionId ||
+        selected.kind !== DatasetPreviewFileKind.TABLE
+      ) {
+        return;
       }
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
+      loadAbortRef.current?.abort();
+      const controller = new AbortController();
+      loadAbortRef.current = controller;
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        await loadContentPreview(selected, page, pageSize, controller.signal);
+      } catch (e: unknown) {
+        if ((e as Error)?.name !== 'AbortError') {
+          setPreviewError(getApiErrorMessage(e));
+        }
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [selected, versionId, loadContentPreview],
+  );
 
   const fileColumns: ColumnsType<DatasetPreviewFileItem> = [
     {
@@ -331,12 +366,29 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const csvDataSource =
     contentData?.rows?.map((row, rowIndex) => {
-      const record: Record<string, string> = { key: String(rowIndex) };
+      const record: Record<string, string> = {
+        key: String((contentPage - 1) * contentPageSize + rowIndex),
+      };
       row.forEach((cell, colIndex) => {
         record[colIndex] = cell;
       });
       return record;
     }) ?? [];
+
+  const csvRowCount = contentData?.rows?.length ?? 0;
+  const csvUseBackendPagination = isCsvBackendPagination(contentData);
+  const csvHasMoreRows = csvRowCount >= contentPageSize;
+  const csvFallbackVisiblePages = getCsvFallbackVisiblePageNumbers(
+    contentPage,
+    csvHasMoreRows,
+  );
+
+  const handleCsvTableChange = (pagination: TablePaginationConfig) => {
+    void goToContentPage(
+      pagination.current ?? 1,
+      pagination.pageSize ?? contentPageSize,
+    );
+  };
 
   if (!versionId) {
     return <Empty description="请选择要预览的数据集版本" />;
@@ -507,6 +559,13 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
             contentData &&
             contentData.contentType === 'CSV' && (
               <Space direction="vertical" style={{ width: '100%' }}>
+                {contentData.truncated && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="内容已按最大可读字节截断；total 仅表示本次可预览范围内的行数，不代表完整文件总行数"
+                  />
+                )}
                 {contentData.message && (
                   <Alert type="info" showIcon message={contentData.message} />
                 )}
@@ -514,17 +573,85 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                   size="small"
                   columns={csvColumns}
                   dataSource={csvDataSource}
-                  pagination={{
-                    current: contentPage,
-                    pageSize: contentPageSize,
-                    showSizeChanger: true,
-                    hideOnSinglePage: contentData.rows?.length
-                      ? contentData.rows.length < contentPageSize
-                      : true,
-                  }}
-                  onChange={handleContentTableChange}
+                  pagination={
+                    csvUseBackendPagination
+                      ? {
+                          current: contentPage,
+                          pageSize: contentPageSize,
+                          total: contentData.total,
+                          showSizeChanger: true,
+                          hideOnSinglePage: (contentData.totalPages ?? 0) > 1,
+                          pageSizeOptions: CSV_PAGE_SIZE_OPTIONS,
+                          showTotal: (total) => {
+                            const pages =
+                              contentData.totalPages ??
+                              Math.max(1, Math.ceil(total / contentPageSize));
+                            return `共 ${total} 条，${pages} 页`;
+                          },
+                        }
+                      : false
+                  }
+                  onChange={
+                    csvUseBackendPagination ? handleCsvTableChange : undefined
+                  }
                   scroll={{ x: 'max-content', y: compact ? 280 : 400 }}
                 />
+                {!csvUseBackendPagination && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    <Button
+                      size="small"
+                      disabled={contentPage <= 1 || previewLoading}
+                      onClick={() =>
+                        goToContentPage(contentPage - 1, contentPageSize)
+                      }
+                    >
+                      上一页
+                    </Button>
+                    {csvFallbackVisiblePages.map((pageNum) => (
+                      <Button
+                        key={pageNum}
+                        size="small"
+                        type={pageNum === contentPage ? 'primary' : 'default'}
+                        disabled={previewLoading}
+                        onClick={() => {
+                          if (pageNum !== contentPage) {
+                            void goToContentPage(pageNum, contentPageSize);
+                          }
+                        }}
+                      >
+                        {pageNum}
+                      </Button>
+                    ))}
+                    <Button
+                      size="small"
+                      disabled={!csvHasMoreRows || previewLoading}
+                      onClick={() =>
+                        goToContentPage(contentPage + 1, contentPageSize)
+                      }
+                    >
+                      下一页
+                    </Button>
+                    <Select
+                      size="small"
+                      value={contentPageSize}
+                      style={{ width: 116 }}
+                      options={CSV_PAGE_SIZE_OPTIONS.map((value) => ({
+                        value: Number(value),
+                        label: `${value} 条/页`,
+                      }))}
+                      onChange={(pageSize) => goToContentPage(1, pageSize)}
+                    />
+                  </div>
+                )}
               </Space>
             )}
         </Col>
