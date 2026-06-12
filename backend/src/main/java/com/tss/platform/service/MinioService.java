@@ -84,6 +84,26 @@ public class MinioService {
         );
     }
 
+    InputStream downloadRange(String objectName, long offset, long length) throws Exception {
+        if (objectName == null || objectName.isBlank()) {
+            throw new IllegalArgumentException("objectName cannot be blank");
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset must be greater than or equal to zero");
+        }
+        if (length <= 0) {
+            throw new IllegalArgumentException("length must be greater than zero");
+        }
+        return minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(objectName)
+                        .offset(offset)
+                        .length(length)
+                        .build()
+        );
+    }
+
     public StatObjectResponse stat(String objectName) throws Exception {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");

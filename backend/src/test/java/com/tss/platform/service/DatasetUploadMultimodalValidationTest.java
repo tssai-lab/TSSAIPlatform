@@ -1,0 +1,73 @@
+package com.tss.platform.service;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class DatasetUploadMultimodalValidationTest {
+
+    @Test
+    void defaultsManifestPathForManifestGrouping() {
+        assertEquals(
+                "manifest.json",
+                DatasetUploadService.normalizeManifestPath("MANIFEST", null)
+        );
+    }
+
+    @Test
+    void rejectsUnsafeManifestPaths() {
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "/manifest.json"));
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "../manifest.json"));
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "dir\\manifest.json"));
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "bad\u0000manifest.json"));
+    }
+
+    @Test
+    void rejectsManifestPathWithoutManifestGrouping() {
+        assertNull(DatasetUploadService.normalizeManifestPath(null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath(null, "manifest.json"));
+    }
+
+    @Test
+    void acceptsOnlyManifestGrouping() {
+        assertNull(DatasetUploadService.normalizeSampleGrouping(null));
+        assertEquals("MANIFEST", DatasetUploadService.normalizeSampleGrouping(" manifest "));
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeSampleGrouping("DIRECTORY"));
+    }
+
+    @Test
+    void calculatesDynamicChunkSizeWithAtMostTenThousandParts() {
+        long fileSize = 50L * 1024 * 1024 * 1024;
+
+        int chunkSize = DatasetUploadService.calculateChunkSize(fileSize);
+        int totalChunks = DatasetUploadService.calculateTotalChunks(fileSize, chunkSize);
+
+        assertEquals(6 * 1024 * 1024, chunkSize);
+        assertEquals(8534, totalChunks);
+    }
+
+    @Test
+    void keepsFiveMegabyteChunksForSmallFiles() {
+        long fileSize = 11L * 1024 * 1024;
+
+        int chunkSize = DatasetUploadService.calculateChunkSize(fileSize);
+
+        assertEquals(5 * 1024 * 1024, chunkSize);
+        assertEquals(3, DatasetUploadService.calculateTotalChunks(fileSize, chunkSize));
+    }
+
+    @Test
+    void acceptsMultimodalZipFileName() {
+        DatasetUploadService.validateDatasetFileNameForTask("MULTIMODAL", "dataset.zip");
+        assertThrows(IllegalArgumentException.class,
+                () -> DatasetUploadService.validateDatasetFileNameForTask("MULTIMODAL", "dataset.tar"));
+    }
+}

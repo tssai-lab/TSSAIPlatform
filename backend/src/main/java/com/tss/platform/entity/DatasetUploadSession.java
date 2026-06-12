@@ -77,6 +77,18 @@ public class DatasetUploadSession {
     @Column(name = "parent_version_id", length = 64)
     private String parentVersionId;
 
+    @Column(name = "sample_grouping", length = 32)
+    private String sampleGrouping;
+
+    @Column(name = "manifest_path", length = 255)
+    private String manifestPath;
+
+    @Column(name = "import_job_id", length = 64)
+    private String importJobId;
+
+    @Column(name = "asset_created_by_upload", nullable = false)
+    private Boolean assetCreatedByUpload = false;
+
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 

@@ -204,6 +204,9 @@ public class DatasetVersionCrudController {
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
+        if (STATUS_READY.equals(targetStatus) && isWorkspaceDraft(version)) {
+            return ApiResponse.fail("workspace draft publishing is not implemented");
+        }
         if (STATUS_READY.equals(targetStatus) && !hasCompleteStorageMetadata(version)) {
             return ApiResponse.fail("READY dataset version requires storage metadata");
         }
@@ -242,7 +245,10 @@ public class DatasetVersionCrudController {
         }
         boolean minioDeleteQueued = false;
         String objectName = version.getStoragePath();
-        if (objectName != null && !objectName.isBlank()) {
+        boolean storageShared = objectName != null
+                && !objectName.isBlank()
+                && repo.existsByStoragePathAndDeletedFalseAndIdNot(objectName, id);
+        if (objectName != null && !objectName.isBlank() && !storageShared) {
             try {
                 authContext.requireObjectAccess(objectName, ownerUserId, "object not found or no permission");
                 minioDeleteTaskService.enqueueDefaultBucketDelete(
@@ -276,6 +282,20 @@ public class DatasetVersionCrudController {
         result.put("deleted", true);
         result.put("minioDeleteQueued", minioDeleteQueued);
         return ApiResponse.ok(result);
+    }
+
+    private boolean isWorkspaceDraft(DatasetVersion version) {
+        if (!STATUS_DRAFT.equals(version.getStatus())
+                || version.getParentVersionId() == null
+                || version.getParentVersionId().isBlank()
+                || version.getStoragePath() == null
+                || version.getStoragePath().isBlank()) {
+            return false;
+        }
+        return repo.findById(version.getParentVersionId())
+                .map(parent -> Objects.equals(parent.getAssetId(), version.getAssetId())
+                        && Objects.equals(parent.getStoragePath(), version.getStoragePath()))
+                .orElse(false);
     }
 
     private Integer resolveAssetOwner(String assetId) {

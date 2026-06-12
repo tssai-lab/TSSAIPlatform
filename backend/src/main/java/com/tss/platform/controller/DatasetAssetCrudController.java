@@ -5,7 +5,7 @@ import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.model.CvAnnotationFormat;
 import com.tss.platform.model.CvTaskType;
-import com.tss.platform.model.TaskType;
+import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
@@ -53,7 +53,7 @@ public class DatasetAssetCrudController {
     @PostMapping
     public ApiResponse<DatasetAsset> create(@RequestBody DatasetAsset body) {
         try {
-            body.setType(TaskType.normalize(body.getType()));
+            body.setType(DatasetTaskType.normalize(body.getType()));
             body.setCvTaskType(CvTaskType.normalizeForTask(body.getType(), body.getCvTaskType()));
             body.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(body.getType(), body.getAnnotationFormat()));
             body.setId("dataset-asset-" + UUID.randomUUID().toString().replace("-", ""));
@@ -99,7 +99,7 @@ public class DatasetAssetCrudController {
         }
         e.setName(body.getName());
         try {
-            e.setType(TaskType.normalize(body.getType()));
+            e.setType(DatasetTaskType.normalize(body.getType()));
             e.setCvTaskType(CvTaskType.normalizeForTask(e.getType(), body.getCvTaskType()));
             e.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(e.getType(), body.getAnnotationFormat()));
         } catch (IllegalArgumentException ex) {

@@ -7,9 +7,18 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUploadSession, String> {
+    Optional<DatasetUploadSession> findByImportJobId(String importJobId);
+
+    List<DatasetUploadSession> findByStatusAndUpdatedAtBefore(String status, Instant updatedBefore);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from DatasetUploadSession s where s.id = :id")
+    Optional<DatasetUploadSession> findByIdForUpdate(@Param("id") String id);
+
     Optional<DatasetUploadSession> findFirstByFileFingerprintAndStatusOrderByUpdatedAtDesc(
             String fileFingerprint,
             String status

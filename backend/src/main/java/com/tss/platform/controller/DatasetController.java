@@ -3,9 +3,11 @@ package com.tss.platform.controller;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
-import com.tss.platform.model.TaskType;
+import com.tss.platform.entity.ImportJob;
+import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,15 +25,18 @@ public class DatasetController {
 
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
+    private final ImportJobRepository importJobRepo;
     private final AuthContext authContext;
 
     public DatasetController(
             DatasetAssetRepository assetRepo,
             DatasetVersionRepository versionRepo,
+            ImportJobRepository importJobRepo,
             AuthContext authContext
     ) {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
+        this.importJobRepo = importJobRepo;
         this.authContext = authContext;
     }
 
@@ -46,7 +51,7 @@ public class DatasetController {
         String normalizedType = null;
         if (type != null && !type.isBlank()) {
             try {
-                normalizedType = TaskType.normalize(type);
+                normalizedType = DatasetTaskType.normalize(type);
             } catch (IllegalArgumentException e) {
                 return ApiResponse.fail(e.getMessage());
             }
@@ -70,9 +75,28 @@ public class DatasetController {
                 : versionRepo.findByAssetIdInAndDeletedFalse(assetIds);
         Map<String, List<DatasetVersion>> versionsByAssetId = versions.stream()
                 .collect(Collectors.groupingBy(DatasetVersion::getAssetId));
+        Map<String, DatasetVersion> latestDraftByAssetId = versions.stream()
+                .filter(version -> "DRAFT".equals(version.getStatus()))
+                .collect(Collectors.toMap(
+                        DatasetVersion::getAssetId,
+                        version -> version,
+                        this::newerVersion
+                ));
+        Set<String> latestDraftIds = latestDraftByAssetId.values().stream()
+                .map(DatasetVersion::getId)
+                .collect(Collectors.toSet());
+        Map<String, ImportJob> jobsByVersionId = latestDraftIds.isEmpty()
+                ? Map.of()
+                : importJobRepo.findByDatasetVersionIdIn(latestDraftIds).stream()
+                .collect(Collectors.toMap(ImportJob::getDatasetVersionId, job -> job));
 
         List<Map<String, Object>> allData = filteredAssets.stream()
-                .map(asset -> toListItem(asset, versionsByAssetId.getOrDefault(asset.getId(), List.of())))
+                .map(asset -> toListItem(
+                        asset,
+                        versionsByAssetId.getOrDefault(asset.getId(), List.of()),
+                        latestDraftByAssetId.get(asset.getId()),
+                        jobsByVersionId
+                ))
                 .filter(item -> matchesKeyword(item, normalizedKeyword))
                 .sorted(Comparator.comparing(
                         item -> String.valueOf(item.getOrDefault("uploadTime", "")),
@@ -89,8 +113,14 @@ public class DatasetController {
         return ApiResponse.ok(result);
     }
 
-    private Map<String, Object> toListItem(DatasetAsset asset, List<DatasetVersion> versions) {
+    private Map<String, Object> toListItem(
+            DatasetAsset asset,
+            List<DatasetVersion> versions,
+            DatasetVersion latestDraft,
+            Map<String, ImportJob> jobsByVersionId
+    ) {
         DatasetVersion version = currentVersion(asset, versions);
+        ImportJob importJob = latestDraft == null ? null : jobsByVersionId.get(latestDraft.getId());
 
         Map<String, Object> item = new HashMap<>();
         item.put("id", asset.getId());
@@ -123,7 +153,19 @@ public class DatasetController {
                 : asset.getCreatedAt());
         item.put("createdAt", asset.getCreatedAt());
         item.put("updatedAt", asset.getUpdatedAt());
+        item.put("latestDraftVersionId", latestDraft != null ? latestDraft.getId() : null);
+        item.put("importJobId", importJob != null ? importJob.getId() : null);
+        item.put("importStatus", importJob != null ? importJob.getStatus() : null);
+        item.put("importProgress", importJob != null ? importJob.getProgress() : null);
+        item.put("importErrorMessage", importJob != null ? importJob.getErrorMessage() : null);
         return item;
+    }
+
+    private DatasetVersion newerVersion(DatasetVersion left, DatasetVersion right) {
+        Comparator<DatasetVersion> comparator = Comparator
+                .comparing(DatasetVersion::getVersionNo, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(DatasetVersion::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()));
+        return comparator.compare(left, right) >= 0 ? left : right;
     }
 
     private String normalizeKeyword(String keyword) {

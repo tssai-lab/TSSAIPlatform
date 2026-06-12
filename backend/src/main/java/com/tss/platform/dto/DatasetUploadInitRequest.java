@@ -18,4 +18,6 @@ public class DatasetUploadInitRequest {
     private String cvTaskType;
     private String annotationFormat;
     private String remark;
+    private String sampleGrouping;
+    private String manifestPath;
 }
