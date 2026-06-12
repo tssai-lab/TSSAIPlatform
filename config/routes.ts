@@ -118,6 +118,19 @@ export default [
     ],
   },
   {
+    path: '/inference',
+    name: '模型推理',
+    icon: 'experiment',
+    routes: [
+      { path: '/inference', redirect: '/inference/playground' },
+      {
+        path: '/inference/playground',
+        name: '在线推理',
+        component: './inference/playground',
+      },
+    ],
+  },
+  {
     path: '/system',
     name: '系统管理',
     icon: 'setting',

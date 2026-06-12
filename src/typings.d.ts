@@ -312,4 +312,76 @@ declare namespace API {
     spanLabel: string;
     points: API.ResourceMonitorMetricPoint[];
   };
+
+  /** 推理模态 */
+  type InferenceModality = 'CV' | 'NLP' | 'MULTIMODAL';
+
+  /** 可推理的训练产出候选项（训练成功列表） */
+  type InferenceTrainingCandidate = {
+    experimentId: string;
+    versionNo: number;
+    taskRecordId?: string;
+    name: string;
+    modelName: string;
+    versionLabel: string;
+    modality: InferenceModality;
+    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    finishedAt?: string;
+    remark?: string;
+  };
+
+  /** 训练产出推理上下文（experimentId + versionNo） */
+  type InferenceTrainingContext = {
+    experimentId: string;
+    versionNo: number;
+    taskRecordId?: string;
+    name: string;
+    modality: InferenceModality;
+    modelName: string;
+    versionLabel: string;
+    outputPath?: string;
+    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    remark?: string;
+  };
+
+  type InferenceCvPrediction = {
+    label: string;
+    score: number;
+    bbox?: [number, number, number, number];
+  };
+
+  type InferenceNlpEntity = {
+    text: string;
+    label: string;
+    start: number;
+    end: number;
+  };
+
+  /** 在线推理响应 */
+  type InferencePredictResult = {
+    recordId?: string;
+    type: InferenceModality;
+    cvTaskType?: string;
+    latencyMs?: number;
+    predictions?: InferenceCvPrediction[];
+    label?: string;
+    score?: number;
+    generatedText?: string;
+    tokenCount?: number;
+    entities?: InferenceNlpEntity[];
+    answer?: string;
+    scene?: string;
+    semanticLabels?: string[];
+    annotatedImageUrl?: string;
+    modelName?: string;
+    modelVersion?: string;
+  };
+
+  type InferenceParams = {
+    confidence?: number;
+    topK?: number;
+    temperature?: number;
+    maxTokens?: number;
+    topP?: number;
+  };
 }

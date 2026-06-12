@@ -439,6 +439,16 @@ const TaskDetail: React.FC = () => {
     { title: '时间', dataIndex: 'createdAt', width: 180 },
   ];
 
+  const handleGoInference = (versionNo: number) => {
+    if (!experimentId) {
+      message.warning('缺少 experimentId，无法进入在线推理');
+      return;
+    }
+    history.push(
+      `/inference/playground?experimentId=${encodeURIComponent(experimentId)}&versionNo=${versionNo}`,
+    );
+  };
+
   const handleCompareVersions = () => {
     if (compareVersionKeys.length < 2) {
       message.warning('请至少选择 2 个版本进行对比');
@@ -592,7 +602,7 @@ const TaskDetail: React.FC = () => {
             {taskInfo.completeTime || taskInfo.finishedAt || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Space size={8}>
+            <Space size={8} wrap>
               <Tag color={statusColor(taskInfo.status)}>
                 {statusText(taskInfo.status)}
               </Tag>
@@ -651,7 +661,7 @@ const TaskDetail: React.FC = () => {
             showIcon
             style={{ marginBottom: 12 }}
             message="版本与超参数说明"
-            description="选择「追溯到此版本」可查看该次训练的配置快照。超参数为只读记录；需基于某一历史版本调整配置再训时，请使用「基于此版本继续训练」。"
+            description="选择「追溯到此版本」可查看该次训练的配置快照。训练成功的版本可在操作列进入在线推理；需基于某一历史版本调整配置再训时，请使用「基于此版本继续训练」。"
           />
         )}
         <Table
@@ -726,7 +736,7 @@ const TaskDetail: React.FC = () => {
             {
               title: '操作',
               key: 'action',
-              width: 240,
+              width: 300,
               fixed: 'right',
               render: (_: any, record: API.TrainingExperimentVersion) => (
                 <Space size={0} wrap={false}>
@@ -737,6 +747,15 @@ const TaskDetail: React.FC = () => {
                   >
                     {record.id === taskInfo.id ? '当前追溯' : '追溯到此版本'}
                   </Button>
+                  {record.status === 'success' && experimentId ? (
+                    <Button
+                      type="link"
+                      style={{ paddingInline: 4 }}
+                      onClick={() => handleGoInference(record.versionNo)}
+                    >
+                      在线推理
+                    </Button>
+                  ) : null}
                   <Button
                     type="link"
                     style={{ paddingInline: 4 }}

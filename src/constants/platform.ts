@@ -62,6 +62,11 @@ export const API_CONFIG = {
 
     /** GPU 资源概况（待后端实现） */
     GPU_OVERVIEW: '/resource/gpu/overview',
+
+    /** 在线推理（训练产出来自 task API，此处仅 predict） */
+    INFERENCE_PREDICT_CV: '/inference/predict/cv',
+    INFERENCE_PREDICT_NLP: '/inference/predict/nlp',
+    INFERENCE_PREDICT_MULTIMODAL: '/inference/predict/multimodal',
   },
 } as const;
 
@@ -89,6 +94,20 @@ export const UPLOAD_CONFIG = {
 export const MODEL_TYPES = {
   CV: { label: 'CV（计算机视觉）', value: 'CV', color: '#1890ff' },
   NLP: { label: 'NLP（自然语言处理）', value: 'NLP', color: '#52c41a' },
+} as const;
+
+/** 推理模态类型 */
+export const INFERENCE_MODALITIES = {
+  CV: { label: '计算机视觉', value: 'CV', tagColor: 'blue' },
+  NLP: { label: '自然语言处理', value: 'NLP', tagColor: 'green' },
+  MULTIMODAL: { label: '多模态', value: 'MULTIMODAL', tagColor: 'purple' },
+} as const;
+
+/** 推理输入限制 */
+export const INFERENCE_CONFIG = {
+  CV_IMAGE_MAX_MB: 20,
+  NLP_TEXT_MAX_CHARS: 8000,
+  PREDICT_TIMEOUT_MS: 120000,
 } as const;
 
 /** 数据集类型 */
