@@ -27,12 +27,22 @@ jobs:
       - name: 打包项目
         run: npm run build
 
-      - name: 上传 dist 到服务器
+      - name: 上传 dist 到主服务器
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.MAIN_SERVER_HOST }}
           username: ${{ secrets.MAIN_SERVER_USER }}
           password: ${{ secrets.MAIN_SERVER_PASSWORD }}
-          source: "dist/*"        # 上传 dist 里面所有内容
-          target: "/var/www/"  # 大厂标准路径！
-          strip_components: 1    # 自动去掉 dist 目录层级
+          source: "dist/*"
+          target: "/var/www/"
+          strip_components: 1
+
+      - name: 上传 dist 到第二台服务器
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SECONDARY_SERVER_HOST }}
+          username: ${{ secrets.SECONDARY_SERVER_USER }}
+          password: ${{ secrets.SECONDARY_SERVER_PASSWORD }}
+          source: "dist/*"
+          target: "/var/www/"
+          strip_components: 1
