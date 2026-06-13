@@ -265,20 +265,20 @@ const TaskCreate: React.FC = () => {
               setSelectedDatasetVersionId(value);
               form.setFieldValue('datasetVersionId', value);
             }}
-            options={datasetOptions
-              .map((d: any) => {
-                const versionId = d.versionId;
-                if (!versionId) return null;
-                const desc = d.versionRemark?.trim();
-                const descPart = desc
-                  ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
-                  : '';
-                return {
+            options={datasetOptions.flatMap((d: API.DatasetItem) => {
+              const versionId = d.versionId;
+              if (!versionId) return [];
+              const desc = d.versionRemark?.trim();
+              const descPart = desc
+                ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
+                : '';
+              return [
+                {
                   value: versionId,
                   label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
-                };
-              })
-              .filter(Boolean)}
+                },
+              ];
+            })}
           />
         </Form.Item>
       ),
