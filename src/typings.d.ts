@@ -98,12 +98,13 @@ declare namespace API {
     id: string;
     assetId?: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL';
     uploadTime?: string;
     size?: string;
     fileCount: number;
     version?: string;
     versionId?: string;
+    versionStatus?: string;
     remark?: string;
     storagePath?: string;
     sizeBytes?: number;
@@ -111,6 +112,11 @@ declare namespace API {
     updatedAt?: string;
     fileName?: string;
     versionRemark?: string;
+    latestDraftVersionId?: string | null;
+    importJobId?: string | null;
+    importStatus?: string | null;
+    importProgress?: number | null;
+    importErrorMessage?: string | null;
   };
 
   // 任务相关
@@ -195,19 +201,25 @@ declare namespace API {
     sizeBytes?: number;
     size?: string;
     remark?: string;
+    status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
     createdAt?: string;
   };
 
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;
     uploadTime?: string;
     latestVersion?: API.DatasetVersionDetail;
     versions: API.DatasetVersionDetail[];
+    latestDraftVersionId?: string | null;
+    importJobId?: string | null;
+    importStatus?: string | null;
+    importProgress?: number | null;
+    importErrorMessage?: string | null;
   };
 
   // MLflow 指标点

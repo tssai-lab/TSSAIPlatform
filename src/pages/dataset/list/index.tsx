@@ -1,7 +1,7 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { Button, message, Popconfirm, Space } from 'antd';
+import { Button, message, Popconfirm, Space, Tag, Tooltip } from 'antd';
 import React from 'react';
 import { MOCK_DATASETS } from '@/constants/mockData';
 import {
@@ -56,6 +56,38 @@ const DatasetList: React.FC = () => {
         CV: { text: 'CV' },
         NLP: { text: 'NLP' },
         POINT_CLOUD: { text: '点云' },
+        MULTIMODAL: { text: '多模态' },
+      },
+    },
+    {
+      title: '导入状态',
+      dataIndex: 'importStatus',
+      key: 'importStatus',
+      hideInSearch: true,
+      width: 120,
+      render: (_, record) => {
+        if (record.type !== 'MULTIMODAL' || !record.importStatus) {
+          return '-';
+        }
+        const color =
+          record.importStatus === 'FAILED'
+            ? 'error'
+            : record.importStatus === 'SUCCESS'
+              ? 'success'
+              : 'processing';
+        const label =
+          record.importStatus === 'PENDING'
+            ? '等待导入'
+            : record.importStatus === 'RUNNING'
+              ? '导入中'
+              : record.importStatus === 'FAILED'
+                ? '导入失败'
+                : record.importStatus;
+        const tag = <Tag color={color}>{label}</Tag>;
+        if (record.importErrorMessage) {
+          return <Tooltip title={record.importErrorMessage}>{tag}</Tooltip>;
+        }
+        return tag;
       },
     },
     {

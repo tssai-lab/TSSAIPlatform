@@ -46,26 +46,38 @@ import {
   suggestNextDatasetVersion,
 } from '@/utils/datasetVersion';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
+import MultimodalImportBanner from '../components/MultimodalImportBanner';
+import MultimodalPreviewPanel from '../components/MultimodalPreviewPanel';
 
 const DATASET_TYPE_LABEL: Record<string, string> = {
   CV: 'CV',
   NLP: 'NLP',
   POINT_CLOUD: '点云',
+  MULTIMODAL: '多模态',
 };
 
 const DATASET_TYPE_COLOR: Record<string, string> = {
   CV: 'blue',
   NLP: 'green',
   POINT_CLOUD: 'purple',
+  MULTIMODAL: 'magenta',
 };
 
 const DatasetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const previewSectionRef = useRef<HTMLDivElement>(null);
-  const [datasetInfo, setDatasetInfo] = useState<API.DatasetDetail | null>(
-    null,
-  );
+  const [datasetInfo, setDatasetInfo] = useState<
+    | (API.DatasetDetail & {
+        defaultVersionId?: string;
+        latestDraftVersionId?: string | null;
+        importJobId?: string | null;
+        importStatus?: string | null;
+        importProgress?: number | null;
+        importErrorMessage?: string | null;
+      })
+    | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [previewVersionId, setPreviewVersionId] = useState<string>();
 
@@ -241,7 +253,11 @@ const DatasetDetail: React.FC = () => {
       return;
     }
 
-    if (datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP') {
+    if (
+      datasetInfo?.type === 'CV' ||
+      datasetInfo?.type === 'NLP' ||
+      datasetInfo?.type === 'MULTIMODAL'
+    ) {
       requestAnimationFrame(() => {
         previewSectionRef.current?.scrollIntoView({
           behavior: 'smooth',
@@ -255,8 +271,14 @@ const DatasetDetail: React.FC = () => {
     (v) => v.id === previewVersionId,
   );
   const isPointCloud = datasetInfo?.type === 'POINT_CLOUD';
+  const isMultimodal = datasetInfo?.type === 'MULTIMODAL';
   const supportsInlinePreview =
     datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP';
+  const previewVersionReady =
+    !isMultimodal ||
+    (previewVersionId != null &&
+      previewVersionId !== datasetInfo?.latestDraftVersionId &&
+      (previewVersion?.status === 'READY' || !previewVersion?.status));
 
   const versionFormRules = useMemo(
     () => datasetVersionFormRules(existingVersionNames),
@@ -338,6 +360,16 @@ const DatasetDetail: React.FC = () => {
         </Descriptions>
       </Card>
 
+      {isMultimodal && (
+        <MultimodalImportBanner
+          importJobId={datasetInfo.importJobId}
+          initialStatus={datasetInfo.importStatus}
+          initialProgress={datasetInfo.importProgress}
+          initialErrorMessage={datasetInfo.importErrorMessage}
+          onImportFinished={loadDetail}
+        />
+      )}
+
       <Card
         title="版本列表"
         style={{ marginBottom: 16 }}
@@ -375,6 +407,32 @@ const DatasetDetail: React.FC = () => {
               key: 'version',
               width: 100,
             },
+            ...(isMultimodal
+              ? [
+                  {
+                    title: '状态',
+                    dataIndex: 'status',
+                    key: 'status',
+                    width: 90,
+                    render: (
+                      status: string,
+                      record: API.DatasetVersionDetail,
+                    ) => {
+                      const vid =
+                        resolveDatasetVersionId(record, datasetInfo.id) ??
+                        record.id;
+                      const isDraft =
+                        status === 'DRAFT' ||
+                        vid === datasetInfo.latestDraftVersionId;
+                      return (
+                        <Tag color={isDraft ? 'default' : 'success'}>
+                          {isDraft ? 'DRAFT' : status || 'READY'}
+                        </Tag>
+                      );
+                    },
+                  },
+                ]
+              : []),
             {
               title: '文件名',
               dataIndex: 'fileName',
@@ -462,7 +520,7 @@ const DatasetDetail: React.FC = () => {
       {!isPointCloud && (
         <div ref={previewSectionRef}>
           <Card
-            title="内容预览"
+            title={isMultimodal ? '多模态样本' : '内容预览'}
             extra={
               previewVersion ? (
                 <Typography.Text type="secondary">
@@ -474,7 +532,17 @@ const DatasetDetail: React.FC = () => {
               ) : null
             }
           >
-            {supportsInlinePreview ? (
+            {isMultimodal ? (
+              previewVersionReady ? (
+                <MultimodalPreviewPanel
+                  key={previewVersionId}
+                  versionId={previewVersionId}
+                  compact
+                />
+              ) : (
+                <Empty description="该版本尚在导入中（DRAFT），导入成功并变为 READY 后可浏览样本" />
+              )
+            ) : supportsInlinePreview ? (
               <DatasetPreviewPanel
                 key={previewVersionId}
                 versionId={previewVersionId}

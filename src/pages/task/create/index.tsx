@@ -64,7 +64,10 @@ const TaskCreate: React.FC = () => {
     setDatasetLoading(true);
     fetchDatasetList({ pageSize: 100 } as any)
       .then((res: any) => {
-        const list = res?.data?.data ?? res?.data ?? [];
+        const list = (res?.data?.data ?? res?.data ?? []).filter(
+          (item: API.DatasetItem) =>
+            item.type !== 'MULTIMODAL' && item.versionId,
+        );
         setDatasetOptions(list ?? []);
       })
       .catch((error: any) => {
