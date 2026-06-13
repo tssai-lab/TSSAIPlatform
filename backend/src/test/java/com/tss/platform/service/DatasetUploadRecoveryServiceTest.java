@@ -36,7 +36,21 @@ class DatasetUploadRecoveryServiceTest {
 
     @Test
     void completesStaleSessionWhenReservedObjectExists() throws Exception {
+        assertCompletesStaleSession("MANIFEST", "manifest.json");
+    }
+
+    @Test
+    void completesAutoDirectoryStaleSessionWithoutManifestPath() throws Exception {
+        assertCompletesStaleSession("AUTO_DIRECTORY", null);
+    }
+
+    private void assertCompletesStaleSession(
+            String sampleGrouping,
+            String manifestPath
+    ) throws Exception {
         Fixture fixture = new Fixture();
+        fixture.session.setSampleGrouping(sampleGrouping);
+        fixture.session.setManifestPath(manifestPath);
         fixture.stubLockedState();
         StatObjectResponse stat = mock(StatObjectResponse.class);
         when(stat.size()).thenReturn(fixture.session.getFileSize());
@@ -63,6 +77,7 @@ class DatasetUploadRecoveryServiceTest {
         assertEquals("READY", fixture.savedPackage.get().getStatus());
         assertEquals(fixture.objectName(), fixture.savedPackage.get().getStoragePath());
         assertEquals(fixture.asset.getId(), fixture.savedPackage.get().getDatasetAssetId());
+        assertEquals(manifestPath, fixture.savedPackage.get().getManifestPath());
         assertEquals(fixture.version.getId(), fixture.savedVersionPackage.get().getDatasetVersionId());
         assertEquals(fixture.savedPackage.get().getId(), fixture.savedVersionPackage.get().getPackageId());
         assertEquals("PRIMARY", fixture.savedVersionPackage.get().getPackageRole());

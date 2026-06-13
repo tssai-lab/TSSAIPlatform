@@ -49,6 +49,8 @@ public class ImportJobService {
     private static final String VERSION_DRAFT = "DRAFT";
     private static final String VERSION_READY = "READY";
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
+    private static final String GROUPING_MANIFEST = "MANIFEST";
+    private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
 
     private final ImportJobRepository jobRepo;
     private final DatasetVersionRepository versionRepo;
@@ -63,6 +65,7 @@ public class ImportJobService {
     private final ZipCentralDirectoryReader zipReader;
     private final ManifestZipReader manifestReader;
     private final ManifestParser manifestParser;
+    private final AutoDirectoryManifestBuilder autoDirectoryManifestBuilder;
     private final TransactionTemplate writeTransaction;
     private final TransactionTemplate statusTransaction;
     private final Map<String, String> activeExecutors = new ConcurrentHashMap<>();
@@ -81,6 +84,7 @@ public class ImportJobService {
             ZipCentralDirectoryReader zipReader,
             ManifestZipReader manifestReader,
             ManifestParser manifestParser,
+            AutoDirectoryManifestBuilder autoDirectoryManifestBuilder,
             PlatformTransactionManager transactionManager
     ) {
         this.jobRepo = jobRepo;
@@ -96,6 +100,7 @@ public class ImportJobService {
         this.zipReader = zipReader;
         this.manifestReader = manifestReader;
         this.manifestParser = manifestParser;
+        this.autoDirectoryManifestBuilder = autoDirectoryManifestBuilder;
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.statusTransaction = new TransactionTemplate(transactionManager);
         this.statusTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -119,31 +124,7 @@ public class ImportJobService {
             StatObjectResponse stat = minioService.stat(context.objectName());
             long objectSize = stat.size();
             List<ZipEntryInfo> entries = zipReader.read(context.objectName(), objectSize);
-            String manifestJson = manifestReader.readManifest(
-                    context.objectName(),
-                    objectSize,
-                    context.manifestPath()
-            );
-            ManifestImportPlan plan;
-            if (context.appendPackage()) {
-                Integer maxSampleIndex =
-                        sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
-                                context.versionId()
-                        );
-                int generatedStart = (maxSampleIndex == null ? -1 : maxSampleIndex) + 1;
-                plan = manifestParser.parse(
-                        manifestJson,
-                        entries,
-                        context.manifestPath(),
-                        generatedStart
-                );
-            } else {
-                plan = manifestParser.parse(
-                        manifestJson,
-                        entries,
-                        context.manifestPath()
-                );
-            }
+            ManifestImportPlan plan = buildPlan(context, entries, objectSize);
             writeTransaction.executeWithoutResult(status -> persistPlan(context, plan, executorId));
         } catch (Exception exception) {
             String message = rootMessage(exception);
@@ -194,12 +175,17 @@ public class ImportJobService {
         if (!version.getId().equals(session.getVersionId())) {
             throw new IllegalArgumentException("upload session version does not match import job");
         }
-        if (!"MANIFEST".equals(session.getSampleGrouping())) {
-            throw new IllegalArgumentException("upload session sampleGrouping must be MANIFEST");
+        String sampleGrouping = session.getSampleGrouping();
+        if (!GROUPING_MANIFEST.equals(sampleGrouping)
+                && !GROUPING_AUTO_DIRECTORY.equals(sampleGrouping)) {
+            throw new IllegalArgumentException(
+                    "upload session sampleGrouping must be MANIFEST or AUTO_DIRECTORY"
+            );
         }
 
         String objectName;
         String manifestPath = session.getManifestPath();
+        String packageManifestPath = null;
         String packageId = job.getPackageId();
         String packageRole = null;
         if (packageId == null || packageId.isBlank()) {
@@ -233,10 +219,27 @@ public class ImportJobService {
                         "dataset package storagePath is blank: " + datasetPackage.getId()
                 );
             }
-            if (datasetPackage.getManifestPath() != null
+            if (GROUPING_MANIFEST.equals(sampleGrouping)
+                    && datasetPackage.getManifestPath() != null
                     && !datasetPackage.getManifestPath().isBlank()) {
                 manifestPath = datasetPackage.getManifestPath();
             }
+            packageManifestPath = datasetPackage.getManifestPath();
+        }
+
+        if (GROUPING_MANIFEST.equals(sampleGrouping)) {
+            manifestPath = DatasetUploadService.normalizeManifestPath(
+                    GROUPING_MANIFEST,
+                    manifestPath
+            );
+        } else {
+            if ((manifestPath != null && !manifestPath.isBlank())
+                    || (packageManifestPath != null && !packageManifestPath.isBlank())) {
+                throw new IllegalArgumentException(
+                        "AUTO_DIRECTORY import cannot use manifestPath"
+                );
+            }
+            manifestPath = null;
         }
 
         return new ImportContext(
@@ -246,8 +249,42 @@ public class ImportJobService {
                 packageId,
                 packageRole,
                 objectName,
+                sampleGrouping,
                 manifestPath
         );
+    }
+
+    private ManifestImportPlan buildPlan(
+            ImportContext context,
+            List<ZipEntryInfo> entries,
+            long objectSize
+    ) throws Exception {
+        int generatedStart = generatedSampleIndexStart(context);
+        if (GROUPING_AUTO_DIRECTORY.equals(context.sampleGrouping())) {
+            return autoDirectoryManifestBuilder.build(entries, generatedStart);
+        }
+        String manifestJson = manifestReader.readManifest(
+                context.objectName(),
+                objectSize,
+                context.manifestPath()
+        );
+        return manifestParser.parse(
+                manifestJson,
+                entries,
+                context.manifestPath(),
+                generatedStart
+        );
+    }
+
+    private int generatedSampleIndexStart(ImportContext context) {
+        if (!context.appendPackage()) {
+            return 0;
+        }
+        Integer maxSampleIndex =
+                sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                        context.versionId()
+                );
+        return (maxSampleIndex == null ? -1 : maxSampleIndex) + 1;
     }
 
     private void persistPlan(ImportContext context, ManifestImportPlan plan, String executorId) {
@@ -559,6 +596,7 @@ public class ImportJobService {
             String packageId,
             String packageRole,
             String objectName,
+            String sampleGrouping,
             String manifestPath
     ) {
         private boolean appendPackage() {

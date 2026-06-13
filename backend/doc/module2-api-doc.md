@@ -59,7 +59,7 @@
 
 | 值 | 说明 |
 | --- | --- |
-| `MULTIMODAL` | 单个数据集版本内管理图片、文本、点云、音频、视频等多种模态；使用 MANIFEST ZIP 异步导入 |
+| `MULTIMODAL` | 单个数据集版本内管理图片、文本、点云、音频、视频等多种模态；支持 MANIFEST 或 AUTO_DIRECTORY ZIP 异步导入 |
 
 `MULTIMODAL` 只适用于数据集资产、数据集列表和数据集上传接口。模型上传和训练接口仍不接受该类型。
 
@@ -200,7 +200,7 @@ if (!response.ok || !result.success) {
 - 不传 `assetId` 时创建新数据集资产；传入 `assetId` 时给已有资产创建新版本。
 - CV 本地文件夹可使用 `/api/dataset/upload/folder` 一次提交，后端会打包为 zip；大文件仍建议使用分片流程。
 - CV/NLP/POINT_CLOUD 旧上传流程完成后，新版本为 `READY`，并自动成为资产的 `currentVersionId`。
-- `MULTIMODAL` 必须上传 zip，并在 init 中传 `sampleGrouping=MANIFEST`。complete 后先返回 `DRAFT` 版本和 `PENDING` ImportJob，后台随后解析 manifest 并导入 Sample/Data/Annotation。
+- `MULTIMODAL` 必须上传 zip，并在 init 中传 `sampleGrouping=MANIFEST` 或 `AUTO_DIRECTORY`。complete 后先返回 `DRAFT` 版本和 `PENDING` ImportJob，后台随后解析 manifest 或按根级样本目录生成内存导入计划。
 - 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`。
 - 上传到已有数据集时，`type`、`cvTaskType`、`annotationFormat` 必须和资产一致。
 
@@ -262,7 +262,7 @@ if (!response.ok || !result.success) {
 
 | 接口 | 前端用途 | 注意事项 |
 | --- | --- | --- |
-| `POST /api/dataset/upload/init` | 创建或恢复数据集上传会话 | 支持 `MULTIMODAL + MANIFEST`；`ROBOT` 当前会被拒绝；分片大小由文件大小动态计算 |
+| `POST /api/dataset/upload/init` | 创建或恢复数据集上传会话 | 支持 `MULTIMODAL + MANIFEST/AUTO_DIRECTORY`；`ROBOT` 当前会被拒绝；分片大小由文件大小动态计算 |
 | `POST /api/dataset/upload/chunk` | 上传数据集分片 | 使用 init 返回的 `chunkSize`；最多 10000 个分片；按 `uploadedPartIndexes` 支持续传 |
 | `GET /api/dataset/upload/progress` | 查询上传进度和版本预分配信息 | 完成后可取得 `assetId`、`versionId`、`versionNo`、`versionLabel` |
 | `POST /api/dataset/upload/complete` | 合并文件并创建版本 | 普通类型创建 READY；MULTIMODAL 创建 DRAFT、PRIMARY package 和 PENDING ImportJob，并异步启动导入 |
@@ -772,8 +772,8 @@ POST /api/dataset/upload/init
 | `cvTaskType` | string | 否 | CV 子任务；非 CV 会被置为 `null` |
 | `annotationFormat` | string | 否 | CV 标注格式；非 CV 会被置为 `null` |
 | `remark` | string | 否 | 备注 |
-| `sampleGrouping` | string | 条件必填 | 只能为空或 `MANIFEST`；`MULTIMODAL` 必须传 `MANIFEST`，其他类型禁止传 |
-| `manifestPath` | string | 否 | manifest 在 zip 内的相对路径；`MANIFEST` 模式未传时默认为 `manifest.json` |
+| `sampleGrouping` | string | 条件必填 | `MULTIMODAL` 必须传 `MANIFEST` 或 `AUTO_DIRECTORY`；其他类型禁止传 |
+| `manifestPath` | string | 否 | 仅 `MANIFEST` 允许；未传时默认为 `manifest.json`。`AUTO_DIRECTORY` 不允许传 |
 
 文件类型规则：
 
@@ -782,7 +782,7 @@ POST /api/dataset/upload/init
 | `CV` | 分片上传只支持 `.zip`；zip 内必须至少包含 `.jpg`、`.jpeg`、`.png`、`.bmp`、`.gif`、`.webp`、`.tif` 或 `.tiff` 图片 |
 | `NLP` | 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，或只包含这些文件的 `.zip` |
 | `POINT_CLOUD` | 支持单文件 `.ply`、`.pcd`，或 `.zip`；zip 内至少包含一个 `.ply` 或 `.pcd`，且仅允许 `.ply`、`.pcd`、`.txt`、`.json`、`.yaml`、`.yml` |
-| `MULTIMODAL` | 只支持 `.zip`，并且必须同时传 `sampleGrouping=MANIFEST`；complete 后由异步 ImportJob 解析 ZIP 索引和 manifest |
+| `MULTIMODAL` | 只支持 `.zip`，必须传 `sampleGrouping=MANIFEST` 或 `AUTO_DIRECTORY`；complete 后由异步 ImportJob 解析 ZIP 索引并生成导入计划 |
 
 `manifestPath` 规则：
 
@@ -818,6 +818,40 @@ CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
   "versionLabel": "v1"
 }
 ```
+
+AUTO_DIRECTORY 初始化时不传 `manifestPath`：
+
+```json
+{
+  "datasetName": "autonomous-driving-scenes",
+  "fileName": "scene-bundle.zip",
+  "fileSize": 53687091200,
+  "type": "MULTIMODAL",
+  "sampleGrouping": "AUTO_DIRECTORY",
+  "versionLabel": "v1"
+}
+```
+
+AUTO_DIRECTORY ZIP 根目录必须直接是样本目录，不会自动剥离 `v1/`、`append/` 等 wrapper：
+
+```text
+scene_001/
+  image/front.jpg
+  point_cloud/lidar.pcd
+  annotations/front.jpg.json
+scene_002/
+  image/front.png
+```
+
+确定性规则：
+
+- 根级目录名就是 `external_id`；根级普通文件直接失败。样本按 `external_id` 排序生成 `sampleIndex`。
+- 每个样本至少包含一个 Data；各样本可使用不同模态子集，只有图片和点云也合法。
+- `annotations/` 下文件视为 Annotation，其余文件视为 Data。
+- Data 扩展名白名单：图片 `jpg/jpeg/png/bmp/gif/webp/tif/tiff`，点云 `pcd/ply`，视频 `mp4/webm/mov/avi/mkv`，音频 `wav/mp3/flac`，文本 `txt/md/csv/jsonl`，其他 `bin/log/npy/npz/pkl`。未知或无扩展名文件失败。
+- Annotation 只允许 `json/txt/xml/csv/yaml/yml`。先按去掉 annotation 扩展名后的完整 Data 文件名匹配，再按唯一文件名 stem 匹配；零匹配或多匹配都失败，不猜测。
+- AUTO 生成的 `sensor`、`channel` 为 `null`，tags/metadata 为空。需要自定义这些字段时使用 MANIFEST。
+- 生成结果只存在 ImportJob 内存中；后端不修改用户 ZIP，也不向 MinIO 写入 `manifest.json`。
 
 50GB 文件的典型响应会返回：
 
@@ -912,7 +946,7 @@ POST /api/dataset/upload/complete
 }
 ```
 
-MULTIMODAL + MANIFEST 响应示例：
+MULTIMODAL + MANIFEST/AUTO_DIRECTORY 响应示例：
 
 ```json
 {
@@ -1429,8 +1463,8 @@ Content-Type: application/json
 | `fileName` | string | 是 | 必须是 `.zip` |
 | `fileSize` | number | 是 | ZIP 字节数，必须大于 0 |
 | `fileFingerprint` | string | 否 | 客户端文件指纹 |
-| `sampleGrouping` | string | 是 | 必须为 `MANIFEST` |
-| `manifestPath` | string | 否 | manifest 在 ZIP 内的路径，沿用初始上传规则 |
+| `sampleGrouping` | string | 是 | `MANIFEST` 或 `AUTO_DIRECTORY` |
+| `manifestPath` | string | 否 | 仅 `MANIFEST` 允许，沿用初始上传规则；`AUTO_DIRECTORY` 不允许传 |
 
 init 返回通用上传进度结构。后续分片继续调用：
 
@@ -1453,7 +1487,7 @@ Content-Type: application/json
 - 版本必须是调用方有权限访问的、未删除的 `MULTIMODAL DRAFT`。
 - complete 创建新的 `dataset_package`、`APPEND` 版本关系和独立 ImportJob。
 - APPEND 导入只新增 Sample/Data/Annotation，来源字段指向新 package；不会修改继承样本。
-- APPEND manifest 的未删除 `externalId` 或显式 `sampleIndex` 与当前 DRAFT 冲突时导入失败，不做跨包合并。
+- APPEND 导入计划的未删除 `externalId` 或 `sampleIndex` 与当前 DRAFT 冲突时导入失败，不做跨包合并；AUTO_DIRECTORY 同样适用。
 - 导入成功后 package 状态变为 READY，但 DatasetVersion 仍保持 DRAFT，`currentVersionId` 不变。
 - complete 响应包含 `packageId`、`packageRole=APPEND`、`packageOrder`、`importJobId` 和状态；这些字段只描述导入结果，不进入样本查询 DTO。
 
@@ -2097,8 +2131,9 @@ Content-Disposition: inline; filename*=UTF-8''a.png
 | 无权访问资源 | `not found or no permission: ...` |
 | 模型/训练任务类型非法 | `任务类型仅支持 CV, NLP, POINT_CLOUD, ROBOT` |
 | 数据集任务类型非法 | `任务类型仅支持 CV, NLP, POINT_CLOUD, ROBOT, MULTIMODAL` |
-| 多模态分组缺失 | `MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST` |
-| 非多模态使用 manifest | `仅 MULTIMODAL 数据集支持 sampleGrouping=MANIFEST` |
+| 多模态分组缺失 | `MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST 或 AUTO_DIRECTORY` |
+| 非多模态使用 grouping | `仅 MULTIMODAL 数据集支持 sampleGrouping` |
+| AUTO_DIRECTORY 传 manifestPath | `AUTO_DIRECTORY 不允许传 manifestPath` |
 | manifest 路径非法 | `manifestPath 非法` |
 | 上传会话不存在或越权 | `uploadId invalid or not accessible` |
 | 分片缺失 | `分片未上传完成` / `缺少分片: ...` |
@@ -2351,8 +2386,8 @@ curl.exe -H "Authorization: Bearer <token>" `
 | `description` | 当前版本说明。 |
 | `changeLog` | 当前版本变更说明。 |
 | `parentVersionId` | 来源版本；不传时使用资产 `currentVersionId`。 |
-| `sampleGrouping` | 多模态上传传 `MANIFEST`；其他类型不传。 |
-| `manifestPath` | manifest 在 zip 内的路径，默认 `manifest.json`。 |
+| `sampleGrouping` | 多模态上传传 `MANIFEST` 或 `AUTO_DIRECTORY`；其他类型不传。 |
+| `manifestPath` | 仅 MANIFEST 使用，默认 `manifest.json`；AUTO_DIRECTORY 不传。 |
 
 上传完成后：
 
@@ -2435,7 +2470,8 @@ Content-Type: application/json
 当前后端已经提供多模态数据上传和持久化导入能力：
 
 - 数据集类型新增 `MULTIMODAL`，但共享模型/训练任务类型没有新增该值。
-- 支持 `MULTIMODAL + MANIFEST` 分片上传、动态 chunkSize、DRAFT 版本和异步 ImportJob。
+- 支持 `MULTIMODAL + MANIFEST/AUTO_DIRECTORY` 分片上传、动态 chunkSize、DRAFT 版本和异步 ImportJob。
+- AUTO_DIRECTORY 根据 ZIP 根级样本目录生成内存 `ManifestImportPlan`，支持初始导入与 DRAFT APPEND，不改写 ZIP、不落地生成 manifest。
 - 已建立 DatasetSample、DatasetSampleData、DatasetAnnotation 和 ImportJob 持久化模型。
 - ImportJob 状态接口已经可用，并按数据集资产归属校验权限。
 - 支持 ZIP central directory range 读取、manifest 解析校验及 Sample/Data/Annotation 全量事务导入。

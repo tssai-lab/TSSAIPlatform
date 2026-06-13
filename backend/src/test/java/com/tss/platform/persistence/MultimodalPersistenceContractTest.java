@@ -54,4 +54,20 @@ class MultimodalPersistenceContractTest {
             assertFalse(sql.contains("model_asset"));
         }
     }
+
+    @Test
+    void autoDirectoryMigrationExtendsOnlyDatasetUploadGrouping() throws Exception {
+        String resource = "db/migration/V12__multimodal_auto_directory_grouping.sql";
+        try (var input = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource)) {
+            assertNotNull(input, resource);
+            String sql = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+
+            assertTrue(sql.contains(
+                    "DROP CONSTRAINT IF EXISTS ck_dataset_upload_session_sample_grouping"
+            ));
+            assertTrue(sql.contains("'MANIFEST'"));
+            assertTrue(sql.contains("'AUTO_DIRECTORY'"));
+            assertFalse(sql.contains("model_asset"));
+        }
+    }
 }

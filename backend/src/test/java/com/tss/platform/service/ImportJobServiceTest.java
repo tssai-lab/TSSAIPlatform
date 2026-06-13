@@ -123,6 +123,61 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void initialAutoDirectoryImportBuildsPlanWithoutReadingManifest() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.session.setSampleGrouping("AUTO_DIRECTORY");
+        fixture.session.setManifestPath(null);
+        fixture.stubContext();
+        when(fixture.autoBuilder.build(any(), eq(0))).thenReturn(fixture.plan(0));
+
+        fixture.service.execute(fixture.job.getId());
+
+        verify(fixture.autoBuilder).build(any(), eq(0));
+        verify(fixture.manifestReader, never()).readManifest(any(), anyLong(), any());
+        verify(fixture.parser, never()).parse(any(), any(), any());
+        assertEquals("SUCCESS", fixture.job.getStatus());
+        assertEquals("READY", fixture.version.getStatus());
+    }
+
+    @Test
+    void appendAutoDirectoryStartsAfterCurrentMaximumSampleIndex() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.session.setSampleGrouping("AUTO_DIRECTORY");
+        fixture.session.setManifestPath(null);
+        fixture.datasetPackage.setManifestPath(null);
+        when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                fixture.version.getId()
+        )).thenReturn(4);
+        fixture.stubContext();
+        when(fixture.autoBuilder.build(any(), eq(5))).thenReturn(fixture.plan(5));
+
+        fixture.service.execute(fixture.job.getId());
+
+        verify(fixture.autoBuilder).build(any(), eq(5));
+        verify(fixture.manifestReader, never()).readManifest(any(), anyLong(), any());
+        DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
+        assertEquals(5, sample.getSampleIndex());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        assertEquals("READY", fixture.datasetPackage.getStatus());
+    }
+
+    @Test
+    void manifestImportDoesNotUseAutoDirectoryBuilder() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubSuccessfulImport();
+
+        fixture.service.execute(fixture.job.getId());
+
+        verify(fixture.autoBuilder, never()).build(any(), any(Integer.class));
+        verify(fixture.manifestReader).readManifest(
+                fixture.version.getStoragePath(),
+                fixture.version.getSizeBytes(),
+                fixture.session.getManifestPath()
+        );
+    }
+
+    @Test
     void appendsPackageSamplesWithoutPublishingDraftOrChangingCurrentVersion() throws Exception {
         Fixture fixture = new Fixture();
         fixture.asAppendPackage();
@@ -351,6 +406,8 @@ class ImportJobServiceTest {
         private final ZipCentralDirectoryReader zipReader = mock(ZipCentralDirectoryReader.class);
         private final ManifestZipReader manifestReader = mock(ManifestZipReader.class);
         private final ManifestParser parser = mock(ManifestParser.class);
+        private final AutoDirectoryManifestBuilder autoBuilder =
+                mock(AutoDirectoryManifestBuilder.class);
         private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
         private final ImportJob job = job();
         private final DatasetVersion version = version();
@@ -372,6 +429,7 @@ class ImportJobServiceTest {
                 zipReader,
                 manifestReader,
                 parser,
+                autoBuilder,
                 transactionManager
         );
 
@@ -464,7 +522,12 @@ class ImportJobServiceTest {
                     return plan(start);
                 });
             } else {
-                when(parser.parse(any(), any(), eq(session.getManifestPath())))
+                when(parser.parse(
+                        any(),
+                        any(),
+                        eq(session.getManifestPath()),
+                        eq(0)
+                ))
                         .thenAnswer(invocation -> {
                             assertEquals("RUNNING", job.getStatus());
                             assertNotNull(job.getStartedAt());
@@ -495,6 +558,7 @@ class ImportJobServiceTest {
                     zipReader,
                     manifestReader,
                     selectedParser,
+                    autoBuilder,
                     transactionManager
             );
         }

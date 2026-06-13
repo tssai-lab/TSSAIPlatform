@@ -78,6 +78,8 @@ public class DatasetUploadService {
     private static final String IMPORT_STATUS_PENDING = "PENDING";
     private static final String UPLOAD_PURPOSE_INITIAL = "INITIAL_DATASET";
     private static final String UPLOAD_PURPOSE_APPEND = "APPEND_PACKAGE";
+    private static final String GROUPING_MANIFEST = "MANIFEST";
+    private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
     private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
@@ -263,9 +265,9 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("fileSize must be greater than 0");
         }
         String sampleGrouping = normalizeSampleGrouping(req.getSampleGrouping());
-        if (!"MANIFEST".equals(sampleGrouping)) {
+        if (!isMultimodalGrouping(sampleGrouping)) {
             throw new IllegalArgumentException(
-                    "append package requires sampleGrouping=MANIFEST"
+                    "append package requires sampleGrouping=MANIFEST or AUTO_DIRECTORY"
             );
         }
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
@@ -370,7 +372,7 @@ public class DatasetUploadService {
                     "append package upload must use the package complete endpoint"
             );
         }
-        if (isManifestUpload(session)) {
+        if (isMultimodalImportUpload(session)) {
             return completeManifestUpload(session.getId());
         }
         Map<String, Object> result = transactionTemplate.execute(
@@ -901,9 +903,9 @@ public class DatasetUploadService {
         return chunks;
     }
 
-    private boolean isManifestUpload(DatasetUploadSession session) {
+    private boolean isMultimodalImportUpload(DatasetUploadSession session) {
         return "MULTIMODAL".equals(session.getType())
-                && "MANIFEST".equals(session.getSampleGrouping());
+                && isMultimodalGrouping(session.getSampleGrouping());
     }
 
     @Transactional
@@ -1132,9 +1134,9 @@ public class DatasetUploadService {
                     "append upload session does not belong to draft version"
             );
         }
-        if (!"MANIFEST".equals(session.getSampleGrouping())) {
+        if (!isMultimodalGrouping(session.getSampleGrouping())) {
             throw new IllegalArgumentException(
-                    "append upload session sampleGrouping must be MANIFEST"
+                    "append upload session sampleGrouping must be MANIFEST or AUTO_DIRECTORY"
             );
         }
     }
@@ -1237,7 +1239,12 @@ public class DatasetUploadService {
         data.put("status", session.getStatus());
         data.put("uploadStatus", session.getStatus());
         data.put("datasetVersionId", session.getVersionId());
-        data.put("versionStatus", isManifestUpload(session) ? VERSION_STATUS_DRAFT : VERSION_STATUS_READY);
+        data.put(
+                "versionStatus",
+                isMultimodalImportUpload(session)
+                        ? VERSION_STATUS_DRAFT
+                        : VERSION_STATUS_READY
+        );
         data.put("importJobId", session.getImportJobId());
         data.put(
                 "importStatus",
@@ -1723,17 +1730,31 @@ public class DatasetUploadService {
         String normalized = value == null || value.isBlank()
                 ? null
                 : value.trim().toUpperCase(Locale.ROOT);
-        if (normalized != null && !"MANIFEST".equals(normalized)) {
-            throw new IllegalArgumentException("sampleGrouping 仅支持 MANIFEST");
+        if (normalized != null
+                && !GROUPING_MANIFEST.equals(normalized)
+                && !GROUPING_AUTO_DIRECTORY.equals(normalized)) {
+            throw new IllegalArgumentException(
+                    "sampleGrouping 仅支持 MANIFEST 或 AUTO_DIRECTORY"
+            );
         }
         return normalized;
     }
 
     static String normalizeManifestPath(String sampleGrouping, String value) {
         String normalized = value == null || value.isBlank() ? null : value.trim();
-        if (!"MANIFEST".equals(sampleGrouping)) {
+        if (GROUPING_AUTO_DIRECTORY.equals(sampleGrouping)) {
             if (normalized != null) {
-                throw new IllegalArgumentException("manifestPath 仅在 sampleGrouping=MANIFEST 时可用");
+                throw new IllegalArgumentException(
+                        "AUTO_DIRECTORY 不允许传 manifestPath"
+                );
+            }
+            return null;
+        }
+        if (!GROUPING_MANIFEST.equals(sampleGrouping)) {
+            if (normalized != null) {
+                throw new IllegalArgumentException(
+                        "manifestPath 仅在 sampleGrouping=MANIFEST 时可用"
+                );
             }
             return null;
         }
@@ -1775,12 +1796,21 @@ public class DatasetUploadService {
     }
 
     private static void validateGroupingForTask(String taskType, String sampleGrouping) {
-        if ("MULTIMODAL".equals(taskType) && !"MANIFEST".equals(sampleGrouping)) {
-            throw new IllegalArgumentException("MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST");
+        if ("MULTIMODAL".equals(taskType) && !isMultimodalGrouping(sampleGrouping)) {
+            throw new IllegalArgumentException(
+                    "MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST 或 AUTO_DIRECTORY"
+            );
         }
-        if (!"MULTIMODAL".equals(taskType) && "MANIFEST".equals(sampleGrouping)) {
-            throw new IllegalArgumentException("仅 MULTIMODAL 数据集支持 sampleGrouping=MANIFEST");
+        if (!"MULTIMODAL".equals(taskType) && sampleGrouping != null) {
+            throw new IllegalArgumentException(
+                    "仅 MULTIMODAL 数据集支持 sampleGrouping"
+            );
         }
+    }
+
+    private static boolean isMultimodalGrouping(String sampleGrouping) {
+        return GROUPING_MANIFEST.equals(sampleGrouping)
+                || GROUPING_AUTO_DIRECTORY.equals(sampleGrouping);
     }
 
     private void validateDatasetObjectFormat(

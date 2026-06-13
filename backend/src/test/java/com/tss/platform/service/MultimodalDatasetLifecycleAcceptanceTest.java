@@ -40,7 +40,8 @@ import com.tss.platform.security.AuthContext;
 import io.minio.MinioClient;
 import io.minio.StatObjectResponse;
 import jakarta.persistence.EntityManager;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.SliceImpl;
@@ -81,10 +82,13 @@ import static org.mockito.Mockito.when;
 
 class MultimodalDatasetLifecycleAcceptanceTest {
 
-    @Test
+    @ParameterizedTest(name = "{0} lifecycle")
+    @ValueSource(strings = {"MANIFEST", "AUTO_DIRECTORY"})
     @SuppressWarnings("unchecked")
-    void completesReadyDraftAppendMutationPublishAndFileReadLifecycle() throws Exception {
-        Fixture fixture = new Fixture();
+    void completesReadyDraftAppendMutationPublishAndFileReadLifecycle(
+            String sampleGrouping
+    ) throws Exception {
+        Fixture fixture = new Fixture(sampleGrouping);
 
         fixture.importJobService.execute(Fixture.INITIAL_JOB_ID);
 
@@ -114,8 +118,10 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                 new DatasetPackageAppendInitRequest();
         appendRequest.setFileName("append.zip");
         appendRequest.setFileSize(1024L);
-        appendRequest.setSampleGrouping("MANIFEST");
-        appendRequest.setManifestPath("manifest.json");
+        appendRequest.setSampleGrouping(sampleGrouping);
+        if ("MANIFEST".equals(sampleGrouping)) {
+            appendRequest.setManifestPath("manifest.json");
+        }
         DatasetUploadProgressDto appendInit =
                 fixture.uploadService.initAppendPackage(v2Id, appendRequest);
         fixture.addUploadedChunk(appendInit.getUploadId(), appendRequest.getFileSize());
@@ -201,6 +207,53 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         assertEquals("READY", listData.get(0).get("versionStatus"));
         assertNull(listData.get(0).get("latestDraftVersionId"));
         assertNull(listData.get(0).get("importJobId"));
+
+        DatasetWorkspaceDraftDto conflictDraft =
+                fixture.workspaceService.createDraft(v2Id);
+        String conflictDraftId = conflictDraft.getDraftVersionId();
+        int inheritedCount = fixture.activeSamples(conflictDraftId).size();
+        DatasetPackageAppendInitRequest conflictRequest =
+                new DatasetPackageAppendInitRequest();
+        conflictRequest.setFileName("conflict.zip");
+        conflictRequest.setFileSize(1024L);
+        conflictRequest.setSampleGrouping(sampleGrouping);
+        if ("MANIFEST".equals(sampleGrouping)) {
+            conflictRequest.setManifestPath("manifest.json");
+        }
+        DatasetUploadProgressDto conflictInit =
+                fixture.uploadService.initAppendPackage(
+                        conflictDraftId,
+                        conflictRequest
+                );
+        fixture.addUploadedChunk(
+                conflictInit.getUploadId(),
+                conflictRequest.getFileSize()
+        );
+        DatasetUploadCompleteRequest conflictCompleteRequest =
+                new DatasetUploadCompleteRequest();
+        conflictCompleteRequest.setUploadId(conflictInit.getUploadId());
+        Map<String, Object> conflictComplete =
+                fixture.uploadService.completeAppendPackage(
+                        conflictDraftId,
+                        conflictCompleteRequest
+                );
+        String conflictJobId =
+                String.valueOf(conflictComplete.get("importJobId"));
+        String conflictPackageId =
+                String.valueOf(conflictComplete.get("packageId"));
+        fixture.stubConflictPlan(sampleGrouping);
+
+        fixture.importJobService.execute(conflictJobId);
+
+        assertEquals("FAILED", fixture.jobs.get(conflictJobId).getStatus());
+        assertEquals(
+                inheritedCount,
+                fixture.activeSamples(conflictDraftId).size()
+        );
+        assertEquals(
+                "FAILED",
+                fixture.packages.get(conflictPackageId).getStatus()
+        );
     }
 
     private static final class Fixture {
@@ -244,6 +297,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         private final ManifestZipReader manifestReader =
                 mock(ManifestZipReader.class);
         private final ManifestParser manifestParser = mock(ManifestParser.class);
+        private final AutoDirectoryManifestBuilder autoDirectoryManifestBuilder =
+                mock(AutoDirectoryManifestBuilder.class);
         private final PlatformTransactionManager transactionManager =
                 mock(PlatformTransactionManager.class);
 
@@ -273,8 +328,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         private final SampleFileService fileService;
         private final DatasetController datasetController;
 
-        private Fixture() throws Exception {
-            seedInitialUpload();
+        private Fixture(String sampleGrouping) throws Exception {
+            seedInitialUpload(sampleGrouping);
             stubInfrastructure();
 
             DatasetWorkspaceMaterializer materializer =
@@ -326,6 +381,7 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     zipReader,
                     manifestReader,
                     manifestParser,
+                    autoDirectoryManifestBuilder,
                     transactionManager
             );
             mutationService = new DatasetWorkspaceSampleMutationService(
@@ -380,7 +436,7 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             );
         }
 
-        private void seedInitialUpload() {
+        private void seedInitialUpload(String sampleGrouping) {
             DatasetVersion version = new DatasetVersion();
             version.setId(V1_ID);
             version.setAssetId(ASSET_ID);
@@ -402,7 +458,9 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             primary.setStoragePath(PRIMARY_PATH);
             primary.setFileName("primary.zip");
             primary.setSizeBytes(4096L);
-            primary.setManifestPath("manifest.json");
+            primary.setManifestPath(
+                    "MANIFEST".equals(sampleGrouping) ? "manifest.json" : null
+            );
             primary.setStatus("READY");
             primary.setCreatedAt(Instant.parse("2026-06-01T00:00:00Z"));
             primary.setDeleted(false);
@@ -434,8 +492,10 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             session.setVersionId(V1_ID);
             session.setAssetId(ASSET_ID);
             session.setImportJobId(INITIAL_JOB_ID);
-            session.setSampleGrouping("MANIFEST");
-            session.setManifestPath("manifest.json");
+            session.setSampleGrouping(sampleGrouping);
+            session.setManifestPath(
+                    "MANIFEST".equals(sampleGrouping) ? "manifest.json" : null
+            );
             session.setStatus("COMPLETED");
             session.setOwnerUserId(7);
             sessions.put(session.getId(), session);
@@ -977,13 +1037,43 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             when(manifestParser.parse(anyString(), any(), anyString()))
                     .thenReturn(initialPlan());
             when(manifestParser.parse(anyString(), any(), anyString(), anyInt()))
-                    .thenAnswer(invocation -> appendPlan(invocation.getArgument(3)));
+                    .thenAnswer(invocation -> {
+                        int sampleIndex = invocation.getArgument(3);
+                        return sampleIndex == 0
+                                ? initialPlan()
+                                : appendPlan(sampleIndex);
+                    });
+            when(autoDirectoryManifestBuilder.build(any(), anyInt()))
+                    .thenAnswer(invocation -> {
+                        int sampleIndex = invocation.getArgument(1);
+                        return sampleIndex == 0
+                                ? initialPlan()
+                                : appendPlan(sampleIndex);
+                    });
             when(minioService.downloadRange(anyString(), anyLong(), anyLong()))
                     .thenAnswer(invocation -> new ByteArrayInputStream(readRange(
                             invocation.getArgument(0),
                             invocation.getArgument(1),
                             invocation.getArgument(2)
                     )));
+        }
+
+        private void stubConflictPlan(String sampleGrouping) {
+            if ("AUTO_DIRECTORY".equals(sampleGrouping)) {
+                when(autoDirectoryManifestBuilder.build(any(), anyInt()))
+                        .thenAnswer(invocation ->
+                                conflictPlan(invocation.getArgument(1))
+                        );
+                return;
+            }
+            when(manifestParser.parse(
+                    anyString(),
+                    any(),
+                    anyString(),
+                    anyInt()
+            )).thenAnswer(invocation ->
+                    conflictPlan(invocation.getArgument(3))
+            );
         }
 
         private void addUploadedChunk(String uploadId, long sizeBytes) {
@@ -1228,6 +1318,33 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     sampleIndex,
                     Map.of(),
                     Map.of("source", "append"),
+                    List.of(image),
+                    List.of()
+            );
+            return new ManifestImportPlan(
+                    "1.0",
+                    List.of(sample),
+                    1,
+                    1,
+                    0,
+                    List.of()
+            );
+        }
+
+        private static ManifestImportPlan conflictPlan(int sampleIndex) {
+            ManifestData image = data(
+                    "scene-001/image/conflict.png",
+                    "IMAGE",
+                    "conflict.png",
+                    "image/png",
+                    4000L,
+                    4
+            );
+            ManifestSample sample = new ManifestSample(
+                    "scene-001",
+                    sampleIndex,
+                    Map.of(),
+                    Map.of(),
                     List.of(image),
                     List.of()
             );

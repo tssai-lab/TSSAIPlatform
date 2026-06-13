@@ -44,8 +44,22 @@ class DatasetUploadManifestCompletionTest {
 
     @Test
     void completesManifestUploadAsDraftWithPendingImportJob() throws Exception {
+        assertCompletesMultimodalUpload("MANIFEST", "manifest.json");
+    }
+
+    @Test
+    void completesAutoDirectoryUploadWithoutManifestPath() throws Exception {
+        assertCompletesMultimodalUpload("AUTO_DIRECTORY", null);
+    }
+
+    private void assertCompletesMultimodalUpload(
+            String sampleGrouping,
+            String manifestPath
+    ) throws Exception {
         Fixture fixture = new Fixture();
         DatasetUploadSession session = fixture.multimodalSession();
+        session.setSampleGrouping(sampleGrouping);
+        session.setManifestPath(manifestPath);
         DatasetUploadChunk chunk = fixture.chunk(session);
         AtomicReference<DatasetVersion> savedVersion = new AtomicReference<>();
         AtomicReference<DatasetAsset> savedAsset = new AtomicReference<>();
@@ -103,6 +117,7 @@ class DatasetUploadManifestCompletionTest {
         assertNull(savedAsset.get().getCurrentVersionId());
         assertEquals(savedVersion.get().getAssetId(), savedPackage.get().getDatasetAssetId());
         assertEquals(savedVersion.get().getStoragePath(), savedPackage.get().getStoragePath());
+        assertEquals(manifestPath, savedPackage.get().getManifestPath());
         assertEquals("READY", savedPackage.get().getStatus());
         assertEquals(savedVersion.get().getId(), savedVersionPackage.get().getDatasetVersionId());
         assertEquals(savedPackage.get().getId(), savedVersionPackage.get().getPackageId());
@@ -171,6 +186,29 @@ class DatasetUploadManifestCompletionTest {
         assertEquals(8534, progress.getTotalChunks());
         assertEquals("MANIFEST", savedSession.get().getSampleGrouping());
         assertEquals("manifest.json", savedSession.get().getManifestPath());
+    }
+
+    @Test
+    void initStoresAutoDirectoryWithoutManifestPath() {
+        Fixture fixture = new Fixture();
+        AtomicReference<DatasetUploadSession> savedSession = new AtomicReference<>();
+        when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> {
+            DatasetUploadSession value = invocation.getArgument(0);
+            savedSession.set(value);
+            return value;
+        });
+
+        DatasetUploadInitRequest request = new DatasetUploadInitRequest();
+        request.setDatasetName("auto multimodal");
+        request.setFileName("dataset.zip");
+        request.setFileSize(1024L);
+        request.setType("MULTIMODAL");
+        request.setSampleGrouping("AUTO_DIRECTORY");
+
+        fixture.service.init(request);
+
+        assertEquals("AUTO_DIRECTORY", savedSession.get().getSampleGrouping());
+        assertNull(savedSession.get().getManifestPath());
     }
 
     @Test

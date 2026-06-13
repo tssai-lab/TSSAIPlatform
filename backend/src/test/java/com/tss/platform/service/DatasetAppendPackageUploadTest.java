@@ -68,6 +68,41 @@ class DatasetAppendPackageUploadTest {
     }
 
     @Test
+    void initializesAutoDirectoryAppendWithoutManifestPath() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedDraft();
+        AtomicReference<DatasetUploadSession> saved = new AtomicReference<>();
+        when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> {
+            DatasetUploadSession value = invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        });
+        DatasetPackageAppendInitRequest request = fixture.request();
+        request.setSampleGrouping("AUTO_DIRECTORY");
+        request.setManifestPath(null);
+
+        fixture.service.initAppendPackage(fixture.version.getId(), request);
+
+        assertEquals("AUTO_DIRECTORY", saved.get().getSampleGrouping());
+        assertNull(saved.get().getManifestPath());
+    }
+
+    @Test
+    void rejectsManifestPathForAutoDirectoryAppend() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedDraft();
+        DatasetPackageAppendInitRequest request = fixture.request();
+        request.setSampleGrouping("AUTO_DIRECTORY");
+        request.setManifestPath("manifest.json");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.initAppendPackage(fixture.version.getId(), request)
+        );
+        verify(fixture.sessionRepo, never()).save(any());
+    }
+
+    @Test
     void rejectsReadyVersionAndNonManifestAppend() {
         Fixture fixture = new Fixture();
         fixture.version.setStatus("READY");
@@ -113,8 +148,22 @@ class DatasetAppendPackageUploadTest {
 
     @Test
     void completesAppendWithPackageRelationAndPendingImportJob() throws Exception {
+        assertCompletesAppend("MANIFEST", "manifest.json");
+    }
+
+    @Test
+    void completesAutoDirectoryAppendWithoutManifestPath() throws Exception {
+        assertCompletesAppend("AUTO_DIRECTORY", null);
+    }
+
+    private void assertCompletesAppend(
+            String sampleGrouping,
+            String manifestPath
+    ) throws Exception {
         Fixture fixture = new Fixture();
         DatasetUploadSession session = fixture.appendSession();
+        session.setSampleGrouping(sampleGrouping);
+        session.setManifestPath(manifestPath);
         DatasetUploadChunk chunk = fixture.chunk(session);
         AtomicReference<DatasetPackage> savedPackage = new AtomicReference<>();
         AtomicReference<DatasetVersionPackage> savedRelation = new AtomicReference<>();
@@ -170,7 +219,7 @@ class DatasetAppendPackageUploadTest {
         assertEquals("PENDING", savedPackage.get().getStatus());
         assertEquals(fixture.asset.getId(), savedPackage.get().getDatasetAssetId());
         assertEquals("append.zip", savedPackage.get().getFileName());
-        assertEquals("manifest.json", savedPackage.get().getManifestPath());
+        assertEquals(manifestPath, savedPackage.get().getManifestPath());
         assertTrue(savedPackage.get().getStoragePath().contains(
                 "/packages/append-upload-1/append.zip"
         ));

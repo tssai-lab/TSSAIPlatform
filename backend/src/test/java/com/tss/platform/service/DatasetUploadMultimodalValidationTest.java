@@ -36,11 +36,27 @@ class DatasetUploadMultimodalValidationTest {
     }
 
     @Test
-    void acceptsOnlyManifestGrouping() {
+    void acceptsManifestAndAutoDirectoryGrouping() {
         assertNull(DatasetUploadService.normalizeSampleGrouping(null));
         assertEquals("MANIFEST", DatasetUploadService.normalizeSampleGrouping(" manifest "));
+        assertEquals(
+                "AUTO_DIRECTORY",
+                DatasetUploadService.normalizeSampleGrouping(" auto_directory ")
+        );
         assertThrows(IllegalArgumentException.class,
-                () -> DatasetUploadService.normalizeSampleGrouping("DIRECTORY"));
+                () -> DatasetUploadService.normalizeSampleGrouping("BASENAME"));
+    }
+
+    @Test
+    void autoDirectoryRejectsManifestPath() {
+        assertNull(DatasetUploadService.normalizeManifestPath("AUTO_DIRECTORY", null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeManifestPath(
+                        "AUTO_DIRECTORY",
+                        "manifest.json"
+                )
+        );
     }
 
     @Test
