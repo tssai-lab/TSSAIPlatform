@@ -95,6 +95,8 @@ export const MODEL_TYPES = {
 export const DATASET_TYPES = {
   CV: { label: 'CV（计算机视觉）', value: 'CV', color: '#1890ff' },
   NLP: { label: 'NLP（自然语言处理）', value: 'NLP', color: '#52c41a' },
+  POINT_CLOUD: { label: '点云', value: 'POINT_CLOUD', color: '#722ed1' },
+  MULTIMODAL: { label: '多模态', value: 'MULTIMODAL', color: '#eb2f96' },
 } as const;
 
 /** 任务状态 */

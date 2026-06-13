@@ -45,7 +45,28 @@ export {
   datasetUploadProgress,
   datasetUploadComplete,
   datasetUploadFolder,
+  type DatasetType,
+  type TaskType,
 } from './dataset';
+
+export {
+  fetchMultimodalImportStatus,
+  fetchMultimodalSamples,
+  fetchMultimodalSampleDetail,
+  fetchMultimodalDataPreview,
+  fetchMultimodalDataDownload,
+  fetchMultimodalAnnotationDownload,
+  triggerBlobDownload,
+  MULTIMODAL_DATA_TYPE_LABEL,
+  MULTIMODAL_IMPORT_STATUS_LABEL,
+  type MultimodalImportJob,
+  type MultimodalImportStatus,
+  type MultimodalSampleSummary,
+  type MultimodalSampleDetail,
+  type MultimodalSampleDataItem,
+  type MultimodalSampleDataType,
+  type MultimodalSampleAnnotation,
+} from './datasetMultimodal';
 
 export {
   fetchTaskList,
