@@ -37,6 +37,9 @@ public class DatasetSample {
     @Column(name = "dataset_version_id", nullable = false, length = 64)
     private String datasetVersionId;
 
+    @Column(name = "created_by_package_id", length = 64)
+    private String createdByPackageId;
+
     @Column(name = "external_id", nullable = false, length = 255)
     private String externalId;
 

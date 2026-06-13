@@ -2,14 +2,17 @@ package com.tss.platform.service;
 
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.repository.DatasetAnnotationRepository;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,8 @@ public class SampleFileService {
     private final DatasetAnnotationRepository annotationRepo;
     private final DatasetVersionRepository versionRepo;
     private final DatasetAssetRepository assetRepo;
+    private final DatasetPackageRepository packageRepo;
+    private final DatasetVersionPackageRepository versionPackageRepo;
     private final MinioService minioService;
     private final AuthContext authContext;
 
@@ -51,6 +56,8 @@ public class SampleFileService {
             DatasetAnnotationRepository annotationRepo,
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
             MinioService minioService,
             AuthContext authContext
     ) {
@@ -59,6 +66,8 @@ public class SampleFileService {
         this.annotationRepo = annotationRepo;
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
+        this.packageRepo = packageRepo;
+        this.versionPackageRepo = versionPackageRepo;
         this.minioService = minioService;
         this.authContext = authContext;
     }
@@ -71,9 +80,18 @@ public class SampleFileService {
     @Transactional(readOnly = true)
     public SampleFileStream openDataPreview(String dataId, String rangeHeader) {
         DatasetSampleData data = requireData(dataId);
-        DatasetVersion version = requireReadyVersionForData(data);
+        DatasetVersion version = requireReadyVersionForSample(
+                data.getSampleId(),
+                data.getDatasetVersionId(),
+                DATA_NOT_FOUND
+        );
+        SampleFileSource source = resolveSampleFileSource(
+                version,
+                data.getPackageId(),
+                DATA_NOT_FOUND
+        );
         if (isVideo(data)) {
-            return openStoredVideoPreview(version, data, rangeHeader);
+            return openStoredVideoPreview(source.objectName(), data, rangeHeader);
         }
         validatePreviewType(data);
         Long sizeBytes = effectiveSize(data.getUncompressedSize(), data.getSizeBytes());
@@ -90,7 +108,7 @@ public class SampleFileService {
             );
         }
         return openIndexedStream(
-                version,
+                source.objectName(),
                 data.getZipDataOffset(),
                 data.getCompressedSize(),
                 data.getUncompressedSize(),
@@ -104,9 +122,18 @@ public class SampleFileService {
     @Transactional(readOnly = true)
     public SampleFileStream openDataDownload(String dataId) {
         DatasetSampleData data = requireData(dataId);
-        DatasetVersion version = requireReadyVersion(data.getDatasetVersionId(), DATA_NOT_FOUND);
-        return openIndexedStream(
+        DatasetVersion version = requireReadyVersionForSample(
+                data.getSampleId(),
+                data.getDatasetVersionId(),
+                DATA_NOT_FOUND
+        );
+        SampleFileSource source = resolveSampleFileSource(
                 version,
+                data.getPackageId(),
+                DATA_NOT_FOUND
+        );
+        return openIndexedStream(
+                source.objectName(),
                 data.getZipDataOffset(),
                 data.getCompressedSize(),
                 data.getUncompressedSize(),
@@ -120,12 +147,18 @@ public class SampleFileService {
     @Transactional(readOnly = true)
     public SampleFileStream openAnnotationDownload(String annotationId) {
         DatasetAnnotation annotation = requireAnnotation(annotationId);
-        DatasetVersion version = requireReadyVersion(
+        DatasetVersion version = requireReadyVersionForSample(
+                annotation.getSampleId(),
                 annotation.getDatasetVersionId(),
                 ANNOTATION_NOT_FOUND
         );
-        return openIndexedStream(
+        SampleFileSource source = resolveSampleFileSource(
                 version,
+                annotation.getPackageId(),
+                ANNOTATION_NOT_FOUND
+        );
+        return openIndexedStream(
+                source.objectName(),
                 annotation.getZipDataOffset(),
                 annotation.getCompressedSize(),
                 annotation.getUncompressedSize(),
@@ -154,17 +187,23 @@ public class SampleFileService {
                 );
     }
 
-    private DatasetVersion requireReadyVersionForData(DatasetSampleData data) {
-        if (data.getSampleId() == null || data.getSampleId().isBlank()) {
-            throw new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND);
+    private DatasetVersion requireReadyVersionForSample(
+            String sampleId,
+            String versionId,
+            String errorMessage
+    ) {
+        if (sampleId == null || sampleId.isBlank()) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
         }
-        DatasetSample sample = sampleRepo.findByIdAndDeletedFalse(data.getSampleId())
-                .orElseThrow(() -> new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND));
+        DatasetSample sample = sampleRepo.findByIdAndDeletedFalse(sampleId)
+                .orElseThrow(() ->
+                        new SampleFileException(HttpStatus.NOT_FOUND, errorMessage)
+                );
         if (sample.getDatasetVersionId() == null
-                || !sample.getDatasetVersionId().equals(data.getDatasetVersionId())) {
-            throw new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND);
+                || !sample.getDatasetVersionId().equals(versionId)) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
         }
-        return requireReadyVersion(sample.getDatasetVersionId(), DATA_NOT_FOUND);
+        return requireReadyVersion(sample.getDatasetVersionId(), errorMessage);
     }
 
     private DatasetVersion requireReadyVersion(String versionId, String errorMessage) {
@@ -181,17 +220,49 @@ public class SampleFileService {
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
         }
-        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
+        return version;
+    }
+
+    private SampleFileSource resolveSampleFileSource(
+            DatasetVersion version,
+            String packageId,
+            String notFoundMessage
+    ) {
+        if (packageId == null || packageId.isBlank()) {
+            if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
+                throw new SampleFileException(
+                        HttpStatus.UNPROCESSABLE_ENTITY,
+                        "sample file storage is unavailable"
+                );
+            }
+            return new SampleFileSource(version.getStoragePath());
+        }
+
+        DatasetPackage datasetPackage = packageRepo.findByIdAndDeletedFalse(packageId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        notFoundMessage
+                ));
+        if (!version.getAssetId().equals(datasetPackage.getDatasetAssetId())
+                || !"READY".equals(datasetPackage.getStatus())
+                || !versionPackageRepo.existsByDatasetVersionIdAndPackageId(
+                        version.getId(),
+                        datasetPackage.getId()
+                )) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, notFoundMessage);
+        }
+        if (datasetPackage.getStoragePath() == null
+                || datasetPackage.getStoragePath().isBlank()) {
             throw new SampleFileException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "sample file storage is unavailable"
             );
         }
-        return version;
+        return new SampleFileSource(datasetPackage.getStoragePath());
     }
 
     private SampleFileStream openIndexedStream(
-            DatasetVersion version,
+            String objectName,
             Long zipDataOffset,
             Long compressedSize,
             Long uncompressedSize,
@@ -214,7 +285,7 @@ public class SampleFileService {
             compressed = compressedSize == 0
                     ? InputStream.nullInputStream()
                     : minioService.downloadRange(
-                            version.getStoragePath(),
+                            objectName,
                             zipDataOffset,
                             compressedSize
                     );
@@ -238,7 +309,7 @@ public class SampleFileService {
     }
 
     private SampleFileStream openStoredVideoPreview(
-            DatasetVersion version,
+            String objectName,
             DatasetSampleData data,
             String rangeHeader
     ) {
@@ -292,7 +363,7 @@ public class SampleFileService {
                         "VIDEO ZIP entry offset is invalid"
                 );
             }
-            inputStream = openRange(version.getStoragePath(), actualOffset, range.length());
+            inputStream = openRange(objectName, actualOffset, range.length());
         }
 
         return new SampleFileStream(
@@ -372,6 +443,9 @@ public class SampleFileService {
             }
         }
         return new ResolvedRange(start, end, total, true);
+    }
+
+    private record SampleFileSource(String objectName) {
     }
 
     private static long parseRangeNumber(String value, long total) {

@@ -23,17 +23,20 @@ public class DatasetWorkspaceService {
     private final DatasetAssetRepository assetRepo;
     private final AuthContext authContext;
     private final DatasetVersionLifecycleService lifecycleService;
+    private final DatasetWorkspaceMaterializer materializer;
 
     public DatasetWorkspaceService(
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
             AuthContext authContext,
-            DatasetVersionLifecycleService lifecycleService
+            DatasetVersionLifecycleService lifecycleService,
+            DatasetWorkspaceMaterializer materializer
     ) {
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
         this.authContext = authContext;
         this.lifecycleService = lifecycleService;
+        this.materializer = materializer;
     }
 
     @Transactional
@@ -52,11 +55,6 @@ public class DatasetWorkspaceService {
             throw new IllegalArgumentException(NOT_FOUND);
         }
         lifecycleService.assertReadyVersion(parent);
-        if (parent.getStoragePath() == null || parent.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException(
-                    "READY dataset version storagePath is blank: " + parent.getId()
-            );
-        }
 
         Optional<DatasetVersion> activeDraft =
                 versionRepo.findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
@@ -97,6 +95,7 @@ public class DatasetWorkspaceService {
         draft.setDeleted(false);
         draft.setDeletedAt(null);
         DatasetVersion saved = versionRepo.save(draft);
+        materializer.materialize(parent, saved);
 
         DatasetWorkspaceDraftDto dto = new DatasetWorkspaceDraftDto();
         dto.setDraftVersionId(saved.getId());
@@ -118,4 +117,3 @@ public class DatasetWorkspaceService {
         return candidate;
     }
 }
-

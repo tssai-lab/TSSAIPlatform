@@ -39,6 +39,9 @@ public class DatasetAnnotation {
     @Column(name = "dataset_version_id", nullable = false, length = 64)
     private String datasetVersionId;
 
+    @Column(name = "package_id", length = 64)
+    private String packageId;
+
     @Column(name = "annotation_type", nullable = false, length = 64)
     private String annotationType;
 

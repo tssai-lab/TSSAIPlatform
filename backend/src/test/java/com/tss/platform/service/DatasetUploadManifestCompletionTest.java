@@ -4,14 +4,18 @@ import com.tss.platform.config.MinioConfig;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetUploadChunk;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.MinioClient;
@@ -45,6 +49,8 @@ class DatasetUploadManifestCompletionTest {
         DatasetUploadChunk chunk = fixture.chunk(session);
         AtomicReference<DatasetVersion> savedVersion = new AtomicReference<>();
         AtomicReference<DatasetAsset> savedAsset = new AtomicReference<>();
+        AtomicReference<DatasetPackage> savedPackage = new AtomicReference<>();
+        AtomicReference<DatasetVersionPackage> savedVersionPackage = new AtomicReference<>();
         AtomicReference<ImportJob> savedJob = new AtomicReference<>();
 
         when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
@@ -65,7 +71,18 @@ class DatasetUploadManifestCompletionTest {
                 .thenAnswer(invocation -> Optional.ofNullable(savedVersion.get()));
         when(fixture.versionRepo.findMaxVersionNoByAssetId(any())).thenReturn(0);
         when(fixture.versionRepo.existsByAssetIdAndVersion(any(), any())).thenReturn(false);
-        when(fixture.importJobRepo.findByDatasetVersionId(any())).thenReturn(Optional.empty());
+        when(fixture.packageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetPackage value = invocation.getArgument(0);
+            savedPackage.set(value);
+            return value;
+        });
+        when(fixture.versionPackageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetVersionPackage value = invocation.getArgument(0);
+            savedVersionPackage.set(value);
+            return value;
+        });
+        when(fixture.importJobRepo.findByDatasetVersionIdAndPackageId(any(), any()))
+                .thenReturn(Optional.empty());
         when(fixture.importJobRepo.saveAndFlush(any())).thenAnswer(invocation -> {
             ImportJob value = invocation.getArgument(0);
             savedJob.set(value);
@@ -84,7 +101,15 @@ class DatasetUploadManifestCompletionTest {
         assertEquals("DRAFT", savedVersion.get().getStatus());
         assertNull(savedVersion.get().getPublishedAt());
         assertNull(savedAsset.get().getCurrentVersionId());
+        assertEquals(savedVersion.get().getAssetId(), savedPackage.get().getDatasetAssetId());
+        assertEquals(savedVersion.get().getStoragePath(), savedPackage.get().getStoragePath());
+        assertEquals("READY", savedPackage.get().getStatus());
+        assertEquals(savedVersion.get().getId(), savedVersionPackage.get().getDatasetVersionId());
+        assertEquals(savedPackage.get().getId(), savedVersionPackage.get().getPackageId());
+        assertEquals("PRIMARY", savedVersionPackage.get().getPackageRole());
+        assertEquals(0, savedVersionPackage.get().getPackageOrder());
         assertEquals("PENDING", savedJob.get().getStatus());
+        assertEquals(savedPackage.get().getId(), savedJob.get().getPackageId());
         assertEquals(savedJob.get().getId(), session.getImportJobId());
         assertEquals("COMPLETED", session.getStatus());
         assertEquals("DRAFT", result.get("versionStatus"));
@@ -216,6 +241,9 @@ class DatasetUploadManifestCompletionTest {
         private final DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
+        private final DatasetPackageRepository packageRepo = mock(DatasetPackageRepository.class);
+        private final DatasetVersionPackageRepository versionPackageRepo =
+                mock(DatasetVersionPackageRepository.class);
         private final ImportJobRepository importJobRepo = mock(ImportJobRepository.class);
         private final AuthContext authContext = mock(AuthContext.class);
         private final MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
@@ -236,6 +264,8 @@ class DatasetUploadManifestCompletionTest {
                     chunkRepo,
                     assetRepo,
                     versionRepo,
+                    packageRepo,
+                    versionPackageRepo,
                     importJobRepo,
                     authContext,
                     deleteTaskService,

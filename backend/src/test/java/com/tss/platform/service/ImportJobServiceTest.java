@@ -3,10 +3,12 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.model.manifest.ManifestAnnotation;
@@ -15,10 +17,12 @@ import com.tss.platform.model.manifest.ManifestImportPlan;
 import com.tss.platform.model.manifest.ManifestSample;
 import com.tss.platform.repository.DatasetAnnotationRepository;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
@@ -89,6 +93,117 @@ class ImportJobServiceTest {
         assertEquals(data.getId(), annotation.getSampleDataId());
         assertEquals(20L, annotation.getSizeBytes());
         assertEquals("STORED", annotation.getCompressionMethod());
+    }
+
+    @Test
+    void importsPackageBackedPlanFromPackageStorageAndPersistsPackageIds() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.job.setPackageId(fixture.datasetPackage.getId());
+        fixture.stubSuccessfulImport();
+
+        fixture.service.execute(fixture.job.getId());
+
+        DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
+        DatasetSampleData data = captureSaved(fixture.dataRepo, DatasetSampleData.class);
+        DatasetAnnotation annotation = captureSaved(fixture.annotationRepo, DatasetAnnotation.class);
+
+        assertEquals(fixture.datasetPackage.getId(), sample.getCreatedByPackageId());
+        assertEquals(fixture.datasetPackage.getId(), data.getPackageId());
+        assertEquals(fixture.datasetPackage.getId(), annotation.getPackageId());
+        verify(fixture.minioService).stat(fixture.datasetPackage.getStoragePath());
+        verify(fixture.zipReader).read(
+                fixture.datasetPackage.getStoragePath(),
+                fixture.datasetPackage.getSizeBytes()
+        );
+        verify(fixture.manifestReader).readManifest(
+                fixture.datasetPackage.getStoragePath(),
+                fixture.datasetPackage.getSizeBytes(),
+                fixture.datasetPackage.getManifestPath()
+        );
+    }
+
+    @Test
+    void appendsPackageSamplesWithoutPublishingDraftOrChangingCurrentVersion() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.asset.setCurrentVersionId("ready-1");
+        when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                fixture.version.getId()
+        )).thenReturn(4);
+        fixture.stubSuccessfulImport();
+
+        fixture.service.execute(fixture.job.getId());
+
+        DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
+        DatasetSampleData data = captureSaved(fixture.dataRepo, DatasetSampleData.class);
+        DatasetAnnotation annotation =
+                captureSaved(fixture.annotationRepo, DatasetAnnotation.class);
+        assertEquals(5, sample.getSampleIndex());
+        assertEquals(fixture.datasetPackage.getId(), sample.getCreatedByPackageId());
+        assertEquals(fixture.datasetPackage.getId(), data.getPackageId());
+        assertEquals(fixture.datasetPackage.getId(), annotation.getPackageId());
+        assertEquals("SUCCESS", fixture.job.getStatus());
+        assertEquals("READY", fixture.datasetPackage.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        assertNull(fixture.version.getPublishedAt());
+        assertEquals("ready-1", fixture.asset.getCurrentVersionId());
+        verify(fixture.versionRepo, never()).saveAndFlush(fixture.version);
+        verify(fixture.assetRepo, never()).saveAndFlush(fixture.asset);
+    }
+
+    @Test
+    void appendExternalIdConflictFailsPackageWithoutWritingRows() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.stubSuccessfulImport();
+        DatasetSample existing = new DatasetSample();
+        existing.setId("existing-sample");
+        existing.setDatasetVersionId(fixture.version.getId());
+        existing.setExternalId("scene-1");
+        existing.setSampleIndex(0);
+        existing.setDeleted(false);
+        when(fixture.sampleRepo
+                .findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(
+                        eq(fixture.version.getId()),
+                        any()
+                ))
+                .thenReturn(List.of(existing));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertTrue(fixture.job.getErrorMessage().contains("external_id already exists"));
+        assertEquals("FAILED", fixture.datasetPackage.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
+        verify(fixture.dataRepo, never()).saveAllAndFlush(any());
+        verify(fixture.annotationRepo, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void appendSampleIndexConflictFailsWithoutWritingRows() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.stubSuccessfulImport();
+        DatasetSample existing = new DatasetSample();
+        existing.setId("existing-sample");
+        existing.setDatasetVersionId(fixture.version.getId());
+        existing.setExternalId("existing-scene");
+        existing.setSampleIndex(0);
+        existing.setDeleted(false);
+        when(fixture.sampleRepo
+                .findByDatasetVersionIdAndDeletedFalseAndSampleIndexIn(
+                        eq(fixture.version.getId()),
+                        any()
+                ))
+                .thenReturn(List.of(existing));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertTrue(fixture.job.getErrorMessage().contains("sample_index already exists"));
+        assertEquals("FAILED", fixture.datasetPackage.getStatus());
+        verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
     }
 
     @Test
@@ -225,6 +340,9 @@ class ImportJobServiceTest {
         private final ImportJobRepository jobRepo = mock(ImportJobRepository.class);
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        private final DatasetPackageRepository packageRepo = mock(DatasetPackageRepository.class);
+        private final DatasetVersionPackageRepository versionPackageRepo =
+                mock(DatasetVersionPackageRepository.class);
         private final DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         private final DatasetSampleRepository sampleRepo = mock(DatasetSampleRepository.class);
         private final DatasetSampleDataRepository dataRepo = mock(DatasetSampleDataRepository.class);
@@ -237,11 +355,15 @@ class ImportJobServiceTest {
         private final ImportJob job = job();
         private final DatasetVersion version = version();
         private final DatasetAsset asset = asset();
+        private final DatasetPackage datasetPackage = datasetPackage();
         private final DatasetUploadSession session = session();
+        private final DatasetVersionPackage versionPackage = versionPackage();
         private final ImportJobService service = new ImportJobService(
                 jobRepo,
                 versionRepo,
                 assetRepo,
+                packageRepo,
+                versionPackageRepo,
                 sessionRepo,
                 sampleRepo,
                 dataRepo,
@@ -266,6 +388,23 @@ class ImportJobServiceTest {
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId())).thenReturn(Optional.of(asset));
             when(sessionRepo.findByImportJobId(job.getId())).thenReturn(Optional.of(session));
+            when(packageRepo.findByIdAndDeletedFalse(datasetPackage.getId()))
+                    .thenReturn(Optional.of(datasetPackage));
+            when(versionPackageRepo.existsByDatasetVersionIdAndPackageId(
+                    version.getId(),
+                    datasetPackage.getId()
+            )).thenReturn(true);
+            when(versionPackageRepo.findByDatasetVersionIdAndPackageId(
+                    version.getId(),
+                    datasetPackage.getId()
+            )).thenReturn(Optional.of(versionPackage));
+            when(packageRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+            when(sampleRepo
+                    .findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(any(), any()))
+                    .thenReturn(List.of());
+            when(sampleRepo
+                    .findByDatasetVersionIdAndDeletedFalseAndSampleIndexIn(any(), any()))
+                    .thenReturn(List.of());
             when(sampleRepo.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(dataRepo.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(annotationRepo.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -290,24 +429,55 @@ class ImportJobServiceTest {
                 job.setFinishedAt(invocation.getArgument(4));
                 return 1;
             });
+            String objectName = job.getPackageId() == null
+                    ? version.getStoragePath()
+                    : datasetPackage.getStoragePath();
+            long objectSize = job.getPackageId() == null
+                    ? version.getSizeBytes()
+                    : datasetPackage.getSizeBytes();
+            String manifestPath = job.getPackageId() == null
+                    ? session.getManifestPath()
+                    : datasetPackage.getManifestPath();
             StatObjectResponse stat = mock(StatObjectResponse.class);
-            when(stat.size()).thenReturn(version.getSizeBytes());
-            when(minioService.stat(version.getStoragePath())).thenReturn(stat);
-            when(zipReader.read(version.getStoragePath(), version.getSizeBytes())).thenReturn(zipEntries());
+            when(stat.size()).thenReturn(objectSize);
+            when(minioService.stat(objectName)).thenReturn(stat);
+            when(zipReader.read(objectName, objectSize)).thenReturn(zipEntries());
             when(manifestReader.readManifest(
-                    version.getStoragePath(),
-                    version.getSizeBytes(),
-                    session.getManifestPath()
+                    objectName,
+                    objectSize,
+                    manifestPath
             )).thenReturn("{\"version\":\"1.0\"}");
         }
 
         private void stubSuccessfulImport() throws Exception {
             stubContext();
-            when(parser.parse(any(), any(), eq(session.getManifestPath()))).thenAnswer(invocation -> {
-                assertEquals("RUNNING", job.getStatus());
-                assertNotNull(job.getStartedAt());
-                return plan();
-            });
+            if ("APPEND".equals(versionPackage.getPackageRole())) {
+                when(parser.parse(
+                        any(),
+                        any(),
+                        eq(session.getManifestPath()),
+                        any(Integer.class)
+                )).thenAnswer(invocation -> {
+                    assertEquals("RUNNING", job.getStatus());
+                    assertNotNull(job.getStartedAt());
+                    int start = invocation.getArgument(3);
+                    return plan(start);
+                });
+            } else {
+                when(parser.parse(any(), any(), eq(session.getManifestPath())))
+                        .thenAnswer(invocation -> {
+                            assertEquals("RUNNING", job.getStatus());
+                            assertNotNull(job.getStartedAt());
+                            return plan(0);
+                        });
+            }
+        }
+
+        private void asAppendPackage() {
+            job.setPackageId(datasetPackage.getId());
+            datasetPackage.setStatus("PENDING");
+            versionPackage.setPackageRole("APPEND");
+            session.setUploadPurpose("APPEND_PACKAGE");
         }
 
         private ImportJobService serviceWithParser(ManifestParser selectedParser) {
@@ -315,6 +485,8 @@ class ImportJobServiceTest {
                     jobRepo,
                     versionRepo,
                     assetRepo,
+                    packageRepo,
+                    versionPackageRepo,
                     sessionRepo,
                     sampleRepo,
                     dataRepo,
@@ -327,7 +499,7 @@ class ImportJobServiceTest {
             );
         }
 
-        private ManifestImportPlan plan() {
+        private ManifestImportPlan plan(int sampleIndex) {
             ZipEntryInfo videoEntry = zipEntries().get(0);
             ZipEntryInfo annotationEntry = zipEntries().get(1);
             ManifestData data = new ManifestData(
@@ -354,7 +526,7 @@ class ImportJobServiceTest {
             );
             ManifestSample sample = new ManifestSample(
                     "scene-1",
-                    0,
+                    sampleIndex,
                     Map.of("weather", "sunny"),
                     Map.of("split", "train"),
                     List.of(data),
@@ -428,6 +600,20 @@ class ImportJobServiceTest {
             return value;
         }
 
+        private DatasetPackage datasetPackage() {
+            DatasetPackage value = new DatasetPackage();
+            value.setId("dataset-pkg-1");
+            value.setDatasetAssetId("asset-1");
+            value.setStoragePath("users/7/datasets/asset-1/v2/package-primary.zip");
+            value.setFileName("package-primary.zip");
+            value.setSizeBytes(4096L);
+            value.setManifestPath("manifest.json");
+            value.setStatus("READY");
+            value.setCreatedAt(Instant.now());
+            value.setDeleted(false);
+            return value;
+        }
+
         private DatasetUploadSession session() {
             DatasetUploadSession value = new DatasetUploadSession();
             value.setId("upload-1");
@@ -436,6 +622,16 @@ class ImportJobServiceTest {
             value.setManifestPath("manifest.json");
             value.setSampleGrouping("MANIFEST");
             value.setStatus("COMPLETED");
+            return value;
+        }
+
+        private DatasetVersionPackage versionPackage() {
+            DatasetVersionPackage value = new DatasetVersionPackage();
+            value.setDatasetVersionId(version.getId());
+            value.setPackageId(datasetPackage.getId());
+            value.setPackageRole("PRIMARY");
+            value.setPackageOrder(0);
+            value.setCreatedAt(Instant.now());
             return value;
         }
     }

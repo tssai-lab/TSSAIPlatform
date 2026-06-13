@@ -45,6 +45,18 @@ public class ManifestParser {
             List<ZipEntryInfo> zipEntries,
             String manifestPath
     ) {
+        return parse(manifestJson, zipEntries, manifestPath, 0);
+    }
+
+    public ManifestImportPlan parse(
+            String manifestJson,
+            List<ZipEntryInfo> zipEntries,
+            String manifestPath,
+            int generatedSampleIndexStart
+    ) {
+        if (generatedSampleIndexStart < 0) {
+            throw new IllegalArgumentException("generatedSampleIndexStart must be non-negative");
+        }
         JsonNode root = parseRoot(manifestJson);
         String version = requiredText(root, "version", null, null);
         if (!"1.0".equals(version)) {
@@ -81,7 +93,7 @@ public class ManifestParser {
 
             int sampleIndex = optionalNonNegativeInt(
                     sampleNode.get("sample_index"),
-                    position,
+                    generatedSampleIndexStart + position,
                     "sample_index",
                     externalId,
                     null

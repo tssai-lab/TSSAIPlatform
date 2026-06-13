@@ -1,12 +1,16 @@
 package com.tss.platform.service;
 
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
@@ -17,6 +21,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -36,8 +41,18 @@ class DatasetUploadRecoveryServiceTest {
         StatObjectResponse stat = mock(StatObjectResponse.class);
         when(stat.size()).thenReturn(fixture.session.getFileSize());
         when(fixture.minioService.stat(fixture.objectName())).thenReturn(stat);
-        when(fixture.jobRepo.findByDatasetVersionId(fixture.version.getId())).thenReturn(Optional.empty());
-        when(fixture.jobRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(fixture.jobRepo.findByDatasetVersionIdAndPackageId(any(), any()))
+                .thenReturn(Optional.empty());
+        when(fixture.packageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetPackage value = invocation.getArgument(0);
+            fixture.savedPackage.set(value);
+            return value;
+        });
+        when(fixture.versionPackageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetVersionPackage value = invocation.getArgument(0);
+            fixture.savedVersionPackage.set(value);
+            return value;
+        });
 
         fixture.service.recover(fixture.session.getId());
 
@@ -45,6 +60,17 @@ class DatasetUploadRecoveryServiceTest {
         assertEquals(fixture.objectName(), fixture.session.getStoragePath());
         assertEquals(fixture.objectName(), fixture.version.getStoragePath());
         assertNotNull(fixture.session.getImportJobId());
+        assertEquals("READY", fixture.savedPackage.get().getStatus());
+        assertEquals(fixture.objectName(), fixture.savedPackage.get().getStoragePath());
+        assertEquals(fixture.asset.getId(), fixture.savedPackage.get().getDatasetAssetId());
+        assertEquals(fixture.version.getId(), fixture.savedVersionPackage.get().getDatasetVersionId());
+        assertEquals(fixture.savedPackage.get().getId(), fixture.savedVersionPackage.get().getPackageId());
+        assertEquals("PRIMARY", fixture.savedVersionPackage.get().getPackageRole());
+        assertEquals(0, fixture.savedVersionPackage.get().getPackageOrder());
+        assertEquals(
+                fixture.savedPackage.get().getId(),
+                fixture.savedJob.get().getPackageId()
+        );
         verify(fixture.launcher).launch(fixture.session.getImportJobId());
     }
 
@@ -78,10 +104,28 @@ class DatasetUploadRecoveryServiceTest {
         verify(fixture.assetRepo).delete(fixture.asset);
     }
 
+    @Test
+    void ignoresAppendPackageSessionInInitialUploadRecovery() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.session.setUploadPurpose("APPEND_PACKAGE");
+        when(fixture.sessionRepo.findByIdForUpdate(fixture.session.getId()))
+                .thenReturn(Optional.of(fixture.session));
+
+        fixture.service.recover(fixture.session.getId());
+
+        verify(fixture.minioService, never()).stat(any());
+        verify(fixture.packageRepo, never()).saveAndFlush(any());
+        verify(fixture.versionRepo, never()).delete(any());
+        assertEquals("COMPLETING", fixture.session.getStatus());
+    }
+
     private static final class Fixture {
         private final DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        private final DatasetPackageRepository packageRepo = mock(DatasetPackageRepository.class);
+        private final DatasetVersionPackageRepository versionPackageRepo =
+                mock(DatasetVersionPackageRepository.class);
         private final ImportJobRepository jobRepo = mock(ImportJobRepository.class);
         private final MinioService minioService = mock(MinioService.class);
         private final MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
@@ -90,10 +134,15 @@ class DatasetUploadRecoveryServiceTest {
         private final DatasetUploadSession session = session();
         private final DatasetVersion version = version();
         private final DatasetAsset asset = asset();
+        private final AtomicReference<DatasetPackage> savedPackage = new AtomicReference<>();
+        private final AtomicReference<DatasetVersionPackage> savedVersionPackage = new AtomicReference<>();
+        private final AtomicReference<ImportJob> savedJob = new AtomicReference<>();
         private final DatasetUploadRecoveryService service = new DatasetUploadRecoveryService(
                 sessionRepo,
                 versionRepo,
                 assetRepo,
+                packageRepo,
+                versionPackageRepo,
                 jobRepo,
                 minioService,
                 deleteTaskService,
@@ -108,6 +157,11 @@ class DatasetUploadRecoveryServiceTest {
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
             when(versionRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(assetRepo.findById(asset.getId())).thenReturn(Optional.of(asset));
+            when(jobRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+                ImportJob value = invocation.getArgument(0);
+                savedJob.set(value);
+                return value;
+            });
         }
 
         private String objectName() {

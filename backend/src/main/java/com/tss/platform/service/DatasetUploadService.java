@@ -1,21 +1,26 @@
 package com.tss.platform.service;
 
 import com.tss.platform.config.MinioConfig;
+import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetUploadChunk;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.model.CvAnnotationFormat;
 import com.tss.platform.model.CvTaskType;
 import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
@@ -71,6 +76,9 @@ public class DatasetUploadService {
     private static final String VERSION_STATUS_DRAFT = "DRAFT";
     private static final String VERSION_STATUS_READY = "READY";
     private static final String IMPORT_STATUS_PENDING = "PENDING";
+    private static final String UPLOAD_PURPOSE_INITIAL = "INITIAL_DATASET";
+    private static final String UPLOAD_PURPOSE_APPEND = "APPEND_PACKAGE";
+    private static final String PACKAGE_ROLE_APPEND = "APPEND";
     private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
@@ -92,6 +100,8 @@ public class DatasetUploadService {
     private final DatasetUploadChunkRepository chunkRepo;
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
+    private final DatasetPackageRepository packageRepo;
+    private final DatasetVersionPackageRepository versionPackageRepo;
     private final ImportJobRepository importJobRepo;
     private final AuthContext authContext;
     private final MinioDeleteTaskService minioDeleteTaskService;
@@ -106,6 +116,8 @@ public class DatasetUploadService {
             DatasetUploadChunkRepository chunkRepo,
             DatasetAssetRepository assetRepo,
             DatasetVersionRepository versionRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
             ImportJobRepository importJobRepo,
             AuthContext authContext,
             MinioDeleteTaskService minioDeleteTaskService,
@@ -117,6 +129,8 @@ public class DatasetUploadService {
         this.chunkRepo = chunkRepo;
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
+        this.packageRepo = packageRepo;
+        this.versionPackageRepo = versionPackageRepo;
         this.importJobRepo = importJobRepo;
         this.authContext = authContext;
         this.minioDeleteTaskService = minioDeleteTaskService;
@@ -145,6 +159,8 @@ public class DatasetUploadService {
                 chunkRepo,
                 assetRepo,
                 versionRepo,
+                null,
+                null,
                 null,
                 authContext,
                 minioDeleteTaskService,
@@ -203,6 +219,7 @@ public class DatasetUploadService {
         DatasetUploadSession session = new DatasetUploadSession();
         session.setId("dataset-upload-" + System.currentTimeMillis() + "-"
                 + UUID.randomUUID().toString().replace("-", ""));
+        session.setUploadPurpose(UPLOAD_PURPOSE_INITIAL);
         session.setFileFingerprint(fingerprint);
         session.setFileName(req.getFileName().trim());
         session.setFileSize(req.getFileSize());
@@ -227,6 +244,62 @@ public class DatasetUploadService {
         session.setAssetId(targetAssetId);
         session.setStatus(STATUS_UPLOADING);
         session.setOwnerUserId(ownerUserId);
+        Instant now = Instant.now();
+        session.setCreatedAt(now);
+        session.setUpdatedAt(now);
+        return progress(sessionRepo.save(session));
+    }
+
+    @Transactional
+    public DatasetUploadProgressDto initAppendPackage(
+            String draftVersionId,
+            DatasetPackageAppendInitRequest req
+    ) {
+        if (req == null) {
+            throw new IllegalArgumentException("request body cannot be null");
+        }
+        requireText(req.getFileName(), "fileName cannot be blank");
+        if (req.getFileSize() == null || req.getFileSize() <= 0) {
+            throw new IllegalArgumentException("fileSize must be greater than 0");
+        }
+        String sampleGrouping = normalizeSampleGrouping(req.getSampleGrouping());
+        if (!"MANIFEST".equals(sampleGrouping)) {
+            throw new IllegalArgumentException(
+                    "append package requires sampleGrouping=MANIFEST"
+            );
+        }
+        String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
+        validateDatasetFileNameForTask("MULTIMODAL", req.getFileName());
+
+        DatasetVersion draft = requireAppendDraft(draftVersionId);
+        DatasetAsset asset = requireAppendAsset(draft);
+
+        DatasetUploadSession session = new DatasetUploadSession();
+        session.setId("dataset-upload-" + System.currentTimeMillis() + "-"
+                + UUID.randomUUID().toString().replace("-", ""));
+        session.setUploadPurpose(UPLOAD_PURPOSE_APPEND);
+        session.setFileFingerprint(normalizeText(req.getFileFingerprint()));
+        session.setFileName(req.getFileName().trim());
+        session.setFileSize(req.getFileSize());
+        int chunkSize = calculateChunkSize(req.getFileSize());
+        session.setChunkSize(chunkSize);
+        session.setTotalChunks(calculateTotalChunks(req.getFileSize(), chunkSize));
+        session.setDatasetName(asset.getName());
+        session.setVersion(draft.getVersion());
+        session.setVersionLabel(draft.getVersionLabel());
+        session.setVersionNo(draft.getVersionNo());
+        session.setVersionLabelGenerated(false);
+        session.setType("MULTIMODAL");
+        session.setCvTaskType(draft.getCvTaskType());
+        session.setAnnotationFormat(draft.getAnnotationFormat());
+        session.setParentVersionId(draft.getParentVersionId());
+        session.setSampleGrouping(sampleGrouping);
+        session.setManifestPath(manifestPath);
+        session.setAssetCreatedByUpload(false);
+        session.setAssetId(asset.getId());
+        session.setVersionId(draft.getId());
+        session.setStatus(STATUS_UPLOADING);
+        session.setOwnerUserId(asset.getOwnerUserId());
         Instant now = Instant.now();
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
@@ -292,6 +365,11 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("uploadId 不能为空");
         }
         DatasetUploadSession session = getSession(req.getUploadId());
+        if (UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose())) {
+            throw new IllegalArgumentException(
+                    "append package upload must use the package complete endpoint"
+            );
+        }
         if (isManifestUpload(session)) {
             return completeManifestUpload(session.getId());
         }
@@ -302,6 +380,83 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("保存数据集上传记录失败");
         }
         return result;
+    }
+
+    public Map<String, Object> completeAppendPackage(
+            String draftVersionId,
+            DatasetUploadCompleteRequest req
+    ) {
+        if (req == null || req.getUploadId() == null || req.getUploadId().isBlank()) {
+            throw new IllegalArgumentException("uploadId cannot be blank");
+        }
+        DatasetUploadSession initial = getSession(req.getUploadId());
+        requireAppendSession(initial, draftVersionId);
+        requireAppendDraft(draftVersionId);
+        if (STATUS_COMPLETED.equals(initial.getStatus())) {
+            launchPendingImport(initial);
+            return appendCompletedPayload(initial);
+        }
+
+        List<DatasetUploadChunk> chunks = requireCompleteChunks(initial);
+        DatasetUploadSession claimed = transactionTemplate.execute(
+                status -> claimCompleting(initial.getId())
+        );
+        if (claimed == null) {
+            throw new IllegalArgumentException("failed to claim append upload session");
+        }
+        requireAppendSession(claimed, draftVersionId);
+        String destinationObject = appendPackageDestinationObject(claimed);
+        DatasetUploadSession completed;
+        try {
+            List<ComposeSource> sources = chunks.stream()
+                    .map(chunk -> ComposeSource.builder()
+                            .bucket(bucket)
+                            .object(chunk.getObjectName())
+                            .build())
+                    .collect(Collectors.toList());
+            minioClient.composeObject(
+                    ComposeObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(destinationObject)
+                            .sources(sources)
+                            .build()
+            );
+            StatObjectResponse stat = minioClient.statObject(
+                    StatObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(destinationObject)
+                            .build()
+            );
+            if (stat.size() != claimed.getFileSize()) {
+                throw new IllegalArgumentException(
+                        "composed append package size does not match upload session"
+                );
+            }
+            completed = transactionTemplate.execute(status ->
+                    finalizeAppendPackage(
+                            claimed.getId(),
+                            draftVersionId,
+                            destinationObject,
+                            stat.size()
+                    )
+            );
+            if (completed == null) {
+                throw new IllegalArgumentException("failed to create append import job");
+            }
+        } catch (Exception exception) {
+            removeObjectQuietly(destinationObject);
+            transactionTemplate.executeWithoutResult(status ->
+                    resetAppendSession(claimed.getId(), draftVersionId)
+            );
+            throw new IllegalArgumentException(
+                    "failed to compose append package: " + rootMessage(exception)
+            );
+        }
+
+        registerChunkCleanup(initial.getId(), chunks);
+        Map<String, Object> response = appendCompletedPayload(completed);
+        launchPendingImport(completed);
+        return response;
     }
 
     private Map<String, Object> completeLegacyUpload(String uploadId) {
@@ -576,11 +731,34 @@ public class DatasetUploadService {
         version.setSizeBytes(sizeBytes);
         versionRepo.saveAndFlush(version);
 
-        ImportJob job = importJobRepo.findByDatasetVersionId(version.getId())
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId("dataset-pkg-" + UUID.randomUUID().toString().replace("-", ""));
+        datasetPackage.setDatasetAssetId(version.getAssetId());
+        datasetPackage.setStoragePath(storagePath);
+        datasetPackage.setFileName(session.getFileName());
+        datasetPackage.setSizeBytes(sizeBytes);
+        datasetPackage.setManifestPath(session.getManifestPath());
+        datasetPackage.setStatus(VERSION_STATUS_READY);
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        datasetPackage = packageRepo.saveAndFlush(datasetPackage);
+
+        DatasetVersionPackage versionPackage = new DatasetVersionPackage();
+        versionPackage.setDatasetVersionId(version.getId());
+        versionPackage.setPackageId(datasetPackage.getId());
+        versionPackage.setPackageRole("PRIMARY");
+        versionPackage.setPackageOrder(0);
+        versionPackage.setCreatedAt(now);
+        versionPackageRepo.saveAndFlush(versionPackage);
+
+        DatasetPackage primaryPackage = datasetPackage;
+        ImportJob job = importJobRepo
+                .findByDatasetVersionIdAndPackageId(version.getId(), primaryPackage.getId())
                 .orElseGet(() -> {
                     ImportJob value = new ImportJob();
                     value.setId("ijob-" + UUID.randomUUID().toString().replace("-", ""));
                     value.setDatasetVersionId(version.getId());
+                    value.setPackageId(primaryPackage.getId());
                     value.setStatus(IMPORT_STATUS_PENDING);
                     value.setProgress(0);
                     value.setImportedSamples(0);
@@ -595,6 +773,90 @@ public class DatasetUploadService {
         session.setStatus(STATUS_COMPLETED);
         session.setUpdatedAt(now);
         return sessionRepo.saveAndFlush(session);
+    }
+
+    private DatasetUploadSession finalizeAppendPackage(
+            String uploadId,
+            String draftVersionId,
+            String storagePath,
+            long sizeBytes
+    ) {
+        DatasetUploadSession session = getSession(uploadId);
+        requireAppendSession(session, draftVersionId);
+        if (STATUS_COMPLETED.equals(session.getStatus())) {
+            return session;
+        }
+        if (!STATUS_COMPLETING.equals(session.getStatus())) {
+            throw new IllegalArgumentException(
+                    "append upload session is not completing: " + session.getStatus()
+            );
+        }
+
+        DatasetVersion draft = versionRepo
+                .findByIdAndDeletedFalseForUpdate(draftVersionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset workspace version not found or no permission"
+                ));
+        DatasetAsset asset = requireAppendAsset(draft);
+        if (!VERSION_STATUS_DRAFT.equals(draft.getStatus())) {
+            throw new IllegalArgumentException(
+                    "dataset version must be DRAFT: " + draft.getId()
+            );
+        }
+
+        Instant now = Instant.now();
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId("dataset-pkg-" + UUID.randomUUID().toString().replace("-", ""));
+        datasetPackage.setDatasetAssetId(asset.getId());
+        datasetPackage.setStoragePath(storagePath);
+        datasetPackage.setFileName(session.getFileName());
+        datasetPackage.setSizeBytes(sizeBytes);
+        datasetPackage.setManifestPath(session.getManifestPath());
+        datasetPackage.setStatus(IMPORT_STATUS_PENDING);
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        datasetPackage = packageRepo.saveAndFlush(datasetPackage);
+
+        Integer maxOrder = versionPackageRepo
+                .findMaxPackageOrderByDatasetVersionId(draft.getId());
+        DatasetVersionPackage relation = new DatasetVersionPackage();
+        relation.setDatasetVersionId(draft.getId());
+        relation.setPackageId(datasetPackage.getId());
+        relation.setPackageRole(PACKAGE_ROLE_APPEND);
+        relation.setPackageOrder((maxOrder == null ? -1 : maxOrder) + 1);
+        relation.setCreatedAt(now);
+        versionPackageRepo.saveAndFlush(relation);
+
+        ImportJob job = new ImportJob();
+        job.setId("ijob-" + UUID.randomUUID().toString().replace("-", ""));
+        job.setDatasetVersionId(draft.getId());
+        job.setPackageId(datasetPackage.getId());
+        job.setStatus(IMPORT_STATUS_PENDING);
+        job.setProgress(0);
+        job.setImportedSamples(0);
+        job.setOwnerUserId(asset.getOwnerUserId());
+        job.setCreatedAt(now);
+        job.setUpdatedAt(now);
+        job = importJobRepo.saveAndFlush(job);
+
+        session.setStoragePath(storagePath);
+        session.setImportJobId(job.getId());
+        session.setStatus(STATUS_COMPLETED);
+        session.setUpdatedAt(now);
+        return sessionRepo.saveAndFlush(session);
+    }
+
+    private void resetAppendSession(String uploadId, String draftVersionId) {
+        DatasetUploadSession session = sessionRepo.findById(uploadId).orElse(null);
+        if (session == null || STATUS_COMPLETED.equals(session.getStatus())) {
+            return;
+        }
+        requireAppendSession(session, draftVersionId);
+        session.setStatus(STATUS_UPLOADING);
+        session.setStoragePath(null);
+        session.setImportJobId(null);
+        session.setUpdatedAt(Instant.now());
+        sessionRepo.saveAndFlush(session);
     }
 
     private void rollbackManifestReservation(String uploadId) {
@@ -823,6 +1085,60 @@ public class DatasetUploadService {
         return session;
     }
 
+    private DatasetVersion requireAppendDraft(String draftVersionId) {
+        if (draftVersionId == null || draftVersionId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "dataset workspace version not found or no permission"
+            );
+        }
+        DatasetVersion draft = versionRepo.findByIdAndDeletedFalse(draftVersionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset workspace version not found or no permission"
+                ));
+        if (!VERSION_STATUS_DRAFT.equals(draft.getStatus())) {
+            throw new IllegalArgumentException(
+                    "dataset workspace version not found or no permission"
+            );
+        }
+        requireAppendAsset(draft);
+        return draft;
+    }
+
+    private DatasetAsset requireAppendAsset(DatasetVersion draft) {
+        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(draft.getAssetId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset workspace version not found or no permission"
+                ));
+        if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
+            throw new IllegalArgumentException(
+                    "dataset workspace version not found or no permission"
+            );
+        }
+        if (!"MULTIMODAL".equals(DatasetTaskType.normalize(asset.getType()))) {
+            throw new IllegalArgumentException(
+                    "append package is only supported for MULTIMODAL datasets"
+            );
+        }
+        return asset;
+    }
+
+    private void requireAppendSession(
+            DatasetUploadSession session,
+            String draftVersionId
+    ) {
+        if (!UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose())
+                || !Objects.equals(draftVersionId, session.getVersionId())) {
+            throw new IllegalArgumentException(
+                    "append upload session does not belong to draft version"
+            );
+        }
+        if (!"MANIFEST".equals(session.getSampleGrouping())) {
+            throw new IllegalArgumentException(
+                    "append upload session sampleGrouping must be MANIFEST"
+            );
+        }
+    }
+
     private DatasetUploadSession claimCompleting(String uploadId) {
         DatasetUploadSession session = getSession(uploadId);
         if (STATUS_COMPLETED.equals(session.getStatus())) {
@@ -872,7 +1188,11 @@ public class DatasetUploadService {
         dto.setUploadedPartIndexes(completed
                 ? completedPartIndexes(session.getTotalChunks())
                 : chunks.stream().map(DatasetUploadChunk::getPartIndex).collect(Collectors.toList()));
-        dto.setStoragePath(session.getStoragePath());
+        dto.setStoragePath(
+                UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose())
+                        ? null
+                        : session.getStoragePath()
+        );
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
         dto.setVersionNo(session.getVersionNo());
@@ -930,6 +1250,40 @@ public class DatasetUploadService {
         data.put("ownerUserId", session.getOwnerUserId());
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
+        return data;
+    }
+
+    private Map<String, Object> appendCompletedPayload(DatasetUploadSession session) {
+        if (session.getImportJobId() == null || session.getImportJobId().isBlank()) {
+            throw new IllegalArgumentException("append upload has no import job");
+        }
+        ImportJob job = importJobRepo.findById(session.getImportJobId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "append import job not found: " + session.getImportJobId()
+                ));
+        if (job.getPackageId() == null || job.getPackageId().isBlank()) {
+            throw new IllegalArgumentException("append import job has no package");
+        }
+        DatasetVersionPackage relation = versionPackageRepo
+                .findByDatasetVersionIdAndPackageId(
+                        session.getVersionId(),
+                        job.getPackageId()
+                )
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "append package is not linked to draft version"
+                ));
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("uploadId", session.getId());
+        data.put("draftVersionId", session.getVersionId());
+        data.put("datasetVersionId", session.getVersionId());
+        data.put("packageId", job.getPackageId());
+        data.put("packageRole", relation.getPackageRole());
+        data.put("packageOrder", relation.getPackageOrder());
+        data.put("importJobId", job.getId());
+        data.put("uploadStatus", session.getStatus());
+        data.put("versionStatus", VERSION_STATUS_DRAFT);
+        data.put("importStatus", job.getStatus());
         return data;
     }
 
@@ -1581,6 +1935,21 @@ public class DatasetUploadService {
                 session.getVersionNo(),
                 session.getFileName()
         );
+    }
+
+    private static String appendPackageDestinationObject(DatasetUploadSession session) {
+        if (session.getOwnerUserId() == null
+                || session.getAssetId() == null || session.getAssetId().isBlank()
+                || session.getVersionNo() == null
+                || session.getId() == null || session.getId().isBlank()
+                || session.getFileName() == null || session.getFileName().isBlank()) {
+            throw new IllegalArgumentException("append upload session is incomplete");
+        }
+        return "users/" + session.getOwnerUserId()
+                + "/datasets/" + session.getAssetId()
+                + "/" + sanitizeSegment("v" + session.getVersionNo())
+                + "/packages/" + sanitizeSegment(session.getId())
+                + "/" + sanitizeSegment(session.getFileName());
     }
 
     private static String manifestDestinationObject(

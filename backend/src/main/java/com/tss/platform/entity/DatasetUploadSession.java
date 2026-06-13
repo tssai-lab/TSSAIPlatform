@@ -29,6 +29,9 @@ public class DatasetUploadSession {
     @Column(name = "file_fingerprint", length = 512)
     private String fileFingerprint;
 
+    @Column(name = "upload_purpose", nullable = false, length = 32)
+    private String uploadPurpose = "INITIAL_DATASET";
+
     @Column(name = "file_name", nullable = false, length = 255)
     private String fileName;
 

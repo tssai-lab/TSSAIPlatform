@@ -265,7 +265,7 @@ if (!response.ok || !result.success) {
 | `POST /api/dataset/upload/init` | 创建或恢复数据集上传会话 | 支持 `MULTIMODAL + MANIFEST`；`ROBOT` 当前会被拒绝；分片大小由文件大小动态计算 |
 | `POST /api/dataset/upload/chunk` | 上传数据集分片 | 使用 init 返回的 `chunkSize`；最多 10000 个分片；按 `uploadedPartIndexes` 支持续传 |
 | `GET /api/dataset/upload/progress` | 查询上传进度和版本预分配信息 | 完成后可取得 `assetId`、`versionId`、`versionNo`、`versionLabel` |
-| `POST /api/dataset/upload/complete` | 合并文件并创建版本 | 普通类型创建 READY；MULTIMODAL 创建 DRAFT 和 PENDING ImportJob，并异步启动导入 |
+| `POST /api/dataset/upload/complete` | 合并文件并创建版本 | 普通类型创建 READY；MULTIMODAL 创建 DRAFT、PRIMARY package 和 PENDING ImportJob，并异步启动导入 |
 | `GET /api/dataset-samples/import/{importJobId}/status` | 查询多模态导入任务状态 | 通过任务关联的数据集资产校验权限；不返回 MinIO 路径 |
 | `GET /api/dataset-versions/{versionId}/samples` | 分页查询多模态样本 | 仅允许查询未删除的 READY 版本；默认每页 20 条，最多 100 条 |
 | `GET /api/dataset-samples/{sampleId}` | 查询多模态样本详情 | 返回 sample、data 和 annotations，不返回 MinIO/ZIP 定位字段 |
@@ -273,6 +273,15 @@ if (!response.ok || !result.success) {
 | `GET /api/dataset-sample-data/{dataId}/preview` | 预览 ZIP 内数据项 | IMAGE/TEXT/POINT_CLOUD/安全文本类 OTHER 使用 D2 全量流；STORED VIDEO 支持单段 HTTP Range |
 | `GET /api/dataset-sample-data/{dataId}/download` | 下载 ZIP 内数据项 | 使用 ZIP Entry Index + MinIO range 流式读取，不支持 HTTP Range |
 | `GET /api/dataset-annotations/{annotationId}/download` | 下载 ZIP 内 annotation | 只返回文件流，不暴露 ZIP 路径或索引 |
+| `POST /api/dataset-versions/{readyVersionId}/draft` | 基于 READY 创建维护工作区 | 物化复制 Sample/Data/Annotation 元数据并复用 package，不复制 MinIO ZIP，不改变 `currentVersionId` |
+| `POST /api/dataset-versions/{draftVersionId}/packages/init` | 初始化 DRAFT 追加 ZIP 上传 | 仅允许 MULTIMODAL DRAFT；分片仍使用通用 chunk/progress 接口 |
+| `POST /api/dataset-versions/{draftVersionId}/packages/complete` | 完成追加 ZIP 上传 | 创建 APPEND package、版本关系和独立 ImportJob；导入成功后 DRAFT 仍保持 DRAFT |
+| `GET /api/dataset-versions/{draftVersionId}/workspace/samples` | 查询 DRAFT 工作区样本 | 支持分页及 `includeDeleted`，只允许访问有权限的未删除 DRAFT |
+| `GET /api/dataset-samples/{sampleId}/workspace` | 查询 DRAFT 样本详情 | 返回物化后的 data 和 annotations，不返回 package 或 ZIP 定位字段 |
+| `GET /api/dataset-samples/{sampleId}/workspace/data` | 查询 DRAFT 样本数据项 | 只返回安全元数据；本接口不开放 DRAFT preview/download |
+| `DELETE /api/dataset-samples/{sampleId}/workspace` | 软删除 DRAFT 样本 | 只修改 DRAFT 样本删除标记，不修改父 READY，不物理删除 ZIP |
+| `POST /api/dataset-samples/{sampleId}/workspace/restore` | 恢复 DRAFT 样本 | 清除 DRAFT 样本删除标记 |
+| `POST /api/dataset-versions/{draftVersionId}/publish` | 发布 DRAFT 为新 READY | 校验导入、package、样本唯一性和版本顺序后更新 `currentVersionId` |
 | `POST /api/dataset/upload/folder` | 上传 CV 文件夹 | `files` 与 `paths` 必须一一对应；后端同步打包上传，不适合超大文件夹 |
 | `GET /api/dataset/list` | 数据集资产主列表 | 每条记录代表资产并携带当前 READY 版本及最新 DRAFT 的导入状态；预览/训练仍使用 `versionId` |
 | `POST /api/dataset-assets` | 预创建空数据集资产 | 只创建资产元数据；没有版本时列表中的版本字段为空 |
@@ -282,7 +291,6 @@ if (!response.ok || !result.success) {
 | `PUT /api/dataset-assets/{id}/current-version` | 切换列表默认版本 | 目标版本必须属于该资产且状态为 `READY` |
 | `DELETE /api/dataset-assets/{id}` | 删除资产及其版本 | 当前版本也会随资产整体软删除；任一版本被训练引用时拒绝 |
 | `POST /api/dataset-versions` | 管理员创建 DRAFT 元数据版本 | 普通用户必定被拒绝；不能携带存储元数据；不会上传文件 |
-| `POST /api/dataset-versions/{readyVersionId}/draft` | 基于 READY 创建维护工作区 | 复用父版本存储引用，不复制 ZIP、样本或 ImportJob，不改变 `currentVersionId` |
 | `GET /api/dataset-versions/{id}` | 查询完整版本实体 | 预览和训练仍传这里返回的版本 `id` |
 | `GET /api/dataset-versions` | 获取版本历史 | 传 `assetId` 时按 `versionNo` 倒序；不传时当前无统一排序和分页 |
 | `PUT /api/dataset-versions/{id}` | 编辑版本标签和说明 | `fileName`、`storagePath`、`sizeBytes` 对所有角色都不可通过此接口修改 |
@@ -929,6 +937,8 @@ MULTIMODAL + MANIFEST 响应示例：
 - 响应中的 `status` / `uploadStatus=COMPLETED` 是上传会话状态，不能当作数据集版本状态。
 - 普通类型的 `versionStatus=READY`；MULTIMODAL 的 `versionStatus=DRAFT`。
 - MULTIMODAL complete 只执行 MinIO compose 和 stat，不调用现有 zip 全量格式校验。
+- MULTIMODAL complete 会为当前 ZIP 创建一个物理 `dataset_package`，并以 `PRIMARY`、`packageOrder=0` 关联到新版本；`ImportJob.packageId` 指向该 package。
+- 导入生成的 Sample、Data 和 Annotation 会记录来源 package。初始导入成功后版本变为 READY，`DatasetVersion.storagePath` 仍保留，兼容没有 packageId 的旧数据。
 - MULTIMODAL complete 失败时会清理目标对象和本次创建的 DRAFT；若本次创建了空资产也会清理，并把会话恢复为 `UPLOADING`。
 - complete 可对已完成的 `uploadId` 重试并返回原结果；状态为 `COMPLETING` 时应停止重复提交并轮询 progress。
 - 数据集名称、类型和版本说明来自 init 会话，complete 请求只接受 `uploadId`。
@@ -1139,9 +1149,10 @@ GET /api/dataset-annotations/{annotationId}/download
 
 1. 根据 dataId 或 annotationId 读取已落库的 `zipDataOffset`、`compressedSize`、`uncompressedSize` 和 `compressionMethod`。
 2. preview 通过 DatasetSampleData -> DatasetSample -> DatasetVersion -> DatasetAsset 回溯；download 通过数据项关联的 DatasetVersion -> DatasetAsset 回溯，完成状态、删除标记和所有权校验。
-3. 使用 MinIO range request 只读取目标 ZIP entry 的压缩字节。
-4. `STORED` 直接返回，`DEFLATED` 使用 raw deflate 流式解压。
-5. 不支持其他压缩算法，也不回退到从 ZIP 开头顺序扫描。
+3. Data/Annotation 有 `packageId` 时从对应 `dataset_package.storagePath` 定位 ZIP；旧数据 `packageId` 为空时回退到 `DatasetVersion.storagePath`。
+4. 使用 MinIO range request 只读取目标 ZIP entry 的压缩字节。
+5. `STORED` 直接返回，`DEFLATED` 使用 raw deflate 流式解压。
+6. 不支持其他压缩算法，也不回退到从 ZIP 开头顺序扫描。
 
 preview 支持：
 
@@ -1375,11 +1386,12 @@ POST /api/dataset-versions/{readyVersionId}/draft
 - 新版本分配新的 `versionNo` 和默认 `versionLabel=v{versionNo}`。
 - `parentVersionId` 指向请求中的 READY 版本。
 - 新版本状态固定为 `DRAFT`，`publishedAt` 为空。
-- 内部复用父版本的文件和存储元数据，不复制 MinIO ZIP 对象。
-- 不复制 DatasetSample、DatasetSampleData、DatasetAnnotation。
+- 物化复制父 READY 中未删除的 DatasetSample、DatasetSampleData 和 DatasetAnnotation，复制记录使用新 ID，Annotation 的 sampleDataId 映射到 DRAFT 内的新 Data。
+- 复制父版本的 `dataset_version_package` 关系，复用同一批 `dataset_package` 和 ZIP 对象；不复制 MinIO ZIP。
+- DRAFT 的样本元数据是独立数据库记录，后续软删除、恢复或追加不会修改父 READY。
 - 不创建 ImportJob，不读取 manifest，不执行导入。
 - 不更新 DatasetAsset.currentVersionId；当前版本仍保持原 READY 版本。
-- 当前不提供 DRAFT 样本继承视图，普通样本查询仍只接受 READY 版本。
+- 普通样本查询仍只接受 READY；DRAFT 必须使用 workspace 专用查询接口。
 
 响应示例：
 
@@ -1399,15 +1411,112 @@ POST /api/dataset-versions/{readyVersionId}/draft
 }
 ```
 
-响应不返回 `storagePath`、MinIO objectName 或 bucket。E0-A 只建立工作区，不提供追加样本、overlay、多 ZIP package 或工作区发布流程。
+响应不返回 `storagePath`、MinIO objectName 或 bucket。同一资产只允许一个未删除 DRAFT。
 
-### 9.3 查询数据集版本详情
+### 9.3 追加 ZIP 到 DRAFT
+
+初始化上传：
+
+```http
+POST /api/dataset-versions/{draftVersionId}/packages/init
+Content-Type: application/json
+```
+
+请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `fileName` | string | 是 | 必须是 `.zip` |
+| `fileSize` | number | 是 | ZIP 字节数，必须大于 0 |
+| `fileFingerprint` | string | 否 | 客户端文件指纹 |
+| `sampleGrouping` | string | 是 | 必须为 `MANIFEST` |
+| `manifestPath` | string | 否 | manifest 在 ZIP 内的路径，沿用初始上传规则 |
+
+init 返回通用上传进度结构。后续分片继续调用：
+
+```http
+POST /api/dataset/upload/chunk
+GET /api/dataset/upload/progress?uploadId={uploadId}
+```
+
+完成上传：
+
+```http
+POST /api/dataset-versions/{draftVersionId}/packages/complete
+Content-Type: application/json
+
+{ "uploadId": "dataset-upload-..." }
+```
+
+要求与结果：
+
+- 版本必须是调用方有权限访问的、未删除的 `MULTIMODAL DRAFT`。
+- complete 创建新的 `dataset_package`、`APPEND` 版本关系和独立 ImportJob。
+- APPEND 导入只新增 Sample/Data/Annotation，来源字段指向新 package；不会修改继承样本。
+- APPEND manifest 的未删除 `externalId` 或显式 `sampleIndex` 与当前 DRAFT 冲突时导入失败，不做跨包合并。
+- 导入成功后 package 状态变为 READY，但 DatasetVersion 仍保持 DRAFT，`currentVersionId` 不变。
+- complete 响应包含 `packageId`、`packageRole=APPEND`、`packageOrder`、`importJobId` 和状态；这些字段只描述导入结果，不进入样本查询 DTO。
+
+### 9.4 查询 DRAFT 工作区样本
+
+```http
+GET /api/dataset-versions/{draftVersionId}/workspace/samples?page=1&pageSize=20&includeDeleted=false
+GET /api/dataset-samples/{sampleId}/workspace
+GET /api/dataset-samples/{sampleId}/workspace/data
+```
+
+- 只允许查询 `status=DRAFT`、`deleted=false` 且调用方有权限的数据集版本。
+- 列表默认不返回软删除样本；`includeDeleted=true` 可用于工作区维护页展示已删除项。
+- `page` 默认 1，`pageSize` 默认 20、最大 100，按 `sampleIndex ASC, createdAt ASC, id ASC` 稳定排序。
+- 数据来自 DRAFT 已物化的独立记录，不沿 `parentVersionId` 动态合并。
+- detail 返回 data 和 annotations；响应不包含 packageId、storagePath、bucket、originalPath、ZIP offset、CRC 或 MinIO objectName。
+- DRAFT 文件 preview/download 仍不开放；发布为 READY 后使用普通文件接口。
+
+### 9.5 删除与恢复 DRAFT 样本
+
+```http
+DELETE /api/dataset-samples/{sampleId}/workspace
+POST /api/dataset-samples/{sampleId}/workspace/restore
+```
+
+- 两个接口都只接受调用方有权限的 DRAFT 样本。
+- 删除是软删除，只设置样本的 `deleted/deletedAt`；不删除 Data、Annotation、package 或 MinIO ZIP。
+- 恢复会清除删除标记。
+- 操作只影响 DRAFT 的物化样本，不影响父 READY。
+
+### 9.6 发布 DRAFT 为新 READY
+
+```http
+POST /api/dataset-versions/{draftVersionId}/publish
+```
+
+发布前校验：
+
+- DRAFT 必须未删除、属于调用方可访问的数据集资产，且 `versionNo` 高于当前 READY。
+- 父版本和当前版本必须是同资产的有效 READY。
+- DRAFT 下所有 ImportJob 必须为 SUCCESS。
+- 必须存在且仅存在一个顺序为 0 的 PRIMARY package；后续关系必须为连续有序的 APPEND package。
+- 所有关联 package 必须未删除、状态为 READY、有存储路径并属于同一资产。
+- Sample/Data/Annotation 的 package 引用必须完整且属于该版本关联的 package。
+- 至少存在一个未删除样本，未删除样本的 `externalId` 和 `sampleIndex` 不得重复。
+
+发布在同一事务内把 DRAFT 状态改为 READY、设置 `publishedAt` 并更新 `DatasetAsset.currentVersionId`。父 READY、package、MinIO ZIP 和 ImportJob 均不会被复制或修改；软删除样本保留在数据库中，但普通 READY 查询和文件访问不会返回它。发布后 workspace 查询拒绝该版本，普通 READY 查询及 preview/download/VIDEO Range 开始生效。
+
+### 9.7 package 模型
+
+- `dataset_package` 表示一个物理 ZIP，包括归属资产、对象路径、文件信息、manifest 路径、状态和软删除信息。
+- `dataset_version_package` 表示某个版本使用哪些物理包，`PRIMARY` 是初始包，`APPEND` 是后续追加包，`packageOrder` 定义稳定顺序。
+- READY 创建 DRAFT 时只复制版本与 package 的关系，复用物理包；追加上传再为 DRAFT 增加新的 APPEND package。
+- Sample 记录 `createdByPackageId`，Data/Annotation 记录 `packageId`，文件服务据此解析实际 ZIP。
+- 旧数据没有 packageId 时继续使用 `DatasetVersion.storagePath`，因此原有已导入版本仍可读取。
+
+### 9.8 查询数据集版本详情
 
 ```http
 GET /api/dataset-versions/{id}
 ```
 
-### 9.4 查询数据集版本列表
+### 9.9 查询数据集版本列表
 
 ```http
 GET /api/dataset-versions?assetId={assetId}
@@ -1417,7 +1526,7 @@ GET /api/dataset-versions?assetId={assetId}
 
 传 `assetId` 时按 `versionNo` 倒序返回完整版本历史。返回项包含 `versionNo`、`versionLabel`、`status`、`description`、`changeLog`、`parentVersionId`、`fileFingerprint`、`publishedAt` 等字段。
 
-### 9.5 更新数据集版本
+### 9.10 更新数据集版本
 
 ```http
 PUT /api/dataset-versions/{id}
@@ -1441,7 +1550,7 @@ PUT /api/dataset-versions/{id}
 
 `remark`、`description`、`changeLog` 会直接使用请求值覆盖，省略时会被更新为 `null`；编辑页应先读取详情并提交完整可编辑字段。
 
-### 9.6 更新数据集版本状态
+### 9.11 更新数据集版本状态
 
 ```http
 PATCH /api/dataset-versions/{id}/status
@@ -1460,10 +1569,10 @@ Content-Type: application/json
 
 - 该接口没有限制只能按固定状态机顺序流转，只限制目标状态和当前版本保护。
 - 由于手工创建 DRAFT 时又不能写入存储元数据，按当前公开接口创建的空 DRAFT 通常无法直接变为 READY。
-- E0-A 工作区接口不调用该状态接口，也不把它定义为工作区发布流程；后续发布需要独立补齐数据合并和完整性校验。
+- 工作区不能通过该通用状态接口发布；必须调用 `POST /api/dataset-versions/{draftVersionId}/publish`，由专用服务执行完整性校验和 `currentVersionId` 更新。
 - 跨域部署需要注意当前 CORS 未允许 `PATCH`，建议经同源 Nginx 代理调用。
 
-### 9.7 删除数据集版本
+### 9.12 删除数据集版本
 
 ```http
 DELETE /api/dataset-versions/{id}
@@ -2311,13 +2420,15 @@ Content-Type: application/json
 - `READY` 是稳定快照，后续 Sample/Data/Annotation 维护不得直接写入 READY。
 - 样本维护服务必须先调用 `DatasetVersionLifecycleService.assertMutableDraftVersion(versionId)`。
 - 需要稳定快照的内部流程可调用 `assertReadyVersion(versionId)`。
-- `currentVersionId` 只能通过现有保护逻辑指向同一资产下未删除的 `READY` 版本，工作区创建不会更新它。
-- `POST /api/dataset-versions/{readyVersionId}/draft` 只创建版本工作区元数据，并复用父 READY 的存储引用。
-- 本阶段不复制父版本 Sample/Data/Annotation，也不提供 DRAFT 样本继承查询。
-- `/api/dataset/list` 继续通过 `latestDraftVersionId` 展示最新工作区；没有 ImportJob 时导入状态字段为 `null`。
+- `POST /api/dataset-versions/{readyVersionId}/draft` 物化复制父 READY 的未删除样本元数据，并复用父版本 package 关系，不复制 ZIP。
+- DRAFT 使用 workspace 专用接口查询、软删除和恢复样本；普通样本接口仍只接受 READY。
+- APPEND ZIP 通过独立 package init/complete 接口加入同一 DRAFT，导入成功只扩充工作区，不更新 `currentVersionId`。
+- `POST /api/dataset-versions/{draftVersionId}/publish` 完成完整性校验后把工作区原地发布为新 READY，并在事务成功时更新 `currentVersionId`。
+- 父 READY 的样本、package 关系和版本状态不会被工作区操作修改。
+- `/api/dataset/list` 通过 `latestDraftVersionId` 展示最新工作区；发布后该字段不再返回已发布版本，`currentVersionId` 指向新 READY。
 - 同一资产只允许一个未删除 DRAFT。已有上传导入 DRAFT 或工作区 DRAFT 时，新建工作区都会被拒绝，避免混淆两种用途。
-- 工作区 DRAFT 不能通过通用版本状态 PATCH 直接变为 READY，后续发布必须使用独立发布流程。
-- 删除复用父版本存储对象的工作区时，只软删 DatasetVersion；只要仍有其他未删除版本引用同一 `storagePath`，就不会创建 MinIO 删除任务。
+- 工作区 DRAFT 不能通过通用版本状态 PATCH 直接变为 READY，必须使用独立 publish 接口。
+- 样本删除和版本维护都不物理删除 package ZIP；物理对象清理不属于当前工作区链路。
 
 ## 17. 多模态数据管理当前范围
 
@@ -2334,17 +2445,21 @@ Content-Type: application/json
 - 支持 READY 版本的样本分页、样本详情和样本 Data 列表查询，响应不暴露 MinIO/ZIP 定位字段。
 - 支持通过 ZIP Entry Index 和 MinIO range 读取样本 Data preview/download 及 Annotation download。
 - 支持 STORED VIDEO 的单段 HTTP Range preview，DEFLATED VIDEO 仅支持 download。
-- 支持基于 READY 快照创建 DRAFT 工作区；工作区不复制 ZIP 或样本记录，不改变当前 READY 版本。
-- 已提供 READY/DRAFT 生命周期断言，供后续样本维护服务统一拒绝对 READY 的直接修改。
+- 支持 `dataset_package` / `dataset_version_package`，一个版本可按 PRIMARY + APPEND 顺序使用多个物理 ZIP。
+- 支持基于 READY 创建 DRAFT，并物化继承 Sample/Data/Annotation；复用 package，不复制 ZIP，不改变当前 READY。
+- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照。
+- 发布后 `currentVersionId` 指向新 READY，父 READY 保持不变，软删除样本不进入正式查询和文件访问。
+- 已提供 READY/DRAFT 生命周期断言，统一拒绝对 READY 的直接样本修改。
 - MULTIMODAL complete 不执行现有 CV/NLP/POINT_CLOUD zip 白名单和全量解压校验。
 
-当前明确未实现：
+### 17.1 后续增强（E0-G 不实现）
 
+- PARTIAL 导入状态。
+- ImportJob retry。
+- 结构化 errorDetails。
 - 跨版本 `external_id` 查询与对齐。
-- AUDIO preview、视频多段 Range、缩略图、转码和抽帧。
-- PARTIAL、errorDetails 和 retry。
-- DRAFT 样本继承视图、overlay、追加样本 ZIP 和多 ZIP DatasetVersionPackage。
-- DRAFT 工作区的数据合并、完整性校验和发布为 READY。
-- 多模态训练绑定和训练数据组装。
+- 工作区 package 的引用感知物理 ZIP 清理。
+- 工作区审计日志。
+- 前端对接。
 
-因此，只有 ImportJob 为 `SUCCESS` 且 DatasetVersion 为 `READY` 时才表示持久化导入完成；当前提供样本查询、基础 preview/download 和 STORED VIDEO 单段 Range preview，但仍不提供训练组装。
+因此，初始导入或 APPEND ImportJob 必须为 `SUCCESS`，且工作区通过 publish 成为 `READY` 后，才进入正式样本查询和文件访问语义。

@@ -88,6 +88,24 @@ class ManifestParserTest {
     }
 
     @Test
+    void generatesMissingSampleIndexFromAppendStart() {
+        String json = manifest(samples(
+                sample("first", null, "first.png"),
+                sample("second", null, "second.png")
+        ));
+
+        ManifestImportPlan plan = parser.parse(
+                json,
+                entries("manifest.json", "first.png", "second.png"),
+                "manifest.json",
+                42
+        );
+
+        assertEquals(42, plan.samples().get(0).sampleIndex());
+        assertEquals(43, plan.samples().get(1).sampleIndex());
+    }
+
+    @Test
     void rejectsDuplicateExternalId() {
         String json = manifest(samples(
                 sample("scene_001", 0, "first.png"),

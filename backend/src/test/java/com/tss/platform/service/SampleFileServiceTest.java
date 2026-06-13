@@ -2,14 +2,17 @@ package com.tss.platform.service;
 
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.repository.DatasetAnnotationRepository;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -27,12 +30,107 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SampleFileServiceTest {
+
+    @Test
+    void previewsPackageBackedDataFromPackageStorage() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetSampleData data = fixture.data("IMAGE", "STORED");
+        data.setPackageId(fixture.datasetPackage.getId());
+        fixture.stubAuthorizedData(data);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                data.getZipDataOffset(),
+                data.getCompressedSize()
+        )).thenReturn(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+
+        fixture.service.openDataPreview(data.getId());
+
+        verify(fixture.minioService).downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                data.getZipDataOffset(),
+                data.getCompressedSize()
+        );
+    }
+
+    @Test
+    void downloadsPackageBackedDataFromPackageStorage() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetSampleData data = fixture.data("IMAGE", "STORED");
+        data.setPackageId(fixture.datasetPackage.getId());
+        fixture.stubAuthorizedData(data);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                data.getZipDataOffset(),
+                data.getCompressedSize()
+        )).thenReturn(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+
+        fixture.service.openDataDownload(data.getId());
+
+        verify(fixture.minioService).downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                data.getZipDataOffset(),
+                data.getCompressedSize()
+        );
+    }
+
+    @Test
+    void downloadsPackageBackedAnnotationFromPackageStorage() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetAnnotation annotation = fixture.annotation("STORED");
+        annotation.setPackageId(fixture.datasetPackage.getId());
+        fixture.stubAuthorizedAnnotation(annotation);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                annotation.getZipDataOffset(),
+                annotation.getCompressedSize()
+        )).thenReturn(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+
+        fixture.service.openAnnotationDownload(annotation.getId());
+
+        verify(fixture.minioService).downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                annotation.getZipDataOffset(),
+                annotation.getCompressedSize()
+        );
+    }
+
+    @Test
+    void previewsPackageBackedStoredVideoRangeFromPackageStorage() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetSampleData data = fixture.data("VIDEO", "STORED");
+        data.setPackageId(fixture.datasetPackage.getId());
+        data.setZipDataOffset(5000L);
+        data.setCompressedSize(1000L);
+        data.setUncompressedSize(1000L);
+        fixture.stubAuthorizedData(data);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                5100L,
+                100L
+        )).thenReturn(new ByteArrayInputStream(new byte[100]));
+
+        SampleFileService.SampleFileStream result =
+                fixture.service.openDataPreview(data.getId(), "bytes=100-199");
+
+        assertTrue(result.partial());
+        verify(fixture.minioService).downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                5100L,
+                100L
+        );
+    }
 
     @Test
     void previewsStoredDataFromExactMinioRange() throws Exception {
@@ -298,6 +396,45 @@ class SampleFileServiceTest {
     }
 
     @Test
+    void rejectsDeletedSamplePreviewAndDownloadsBeforeVersionOrMinioAccess()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.version.setStatus("DRAFT");
+        DatasetSampleData data = fixture.data("VIDEO", "STORED");
+        DatasetAnnotation annotation = fixture.annotation("STORED");
+        when(fixture.dataRepo.findById(data.getId())).thenReturn(Optional.of(data));
+        when(fixture.annotationRepo.findById(annotation.getId()))
+                .thenReturn(Optional.of(annotation));
+        when(fixture.sampleRepo.findByIdAndDeletedFalse(data.getSampleId()))
+                .thenReturn(Optional.empty());
+
+        for (SampleFileException error : new SampleFileException[]{
+                assertThrows(
+                        SampleFileException.class,
+                        () -> fixture.service.openDataPreview(data.getId(), "bytes=0-1")
+                ),
+                assertThrows(
+                        SampleFileException.class,
+                        () -> fixture.service.openDataDownload(data.getId())
+                ),
+                assertThrows(
+                        SampleFileException.class,
+                        () -> fixture.service.openAnnotationDownload(annotation.getId())
+                )
+        }) {
+            assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
+        }
+        verify(fixture.sampleRepo, times(3))
+                .findByIdAndDeletedFalse(data.getSampleId());
+        verify(fixture.versionRepo, never()).findByIdAndDeletedFalse(any());
+        verify(fixture.minioService, never()).downloadRange(
+                any(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong()
+        );
+    }
+
+    @Test
     void nonVideoPreviewRetainsD2BehaviorWhenRangeHeaderIsPresent() throws Exception {
         Fixture fixture = new Fixture();
         DatasetSampleData data = fixture.data("IMAGE", "STORED");
@@ -467,16 +604,22 @@ class SampleFileServiceTest {
                 mock(DatasetAnnotationRepository.class);
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        private final DatasetPackageRepository packageRepo = mock(DatasetPackageRepository.class);
+        private final DatasetVersionPackageRepository versionPackageRepo =
+                mock(DatasetVersionPackageRepository.class);
         private final MinioService minioService = mock(MinioService.class);
         private final AuthContext authContext = mock(AuthContext.class);
         private final DatasetVersion version = version();
         private final DatasetAsset asset = asset();
+        private final DatasetPackage datasetPackage = datasetPackage();
         private final SampleFileService service = new SampleFileService(
                 dataRepo,
                 sampleRepo,
                 annotationRepo,
                 versionRepo,
                 assetRepo,
+                packageRepo,
+                versionPackageRepo,
                 minioService,
                 authContext
         );
@@ -499,9 +642,24 @@ class SampleFileServiceTest {
 
         private void stubAuthorizedAnnotation(DatasetAnnotation annotation) {
             when(annotationRepo.findById(annotation.getId())).thenReturn(Optional.of(annotation));
+            DatasetSample sample = new DatasetSample();
+            sample.setId(annotation.getSampleId());
+            sample.setDatasetVersionId(version.getId());
+            sample.setDeleted(false);
+            when(sampleRepo.findByIdAndDeletedFalse(sample.getId()))
+                    .thenReturn(Optional.of(sample));
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalse(asset.getId())).thenReturn(Optional.of(asset));
             when(authContext.canAccessOwner(asset.getOwnerUserId())).thenReturn(true);
+        }
+
+        private void stubPackageSource() {
+            when(packageRepo.findByIdAndDeletedFalse(datasetPackage.getId()))
+                    .thenReturn(Optional.of(datasetPackage));
+            when(versionPackageRepo.existsByDatasetVersionIdAndPackageId(
+                    version.getId(),
+                    datasetPackage.getId()
+            )).thenReturn(true);
         }
 
         private DatasetSampleData data(String dataType, String compressionMethod) {
@@ -522,6 +680,7 @@ class SampleFileServiceTest {
         private DatasetAnnotation annotation(String compressionMethod) {
             DatasetAnnotation annotation = new DatasetAnnotation();
             annotation.setId("annotation-1");
+            annotation.setSampleId("sample-1");
             annotation.setDatasetVersionId(version.getId());
             annotation.setFileName("annotation.json");
             annotation.setContentType("application/json");
@@ -548,6 +707,18 @@ class SampleFileServiceTest {
             asset.setOwnerUserId(7);
             asset.setDeleted(false);
             return asset;
+        }
+
+        private static DatasetPackage datasetPackage() {
+            DatasetPackage datasetPackage = new DatasetPackage();
+            datasetPackage.setId("dataset-pkg-1");
+            datasetPackage.setDatasetAssetId("asset-1");
+            datasetPackage.setStoragePath("users/7/datasets/asset-1/v1/package-primary.zip");
+            datasetPackage.setFileName("package-primary.zip");
+            datasetPackage.setSizeBytes(1024L);
+            datasetPackage.setStatus("READY");
+            datasetPackage.setDeleted(false);
+            return datasetPackage;
         }
     }
 

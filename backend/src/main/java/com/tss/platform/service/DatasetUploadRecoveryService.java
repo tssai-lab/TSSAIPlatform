@@ -1,12 +1,16 @@
 package com.tss.platform.service;
 
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import io.minio.StatObjectResponse;
 import org.slf4j.Logger;
@@ -31,6 +35,8 @@ public class DatasetUploadRecoveryService {
     private final DatasetUploadSessionRepository sessionRepo;
     private final DatasetVersionRepository versionRepo;
     private final DatasetAssetRepository assetRepo;
+    private final DatasetPackageRepository packageRepo;
+    private final DatasetVersionPackageRepository versionPackageRepo;
     private final ImportJobRepository jobRepo;
     private final MinioService minioService;
     private final MinioDeleteTaskService deleteTaskService;
@@ -41,6 +47,8 @@ public class DatasetUploadRecoveryService {
             DatasetUploadSessionRepository sessionRepo,
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
             ImportJobRepository jobRepo,
             MinioService minioService,
             MinioDeleteTaskService deleteTaskService,
@@ -50,6 +58,8 @@ public class DatasetUploadRecoveryService {
         this.sessionRepo = sessionRepo;
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
+        this.packageRepo = packageRepo;
+        this.versionPackageRepo = versionPackageRepo;
         this.jobRepo = jobRepo;
         this.minioService = minioService;
         this.deleteTaskService = deleteTaskService;
@@ -77,6 +87,7 @@ public class DatasetUploadRecoveryService {
         RecoverySnapshot snapshot = transactionTemplate.execute(status ->
                 sessionRepo.findByIdForUpdate(uploadId)
                         .filter(session -> STATUS_COMPLETING.equals(session.getStatus()))
+                        .filter(session -> !"APPEND_PACKAGE".equals(session.getUploadPurpose()))
                         .map(this::snapshot)
                         .orElse(null)
         );
@@ -157,11 +168,34 @@ public class DatasetUploadRecoveryService {
         version.setSizeBytes(objectSize);
         versionRepo.saveAndFlush(version);
 
-        ImportJob job = jobRepo.findByDatasetVersionId(version.getId())
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId("dataset-pkg-" + UUID.randomUUID().toString().replace("-", ""));
+        datasetPackage.setDatasetAssetId(version.getAssetId());
+        datasetPackage.setStoragePath(snapshot.objectName());
+        datasetPackage.setFileName(session.getFileName());
+        datasetPackage.setSizeBytes(objectSize);
+        datasetPackage.setManifestPath(session.getManifestPath());
+        datasetPackage.setStatus("READY");
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        datasetPackage = packageRepo.saveAndFlush(datasetPackage);
+
+        DatasetVersionPackage versionPackage = new DatasetVersionPackage();
+        versionPackage.setDatasetVersionId(version.getId());
+        versionPackage.setPackageId(datasetPackage.getId());
+        versionPackage.setPackageRole("PRIMARY");
+        versionPackage.setPackageOrder(0);
+        versionPackage.setCreatedAt(now);
+        versionPackageRepo.saveAndFlush(versionPackage);
+
+        DatasetPackage primaryPackage = datasetPackage;
+        ImportJob job = jobRepo
+                .findByDatasetVersionIdAndPackageId(version.getId(), primaryPackage.getId())
                 .orElseGet(() -> {
                     ImportJob value = new ImportJob();
                     value.setId("ijob-" + UUID.randomUUID().toString().replace("-", ""));
                     value.setDatasetVersionId(version.getId());
+                    value.setPackageId(primaryPackage.getId());
                     value.setStatus("PENDING");
                     value.setProgress(0);
                     value.setImportedSamples(0);

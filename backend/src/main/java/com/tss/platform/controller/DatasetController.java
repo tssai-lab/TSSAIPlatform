@@ -88,7 +88,11 @@ public class DatasetController {
         Map<String, ImportJob> jobsByVersionId = latestDraftIds.isEmpty()
                 ? Map.of()
                 : importJobRepo.findByDatasetVersionIdIn(latestDraftIds).stream()
-                .collect(Collectors.toMap(ImportJob::getDatasetVersionId, job -> job));
+                .collect(Collectors.toMap(
+                        ImportJob::getDatasetVersionId,
+                        job -> job,
+                        this::newerImportJob
+                ));
 
         List<Map<String, Object>> allData = filteredAssets.stream()
                 .map(asset -> toListItem(
@@ -165,6 +169,13 @@ public class DatasetController {
         Comparator<DatasetVersion> comparator = Comparator
                 .comparing(DatasetVersion::getVersionNo, Comparator.nullsFirst(Comparator.naturalOrder()))
                 .thenComparing(DatasetVersion::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()));
+        return comparator.compare(left, right) >= 0 ? left : right;
+    }
+
+    private ImportJob newerImportJob(ImportJob left, ImportJob right) {
+        Comparator<ImportJob> comparator = Comparator
+                .comparing(ImportJob::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(ImportJob::getId, Comparator.nullsFirst(Comparator.naturalOrder()));
         return comparator.compare(left, right) >= 0 ? left : right;
     }
 

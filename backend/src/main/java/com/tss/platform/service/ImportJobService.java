@@ -2,10 +2,12 @@ package com.tss.platform.service;
 
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.model.manifest.ManifestAnnotation;
@@ -14,10 +16,12 @@ import com.tss.platform.model.manifest.ManifestImportPlan;
 import com.tss.platform.model.manifest.ManifestSample;
 import com.tss.platform.repository.DatasetAnnotationRepository;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import io.minio.StatObjectResponse;
 import org.springframework.stereotype.Service;
@@ -27,6 +31,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,10 +48,13 @@ public class ImportJobService {
     private static final String JOB_FAILED = "FAILED";
     private static final String VERSION_DRAFT = "DRAFT";
     private static final String VERSION_READY = "READY";
+    private static final String PACKAGE_ROLE_APPEND = "APPEND";
 
     private final ImportJobRepository jobRepo;
     private final DatasetVersionRepository versionRepo;
     private final DatasetAssetRepository assetRepo;
+    private final DatasetPackageRepository packageRepo;
+    private final DatasetVersionPackageRepository versionPackageRepo;
     private final DatasetUploadSessionRepository sessionRepo;
     private final DatasetSampleRepository sampleRepo;
     private final DatasetSampleDataRepository dataRepo;
@@ -62,6 +71,8 @@ public class ImportJobService {
             ImportJobRepository jobRepo,
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
             DatasetUploadSessionRepository sessionRepo,
             DatasetSampleRepository sampleRepo,
             DatasetSampleDataRepository dataRepo,
@@ -75,6 +86,8 @@ public class ImportJobService {
         this.jobRepo = jobRepo;
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
+        this.packageRepo = packageRepo;
+        this.versionPackageRepo = versionPackageRepo;
         this.sessionRepo = sessionRepo;
         this.sampleRepo = sampleRepo;
         this.dataRepo = dataRepo;
@@ -111,11 +124,26 @@ public class ImportJobService {
                     objectSize,
                     context.manifestPath()
             );
-            ManifestImportPlan plan = manifestParser.parse(
-                    manifestJson,
-                    entries,
-                    context.manifestPath()
-            );
+            ManifestImportPlan plan;
+            if (context.appendPackage()) {
+                Integer maxSampleIndex =
+                        sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                                context.versionId()
+                        );
+                int generatedStart = (maxSampleIndex == null ? -1 : maxSampleIndex) + 1;
+                plan = manifestParser.parse(
+                        manifestJson,
+                        entries,
+                        context.manifestPath(),
+                        generatedStart
+                );
+            } else {
+                plan = manifestParser.parse(
+                        manifestJson,
+                        entries,
+                        context.manifestPath()
+                );
+            }
             writeTransaction.executeWithoutResult(status -> persistPlan(context, plan, executorId));
         } catch (Exception exception) {
             String message = rootMessage(exception);
@@ -159,9 +187,6 @@ public class ImportJobService {
                     "dataset version must be DRAFT: " + version.getId() + ", status=" + version.getStatus()
             );
         }
-        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("dataset version storagePath is blank: " + version.getId());
-        }
         DatasetUploadSession session = sessionRepo.findByImportJobId(importJobId)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "upload session not found for import job: " + importJobId
@@ -173,12 +198,55 @@ public class ImportJobService {
             throw new IllegalArgumentException("upload session sampleGrouping must be MANIFEST");
         }
 
+        String objectName;
+        String manifestPath = session.getManifestPath();
+        String packageId = job.getPackageId();
+        String packageRole = null;
+        if (packageId == null || packageId.isBlank()) {
+            objectName = version.getStoragePath();
+            if (objectName == null || objectName.isBlank()) {
+                throw new IllegalArgumentException(
+                        "dataset version storagePath is blank: " + version.getId()
+                );
+            }
+            packageId = null;
+        } else {
+            DatasetPackage datasetPackage = packageRepo.findByIdAndDeletedFalse(packageId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "dataset package not found: " + job.getPackageId()
+                    ));
+            if (!version.getAssetId().equals(datasetPackage.getDatasetAssetId())) {
+                throw new IllegalArgumentException("dataset package does not belong to version asset");
+            }
+            DatasetVersionPackage relation = versionPackageRepo
+                    .findByDatasetVersionIdAndPackageId(
+                            version.getId(),
+                            datasetPackage.getId()
+                    )
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "dataset package is not linked to version"
+                    ));
+            packageRole = relation.getPackageRole();
+            objectName = datasetPackage.getStoragePath();
+            if (objectName == null || objectName.isBlank()) {
+                throw new IllegalArgumentException(
+                        "dataset package storagePath is blank: " + datasetPackage.getId()
+                );
+            }
+            if (datasetPackage.getManifestPath() != null
+                    && !datasetPackage.getManifestPath().isBlank()) {
+                manifestPath = datasetPackage.getManifestPath();
+            }
+        }
+
         return new ImportContext(
                 importJobId,
                 version.getId(),
                 version.getAssetId(),
-                version.getStoragePath(),
-                session.getManifestPath()
+                packageId,
+                packageRole,
+                objectName,
+                manifestPath
         );
     }
 
@@ -197,18 +265,28 @@ public class ImportJobService {
                         "dataset asset not found: " + context.assetId()
                 ));
 
+        if (context.appendPackage()) {
+            validateAppendConflicts(context.versionId(), plan);
+        }
+
         Instant now = Instant.now();
         List<DatasetSample> samples = new ArrayList<>(plan.totalSamples());
         List<DatasetSampleData> dataItems = new ArrayList<>(plan.totalDataCount());
         List<DatasetAnnotation> annotations = new ArrayList<>(plan.totalAnnotationCount());
 
         for (ManifestSample manifestSample : plan.samples()) {
-            DatasetSample sample = toSample(version, manifestSample, now);
+            DatasetSample sample = toSample(version, context.packageId(), manifestSample, now);
             samples.add(sample);
 
             Map<String, DatasetSampleData> dataByPath = new LinkedHashMap<>();
             for (ManifestData manifestData : manifestSample.data()) {
-                DatasetSampleData data = toSampleData(version, sample, manifestData, now);
+                DatasetSampleData data = toSampleData(
+                        version,
+                        sample,
+                        context.packageId(),
+                        manifestData,
+                        now
+                );
                 dataItems.add(data);
                 dataByPath.put(manifestData.path(), data);
             }
@@ -227,6 +305,7 @@ public class ImportJobService {
                         version,
                         sample,
                         referencedData,
+                        context.packageId(),
                         manifestAnnotation,
                         now
                 ));
@@ -249,14 +328,59 @@ public class ImportJobService {
             throw new IllegalStateException("import job lease was lost before SUCCESS");
         }
 
-        version.setStatus(VERSION_READY);
-        version.setPublishedAt(now);
-        versionRepo.saveAndFlush(version);
+        if (context.appendPackage()) {
+            DatasetPackage datasetPackage = packageRepo
+                    .findByIdAndDeletedFalse(context.packageId())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "dataset package not found: " + context.packageId()
+                    ));
+            datasetPackage.setStatus(VERSION_READY);
+            packageRepo.saveAndFlush(datasetPackage);
+        } else {
+            version.setStatus(VERSION_READY);
+            version.setPublishedAt(now);
+            versionRepo.saveAndFlush(version);
 
-        if (shouldUpdateCurrentVersion(asset, version)) {
-            asset.setCurrentVersionId(version.getId());
-            asset.setUpdatedAt(now);
-            assetRepo.saveAndFlush(asset);
+            if (shouldUpdateCurrentVersion(asset, version)) {
+                asset.setCurrentVersionId(version.getId());
+                asset.setUpdatedAt(now);
+                assetRepo.saveAndFlush(asset);
+            }
+        }
+    }
+
+    private void validateAppendConflicts(
+            String versionId,
+            ManifestImportPlan plan
+    ) {
+        Collection<String> externalIds = plan.samples().stream()
+                .map(ManifestSample::externalId)
+                .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        List<DatasetSample> externalConflicts =
+                sampleRepo.findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(
+                        versionId,
+                        externalIds
+                );
+        if (!externalConflicts.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "external_id already exists in DRAFT: "
+                            + externalConflicts.get(0).getExternalId()
+            );
+        }
+
+        Collection<Integer> sampleIndexes = plan.samples().stream()
+                .map(ManifestSample::sampleIndex)
+                .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        List<DatasetSample> indexConflicts =
+                sampleRepo.findByDatasetVersionIdAndDeletedFalseAndSampleIndexIn(
+                        versionId,
+                        sampleIndexes
+                );
+        if (!indexConflicts.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "sample_index already exists in DRAFT: "
+                            + indexConflicts.get(0).getSampleIndex()
+            );
         }
     }
 
@@ -291,16 +415,32 @@ public class ImportJobService {
             versionRepo.saveAndFlush(version);
                 })
         );
+        jobRepo.findById(importJobId)
+                .filter(job -> job.getPackageId() != null)
+                .flatMap(job -> versionPackageRepo.findByDatasetVersionIdAndPackageId(
+                        job.getDatasetVersionId(),
+                        job.getPackageId()
+                ).map(relation -> Map.entry(job, relation)))
+                .filter(entry -> PACKAGE_ROLE_APPEND.equals(entry.getValue().getPackageRole()))
+                .flatMap(entry -> packageRepo.findByIdAndDeletedFalse(
+                        entry.getKey().getPackageId()
+                ))
+                .ifPresent(datasetPackage -> {
+                    datasetPackage.setStatus(JOB_FAILED);
+                    packageRepo.saveAndFlush(datasetPackage);
+                });
     }
 
     private static DatasetSample toSample(
             DatasetVersion version,
+            String packageId,
             ManifestSample source,
             Instant now
     ) {
         DatasetSample target = new DatasetSample();
         target.setId(id("sample"));
         target.setDatasetVersionId(version.getId());
+        target.setCreatedByPackageId(packageId);
         target.setExternalId(source.externalId());
         target.setSampleIndex(source.sampleIndex());
         target.setTags(source.tags());
@@ -315,6 +455,7 @@ public class ImportJobService {
     private static DatasetSampleData toSampleData(
             DatasetVersion version,
             DatasetSample sample,
+            String packageId,
             ManifestData source,
             Instant now
     ) {
@@ -323,6 +464,7 @@ public class ImportJobService {
         target.setId(id("data"));
         target.setSampleId(sample.getId());
         target.setDatasetVersionId(version.getId());
+        target.setPackageId(packageId);
         target.setDataType(source.dataType());
         target.setSensor(source.sensor());
         target.setChannel(source.channel());
@@ -343,6 +485,7 @@ public class ImportJobService {
             DatasetVersion version,
             DatasetSample sample,
             DatasetSampleData referencedData,
+            String packageId,
             ManifestAnnotation source,
             Instant now
     ) {
@@ -352,6 +495,7 @@ public class ImportJobService {
         target.setSampleId(sample.getId());
         target.setSampleDataId(referencedData == null ? null : referencedData.getId());
         target.setDatasetVersionId(version.getId());
+        target.setPackageId(packageId);
         target.setAnnotationType(source.annotationType());
         target.setFormat(source.format());
         target.setOriginalPath(source.path());
@@ -412,8 +556,13 @@ public class ImportJobService {
             String importJobId,
             String versionId,
             String assetId,
+            String packageId,
+            String packageRole,
             String objectName,
             String manifestPath
     ) {
+        private boolean appendPackage() {
+            return PACKAGE_ROLE_APPEND.equals(packageRole);
+        }
     }
 }

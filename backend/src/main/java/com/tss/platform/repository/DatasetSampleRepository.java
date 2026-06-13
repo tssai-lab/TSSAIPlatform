@@ -1,10 +1,17 @@
 package com.tss.platform.repository;
 
 import com.tss.platform.entity.DatasetSample;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface DatasetSampleRepository extends JpaRepository<DatasetSample, String> {
@@ -13,5 +20,77 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
             Pageable pageable
     );
 
+    Page<DatasetSample> findByDatasetVersionId(
+            String datasetVersionId,
+            Pageable pageable
+    );
+
     Optional<DatasetSample> findByIdAndDeletedFalse(String id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from DatasetSample s where s.id = :id")
+    Optional<DatasetSample> findByIdForUpdate(@Param("id") String id);
+
+    Slice<DatasetSample> findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
+            String datasetVersionId,
+            Pageable pageable
+    );
+
+    List<DatasetSample> findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(
+            String datasetVersionId,
+            Collection<String> externalIds
+    );
+
+    List<DatasetSample> findByDatasetVersionIdAndDeletedFalseAndSampleIndexIn(
+            String datasetVersionId,
+            Collection<Integer> sampleIndexes
+    );
+
+    long countByDatasetVersionIdAndDeletedFalse(String datasetVersionId);
+
+    long countByDatasetVersionIdAndCreatedByPackageIdIsNull(String datasetVersionId);
+
+    @Query("""
+            select s.externalId
+            from DatasetSample s
+            where s.datasetVersionId = :datasetVersionId
+              and s.deleted = false
+            group by s.externalId
+            having count(s.id) > 1
+            """)
+    List<String> findDuplicateExternalIdsByDatasetVersionId(
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
+    @Query("""
+            select s.sampleIndex
+            from DatasetSample s
+            where s.datasetVersionId = :datasetVersionId
+              and s.deleted = false
+            group by s.sampleIndex
+            having count(s.id) > 1
+            """)
+    List<Integer> findDuplicateSampleIndexesByDatasetVersionId(
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
+    @Query("""
+            select distinct s.createdByPackageId
+            from DatasetSample s
+            where s.datasetVersionId = :datasetVersionId
+              and s.createdByPackageId is not null
+            """)
+    List<String> findDistinctCreatedByPackageIdsByDatasetVersionId(
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
+    @Query("""
+            select coalesce(max(s.sampleIndex), -1)
+            from DatasetSample s
+            where s.datasetVersionId = :datasetVersionId
+              and s.deleted = false
+            """)
+    Integer findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+            @Param("datasetVersionId") String datasetVersionId
+    );
 }

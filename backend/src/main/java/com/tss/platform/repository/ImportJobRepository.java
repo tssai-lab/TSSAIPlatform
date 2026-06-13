@@ -15,7 +15,12 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
-    Optional<ImportJob> findByDatasetVersionId(String datasetVersionId);
+    List<ImportJob> findByDatasetVersionId(String datasetVersionId);
+
+    Optional<ImportJob> findByDatasetVersionIdAndPackageId(
+            String datasetVersionId,
+            String packageId
+    );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select j from ImportJob j where j.id = :id")

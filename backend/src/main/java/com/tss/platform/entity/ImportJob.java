@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -16,13 +15,10 @@ import java.time.Instant;
 @Entity
 @Table(
         name = "import_job",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_import_job_dataset_version",
-                columnNames = "dataset_version_id"
-        ),
         indexes = {
                 @Index(name = "idx_ij_version", columnList = "dataset_version_id"),
-                @Index(name = "idx_ij_status", columnList = "status")
+                @Index(name = "idx_ij_status", columnList = "status"),
+                @Index(name = "idx_import_job_package", columnList = "package_id")
         }
 )
 public class ImportJob {
@@ -33,6 +29,9 @@ public class ImportJob {
 
     @Column(name = "dataset_version_id", nullable = false, length = 64)
     private String datasetVersionId;
+
+    @Column(name = "package_id", length = 64)
+    private String packageId;
 
     @Column(name = "status", nullable = false, length = 32)
     private String status;

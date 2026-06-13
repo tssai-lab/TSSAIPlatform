@@ -16,15 +16,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DatasetWorkspaceServiceTest {
 
     @Test
-    void createsMetadataOnlyDraftFromReadyWithoutChangingCurrentVersion() {
+    void createsMaterializedDraftFromReadyWithoutChangingCurrentVersion() {
         Fixture fixture = new Fixture();
         fixture.stubOwnedReady();
         when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
@@ -62,6 +64,52 @@ class DatasetWorkspaceServiceTest {
         assertNull(draft.getPublishedAt());
         assertFalse(Boolean.TRUE.equals(draft.getDeleted()));
         verify(fixture.assetRepo, never()).save(any(DatasetAsset.class));
+        verify(fixture.materializer).materialize(fixture.parent, draft);
+    }
+
+    @Test
+    void propagatesMaterializationFailureSoDraftTransactionCanRollBack() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedReady();
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(fixture.asset.getId(), "v3"))
+                .thenReturn(false);
+        when(fixture.versionRepo.save(any(DatasetVersion.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        doThrow(new IllegalStateException("copy failed"))
+                .when(fixture.materializer)
+                .materialize(eq(fixture.parent), any(DatasetVersion.class));
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> fixture.service.createDraft(fixture.parent.getId())
+        );
+
+        assertEquals("copy failed", error.getMessage());
+        verify(fixture.assetRepo, never()).save(any(DatasetAsset.class));
+    }
+
+    @Test
+    void allowsPackageBackedParentWithoutLegacyVersionStoragePath() {
+        Fixture fixture = new Fixture();
+        fixture.parent.setStoragePath(null);
+        fixture.stubOwnedReady();
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(fixture.asset.getId(), "v3"))
+                .thenReturn(false);
+        when(fixture.versionRepo.save(any(DatasetVersion.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        DatasetWorkspaceDraftDto result =
+                fixture.service.createDraft(fixture.parent.getId());
+
+        assertEquals("DRAFT", result.getStatus());
+        ArgumentCaptor<DatasetVersion> draftCaptor =
+                ArgumentCaptor.forClass(DatasetVersion.class);
+        verify(fixture.materializer).materialize(eq(fixture.parent), draftCaptor.capture());
+        assertNull(draftCaptor.getValue().getStoragePath());
     }
 
     @Test
@@ -152,8 +200,16 @@ class DatasetWorkspaceServiceTest {
         private final AuthContext authContext = mock(AuthContext.class);
         private final DatasetVersionLifecycleService lifecycle =
                 new DatasetVersionLifecycleService(versionRepo);
+        private final DatasetWorkspaceMaterializer materializer =
+                mock(DatasetWorkspaceMaterializer.class);
         private final DatasetWorkspaceService service =
-                new DatasetWorkspaceService(versionRepo, assetRepo, authContext, lifecycle);
+                new DatasetWorkspaceService(
+                        versionRepo,
+                        assetRepo,
+                        authContext,
+                        lifecycle,
+                        materializer
+                );
         private final DatasetAsset asset = asset();
         private final DatasetVersion parent = parent();
 
@@ -203,4 +259,3 @@ class DatasetWorkspaceServiceTest {
         }
     }
 }
-
