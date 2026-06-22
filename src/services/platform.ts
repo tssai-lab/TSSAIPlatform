@@ -109,8 +109,11 @@ export {
   fetchInferenceTrainingCandidates,
   fetchTrainingInferenceContext,
   runInference,
+  type CvBatchInputState,
   type CvInputState,
+  type CustomScriptInputState,
   type MultimodalInputState,
+  type NlpBatchInputState,
   type NlpInputState,
   type RunInferenceParams,
 } from './inference';

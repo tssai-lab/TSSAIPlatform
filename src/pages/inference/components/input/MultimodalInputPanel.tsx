@@ -5,6 +5,7 @@ import React from 'react';
 import { INFERENCE_CONFIG } from '@/constants/platform';
 import type { MultimodalInputState } from '@/services/platform';
 import InferenceParamsPanel from '../InferenceParamsPanel';
+import InputFileActions from './InputFileActions';
 
 const { TextArea } = Input;
 
@@ -21,6 +22,27 @@ const MultimodalInputPanel: React.FC<MultimodalInputPanelProps> = ({
   onInputChange,
   onParamsChange,
 }) => {
+  const applyFile = (file: File) => {
+    if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
+    const previewUrl = URL.createObjectURL(file);
+    onInputChange({
+      ...input,
+      file,
+      previewUrl,
+      objectName: undefined,
+    });
+  };
+
+  const clearImage = () => {
+    if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
+    onInputChange({
+      ...input,
+      file: undefined,
+      previewUrl: undefined,
+      objectName: undefined,
+    });
+  };
+
   const uploadProps: UploadProps = {
     accept: '.jpg,.jpeg,.png,.webp',
     maxCount: 1,
@@ -28,16 +50,12 @@ const MultimodalInputPanel: React.FC<MultimodalInputPanelProps> = ({
     beforeUpload: (file) => {
       const maxBytes = INFERENCE_CONFIG.CV_IMAGE_MAX_MB * 1024 * 1024;
       if (file.size > maxBytes) return Upload.LIST_IGNORE;
-      if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
-      const previewUrl = URL.createObjectURL(file);
-      onInputChange({
-        ...input,
-        file,
-        previewUrl,
-      });
+      applyFile(file);
       return false;
     },
   };
+
+  const hasImage = !!input.previewUrl;
 
   return (
     <div
@@ -48,12 +66,23 @@ const MultimodalInputPanel: React.FC<MultimodalInputPanelProps> = ({
         gap: 8,
       }}
     >
-      {input.previewUrl ? (
-        <Image
-          src={input.previewUrl}
-          alt="input"
-          style={{ maxHeight: 160, objectFit: 'contain' }}
-        />
+      {hasImage ? (
+        <>
+          <Image
+            src={input.previewUrl}
+            alt="input"
+            style={{ maxHeight: 160, objectFit: 'contain' }}
+          />
+          <InputFileActions
+            label={
+              input.file?.name
+                ? `已选择：${input.file.name}`
+                : '已选择 1 张图片'
+            }
+            onRemove={clearImage}
+            reselectUploadProps={uploadProps}
+          />
+        </>
       ) : (
         <Upload.Dragger {...uploadProps}>
           <p className="ant-upload-drag-icon">

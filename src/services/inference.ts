@@ -6,6 +6,11 @@
  */
 import { request } from '@umijs/max';
 import { INFERENCE_TASK_FETCH_PAGE_SIZE } from '@/constants/inference';
+import type {
+  CvBatchSubMode,
+  InferenceInputMode,
+  NlpBatchSubMode,
+} from '@/constants/inference';
 import { API_CONFIG, INFERENCE_CONFIG } from '@/constants/platform';
 import { uploadObject } from '@/services/files';
 import { getModelDetail } from '@/services/model';
@@ -41,12 +46,32 @@ export type MultimodalInputState = {
   prompt: string;
 };
 
+export type CvBatchInputState = {
+  subMode: CvBatchSubMode;
+  files: File[];
+};
+
+export type NlpBatchInputState = {
+  subMode: NlpBatchSubMode;
+  pasteText: string;
+  files: File[];
+};
+
+export type CustomScriptInputState = {
+  scriptFile?: File;
+  dataFiles: File[];
+};
+
 export type RunInferenceParams = {
   model: InferenceModelItem;
   params: API.InferenceParams;
+  inputMode?: InferenceInputMode;
   cvInput?: CvInputState;
   nlpInput?: NlpInputState;
   multimodalInput?: MultimodalInputState;
+  cvBatchInput?: CvBatchInputState;
+  nlpBatchInput?: NlpBatchInputState;
+  customScriptInput?: CustomScriptInputState;
 };
 
 type TrainingOutputPayload = {
@@ -279,6 +304,49 @@ async function resolveImageObjectName(input: {
   throw new Error('请先上传图片');
 }
 
+function validateCvBatchInput(input?: CvBatchInputState) {
+  if (!input?.files?.length) {
+    throw new Error('请先上传批量输入文件');
+  }
+}
+
+function validateNlpBatchInput(input?: NlpBatchInputState) {
+  if (!input) {
+    throw new Error('请先配置批量输入');
+  }
+  if (input.subMode === 'paste') {
+    if (!input.pasteText.trim()) {
+      throw new Error('请粘贴待推理文本');
+    }
+    return;
+  }
+  if (!input.files.length) {
+    throw new Error('请先上传批量输入文件');
+  }
+}
+
+function validateBatchInput(
+  modality: API.InferenceModality,
+  ctx: RunInferenceParams,
+) {
+  if (modality === 'CV' || modality === 'MULTIMODAL') {
+    validateCvBatchInput(ctx.cvBatchInput);
+    return;
+  }
+  if (modality === 'NLP') {
+    validateNlpBatchInput(ctx.nlpBatchInput);
+  }
+}
+
+function validateCustomScriptInput(ctx: RunInferenceParams) {
+  if (!ctx.customScriptInput?.scriptFile) {
+    throw new Error('请先上传推理脚本');
+  }
+  if (!ctx.customScriptInput.dataFiles.length) {
+    throw new Error('请先上传数据文件');
+  }
+}
+
 async function postPredict(
   endpoint: string,
   data: Record<string, unknown>,
@@ -332,9 +400,18 @@ export async function runInference(
   ctx: RunInferenceParams,
   options?: { skipErrorHandler?: boolean },
 ) {
-  const { model, params } = ctx;
+  const { model, params, inputMode = 'single' } = ctx;
   const source = buildTrainingOutputPayload(model);
   const reqOpts = { skipErrorHandler: options?.skipErrorHandler ?? true };
+
+  if (inputMode === 'batch') {
+    validateBatchInput(model.modality, ctx);
+    throw new Error('批量推理接口开发中，请稍后重试');
+  }
+  if (inputMode === 'custom') {
+    validateCustomScriptInput(ctx);
+    throw new Error('自定义推理脚本接口开发中，请稍后重试');
+  }
 
   let res: PredictResponse;
 

@@ -5,6 +5,7 @@ import React from 'react';
 import { INFERENCE_CONFIG } from '@/constants/platform';
 import type { CvInputState } from '@/services/platform';
 import InferenceParamsPanel from '../InferenceParamsPanel';
+import InputFileActions from './InputFileActions';
 
 type CvInputPanelProps = {
   input: CvInputState;
@@ -19,6 +20,17 @@ const CvInputPanel: React.FC<CvInputPanelProps> = ({
   onInputChange,
   onParamsChange,
 }) => {
+  const applyFile = (file: File) => {
+    if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
+    const previewUrl = URL.createObjectURL(file);
+    onInputChange({ file, previewUrl });
+  };
+
+  const clearFile = () => {
+    if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
+    onInputChange({});
+  };
+
   const uploadProps: UploadProps = {
     accept: '.jpg,.jpeg,.png,.webp',
     maxCount: 1,
@@ -26,21 +38,32 @@ const CvInputPanel: React.FC<CvInputPanelProps> = ({
     beforeUpload: (file) => {
       const maxBytes = INFERENCE_CONFIG.CV_IMAGE_MAX_MB * 1024 * 1024;
       if (file.size > maxBytes) return Upload.LIST_IGNORE;
-      if (input.previewUrl) URL.revokeObjectURL(input.previewUrl);
-      const previewUrl = URL.createObjectURL(file);
-      onInputChange({ file, previewUrl });
+      applyFile(file);
       return false;
     },
   };
 
+  const hasFile = !!input.previewUrl;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {input.previewUrl ? (
-        <div style={{ marginBottom: 12, textAlign: 'center' }}>
-          <Image
-            src={input.previewUrl}
-            alt="input"
-            style={{ maxHeight: 220, objectFit: 'contain' }}
+      {hasFile ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ textAlign: 'center', marginBottom: 8 }}>
+            <Image
+              src={input.previewUrl}
+              alt="input"
+              style={{ maxHeight: 220, objectFit: 'contain' }}
+            />
+          </div>
+          <InputFileActions
+            label={
+              input.file?.name
+                ? `已选择：${input.file.name}`
+                : '已选择 1 张图片'
+            }
+            onRemove={clearFile}
+            reselectUploadProps={uploadProps}
           />
         </div>
       ) : (

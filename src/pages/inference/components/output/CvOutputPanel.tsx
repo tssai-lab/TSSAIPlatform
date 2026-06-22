@@ -54,7 +54,7 @@ const CvOutputPanel: React.FC<CvOutputPanelProps> = ({ result, running }) => {
       </Space>
       <div style={{ ...INFERENCE_OUTPUT_CONTENT_STYLE, clear: 'both' }}>
         <Typography.Title level={5} style={{ marginTop: 0 }}>
-          Detection Results
+          检测结果
         </Typography.Title>
         {(result.predictions ?? []).map((p, i) => (
           <div key={predictionItemKey(p)}>
@@ -64,13 +64,13 @@ const CvOutputPanel: React.FC<CvOutputPanelProps> = ({ result, running }) => {
         ))}
         {result.scene ? (
           <>
-            <Typography.Title level={5}>Scene</Typography.Title>
+            <Typography.Title level={5}>场景识别</Typography.Title>
             <div>{result.scene}</div>
           </>
         ) : null}
         {result.semanticLabels?.length ? (
           <>
-            <Typography.Title level={5}>Semantic Labels</Typography.Title>
+            <Typography.Title level={5}>语义标签</Typography.Title>
             <Space wrap>
               {result.semanticLabels.map((l) => (
                 <Tag key={l}>{l}</Tag>

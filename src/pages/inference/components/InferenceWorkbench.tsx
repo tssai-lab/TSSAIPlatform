@@ -1,16 +1,20 @@
 import { history } from '@umijs/max';
-import { Card, Col, message, Row, Spin, Typography } from 'antd';
+import { Card, message, Spin, Typography } from 'antd';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   INFERENCE_CANDIDATES_PAGE_SIZE,
   INFERENCE_DEFAULT_PARAMS,
+  type InferenceInputMode,
 } from '@/constants/inference';
 import {
+  type CustomScriptInputState,
+  type CvBatchInputState,
   type CvInputState,
   fetchInferenceTrainingCandidates,
   fetchTrainingInferenceContext,
   type InferenceModelItem,
   type MultimodalInputState,
+  type NlpBatchInputState,
   type NlpInputState,
   runInference,
 } from '@/services/platform';
@@ -24,7 +28,6 @@ import InferenceTargetBanner from './InferenceTargetBanner';
 import InferenceWorkspace from './InferenceWorkspace';
 import ModalityCards from './ModalityCards';
 import TrainingRunGrid from './TrainingRunGrid';
-import TrainingSourcePanel from './TrainingSourcePanel';
 
 type InferenceWorkbenchProps = {
   experimentId?: string | null;
@@ -71,11 +74,25 @@ const InferenceWorkbench: React.FC<InferenceWorkbenchProps> = ({
   const [params, setParams] = useState<API.InferenceParams>(
     INFERENCE_DEFAULT_PARAMS,
   );
+  const [inputMode, setInputMode] = useState<InferenceInputMode>('single');
   const [cvInput, setCvInput] = useState<CvInputState>({});
   const [nlpInput, setNlpInput] = useState<NlpInputState>({ text: '' });
   const [multimodalInput, setMultimodalInput] = useState<MultimodalInputState>({
     prompt: '',
   });
+  const [cvBatchInput, setCvBatchInput] = useState<CvBatchInputState>({
+    subMode: 'files',
+    files: [],
+  });
+  const [nlpBatchInput, setNlpBatchInput] = useState<NlpBatchInputState>({
+    subMode: 'paste',
+    pasteText: '',
+    files: [],
+  });
+  const [customScriptInput, setCustomScriptInput] =
+    useState<CustomScriptInputState>({
+      dataFiles: [],
+    });
 
   const hasTarget = !!activeTarget;
   const inferReady =
@@ -183,6 +200,10 @@ const InferenceWorkbench: React.FC<InferenceWorkbenchProps> = ({
       if (prev.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return { prompt: '' };
     });
+    setInputMode('single');
+    setCvBatchInput({ subMode: 'files', files: [] });
+    setNlpBatchInput({ subMode: 'paste', pasteText: '', files: [] });
+    setCustomScriptInput({ dataFiles: [] });
     setParams(INFERENCE_DEFAULT_PARAMS);
     setResult(null);
     setLastLatencyMs(undefined);
@@ -241,9 +262,13 @@ const InferenceWorkbench: React.FC<InferenceWorkbenchProps> = ({
       const data = await runInference({
         model: selectedModel,
         params,
+        inputMode,
         cvInput,
         nlpInput,
         multimodalInput,
+        cvBatchInput,
+        nlpBatchInput,
+        customScriptInput,
       });
       setResult(data);
       if (data.latencyMs != null) {
@@ -310,47 +335,42 @@ const InferenceWorkbench: React.FC<InferenceWorkbenchProps> = ({
         />
       ) : null}
 
-      <Row gutter={16} align="stretch">
-        <Col xs={24} lg={7} xl={6} style={{ maxWidth: 300 }}>
-          <Card bordered size="small" style={{ height: '100%' }}>
-            <TrainingSourcePanel
-              context={trainingContext}
-              loading={contextLoading}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} lg={17} xl={18} flex="auto">
-          <Card bordered size="small" style={{ height: '100%', minWidth: 0 }}>
-            {contextLoading ? (
-              <div style={{ textAlign: 'center', padding: 80 }}>
-                <Spin tip="加载训练产出…" />
-              </div>
-            ) : !trainingContext ? (
-              <Typography.Text type="secondary">
-                训练产出加载失败，请更换选择或从任务详情重新进入
-              </Typography.Text>
-            ) : (
-              <InferenceWorkspace
-                model={selectedModel}
-                trainingContext={trainingContext}
-                params={params}
-                cvInput={cvInput}
-                nlpInput={nlpInput}
-                multimodalInput={multimodalInput}
-                result={result}
-                running={running}
-                lastLatencyMs={lastLatencyMs}
-                onParamsChange={setParams}
-                onCvInputChange={setCvInput}
-                onNlpInputChange={setNlpInput}
-                onMultimodalInputChange={setMultimodalInput}
-                onRun={handleRun}
-                onReset={clearWorkspace}
-              />
-            )}
-          </Card>
-        </Col>
-      </Row>
+      <Card bordered size="small" style={{ minWidth: 0 }}>
+        {contextLoading ? (
+          <div style={{ textAlign: 'center', padding: 80 }}>
+            <Spin tip="加载训练产出…" />
+          </div>
+        ) : !trainingContext ? (
+          <Typography.Text type="secondary">
+            训练产出加载失败，请更换选择或从任务详情重新进入
+          </Typography.Text>
+        ) : (
+          <InferenceWorkspace
+            model={selectedModel}
+            inputMode={inputMode}
+            params={params}
+            cvInput={cvInput}
+            nlpInput={nlpInput}
+            multimodalInput={multimodalInput}
+            cvBatchInput={cvBatchInput}
+            nlpBatchInput={nlpBatchInput}
+            customScriptInput={customScriptInput}
+            result={result}
+            running={running}
+            lastLatencyMs={lastLatencyMs}
+            onInputModeChange={setInputMode}
+            onParamsChange={setParams}
+            onCvInputChange={setCvInput}
+            onNlpInputChange={setNlpInput}
+            onMultimodalInputChange={setMultimodalInput}
+            onCvBatchInputChange={setCvBatchInput}
+            onNlpBatchInputChange={setNlpBatchInput}
+            onCustomScriptInputChange={setCustomScriptInput}
+            onRun={handleRun}
+            onReset={clearWorkspace}
+          />
+        )}
+      </Card>
     </div>
   );
 };
