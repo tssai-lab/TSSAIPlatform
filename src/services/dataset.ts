@@ -168,6 +168,9 @@ export type DatasetListQuery = {
   page?: number;
 };
 
+/** 多模态 zip 样本分组方式（module2-api-doc §6.1） */
+export type MultimodalSampleGrouping = 'MANIFEST' | 'AUTO_DIRECTORY';
+
 /** 初始化数据集分片上传时需要提交的元信息。 */
 export type DatasetUploadInitParams = {
   fileName: string;
@@ -182,7 +185,7 @@ export type DatasetUploadInitParams = {
   annotationFormat?: AnnotationFormat;
   remark?: string;
   description?: string;
-  sampleGrouping?: 'MANIFEST';
+  sampleGrouping?: MultimodalSampleGrouping;
   manifestPath?: string;
 };
 
@@ -587,7 +590,7 @@ export type UploadDatasetCompatParams = {
   cvTaskType?: CvTaskType;
   annotationFormat?: AnnotationFormat;
   remark?: string;
-  sampleGrouping?: 'MANIFEST';
+  sampleGrouping?: MultimodalSampleGrouping;
   manifestPath?: string;
   /** 与 backend-api 一致；不传则按「文件名|大小|数据集名|版本|类型」自动生成稳定指纹 */
   fileFingerprint?: string;
@@ -642,8 +645,11 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
       initBody.assetId = assetId;
     }
     if (type === 'MULTIMODAL') {
-      initBody.sampleGrouping = sampleGrouping ?? 'MANIFEST';
-      if (manifestPath?.trim()) {
+      initBody.sampleGrouping = sampleGrouping ?? 'AUTO_DIRECTORY';
+      if (
+        initBody.sampleGrouping === 'MANIFEST' &&
+        manifestPath?.trim()
+      ) {
         initBody.manifestPath = manifestPath.trim();
       }
     }

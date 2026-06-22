@@ -19,6 +19,7 @@ import type {
   AnnotationFormat,
   CvTaskType,
   DatasetType,
+  MultimodalSampleGrouping,
 } from '@/services/dataset';
 import { fetchDatasetDetail, uploadDataset } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
@@ -49,6 +50,9 @@ const DatasetUpload: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
   const datasetType = Form.useWatch('type', form) as DatasetType | undefined;
+  const sampleGrouping = Form.useWatch('sampleGrouping', form) as
+    | MultimodalSampleGrouping
+    | undefined;
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [resumeHint, setResumeHint] = useState<string | null>(null);
@@ -130,6 +134,9 @@ const DatasetUpload: React.FC = () => {
     const version = (values.version || 'v1.0.0').trim();
     const type = values.type as DatasetType;
     const remark = values.remark?.trim();
+    const multimodalGrouping = values.sampleGrouping as
+      | MultimodalSampleGrouping
+      | undefined;
     const manifestPath = values.manifestPath?.trim();
     const cvTaskType = values.cvTaskType as CvTaskType | undefined;
     const annotationFormat = values.annotationFormat as
@@ -157,7 +164,7 @@ const DatasetUpload: React.FC = () => {
 
     if (type === 'MULTIMODAL') {
       if (files.length !== 1) {
-        message.error('多模态数据集仅支持上传单个 MANIFEST zip 文件');
+        message.error('多模态数据集仅支持上传单个 zip 文件');
         return;
       }
       if (!files[0].name.toLowerCase().endsWith('.zip')) {
@@ -185,8 +192,15 @@ const DatasetUpload: React.FC = () => {
             cvTaskType,
             annotationFormat,
             remark,
-            sampleGrouping: type === 'MULTIMODAL' ? 'MANIFEST' : undefined,
-            manifestPath: type === 'MULTIMODAL' ? manifestPath : undefined,
+            sampleGrouping:
+              type === 'MULTIMODAL'
+                ? (multimodalGrouping ?? 'AUTO_DIRECTORY')
+                : undefined,
+            manifestPath:
+              type === 'MULTIMODAL' &&
+              (multimodalGrouping ?? 'AUTO_DIRECTORY') === 'MANIFEST'
+                ? manifestPath
+                : undefined,
             fileFingerprint: fp,
             onProgress: (p) => setUploadPercent(p),
             onUploadSession: ({ uploadId, fileFingerprint: fgp }) => {
@@ -199,7 +213,9 @@ const DatasetUpload: React.FC = () => {
         createdAssetId = uploadRes?.data?.assetId;
         if (type === 'MULTIMODAL' && uploadRes?.data?.importJobId) {
           message.info(
-            'zip 上传完成，后台正在解析 manifest 并导入样本，请在详情页查看导入进度。',
+            multimodalGrouping === 'MANIFEST'
+              ? 'zip 上传完成，后台正在解析 manifest 并导入样本，请在详情页查看导入进度。'
+              : 'zip 上传完成，后台正在按目录结构导入样本，请在详情页查看导入进度。',
           );
         }
       } else {
@@ -288,7 +304,11 @@ const DatasetUpload: React.FC = () => {
         form={form}
         onFinish={handleSubmit}
         layout="vertical"
-        initialValues={{ type: 'CV', version: 'v1.0.0' }}
+        initialValues={{
+          type: 'CV',
+          version: 'v1.0.0',
+          sampleGrouping: 'AUTO_DIRECTORY',
+        }}
       >
         <Form.Item
           name="name"
@@ -321,10 +341,14 @@ const DatasetUpload: React.FC = () => {
         >
           <Select
             disabled={isNewVersionUpload || prefillLoading}
-            onChange={() => {
+            onChange={(value) => {
               form.setFieldValue('files', []);
               form.setFieldValue('cvTaskType', undefined);
               form.setFieldValue('annotationFormat', undefined);
+              if (value === 'MULTIMODAL') {
+                form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
+                form.setFieldValue('manifestPath', undefined);
+              }
             }}
           >
             <Select.Option value="CV">CV</Select.Option>
@@ -338,13 +362,48 @@ const DatasetUpload: React.FC = () => {
           </Select>
         </Form.Item>
         {datasetType === 'MULTIMODAL' && (
-          <Form.Item
-            name="manifestPath"
-            label="Manifest 路径"
-            extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
-          >
-            <Input placeholder="例如 metadata/manifest.json" />
-          </Form.Item>
+          <>
+            <Form.Item
+              name="sampleGrouping"
+              label="样本分组方式"
+              rules={[{ required: true, message: '请选择样本分组方式' }]}
+              extra="AUTO_DIRECTORY 无需 manifest；MANIFEST 需在 zip 内提供 manifest 索引文件"
+            >
+              <Select>
+                <Select.Option value="AUTO_DIRECTORY">
+                  自动目录（AUTO_DIRECTORY，推荐）
+                </Select.Option>
+                <Select.Option value="MANIFEST">
+                  Manifest 索引（MANIFEST）
+                </Select.Option>
+              </Select>
+            </Form.Item>
+            {sampleGrouping === 'MANIFEST' && (
+              <Form.Item
+                name="manifestPath"
+                label="Manifest 路径"
+                extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
+              >
+                <Input placeholder="例如 metadata/manifest.json" />
+              </Form.Item>
+            )}
+            {sampleGrouping === 'AUTO_DIRECTORY' && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="AUTO_DIRECTORY zip 结构要求"
+                description={
+                  <>
+                    zip 根目录须直接为样本目录（如
+                    scene_001/、scene_002/），根级不能有普通文件。
+                    每个样本目录内：annotations/ 下为标注文件，其余为数据文件。
+                    目录名即 externalId；无需 manifest.json。
+                  </>
+                }
+              />
+            )}
+          </>
         )}
         {datasetType === 'CV' && (
           <>
@@ -450,7 +509,7 @@ const DatasetUpload: React.FC = () => {
               {datasetType === 'POINT_CLOUD'
                 ? '选择点云文件（.ply / .pcd / .zip）'
                 : datasetType === 'MULTIMODAL'
-                  ? '选择 MANIFEST zip（单文件分片上传）'
+                  ? '选择多模态 zip（单文件分片上传）'
                   : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
             </Button>
           </Upload>
@@ -460,7 +519,9 @@ const DatasetUpload: React.FC = () => {
             {datasetType === 'POINT_CLOUD'
               ? ' 点云仅支持单个 .ply、.pcd 或 .zip；zip 内需至少包含一个 .ply 或 .pcd。'
               : datasetType === 'MULTIMODAL'
-                ? ' 多模态须为含 manifest 的 zip；上传完成后版本为 DRAFT，后台异步导入样本，导入成功后变为 READY。'
+                ? sampleGrouping === 'MANIFEST'
+                  ? ' MANIFEST 模式：zip 须含 manifest.json（或指定路径）；上传后 DRAFT，后台异步导入。'
+                  : ' AUTO_DIRECTORY：zip 根目录为样本子目录，无需 manifest；上传后 DRAFT，后台异步导入。'
                 : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
           </div>
         </Form.Item>
