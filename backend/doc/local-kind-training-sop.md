@@ -168,3 +168,16 @@ limit: 2 CPU / 4 GiB
 docker compose down -v
 docker system prune --volumes
 ```
+
+## 9. 图文一致性测试资产（fusion_logreg）
+
+种子脚本 `backend/scripts/seed-consistency-test-assets.sh` 使用全量 `consistency_test_data.zip`（约 177MB）。
+
+若仅需 `image_text_consistency_fusion_logreg` 训练，可生成最小 data 包（9 个预计算分数 JSONL，约 3.4MB，不覆盖全量包）：
+
+```bash
+backend/scripts/build-consistency-fusion-data-min.sh
+# 默认输出 /opt/consistency_test_fusion_data_min.zip（不入库，本地生成）
+```
+
+Profile 与 data 包边界说明见 `backend/doc/training-profile-security.md`。

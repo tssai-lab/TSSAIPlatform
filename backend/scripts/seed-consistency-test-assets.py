@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Seed consistency_test code/data assets into MinIO and PostgreSQL."""
+"""Seed consistency_test code/data assets into MinIO and PostgreSQL.
+
+See backend/doc/training-profile-security.md for profile data requirements.
+For fusion_logreg minimal data (9 score JSONL only):
+    backend/scripts/build-consistency-fusion-data-min.sh
+"""
 
 from __future__ import annotations
 

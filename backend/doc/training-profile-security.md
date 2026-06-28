@@ -78,3 +78,29 @@ Worker 当前已有部分措施（固定命令、ZIP 路径校验、禁止 `.sh`
 - 上传 code.zip 后展示 `approvalStatus`
 - `PENDING` 时禁用「创建训练任务」
 - 管理员可见「审核通过（测试）」按钮，调用 approve 接口
+
+## Profile 数据包要求
+
+不同 `trainingProfile` 对 data.zip 内容要求不同，**不要混用**。
+
+### `image_text_consistency_fusion_logreg`（fusion_logreg）
+
+- **只需要**预计算分数文件：`data/*.jsonl`（共 9 个）
+- 由 `scripts/training/train_fusion_baseline.py` 按 `pair_id` 合并 global / region / entity 三路分数后训练 LogReg
+- **不需要**：`dataset/images`、原始图片、`models/`、`data/splits/`、`data/splits_existing_images/`、`manifest.jsonl` 等
+
+最小数据包示例：
+
+```bash
+backend/scripts/build-consistency-fusion-data-min.sh
+# 输出: /opt/consistency_test_fusion_data_min.zip（约 3.4MB，9 个 JSONL）
+```
+
+完整数据包 `consistency_test_data.zip`（约 177MB）仍可用于该 profile，但 fusion 训练不会读取其中的图片与 splits。
+
+### `text_image_baseline`（预留 / 非当前平台 profile）
+
+- **需要**原始图文对与图片资源，例如 `dataset/images/`、`data/splits_existing_images/` 等
+- 用于端到端图文基线训练，**不能**仅依赖 fusion 的 9 个预计算分数文件
+
+当前平台已注册并可执行的 profile 仅为 `image_text_consistency_fusion_logreg`；`text_image_baseline` 在此说明以便区分数据包边界，避免误传最小 fusion 包到需要图片的 profile。

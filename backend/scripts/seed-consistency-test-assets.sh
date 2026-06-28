@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# 写入 consistency_test 种子 code/data 资产到 MinIO 与 PostgreSQL。
+# 数据包说明见 backend/doc/training-profile-security.md。
+# fusion_logreg 最小 data 包（9 个 JSONL，不修改本脚本使用的全量包）：
+#   backend/scripts/build-consistency-fusion-data-min.sh
 set -euo pipefail
 
 ROOT_DIR="/opt/tss-platform"
