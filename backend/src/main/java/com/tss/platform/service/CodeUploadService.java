@@ -21,14 +21,10 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 @Service
 public class CodeUploadService {
-
-    private static final int MAX_CODE_ZIP_ENTRIES = 10_000;
-    private static final long MAX_CODE_UNCOMPRESSED_BYTES = 512L * 1024 * 1024;
 
     private final MinioClient minioClient;
     private final String bucket;
@@ -62,14 +58,14 @@ public class CodeUploadService {
             String remark
     ) {
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("请上传 code zip 文件");
+            throw new IllegalArgumentException("请上传代码模型包 ZIP 文件");
         }
         String profile = normalizeRequired(trainingProfile, "trainingProfile 不能为空");
         TrainingProfileRegistry.requireSupported(profile);
 
         String fileName = file.getOriginalFilename();
         if (fileName == null || !fileName.toLowerCase(Locale.ROOT).endsWith(".zip")) {
-            throw new IllegalArgumentException("代码包仅支持 .zip 格式");
+            throw new IllegalArgumentException("代码模型包仅支持 .zip 格式");
         }
 
         String assetName = normalizeRequired(codeName, "codeName 不能为空");
@@ -96,7 +92,7 @@ public class CodeUploadService {
                             .build()
             );
         } catch (Exception e) {
-            throw new IllegalArgumentException("上传代码包失败: " + e.getMessage());
+            throw new IllegalArgumentException("上传代码模型包失败: " + e.getMessage());
         }
 
         try {
@@ -152,62 +148,12 @@ public class CodeUploadService {
     }
 
     private void validateCodeZip(String objectName) throws Exception {
-        int entries = 0;
-        boolean foundFile = false;
-        long totalUncompressedBytes = 0;
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         );
              ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                entries += 1;
-                if (entries > MAX_CODE_ZIP_ENTRIES) {
-                    throw new IllegalArgumentException("代码 zip 文件条目过多");
-                }
-                String entryName = normalizeZipEntryName(entry.getName());
-                if (!isSafeZipEntryPath(entryName)) {
-                    throw new IllegalArgumentException("代码 zip 包含非法路径: " + entry.getName());
-                }
-                if (!entry.isDirectory()) {
-                    foundFile = true;
-                    totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
-                }
-                zip.closeEntry();
-            }
+            CodeModelZipValidator.validate(zip);
         }
-        if (!foundFile) {
-            throw new IllegalArgumentException("代码 zip 不能为空");
-        }
-    }
-
-    private long drainZipEntry(ZipInputStream zip, long currentTotal) throws Exception {
-        byte[] buffer = new byte[8192];
-        long total = currentTotal;
-        int len;
-        while ((len = zip.read(buffer)) != -1) {
-            total += len;
-            if (total > MAX_CODE_UNCOMPRESSED_BYTES) {
-                throw new IllegalArgumentException("代码 zip 解压后体积过大");
-            }
-        }
-        return total;
-    }
-
-    private String normalizeZipEntryName(String name) {
-        return name == null ? "" : name.replace('\\', '/');
-    }
-
-    private boolean isSafeZipEntryPath(String path) {
-        if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
-            return false;
-        }
-        for (String part : path.split("/")) {
-            if ("..".equals(part) || part.contains("\u0000")) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void removeObjectQuietly(String objectName) {

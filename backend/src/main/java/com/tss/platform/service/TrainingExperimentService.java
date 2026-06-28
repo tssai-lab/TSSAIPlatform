@@ -95,11 +95,11 @@ public class TrainingExperimentService {
     public TrainingExperimentVersionDto createExperiment(CreateTrainingExperimentRequest req) {
         requireText(req.getCodeVersionId(), "codeVersionId 不能为空");
         requireText(req.getDatasetVersionId(), "datasetVersionId 不能为空");
-        codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
         String trainingProfile = blankToNull(req.getTrainingProfile());
         Object initialParams = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
 
         if (trainingProfile != null) {
+            codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
             TrainingProfileRegistry.requireSupported(trainingProfile);
             validateProfileTraining(req.getCodeVersionId(), req.getDatasetVersionId(), trainingProfile);
             if (initialParams == null) {
@@ -151,8 +151,13 @@ public class TrainingExperimentService {
         version.setModelVersionId(firstText(req.getModelVersionId(), latest.getModelVersionId()));
         version.setCodeVersionId(firstRequiredText(req.getCodeVersionId(), latest.getCodeVersionId(), "codeVersionId 不能为空"));
         version.setDatasetVersionId(firstRequiredText(req.getDatasetVersionId(), latest.getDatasetVersionId(), "datasetVersionId 不能为空"));
-        codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
-        validateModelDatasetMatch(version.getModelVersionId(), version.getDatasetVersionId());
+        version.setTrainingProfile(latest.getTrainingProfile());
+        if (latest.getTrainingProfile() != null && !latest.getTrainingProfile().isBlank()) {
+            codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
+            validateProfileTraining(version.getCodeVersionId(), version.getDatasetVersionId(), latest.getTrainingProfile());
+        } else {
+            validateModelDatasetMatch(version.getModelVersionId(), version.getDatasetVersionId());
+        }
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
         version.setStatus(STATUS_PENDING);
@@ -511,7 +516,7 @@ public class TrainingExperimentService {
     private void validateProfileTraining(String codeVersionId, String datasetVersionId, String trainingProfile) {
         TrainingProfileRegistry.requireSupported(trainingProfile);
         CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("代码版本不存在: " + codeVersionId));
+                .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + codeVersionId));
         CodeAsset codeAsset = codeAssetRepo.findByIdAndDeletedFalse(codeVersion.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("代码资产不存在: " + codeVersion.getAssetId()));
         if (codeAsset.getTrainingProfile() == null

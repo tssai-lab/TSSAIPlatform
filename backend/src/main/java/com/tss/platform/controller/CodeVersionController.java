@@ -2,11 +2,15 @@ package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CodeVersionApprovalDto;
+import com.tss.platform.dto.CodeVersionListItemDto;
 import com.tss.platform.service.CodeVersionService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/code/version")
@@ -16,6 +20,11 @@ public class CodeVersionController {
 
     public CodeVersionController(CodeVersionService codeVersionService) {
         this.codeVersionService = codeVersionService;
+    }
+
+    @GetMapping("/list")
+    public ApiResponse<List<CodeVersionListItemDto>> listApproved() {
+        return ApiResponse.ok(codeVersionService.listApprovedForTraining());
     }
 
     @PostMapping("/{codeVersionId}/approve")

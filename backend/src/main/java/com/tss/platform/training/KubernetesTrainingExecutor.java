@@ -112,7 +112,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingProfileRegistry.requireSupported(task.getTrainingProfile());
 
             CodeVersion codeVersion = codeVersionRepository.findByIdAndDeletedFalse(task.getCodeVersionId())
-                    .orElseThrow(() -> new IllegalArgumentException("代码版本不存在: " + task.getCodeVersionId()));
+                    .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + task.getCodeVersionId()));
             DatasetVersion datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
                     .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在"));
 

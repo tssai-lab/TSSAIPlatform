@@ -1,12 +1,30 @@
 # 训练 Profile 安全边界与代码审核
 
+## 代码模型包（过渡概念）
+
+当前阶段平台将训练脚本、模型权重与配置文件统一称为**代码模型包**（code-model zip），作为向后续严谨版本拆分的过渡设计：
+
+| 内容 | 示例路径 |
+| --- | --- |
+| 训练代码 | `scripts/train.py`、`scripts/training/train_fusion_baseline.py` |
+| 模型权重 | `weights/best.pt`、`weights/last.pt`、`weights/*.pth` |
+| 配置文件 | `config/*.yaml` |
+
+**元数据**：短期仍复用 `code_asset` / `code_version` 表与 `codeVersionId`，**不**新增 `modelVersionId` / `baseModelVersionId`。
+
+**上传校验**：`POST /api/code/upload` 允许常见代码、配置与权重扩展名（`.py`、`.json`、`.jsonl`、`.pt`、`.pth` 等），拒绝 shell/可执行文件（`.sh`、`.exe` 等）与无扩展名文件；保留 ZIP 路径穿越与体积限制。**不强制** `scripts/`、`weights/`、`config/` 目录结构。
+
+**训练行为**：当前唯一 profile `image_text_consistency_fusion_logreg` 的 Worker **不会**自动加载 `weights/` 下权重；仍执行硬编码白名单命令。`hyperParams` 仅记录/预留，不能覆盖命令。
+
+**后续设计**：更严谨版本将拆分为 `codeVersionId`（训练代码）+ `baseModelVersionId`（基础权重）。
+
 ## 当前定位
 
 TSS 平台**不是**开放式任意代码执行平台。带 `codeVersionId` 的 profile 训练仅允许：
 
 1. 平台预注册的 `trainingProfile`（当前：`image_text_consistency_fusion_logreg`）
 2. Worker 内硬编码的白名单命令（不可通过 `hyperParams` 覆盖）
-3. 经管理员审核（`approval_status = APPROVED`）的代码版本
+3. 经管理员审核（`approval_status = APPROVED`）的代码模型版本
 
 ## approval_status（平台级）
 
@@ -20,11 +38,11 @@ TSS 平台**不是**开放式任意代码执行平台。带 `codeVersionId` 的 
 
 所有通过 `codeVersionId` 参与训练的任务，在 `TrainingExperimentService.createExperiment` / `createVersion` 中调用 `CodeVersionService.requireApprovedForTraining()`：
 
-- 代码版本存在且 `READY`
+- 代码模型版本存在且 `READY`
 - `approval_status = APPROVED`
 - 当前用户有 owner 访问权限
 
-未通过时返回：**代码版本未审核通过，不能用于训练**，且**不会**创建 K8s Job。
+未通过时返回：**代码模型版本未审核通过，不能用于训练**，且**不会**创建 K8s Job。
 
 ### 审核接口
 
@@ -43,7 +61,7 @@ POST /api/code/version/{codeVersionId}/approve
 
 ## APPROVED ≠ 沙箱隔离
 
-`APPROVED` 仅表示**准入审核**（人工确认代码包可用于固定 profile 演示/测试），**不代表**已完成沙箱隔离。
+`APPROVED` 仅表示**准入审核**（人工确认代码模型包可用于固定 profile 演示/测试），**不代表**已完成沙箱隔离。
 
 后续仍需：
 
@@ -66,6 +84,11 @@ Worker 当前已有部分措施（固定命令、ZIP 路径校验、禁止 `.sh`
 - codeVersionId 不存在拒绝
 - datasetVersionId 不存在拒绝
 
+`CodeModelZipValidatorTest`：
+
+- 含 `weights/best.pt` 的代码模型包通过
+- `.sh` / 无扩展名 / 不支持扩展名 / 路径穿越拒绝
+
 ### Worker 脚本（`verify-consistency-security.sh`）
 
 - hyperParams 不能覆盖固定命令
@@ -73,11 +96,12 @@ Worker 当前已有部分措施（固定命令、ZIP 路径校验、禁止 `.sh`
 - zip 路径穿越
 - data.zip 缺少 data/
 
-## 前端 `/task/consistency-upload`
+## 前端入口
 
-- 上传 code.zip 后展示 `approvalStatus`
-- `PENDING` 时禁用「创建训练任务」
-- 管理员可见「审核通过（测试）」按钮，调用 approve 接口
+- **`/task/create`**：K8s 训练主入口，四步向导（代码模型包 → 数据包 → 配置 → 提交）
+- **`/task/consistency-upload`**：开发/演示用上传页
+
+上传代码模型包后展示 `approvalStatus`；`PENDING` 时禁用提交；管理员可见「审核通过（测试）」按钮。
 
 ## Profile 数据包要求
 
@@ -88,6 +112,7 @@ Worker 当前已有部分措施（固定命令、ZIP 路径校验、禁止 `.sh`
 - **只需要**预计算分数文件：`data/*.jsonl`（共 9 个）
 - 由 `scripts/training/train_fusion_baseline.py` 按 `pair_id` 合并 global / region / entity 三路分数后训练 LogReg
 - **不需要**：`dataset/images`、原始图片、`models/`、`data/splits/`、`data/splits_existing_images/`、`manifest.jsonl` 等
+- **不会读取**代码模型包内 `weights/` 下的权重文件
 
 最小数据包示例：
 

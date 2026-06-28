@@ -78,7 +78,7 @@ class TrainingCodeVersionSecurityTest {
                 IllegalArgumentException.class,
                 () -> codeVersionService.requireApprovedForTraining(pending.getId())
         );
-        assertEquals("代码版本未审核通过，不能用于训练", error.getMessage());
+        assertEquals("代码模型版本未审核通过，不能用于训练", error.getMessage());
     }
 
     @Test
@@ -98,7 +98,7 @@ class TrainingCodeVersionSecurityTest {
                 IllegalArgumentException.class,
                 () -> codeVersionService.requireApprovedForTraining("missing-code")
         );
-        assertEquals("代码版本不存在: missing-code", error.getMessage());
+        assertEquals("代码模型版本不存在: missing-code", error.getMessage());
     }
 
     @Test
