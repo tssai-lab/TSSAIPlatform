@@ -358,20 +358,24 @@ const TaskCreate: React.FC = () => {
         />
       )}
       {!isExperimentContinue && (
-        <ProCard
-          title="图文一致性训练演示"
-          style={{ marginBottom: 16 }}
-          extra={
-            <Button type="primary" onClick={() => history.push('/task/consistency-demo')}>
-              开始演示
-            </Button>
-          }
-        >
-          使用后端预置种子资产，一键发起 LogReg 融合基线训练（无需选择模型版本或上传 ZIP）。
+        <ProCard title="图文一致性训练" style={{ marginBottom: 16 }}>
+          上传 code.zip 与 data.zip，经管理员审核后发起固定 profile 训练。
           <div style={{ marginTop: 12 }}>
-            <Button onClick={() => history.push('/task/consistency-upload')}>
+            <Button
+              type="primary"
+              onClick={() => history.push('/task/consistency-upload')}
+            >
               上传 ZIP 后训练
             </Button>
+            {process.env.NODE_ENV === 'development' && (
+              <Button
+                type="link"
+                onClick={() => history.push('/task/consistency-demo')}
+                style={{ marginLeft: 8 }}
+              >
+                开发调试：种子演示
+              </Button>
+            )}
           </div>
         </ProCard>
       )}
