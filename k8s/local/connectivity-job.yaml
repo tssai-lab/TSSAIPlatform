@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tss-training-connectivity
+  namespace: tss-training
+  labels:
+    app.kubernetes.io/name: tss-training-connectivity
+    app.kubernetes.io/part-of: tss-platform
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tss-training-connectivity
+    spec:
+      serviceAccountName: tss-training-worker
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        tss.ai/node-pool: cpu
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connectivity
+          image: curlimages/curl:8.17.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              test "$(curl -sS -o /dev/null -w '%{http_code}' http://tss-backend:8080/api/user/current-user)" = "401"
+              test "$(curl -sS -o /dev/null -w '%{http_code}' http://tss-minio:9000/minio/health/live)" = "200"
+              test "$(curl -sS -o /dev/null -w '%{http_code}' http://tss-mlflow:5000/)" = "200"
+              echo "TSS training dependencies are reachable"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true

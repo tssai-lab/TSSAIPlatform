@@ -214,5 +214,46 @@ __marimo__/
 /m2/
 /.vscode/
 
- 
+# ====================================================================
+# TSS Platform 项目专用忽略规则（Java 后端 + TS 前端）
+# ====================================================================
+
+# --- 本地数据卷（切勿入库：数据库与对象存储二进制数据）---
+/postgres-data/
+/minio-data/
+/mlflow-data/
+
+# --- 环境变量与密钥（含明文密码）---
+.env.backend
+.env.production
+.env.local
+.env.*.local
+
+# --- 后端顶层运行时/遗留产物 ---
+/backend.log
+/backend.pid
+/backend.tar.gz
+
+# --- 备份目录 ---
+/backup/
+
+# --- 本地 K8s 工具链与凭证 ---
+/.tools/
+/k8s/.kube/
+
+# --- 前端构建产物与本地缓存 ---
+/frontend/dist/
+/frontend/node_modules/
+/frontend/.umi/
+/frontend/.umi-production/
+
+# --- Java / Maven 本地缓存补充 ---
+/backend/.mvn/wrapper/maven-wrapper.jar
+
+# --- IDE / 编辑器 / 系统 ---
+.idea/
+*.iml
+*.swp
+.DS_Store
+
  

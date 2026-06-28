@@ -8,18 +8,24 @@ import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
 import com.tss.platform.dto.UpdateHyperParamsRequest;
 import com.tss.platform.dto.UpdateTrainingResultRequest;
+import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.model.TaskType;
+import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.training.TrainingExecutorRouter;
+import com.tss.platform.training.TrainingProfileRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -52,7 +58,10 @@ public class TrainingExperimentService {
     private final ModelAssetRepository modelAssetRepo;
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
-    private final LocalTrainingRunnerService localTrainingRunnerService;
+    private final CodeVersionRepository codeVersionRepo;
+    private final CodeAssetRepository codeAssetRepo;
+    private final CodeVersionService codeVersionService;
+    private final TrainingExecutorRouter trainingExecutorRouter;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
 
@@ -62,7 +71,10 @@ public class TrainingExperimentService {
             ModelAssetRepository modelAssetRepo,
             DatasetVersionRepository datasetVersionRepo,
             DatasetAssetRepository datasetAssetRepo,
-            LocalTrainingRunnerService localTrainingRunnerService,
+            CodeVersionRepository codeVersionRepo,
+            CodeAssetRepository codeAssetRepo,
+            CodeVersionService codeVersionService,
+            TrainingExecutorRouter trainingExecutorRouter,
             ObjectMapper objectMapper,
             AuthContext authContext
     ) {
@@ -71,7 +83,10 @@ public class TrainingExperimentService {
         this.modelAssetRepo = modelAssetRepo;
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
-        this.localTrainingRunnerService = localTrainingRunnerService;
+        this.codeVersionRepo = codeVersionRepo;
+        this.codeAssetRepo = codeAssetRepo;
+        this.codeVersionService = codeVersionService;
+        this.trainingExecutorRouter = trainingExecutorRouter;
         this.objectMapper = objectMapper;
         this.authContext = authContext;
     }
@@ -79,12 +94,23 @@ public class TrainingExperimentService {
     @Transactional
     public TrainingExperimentVersionDto createExperiment(CreateTrainingExperimentRequest req) {
         requireText(req.getCodeVersionId(), "codeVersionId 不能为空");
-        requireText(req.getModelVersionId(), "modelVersionId 不能为空");
         requireText(req.getDatasetVersionId(), "datasetVersionId 不能为空");
-        validateModelDatasetMatch(req.getModelVersionId(), req.getDatasetVersionId());
+        codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
+        String trainingProfile = blankToNull(req.getTrainingProfile());
         Object initialParams = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
-        if (initialParams == null) {
-            throw new IllegalArgumentException("hyperParams 不能为空");
+
+        if (trainingProfile != null) {
+            TrainingProfileRegistry.requireSupported(trainingProfile);
+            validateProfileTraining(req.getCodeVersionId(), req.getDatasetVersionId(), trainingProfile);
+            if (initialParams == null) {
+                initialParams = Map.of();
+            }
+        } else {
+            requireText(req.getModelVersionId(), "modelVersionId 不能为空");
+            validateModelDatasetMatch(req.getModelVersionId(), req.getDatasetVersionId());
+            if (initialParams == null) {
+                throw new IllegalArgumentException("hyperParams 不能为空");
+            }
         }
 
         String experimentId = "exp-" + System.currentTimeMillis() + "-"
@@ -94,8 +120,9 @@ public class TrainingExperimentService {
         version.setExperimentId(experimentId);
         version.setVersionNo(1);
         version.setName(defaultName(req.getName(), experimentId));
-        version.setModelVersionId(req.getModelVersionId().trim());
+        version.setModelVersionId(blankToNull(req.getModelVersionId()));
         version.setCodeVersionId(req.getCodeVersionId().trim());
+        version.setTrainingProfile(trainingProfile);
         version.setDatasetVersionId(req.getDatasetVersionId().trim());
         version.setHyperParamsJson(toJson(initialParams));
         version.setStatus(STATUS_PENDING);
@@ -106,7 +133,7 @@ public class TrainingExperimentService {
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
         TrainingExperimentVersion saved = repo.save(version);
-        startLocalTrainingAfterCommit(saved.getId());
+        startTrainingAfterCommit(saved.getId());
         return toDto(saved);
     }
 
@@ -124,6 +151,7 @@ public class TrainingExperimentService {
         version.setModelVersionId(firstText(req.getModelVersionId(), latest.getModelVersionId()));
         version.setCodeVersionId(firstRequiredText(req.getCodeVersionId(), latest.getCodeVersionId(), "codeVersionId 不能为空"));
         version.setDatasetVersionId(firstRequiredText(req.getDatasetVersionId(), latest.getDatasetVersionId(), "datasetVersionId 不能为空"));
+        codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
         validateModelDatasetMatch(version.getModelVersionId(), version.getDatasetVersionId());
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
@@ -135,7 +163,7 @@ public class TrainingExperimentService {
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
         TrainingExperimentVersion saved = repo.save(version);
-        startLocalTrainingAfterCommit(saved.getId());
+        startTrainingAfterCommit(saved.getId());
         return toDto(saved);
     }
 
@@ -214,6 +242,20 @@ public class TrainingExperimentService {
     }
 
     @Transactional
+    public TrainingExperimentVersionDto stopTraining(String idOrExperimentId) {
+        TrainingExperimentVersion version = repo.findById(idOrExperimentId)
+                .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
+                        .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
+        requireExperimentAccess(version);
+        trainingExecutorRouter.stop(version.getId());
+        version.setStatus("stopped");
+        version.setProgress(progressOf("stopped"));
+        version.setFinishedAt(Instant.now());
+        version.setUpdatedAt(Instant.now());
+        return toDto(repo.save(version));
+    }
+
+    @Transactional
     public TrainingExperimentVersionDto updateStatus(String idOrExperimentId, String status) {
         TrainingExperimentVersion version = repo.findById(idOrExperimentId)
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
@@ -252,6 +294,18 @@ public class TrainingExperimentService {
         return toDto(repo.save(version));
     }
 
+    /** Worker 内部回调，跳过用户权限校验（由 InternalTrainingCallbackController 校验 token） */
+    @Transactional
+    public TrainingExperimentVersionDto updateResultInternal(
+            String trainingId,
+            UpdateTrainingResultRequest req
+    ) {
+        TrainingExperimentVersion version = repo.findById(trainingId)
+                .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
+        applyResult(version, req);
+        return toDto(repo.save(version));
+    }
+
     @Transactional
     public void deleteExperiment(String idOrExperimentId) {
         TrainingExperimentVersion byId = repo.findById(idOrExperimentId).orElse(null);
@@ -276,6 +330,7 @@ public class TrainingExperimentService {
         dto.setName(version.getName());
         dto.setModelVersionId(version.getModelVersionId());
         dto.setCodeVersionId(version.getCodeVersionId());
+        dto.setTrainingProfile(version.getTrainingProfile());
         dto.setDatasetVersionId(version.getDatasetVersionId());
         dto.setHyperParams(fromJson(version.getHyperParamsJson()));
         dto.setStatus(version.getStatus());
@@ -412,17 +467,17 @@ public class TrainingExperimentService {
         return 0;
     }
 
-    private void startLocalTrainingAfterCommit(String trainingId) {
+    private void startTrainingAfterCommit(String trainingId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    localTrainingRunnerService.start(trainingId);
+                    trainingExecutorRouter.start(trainingId);
                 }
             });
             return;
         }
-        localTrainingRunnerService.start(trainingId);
+        trainingExecutorRouter.start(trainingId);
     }
 
     private String newVersionId() {
@@ -451,6 +506,26 @@ public class TrainingExperimentService {
         String result = firstText(value, fallback);
         requireText(result, message);
         return result;
+    }
+
+    private void validateProfileTraining(String codeVersionId, String datasetVersionId, String trainingProfile) {
+        TrainingProfileRegistry.requireSupported(trainingProfile);
+        CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("代码版本不存在: " + codeVersionId));
+        CodeAsset codeAsset = codeAssetRepo.findByIdAndDeletedFalse(codeVersion.getAssetId())
+                .orElseThrow(() -> new IllegalArgumentException("代码资产不存在: " + codeVersion.getAssetId()));
+        if (codeAsset.getTrainingProfile() == null
+                || !codeAsset.getTrainingProfile().equals(trainingProfile)) {
+            throw new IllegalArgumentException("trainingProfile 与代码资产不匹配");
+        }
+
+        TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(trainingProfile)
+                .orElseThrow(() -> new IllegalArgumentException("不支持的 trainingProfile: " + trainingProfile));
+        String datasetType = resolveDatasetTaskType(datasetVersionId.trim());
+        if (!spec.requiredDatasetType().equals(datasetType)) {
+            throw new IllegalArgumentException(
+                    "数据集类型与 trainingProfile 不匹配：需要 " + spec.requiredDatasetType() + "，实际 " + datasetType);
+        }
     }
 
     private void validateModelDatasetMatch(String modelVersionId, String datasetVersionId) {

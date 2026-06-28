@@ -81,3 +81,31 @@ training:
     enabled: ${TRAINING_MLFLOW_ENABLED:true}
     tracking-uri: ${TRAINING_MLFLOW_TRACKING_URI:http://127.0.0.1:5000}
     experiment-name: ${TRAINING_MLFLOW_EXPERIMENT_NAME:tss-training}
+  kubernetes:
+    enabled: ${TRAINING_K8S_ENABLED:true}
+    auto-create: ${TRAINING_K8S_AUTO_CREATE:true}
+    verify-on-startup: ${TRAINING_K8S_VERIFY_ON_STARTUP:true}
+    fallback-to-local: ${TRAINING_K8S_FALLBACK_TO_LOCAL:true}
+    cluster-name: ${TRAINING_K8S_CLUSTER_NAME:tss-training}
+    namespace: ${TRAINING_K8S_NAMESPACE:tss-training}
+    service-account: ${TRAINING_K8S_SERVICE_ACCOUNT:tss-training-worker}
+    project-root: ${TRAINING_K8S_PROJECT_ROOT:..}
+    kubeconfig: ${TRAINING_K8S_KUBECONFIG:k8s/.kube/config}
+    kind-path: ${TRAINING_K8S_KIND_PATH:.tools/bin/kind}
+    kubectl-path: ${TRAINING_K8S_KUBECTL_PATH:.tools/bin/kubectl}
+    bootstrap-script: ${TRAINING_K8S_BOOTSTRAP_SCRIPT:backend/scripts/k8s/bootstrap-local-kind.sh}
+    verify-script: ${TRAINING_K8S_VERIFY_SCRIPT:backend/scripts/k8s/verify-local-kind.sh}
+    worker-image: ${TRAINING_K8S_WORKER_IMAGE:tss-training-worker:local}
+    worker-image-pull-policy: ${TRAINING_K8S_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
+    backend-service-url: ${TRAINING_K8S_BACKEND_SERVICE_URL:http://tss-backend:8080}
+    minio-service-url: ${TRAINING_K8S_MINIO_SERVICE_URL:http://tss-minio:9000}
+    mlflow-service-url: ${TRAINING_K8S_MLFLOW_SERVICE_URL:http://tss-mlflow:5000}
+    cpu-request: ${TRAINING_K8S_CPU_REQUEST:500m}
+    cpu-limit: ${TRAINING_K8S_CPU_LIMIT:2}
+    memory-request: ${TRAINING_K8S_MEMORY_REQUEST:512Mi}
+    memory-limit: ${TRAINING_K8S_MEMORY_LIMIT:4Gi}
+    job-active-deadline-seconds: ${TRAINING_K8S_JOB_ACTIVE_DEADLINE_SECONDS:3600}
+    job-ttl-seconds-after-finished: ${TRAINING_K8S_JOB_TTL_SECONDS:86400}
+    internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:tss-internal-callback-dev}
+    monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
+    bootstrap-timeout-seconds: ${TRAINING_K8S_BOOTSTRAP_TIMEOUT_SECONDS:600}

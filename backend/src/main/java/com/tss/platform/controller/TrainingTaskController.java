@@ -51,7 +51,7 @@ public class TrainingTaskController {
     @PostMapping("/stop")
     public ApiResponse<TrainingExperimentVersionDto> stop(@RequestParam String id) {
         try {
-            return ApiResponse.ok(service.updateStatus(id, "stopped"));
+            return ApiResponse.ok(service.stopTraining(id));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

@@ -47,6 +47,9 @@ public class TrainingExperimentVersion {
     @Column(name = "code_version_id", nullable = false, length = 128)
     private String codeVersionId;
 
+    @Column(name = "training_profile", length = 128)
+    private String trainingProfile;
+
     @Column(name = "dataset_version_id", nullable = false, length = 64)
     private String datasetVersionId;
 

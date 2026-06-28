@@ -85,7 +85,8 @@ public class DatasetUploadService {
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
     private static final Set<String> NLP_ALLOWED_EXTENSIONS = Set.of(
-            ".txt", ".json", ".jsonl", ".csv", ".xlsx", ".xls", ".pdf", ".docx", ".xml"
+            ".txt", ".json", ".jsonl", ".csv", ".xlsx", ".xls", ".pdf", ".docx", ".xml",
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
     private static final Set<String> POINT_CLOUD_EXTENSIONS = Set.of(
             ".ply", ".pcd"

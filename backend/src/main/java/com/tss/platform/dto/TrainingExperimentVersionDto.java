@@ -13,6 +13,7 @@ public class TrainingExperimentVersionDto {
     private String name;
     private String modelVersionId;
     private String codeVersionId;
+    private String trainingProfile;
     private String datasetVersionId;
     private JsonNode hyperParams;
     private String status;

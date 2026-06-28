@@ -7,6 +7,7 @@ public class CreateTrainingExperimentRequest {
     private String name;
     private String modelVersionId;
     private String codeVersionId;
+    private String trainingProfile;
     private String datasetVersionId;
     private Object hyperParams;
     private Object params;
