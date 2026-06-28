@@ -104,6 +104,18 @@ export default [
         hideInMenu: true,
       },
       {
+        path: '/task/consistency-demo',
+        name: '图文一致性训练演示',
+        component: './task/consistency-demo',
+        hideInMenu: true,
+      },
+      {
+        path: '/task/consistency-upload',
+        name: '图文一致性训练上传',
+        component: './task/consistency-upload',
+        hideInMenu: true,
+      },
+      {
         path: '/task/detail/:id',
         name: '任务详情',
         component: './task/detail/[id]',

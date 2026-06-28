@@ -68,10 +68,17 @@ export {
   type MultimodalSampleAnnotation,
 } from './datasetMultimodal';
 
+export { uploadCodeZip, approveCodeVersion } from './code';
+export type { CodeUploadResult, CodeVersionApprovalResult } from './code';
+
 export {
   fetchTaskList,
   fetchTaskDetail,
   createTask,
+  createConsistencyTask,
+  createProfileTrainingTask,
+  CONSISTENCY_DEMO_PARAMS,
+  CONSISTENCY_TRAINING_PROFILE,
   listExperimentVersions,
   getExperimentVersion,
   updateExperimentHyperParams,

@@ -73,6 +73,7 @@ type TaskDetailInfo = API.TaskItem & {
   files?: { name: string; desc: string }[];
   hyperParams?: Record<string, any>;
   codeVersionId?: string;
+  trainingProfile?: string;
 };
 
 function _shortId(v?: string, keep = 10) {
@@ -140,6 +141,72 @@ function mapVersionToTaskDetail(
     createTime: data.createTime || data.createdAt || '',
     runId: data.runId || (data as any).run_id,
   };
+}
+
+const CONSISTENCY_PROFILE = 'image_text_consistency_fusion_logreg';
+
+const CONSISTENCY_SPLITS = ['train', 'val', 'test'] as const;
+
+const CONSISTENCY_METRIC_KEYS = [
+  'accuracy',
+  'precision',
+  'recall',
+  'f1',
+  'roc_auc',
+] as const;
+
+const CONSISTENCY_ARTIFACT_FILES = [
+  'fusion_model.pkl',
+  'metrics.json',
+  'val_predictions.csv',
+  'test_predictions.csv',
+] as const;
+
+function isConsistencyProfileTask(metrics?: Record<string, any>) {
+  return metrics?.trainingProfile === CONSISTENCY_PROFILE;
+}
+
+function formatMetricValue(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toFixed(4);
+  }
+  return value != null && value !== '' ? String(value) : '-';
+}
+
+function buildConsistencyMetricsRows(metrics?: Record<string, any>) {
+  if (!metrics) return [];
+  return CONSISTENCY_SPLITS.map((split) => {
+    const label =
+      split === 'train' ? '训练集' : split === 'val' ? '验证集' : '测试集';
+    const row: Record<string, string | number> = {
+      key: split,
+      split: label,
+      rows: metrics[`${split}_rows`] ?? '-',
+      positive: metrics[`${split}_positive`] ?? '-',
+      negative: metrics[`${split}_negative`] ?? '-',
+    };
+    CONSISTENCY_METRIC_KEYS.forEach((metric) => {
+      row[metric] = formatMetricValue(metrics[`${split}_${metric}`]);
+    });
+    return row;
+  });
+}
+
+function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
+  const items: { name: string; desc: string }[] = [];
+  if (outputPath) {
+    const base = outputPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
+    CONSISTENCY_ARTIFACT_FILES.forEach((fileName) => {
+      items.push({
+        name: fileName,
+        desc: `minio://${base}/${fileName}`,
+      });
+    });
+  }
+  if (logPath) {
+    items.push({ name: '训练日志', desc: logPath });
+  }
+  return items;
 }
 
 const TaskDetail: React.FC = () => {
@@ -562,6 +629,11 @@ const TaskDetail: React.FC = () => {
           <Descriptions.Item label="代码版本标识" span={2}>
             {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
           </Descriptions.Item>
+          {(taskInfo as TaskDetailInfo).trainingProfile && (
+            <Descriptions.Item label="训练 Profile" span={2}>
+              <code>{(taskInfo as TaskDetailInfo).trainingProfile}</code>
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label="该版本超参数" span={2}>
             {renderHyperParamsCell((taskInfo as TaskDetailInfo).hyperParams)}
           </Descriptions.Item>
@@ -842,6 +914,79 @@ const TaskDetail: React.FC = () => {
           </Button>
         </Space>
       </Card>
+
+      {isConsistencyProfileTask(taskInfo.metrics) && (
+        <Card
+          title="图文一致性训练指标"
+          extra={
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              profile: {CONSISTENCY_PROFILE}
+            </span>
+          }
+          style={{ marginBottom: 16 }}
+        >
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="key"
+            dataSource={buildConsistencyMetricsRows(taskInfo.metrics)}
+            columns={[
+              { title: '数据集', dataIndex: 'split', width: 80 },
+              {
+                title: '样本数',
+                dataIndex: 'rows',
+                width: 80,
+                render: (_: unknown, record: any) => (
+                  <Tooltip
+                    title={`正样本 ${record.positive} / 负样本 ${record.negative}`}
+                  >
+                    <span>{record.rows}</span>
+                  </Tooltip>
+                ),
+              },
+              ...CONSISTENCY_METRIC_KEYS.map((metric) => ({
+                title: metric,
+                dataIndex: metric,
+                render: (v: string) => (
+                  <span style={{ fontFamily: 'monospace' }}>{v}</span>
+                ),
+              })),
+            ]}
+          />
+          {buildConsistencyArtifactItems(
+            taskInfo.outputPath,
+            taskInfo.logPath,
+          ).length > 0 && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 16 }}>
+                产物文件
+              </Typography.Title>
+              <List
+                size="small"
+                dataSource={buildConsistencyArtifactItems(
+                  taskInfo.outputPath,
+                  taskInfo.logPath,
+                )}
+                renderItem={(item) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      title={item.name}
+                      description={
+                        <Typography.Text
+                          copyable
+                          style={{ fontFamily: 'monospace', fontSize: 12 }}
+                        >
+                          {item.desc}
+                        </Typography.Text>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </>
+          )}
+        </Card>
+      )}
 
       <Card
         title="训练指标可视化"

@@ -1,4 +1,4 @@
-import { PageContainer } from '@ant-design/pro-components';
+import { PageContainer, ProCard } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
 import { Alert, Button, Form, Input, message, Select, Steps } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -356,6 +356,24 @@ const TaskCreate: React.FC = () => {
           message="基于此版本继续训练"
           description="已预填所选历史版本的模型、数据集、代码与超参数。提交后将在同一 experimentId 下创建下一版（versionNo 自动递增）；历史版本的超参数记录不会被修改。"
         />
+      )}
+      {!isExperimentContinue && (
+        <ProCard
+          title="图文一致性训练演示"
+          style={{ marginBottom: 16 }}
+          extra={
+            <Button type="primary" onClick={() => history.push('/task/consistency-demo')}>
+              开始演示
+            </Button>
+          }
+        >
+          使用后端预置种子资产，一键发起 LogReg 融合基线训练（无需选择模型版本或上传 ZIP）。
+          <div style={{ marginTop: 12 }}>
+            <Button onClick={() => history.push('/task/consistency-upload')}>
+              上传 ZIP 后训练
+            </Button>
+          </div>
+        </ProCard>
       )}
       <Form
         form={form}

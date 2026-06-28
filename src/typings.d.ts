@@ -132,6 +132,7 @@ declare namespace API {
     progress: number;
     modelVersionId?: string;
     codeVersionId?: string;
+    trainingProfile?: string;
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
     metrics?: Record<string, any>;
@@ -150,10 +151,11 @@ declare namespace API {
     experimentId: string;
     versionNo: number;
     name?: string;
-    modelVersionId: string;
+    modelVersionId?: string;
     codeVersionId: string;
+    trainingProfile?: string;
     datasetVersionId: string;
-    hyperParams: Record<string, any>;
+    hyperParams?: Record<string, any>;
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress?: number;
     metrics?: Record<string, any>;
