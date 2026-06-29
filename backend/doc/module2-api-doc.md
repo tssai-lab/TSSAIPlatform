@@ -222,13 +222,14 @@ if (!response.ok || !result.success) {
 #### 训练实验
 
 ```text
-准备 modelVersionId、datasetVersionId、codeVersionId、hyperParams
+legacy: 准备 modelVersionId、datasetVersionId、codeVersionId、hyperParams
+profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、trainingProfile、hyperParams
   -> POST /api/task/create 或 POST /api/experiments
   -> GET /api/task/detail 轮询最新状态
   -> 需要保留实验历史时使用 /api/experiments/{experimentId}/versions
 ```
 
-创建训练后，服务会在数据库事务提交后异步启动本地训练。当前训练实现会读取 YOLO zip 中的图片和 `labels/` 下 `.txt` 标签；类型匹配通过并不代表任意格式都能被当前本地训练器实际解析。
+创建训练后，服务会在数据库事务提交后异步启动训练执行器。不带 `trainingProfile` 的兼容任务走本地训练器；带 `trainingProfile` 的任务走 K8s profile 训练路径，并要求训练代码版本通过准入。当前本地训练实现会读取 YOLO zip 中的图片和 `labels/` 下 `.txt` 标签；类型匹配通过并不代表任意格式都能被当前本地训练器实际解析。
 
 ### 1.7 接口速查与前端注意事项
 
@@ -1646,6 +1647,19 @@ DELETE /api/dataset-versions/{id}
 
 `/api/task` 是当前前端兼容路径，操作训练实验的最新版本。
 
+训练配置页使用以下训练代码资产接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
+| `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
+| `POST` | `/api/code/version/{codeVersionId}/approve` | 手工批准代码版本 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案做代码包结构准入检查；通过后自动置为 `APPROVED` |
+
+`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。准入通过只代表结构、固定入口和 profile 元数据检查通过，不代表完成代码安全审计。
+
+当前唯一训练方案为 `image_text_consistency_fusion_logreg`（展示名：图文一致性基线训练），要求代码包包含固定入口 `scripts/training/train_fusion_baseline.py`，并要求训练数据集类型为 `NLP`。
+
 ### 10.1 创建训练任务
 
 ```http
@@ -1657,23 +1671,25 @@ POST /api/task/create
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 否 | 任务名称；不传时使用实验 ID |
-| `modelVersionId` | string | 是 | 模型版本 ID |
+| `modelVersionId` | string | 条件 | 兼容模型版本 ID；未传 `baseModelVersionId` 时作为基础模型权重版本使用 |
+| `baseModelVersionId` | string | 条件 | 基础模型权重版本 ID；带 `trainingProfile` 时必填，可与 `modelVersionId` 二选一，二者同时传入时必须一致 |
 | `datasetVersionId` | string | 是 | 数据集版本 ID |
-| `codeVersionId` | string | 是 | 代码版本 ID |
-| `hyperParams` | object/string | 是 | 超参数 JSON；也可使用 `params` |
+| `codeVersionId` | string | 是 | 训练代码版本 ID |
+| `trainingProfile` | string | 否 | 训练方案 ID；不传走 legacy 本地训练路径，传入时进入 profile/K8s 路径 |
+| `hyperParams` | object/string | 条件 | 超参数 JSON；也可使用 `params`。legacy 路径必填，profile 路径不传时按 `{}` 记录 |
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注 |
 
-后端会校验模型版本、数据集版本是否存在且当前用户可访问，并校验模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。数据集版本还必须为 `READY` 且 `storagePath` 非空。
+后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。不带 `trainingProfile` 的 legacy 路径会校验模型版本存在、模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。带 `trainingProfile` 的 profile 路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。
 
 当前代码的额外行为：
 
-- `codeVersionId` 只校验非空，没有查询独立代码版本表。
-- 创建事务提交后会自动启动 `LocalTrainingRunnerService` 后台线程。
+- 不带 `trainingProfile` 的 legacy 路径中，`codeVersionId` 仍只校验非空；带 `trainingProfile` 的 profile 路径中，`codeVersionId` 必须指向已准入的代码版本。
+- 创建事务提交后会自动启动 `TrainingExecutorRouter`。legacy 任务走 `LocalTrainingRunnerService`；profile 任务要求 K8s 环境可用，并提交 K8s Job。
 - 当前本地训练器实际只解析 zip 中的图片和路径包含 `labels/` 的 YOLO `.txt` 标签。NLP、POINT_CLOUD 或其他 CV 格式即使通过类型匹配，也可能在异步训练阶段进入 `failed`。
 - `MULTIMODAL` 当前不属于模型或训练任务类型，不能用于创建训练。
-- 当前有效超参数主要是 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）。
-- 创建阶段会确认模型版本和资产存在，但不会提前校验模型版本的 `storagePath`、`fileName`、`sizeBytes`；缺少真实模型文件时任务会创建成功，随后在后台训练中失败。
+- legacy 本地训练器当前有效超参数主要是 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）。profile 路径会记录并传递 `hyperParams`，但不能覆盖固定训练命令。
+- legacy 路径创建阶段会确认模型版本和资产存在，但不会提前校验模型版本的 `storagePath`、`fileName`、`sizeBytes`；profile 路径会校验基础模型权重版本 `storagePath`。
 - 前端创建后应轮询 `/api/task/detail`，不能把创建接口返回的 `pending` 当成训练已经成功启动。
 
 响应 `data`：
@@ -1685,7 +1701,9 @@ POST /api/task/create
 | `versionNo` | 实验版本号 |
 | `name` | 名称 |
 | `modelVersionId` | 模型版本 ID |
+| `baseModelVersionId` | 基础模型权重版本 ID；当前与 `modelVersionId` 相同 |
 | `codeVersionId` | 代码版本 ID |
+| `trainingProfile` | 训练方案 ID；legacy 任务为空 |
 | `datasetVersionId` | 数据集版本 ID |
 | `hyperParams` | 超参数 JSON |
 | `status` | 状态，初始为 `pending` |
@@ -1816,14 +1834,15 @@ POST /api/experiments/{experimentId}/versions
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 否 | 新版本名称；不传继承上一版本 |
-| `modelVersionId` | string | 否 | 模型版本 ID；不传继承上一版本 |
+| `modelVersionId` | string | 否 | 兼容模型版本 ID；不传继承上一版本 |
+| `baseModelVersionId` | string | 否 | 基础模型权重版本 ID；不传继承上一版本，可与 `modelVersionId` 二选一，二者同时传入时必须一致 |
 | `datasetVersionId` | string | 否 | 数据集版本 ID；不传继承上一版本 |
 | `codeVersionId` | string | 否 | 代码版本 ID；不传继承上一版本 |
 | `hyperParams` | object/string | 否 | 超参数 JSON；不传继承上一版本 |
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注；不传继承上一版本 |
 
-创建成功后 `versionNo` 为上一版本加 `1`，状态为 `pending`。
+创建成功后 `versionNo` 为上一版本加 `1`，状态为 `pending`。新版本会继承上一版本的 `trainingProfile`，该接口不能切换训练方案；如果上一版本是 profile 任务，则新版本的 `codeVersionId` 仍必须指向已准入代码版本，并继续校验代码资产、数据集类型和基础模型权重版本。
 
 ### 11.5 更新实验版本超参数
 
@@ -2788,15 +2807,16 @@ init 请求：
 
 ### 18.6 训练对接边界
 
-本轮 V2 改造不修改训练 Java 代码、训练 DTO、训练数据库表或训练测试。
+V2 数据集列表和上传门面不直接提供训练动作；训练页面继续通过训练任务接口、模型版本接口、数据集版本接口和训练代码资产接口拿到具体版本 ID。
 
-- 训练仍提交 `modelVersionId`、`datasetVersionId`、`codeVersionId` 和 `hyperParams`。
+- legacy 训练仍提交 `modelVersionId`、`datasetVersionId`、`codeVersionId` 和 `hyperParams`。
+- profile 训练提交 `baseModelVersionId`（或兼容字段 `modelVersionId`）、`datasetVersionId`、`codeVersionId`、`trainingProfile` 和 `hyperParams`。
 - `datasetVersionId` 必须指向未删除、调用方可访问、具有存储路径的 `READY` 版本。
-- 模型与数据集类型必须匹配。
+- legacy 路径要求模型与数据集类型匹配；profile 路径要求数据集类型符合该 `trainingProfile` 的固定要求。
+- profile 路径要求 `codeVersionId` 指向 `READY` + `APPROVED` 的代码版本，并且代码资产 `trainingProfile` 与请求一致。
+- 当前唯一 profile 为 `image_text_consistency_fusion_logreg`，展示名为“图文一致性基线训练”，要求代码入口 `scripts/training/train_fusion_baseline.py` 和 `NLP` 数据集。
 - `MULTIMODAL` 当前不能进入训练任务类型。
 - 模块二向训练侧稳定交付 READY `datasetVersionId` 和 consumer manifest；训练侧负责 batch 组装、样本选择和多模态适配。
 - 训练侧不得依赖 `storagePath`、MinIO objectName、ZIP offset 或模块二数据库表结构。
 - 本地训练器当前实际只支持 CV/YOLO 图片和 `labels/*.txt` 数据。
-- 主要有效超参数为 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）。
-- `codeVersionId` 当前只校验非空，没有独立代码版本资源表。
-- V2 数据集列表不提供训练动作；训练页面继续使用现有模型和数据集版本接口获取具体版本 ID。
+- legacy 本地训练器主要有效超参数为 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）；profile 路径记录并传递 `hyperParams`，但不能覆盖固定训练命令。

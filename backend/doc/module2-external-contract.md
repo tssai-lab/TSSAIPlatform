@@ -342,9 +342,11 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 
 ## 7. 训练实验边界
 
-训练任务和训练实验不是纯元数据管理：创建实验首个版本或实验新版本后，当前代码会在事务提交后异步启动 `LocalTrainingRunnerService`。
+训练任务和训练实验不是纯元数据管理：创建实验首个版本或实验新版本后，当前代码会在事务提交后异步启动 `TrainingExecutorRouter`。不带 `trainingProfile` 的兼容任务走本地 runner；带 `trainingProfile` 的任务走 K8s profile 训练路径，要求训练代码版本已准入。
 
 当前本地 runner 只解析数据集 zip 中的图片和路径包含 `labels/` 的 YOLO `.txt` 标签，并写回 `running`、`success` 或 `failed` 结果。模型/数据集类型校验通过，不代表所有数据集类型或标注格式都能被当前本地 runner 成功训练。
+
+当前 profile 训练只支持 `image_text_consistency_fusion_logreg`。该路径会校验基础模型权重版本、训练数据集版本、训练代码版本和 `trainingProfile` 的匹配关系；Worker 使用固定 profile 命令，`hyperParams` 只作为记录和传递字段，不能覆盖固定训练命令。
 
 兼容路径：
 
@@ -352,6 +354,17 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 /api/task
 /api/experiments
 ```
+
+训练代码资产接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
+| `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
+| `POST` | `/api/code/version/{codeVersionId}/approve` | 手工批准代码版本 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案做代码包结构准入检查；通过后自动置为 `APPROVED` |
+
+代码包准入只代表路径、扩展名、固定入口和 profile 元数据检查通过，不代表完成代码安全审计。
 
 ### 7.1 训练任务接口
 
@@ -369,13 +382,15 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 | 字段 | 说明 |
 | --- | --- |
 | `name` | 实验名称，可选 |
-| `modelVersionId` | 模型版本 ID，必填 |
+| `modelVersionId` | 兼容模型版本 ID；未传 `baseModelVersionId` 时作为基础模型权重版本使用 |
+| `baseModelVersionId` | 基础模型权重版本 ID；带 `trainingProfile` 时必填，可与 `modelVersionId` 二选一，二者同时传入时必须一致 |
 | `datasetVersionId` | 数据集版本 ID，必填 |
-| `codeVersionId` | 代码版本 ID，必填 |
-| `hyperParams` / `params` | 超参数 JSON，必填 |
+| `codeVersionId` | 训练代码版本 ID，必填 |
+| `trainingProfile` | 训练方案 ID；不传走 legacy 本地训练路径，传入时进入 profile/K8s 路径 |
+| `hyperParams` / `params` | 超参数 JSON；legacy 路径必填，profile 路径不传时按 `{}` 记录 |
 | `remark` | 备注，可选 |
 
-创建时后端会校验模型版本、数据集版本存在且调用方可访问，模型类型与数据集类型一致，数据集版本为 `READY` 且具备 `storagePath`。`codeVersionId` 当前只校验非空，没有独立代码版本资源表。
+创建时后端会校验数据集版本存在且调用方可访问，数据集版本为 `READY` 且具备 `storagePath`。不带 `trainingProfile` 的 legacy 路径会校验模型类型与数据集类型一致，`codeVersionId` 仍只做非空校验。带 `trainingProfile` 的 profile 路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。
 
 返回稳定字段：
 
@@ -386,7 +401,9 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 | `versionNo` | 实验版本号 |
 | `name` | 实验名称 |
 | `modelVersionId` | 模型版本 ID |
+| `baseModelVersionId` | 基础模型权重版本 ID；当前与 `modelVersionId` 相同 |
 | `codeVersionId` | 代码版本 ID |
+| `trainingProfile` | 训练方案 ID；legacy 任务为空 |
 | `datasetVersionId` | 数据集版本 ID |
 | `hyperParams` | 超参数 JSON |
 | `status` | 训练状态 |
