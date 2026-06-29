@@ -216,16 +216,8 @@ const ModelDetail: React.FC = () => {
       onBack={() => history.push('/model/list')}
       extra={
         <Space>
-          <Button
-            type="primary"
-            disabled={!selectedVersionId}
-            onClick={() =>
-              history.push(
-                `/task/create?modelVersionId=${encodeURIComponent(selectedVersionId as string)}`,
-              )
-            }
-          >
-            使用选中版本训练
+          <Button type="primary" onClick={() => history.push('/task/create')}>
+            创建 K8s 训练任务
           </Button>
           <Button
             onClick={() =>
@@ -258,7 +250,14 @@ const ModelDetail: React.FC = () => {
           <>
             <strong>模型版本</strong>
             ：上传
-            zip（代码或预训练权重）时填写版本号自动创建，作为发起训练时的输入包。
+            zip（代码或预训练权重）时填写版本号自动创建，用于资产归档与代码预览。
+            <br />
+            <strong>训练任务</strong>
+            ：K8s 训练请在
+            <Typography.Link onClick={() => history.push('/task/create')}>
+              创建 K8s 训练任务
+            </Typography.Link>
+            页选择或上传<strong>代码模型包</strong>与数据包。
             <br />
             <strong>训练实验版本</strong>
             ：在某次训练结果上继续调参、再训练，请在「训练任务详情」使用
@@ -397,8 +396,8 @@ const ModelDetail: React.FC = () => {
           type="secondary"
           style={{ display: 'block', marginTop: 8 }}
         >
-          每个版本对应一次上传的 zip 文件；发起训练时在创建任务页选择
-          modelVersionId（版本 ID）。
+          每个版本对应一次上传的 zip 文件；K8s 训练请在「创建 K8s
+          训练任务」页选择代码模型版本，不再使用 modelVersionId。
         </Typography.Text>
       </Card>
 

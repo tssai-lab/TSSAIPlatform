@@ -79,7 +79,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
 
   const isActive = isActiveTaskStatus(taskStatus);
   const shouldPoll = !!runId && autoRefresh && isActive;
-  const useSplitLayout = chartStyle === 'split-line';
 
   const availableMetrics = useMemo(
     () => getAvailableMetricKeys(metricsData),
@@ -90,6 +89,16 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     const picked = selectedMetrics.filter((k) => availableMetrics.includes(k));
     return picked.length ? picked : availableMetrics;
   }, [selectedMetrics, availableMetrics]);
+
+  const onlyFinalMetrics = useMemo(
+    () =>
+      effectiveSelected.length > 0 &&
+      effectiveSelected.every((key) => (metricsData[key]?.length ?? 0) <= 1),
+    [effectiveSelected, metricsData],
+  );
+  const effectiveChartStyle: ChartStyle =
+    onlyFinalMetrics && chartStyle !== 'bar-latest' ? 'bar-latest' : chartStyle;
+  const useSplitLayout = effectiveChartStyle === 'split-line';
 
   const loadMetrics = useCallback(
     async (silent = false) => {
@@ -138,7 +147,8 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   }, [availableMetrics]);
 
   const mlflowMetricSummaries = useMemo(
-    () => buildMlflowMetricSummaries(metricsData),
+    () =>
+      buildMlflowMetricSummaries(metricsData).filter((item) => item.hasData),
     [metricsData],
   );
 
@@ -164,13 +174,13 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     const option = buildMetricsChartOption(
       metricsData,
       effectiveSelected,
-      chartStyle,
+      effectiveChartStyle,
     );
     if (!combinedChartInstance.current) {
       combinedChartInstance.current = echarts.init(combinedChartRef.current);
     }
     combinedChartInstance.current.setOption(option, { notMerge: true });
-  }, [metricsData, effectiveSelected, chartStyle]);
+  }, [metricsData, effectiveSelected, effectiveChartStyle]);
 
   const renderSplitCharts = useCallback(() => {
     const activeKeys = new Set(effectiveSelected);
@@ -246,7 +256,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     return (
       <div style={{ padding: 24, background: '#fafafa', borderRadius: 8 }}>
         <div style={{ marginBottom: 12, color: '#8c8c8c' }}>
-          任务详情未包含 run_id，或后端尚未返回。可手动输入 MLflow Run ID
+          当前任务未关联 MLflow Run，或暂无可视化指标。可手动输入 MLflow Run ID
           进行联调：
         </div>
         <Input.Search
@@ -272,7 +282,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       <Space wrap style={{ marginBottom: 16 }} align="center">
         <span style={{ color: '#8c8c8c', fontSize: 12 }}>图表样式</span>
         <Select
-          value={chartStyle}
+          value={effectiveChartStyle}
           onChange={setChartStyle}
           options={CHART_STYLE_OPTIONS}
           style={{ width: 160 }}
@@ -328,9 +338,12 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             训练中 · 指标 {METRICS_POLL_INTERVAL_MS / 1000}s 刷新
           </Tag>
         )}
+        {onlyFinalMetrics && hasCharts && (
+          <Tag color="blue">当前 MLflow 只有终值，已按末值柱状图展示</Tag>
+        )}
       </Space>
 
-      {runId && (
+      {runId && mlflowMetricSummaries.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <Typography.Text
             type="secondary"

@@ -46,12 +46,50 @@ export {
   datasetUploadProgress,
   datasetUploadComplete,
   datasetUploadFolder,
+  type DatasetType,
+  type TaskType,
 } from './dataset';
+
+export {
+  fetchMultimodalImportStatus,
+  fetchMultimodalSamples,
+  fetchMultimodalSampleDetail,
+  fetchMultimodalDataPreview,
+  fetchMultimodalDataDownload,
+  fetchMultimodalAnnotationDownload,
+  triggerBlobDownload,
+  MULTIMODAL_DATA_TYPE_LABEL,
+  MULTIMODAL_IMPORT_STATUS_LABEL,
+  type MultimodalImportJob,
+  type MultimodalImportStatus,
+  type MultimodalSampleSummary,
+  type MultimodalSampleDetail,
+  type MultimodalSampleDataItem,
+  type MultimodalSampleDataType,
+  type MultimodalSampleAnnotation,
+} from './datasetMultimodal';
+
+export {
+  uploadCodeZip,
+  approveCodeVersion,
+  fetchApprovedCodeVersions,
+  checkCodeVersionForTraining,
+} from './code';
+export type {
+  CodeUploadResult,
+  CodeVersionApprovalResult,
+  CodeVersionListItem,
+  CodeVersionTrainingCheckResult,
+} from './code';
 
 export {
   fetchTaskList,
   fetchTaskDetail,
   createTask,
+  createConsistencyTask,
+  createProfileTrainingTask,
+  CONSISTENCY_DEMO_PARAMS,
+  CONSISTENCY_TRAINING_PROFILE,
   listExperimentVersions,
   getExperimentVersion,
   updateExperimentHyperParams,
@@ -78,7 +116,7 @@ export {
   cancelResourceQueueTask,
 } from './resourceMonitor';
 
-export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
+export { fileHealth, uploadObject, getDownloadUrl, downloadObject, deleteObject } from './files';
 
 export {
   getPointCloudPreview,

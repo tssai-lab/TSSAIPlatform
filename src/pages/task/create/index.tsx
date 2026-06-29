@@ -1,166 +1,278 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
-import { Alert, Button, Form, Input, message, Select, Steps } from 'antd';
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Form,
+  Input,
+  Modal,
+  message,
+  Select,
+  Space,
+  Steps,
+  Tag,
+  Typography,
+} from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  CONSISTENCY_TRAINING_PROFILE,
+  checkCodeVersionForTraining,
   createExperimentVersion,
   createTask,
+  fetchApprovedCodeVersions,
   fetchDatasetList,
-  fetchModelList,
+  fetchTaskDetail,
 } from '@/services/platform';
 
-const DEFAULT_HYPER_PARAMS = {
-  epochs: 5,
-  lr0: 0.05,
-  batch_size: 4,
-  imgsz: 640,
-  device: 'cpu',
+const FUSION_HYPER_PARAMS_DEFAULT = {
+  model: 'logreg',
+  threshold: 0.5,
+  outputDir: 'outputs/fusion_baseline_logreg',
 };
 
-/**
- * 发起训练页（按 backend-api.md 的实验/版本机制）
- * - POST /api/task/create：自动生成 experimentId，并创建 versionNo=1
- */
-/** 各步骤需校验的字段（分步切换时只校验当前步） */
-const STEP_FIELD_NAMES = [
-  ['modelVersionId'],
-  ['datasetVersionId'],
-  ['codeVersionId', 'hyperParams'],
-] as const;
+const PROFILE_DISPLAY_NAME = '图文一致性基线训练';
 
-const STEP_COUNT = STEP_FIELD_NAMES.length;
+type CheckState = {
+  loading: boolean;
+  passed?: boolean;
+  reasons?: string[];
+  approvalStatus?: string;
+};
 
 const TaskCreate: React.FC = () => {
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get('experimentId')?.trim() || '';
   const isExperimentContinue = !!experimentId;
+
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
-  const [modelOptions, setModelOptions] = useState<any[]>([]);
+
+  const [codeOptions, setCodeOptions] = useState<any[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<any[]>([]);
-  const [modelLoading, setModelLoading] = useState(false);
+  const [codeLoading, setCodeLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
-  /** 与 Form 同步备份，避免分步卸载表单项后 id 丢失 */
-  const [selectedModelVersionId, setSelectedModelVersionId] =
+
+  const [selectedCodeVersionId, setSelectedCodeVersionId] = useState<string>();
+  const [selectedCodeApprovalStatus, setSelectedCodeApprovalStatus] =
     useState<string>();
   const [selectedDatasetVersionId, setSelectedDatasetVersionId] =
     useState<string>();
 
-  useEffect(() => {
-    setModelLoading(true);
-    fetchModelList({ pageSize: 100 } as any)
+  const [codeCheck, setCodeCheck] = useState<CheckState>({ loading: false });
+
+  const filteredDatasetOptions = useMemo(
+    () =>
+      datasetOptions.filter(
+        (d: API.DatasetItem) => d.type === 'NLP' && d.versionId,
+      ),
+    [datasetOptions],
+  );
+
+  const reloadCodeOptions = () => {
+    setCodeLoading(true);
+    return fetchApprovedCodeVersions({ skipErrorHandler: true })
       .then((res: any) => {
-        const list = res?.data?.data ?? res?.data ?? [];
-        setModelOptions(list ?? []);
+        if (!res?.success) {
+          message.error(res?.errorMessage || '代码模型版本列表加载失败');
+          setCodeOptions([]);
+          return;
+        }
+        setCodeOptions(res.data ?? []);
       })
       .catch((error: any) => {
-        setModelOptions([]);
-        message.error(
-          error?.message || '模型版本列表加载失败，请重新登录或检查后端服务',
-        );
+        setCodeOptions([]);
+        message.error(error?.message || '代码模型版本列表加载失败');
       })
-      .finally(() => setModelLoading(false));
+      .finally(() => setCodeLoading(false));
+  };
 
+  useEffect(() => {
+    reloadCodeOptions();
     setDatasetLoading(true);
     fetchDatasetList({ pageSize: 100 } as any)
       .then((res: any) => {
-        const list = res?.data?.data ?? res?.data ?? [];
+        const list = (res?.data?.data ?? res?.data ?? []).filter(
+          (item: API.DatasetItem) =>
+            item.type !== 'MULTIMODAL' && item.versionId,
+        );
         setDatasetOptions(list ?? []);
       })
       .catch((error: any) => {
         setDatasetOptions([]);
-        message.error(
-          error?.message || '数据集版本列表加载失败，请重新登录或检查后端服务',
-        );
+        message.error(error?.message || '数据集版本列表加载失败');
       })
       .finally(() => setDatasetLoading(false));
   }, []);
 
   useEffect(() => {
-    const raw = localStorage.getItem('taskCreatePrefill');
-    const queryModelVersionId = searchParams.get('modelVersionId');
-    if (queryModelVersionId) {
-      form.setFieldValue('modelVersionId', queryModelVersionId);
-      setSelectedModelVersionId(queryModelVersionId);
-    }
-    if (!raw) return;
-    try {
-      const prefill = JSON.parse(raw);
-      form.setFieldsValue(prefill);
-      if (prefill.modelVersionId) {
-        setSelectedModelVersionId(prefill.modelVersionId);
-      }
-      if (prefill.datasetVersionId) {
-        setSelectedDatasetVersionId(prefill.datasetVersionId);
-      }
-    } catch {
-      // ignore
-    } finally {
-      localStorage.removeItem('taskCreatePrefill');
-    }
-  }, [form, searchParams]);
+    if (!isExperimentContinue) return;
+    fetchTaskDetail(experimentId, { skipErrorHandler: true })
+      .then((res: any) => {
+        const data = res?.data;
+        if (!data) return;
+        if (data.codeVersionId) {
+          setSelectedCodeVersionId(data.codeVersionId);
+          setSelectedCodeApprovalStatus('APPROVED');
+          form.setFieldValue('codeVersionId', data.codeVersionId);
+        }
+        if (data.datasetVersionId) {
+          setSelectedDatasetVersionId(data.datasetVersionId);
+          form.setFieldValue('datasetVersionId', data.datasetVersionId);
+        }
+        if (data.name) {
+          form.setFieldValue('name', `${data.name}-continue`);
+        }
+        if (data.hyperParams && typeof data.hyperParams === 'object') {
+          form.setFieldValue(
+            'hyperParams',
+            JSON.stringify(data.hyperParams, null, 2),
+          );
+        }
+      })
+      .catch(() => {
+        // ignore prefill failure
+      });
+  }, [experimentId, form, isExperimentContinue]);
 
-  const pageTitle = useMemo(
-    () => (isExperimentContinue ? '基于此版本继续训练' : '发起训练'),
-    [isExperimentContinue],
+  // Run training-check whenever selected code version changes.
+  useEffect(() => {
+    if (!selectedCodeVersionId) {
+      setCodeCheck({ loading: false });
+      return;
+    }
+    setCodeCheck({ loading: true });
+    checkCodeVersionForTraining(
+      selectedCodeVersionId,
+      CONSISTENCY_TRAINING_PROFILE,
+      { skipErrorHandler: true },
+    )
+      .then((res: any) => {
+        if (!res?.success) {
+          setCodeCheck({
+            loading: false,
+            passed: false,
+            reasons: [res?.errorMessage || '准入校验失败'],
+          });
+          return;
+        }
+        const d = res.data;
+        setCodeCheck({
+          loading: false,
+          passed: d.passed,
+          reasons: d.reasons || [],
+          approvalStatus: d.approvalStatus,
+        });
+        if (d.approvalStatus) {
+          setSelectedCodeApprovalStatus(d.approvalStatus);
+        }
+      })
+      .catch((error: any) => {
+        setCodeCheck({
+          loading: false,
+          passed: false,
+          reasons: [error?.message || '准入校验请求失败'],
+        });
+      });
+  }, [selectedCodeVersionId]);
+
+  const handleCodeVersionChange = (value: string) => {
+    setSelectedCodeVersionId(value);
+    setSelectedCodeApprovalStatus('APPROVED');
+    form.setFieldValue('codeVersionId', value);
+  };
+
+  const selectedCode = useMemo(
+    () =>
+      codeOptions.find((item) => item.codeVersionId === selectedCodeVersionId),
+    [codeOptions, selectedCodeVersionId],
   );
 
-  const handleNext = async (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
+  const validateStep = async (step: number) => {
+    if (step === 0) {
+      if (!selectedCodeVersionId) {
+        message.error('请选择代码模型版本');
+        throw new Error('missing code');
+      }
+      if (codeCheck.loading) {
+        message.warning('正在执行准入校验，请稍候');
+        throw new Error('check loading');
+      }
+      if (!codeCheck.passed) {
+        Modal.error({
+          title: '代码模型包校验未通过',
+          content: (
+            <div>
+              <p>不能进入下一步，原因：</p>
+              <ul style={{ paddingLeft: 20 }}>
+                {(codeCheck.reasons || []).map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          ),
+        });
+        throw new Error('check failed');
+      }
+      return;
+    }
+    if (step === 1) {
+      if (!selectedDatasetVersionId) {
+        message.error('请选择数据集版本');
+        throw new Error('missing dataset');
+      }
+      return;
+    }
+    if (step === 2) {
+      await form.validateFields(['trainingProfile', 'hyperParams']);
+    }
+  };
+
+  const handleNext = async () => {
     try {
-      await form.validateFields([...STEP_FIELD_NAMES[currentStep]]);
-      // 延迟切步，避免「下一步」与「提交训练」同位置时同一次点击误触提交
-      setTimeout(() => setCurrentStep((s) => s + 1), 0);
+      await validateStep(currentStep);
+      setCurrentStep((s) => s + 1);
     } catch {
-      // 校验失败时表单项会展示错误提示
+      // validated inside
     }
   };
 
   const handlePrev = () => setCurrentStep((s) => Math.max(0, s - 1));
 
-  const handleSubmit = async (values: any) => {
+  const handleSubmit = async () => {
+    if (!codeCheck.passed) {
+      Modal.error({
+        title: '代码模型包校验未通过',
+        content: (codeCheck.reasons || ['未知原因']).join('；'),
+      });
+      setCurrentStep(0);
+      return;
+    }
+    if (!selectedCodeVersionId || !selectedDatasetVersionId) {
+      message.error('请完成代码模型包与数据包选择');
+      return;
+    }
+    const values = form.getFieldsValue(true);
+    let hyperParams: Record<string, unknown> = {};
     try {
-      const allValues = form.getFieldsValue(true);
-      const modelVersionId =
-        values.modelVersionId ??
-        allValues.modelVersionId ??
-        selectedModelVersionId;
-      const datasetVersionId =
-        values.datasetVersionId ??
-        allValues.datasetVersionId ??
-        selectedDatasetVersionId;
-      const codeVersionId = values.codeVersionId ?? allValues.codeVersionId;
-      const hyperParamsRaw = values.hyperParams ?? allValues.hyperParams;
+      hyperParams = JSON.parse(values.hyperParams || '{}');
+    } catch {
+      message.error('hyperParams JSON 格式不正确');
+      setCurrentStep(2);
+      return;
+    }
 
-      if (!modelVersionId) {
-        message.error('请选择模型版本后再提交训练');
-        setCurrentStep(0);
-        return;
-      }
-      if (!datasetVersionId) {
-        message.error('请选择数据集版本后再提交训练');
-        setCurrentStep(1);
-        return;
-      }
-      if (!codeVersionId) {
-        message.error('请填写代码版本标识');
-        return;
-      }
-
-      const hyperParams = JSON.parse(hyperParamsRaw);
+    try {
       let data: API.TrainingExperimentVersion | undefined;
-
       if (isExperimentContinue) {
         const res: any = await createExperimentVersion(
           experimentId,
           {
-            name: values.name ?? allValues.name,
-            modelVersionId,
-            codeVersionId,
-            datasetVersionId,
+            name: values.name,
+            codeVersionId: selectedCodeVersionId,
+            datasetVersionId: selectedDatasetVersionId,
             hyperParams,
-            remark: values.remark ?? allValues.remark,
+            remark: values.remark,
           },
           { skipErrorHandler: true },
         );
@@ -169,17 +281,17 @@ const TaskCreate: React.FC = () => {
         }
         data = res?.data;
         message.success(
-          `已在实验 ${experimentId} 下创建 v${data?.versionNo ?? '?'}，experimentId 不变`,
+          `已在实验 ${experimentId} 下创建 v${data?.versionNo ?? '?'}`,
         );
       } else {
         const res: any = await createTask(
           {
-            name: values.name ?? allValues.name,
-            modelVersionId,
-            codeVersionId,
-            datasetVersionId,
+            name: values.name,
+            codeVersionId: selectedCodeVersionId,
+            datasetVersionId: selectedDatasetVersionId,
+            trainingProfile: CONSISTENCY_TRAINING_PROFILE,
             hyperParams,
-            remark: values.remark ?? allValues.remark,
+            remark: values.remark,
           },
           { skipErrorHandler: true },
         );
@@ -187,156 +299,67 @@ const TaskCreate: React.FC = () => {
           throw new Error(res?.errorMessage || '创建训练任务失败');
         }
         data = res?.data;
-        message.success(`创建成功，experimentId=${data?.experimentId || '-'}`);
+        message.success('K8s 训练任务已创建');
       }
-
       history.push(`/task/detail/${data?.id}`);
     } catch (error: any) {
       message.error(
-        error?.errorMessage || error?.message || '创建失败，请重试！',
+        error?.errorMessage || error?.message || '创建失败，请重试',
       );
     }
   };
 
-  /** 仅用户点击「提交训练」时调用，不用 Form 原生 onFinish，避免 Enter/同位置点击误提交 */
-  const handleSubmitClick = async (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    if (currentStep !== STEP_COUNT - 1) {
-      return;
-    }
-    try {
-      await form.validateFields([
-        'modelVersionId',
-        'datasetVersionId',
-        'codeVersionId',
-        'hyperParams',
-      ]);
-      const values = form.getFieldsValue(true);
-      await handleSubmit(values);
-    } catch {
-      // 校验失败时表单项会展示错误提示
-    }
-  };
-
-  const steps = [
-    {
-      title: '选择模型版本',
-      content: (
-        <Form.Item
-          name="modelVersionId"
-          label="模型版本"
-          rules={[{ required: true, message: '请选择模型版本' }]}
-        >
-          <Select
-            placeholder="请选择模型版本"
-            showSearch
-            loading={modelLoading}
-            optionFilterProp="label"
-            onChange={(value: string) => {
-              setSelectedModelVersionId(value);
-              form.setFieldValue('modelVersionId', value);
-            }}
-            options={modelOptions.map((m: any) => ({
-              value: m.id,
-              label: `${m.name} / ${m.version} / ${m.type} / ${m.id}`,
-            }))}
-          />
-        </Form.Item>
-      ),
-    },
-    {
-      title: '选择数据集版本',
-      content: (
-        <Form.Item
-          name="datasetVersionId"
-          label="数据集版本"
-          rules={[{ required: true, message: '请选择数据集版本' }]}
-        >
-          <Select
-            placeholder="请选择数据集版本"
-            showSearch
-            loading={datasetLoading}
-            optionFilterProp="label"
-            onChange={(value: string) => {
-              setSelectedDatasetVersionId(value);
-              form.setFieldValue('datasetVersionId', value);
-            }}
-            options={datasetOptions
-              .map((d: any) => {
-                const versionId = d.versionId;
-                if (!versionId) return null;
-                const desc = d.versionRemark?.trim();
-                const descPart = desc
-                  ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
-                  : '';
-                return {
-                  value: versionId,
-                  label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
-                };
-              })
-              .filter(Boolean)}
-          />
-        </Form.Item>
-      ),
-    },
-    {
-      title: '配置超参数与代码版本',
-      content: (
-        <>
-          <Form.Item name="name" label="实验名称（可选）">
-            <Input placeholder="例如：resnet50-cifar10-train" />
-          </Form.Item>
-          <Form.Item
-            name="codeVersionId"
-            label="代码版本标识"
-            rules={[
-              {
-                required: true,
-                message: '请输入代码版本标识（如 git commit / 镜像 tag）',
-              },
-            ]}
-          >
-            <Input placeholder="例如：git-commit-a1b2c3d" />
-          </Form.Item>
-          <Form.Item name="remark" label="备注（可选）">
-            <Input placeholder="例如：baseline" />
-          </Form.Item>
-          <Form.Item
-            name="hyperParams"
-            label="超参数（JSON）"
-            rules={[
-              { required: true, message: '请输入超参数 JSON' },
-              {
-                validator: async (_: any, value: string) => {
-                  try {
-                    JSON.parse(value || '');
-                    return Promise.resolve();
-                  } catch {
-                    return Promise.reject(new Error('JSON 格式不正确'));
-                  }
-                },
-              },
-            ]}
-          >
-            <Input.TextArea
-              rows={10}
-              placeholder='{"epochs": 5, "lr0": 0.05, "batch_size": 4, "imgsz": 640, "device": "cpu"}'
-            />
-          </Form.Item>
-        </>
-      ),
-    },
+  const stepItems = [
+    { title: '选择代码模型包' },
+    { title: '选择数据包' },
+    { title: '训练配置' },
+    { title: '提交 K8s 训练' },
   ];
+
+  const renderCheckAlert = () => {
+    if (!selectedCodeVersionId) return null;
+    if (codeCheck.loading) {
+      return (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="正在执行准入校验…"
+        />
+      );
+    }
+    if (codeCheck.passed) {
+      return (
+        <Alert
+          type="success"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="代码模型包校验通过"
+          description={`approvalStatus=${codeCheck.approvalStatus || 'APPROVED'}。准入校验只代表结构与固定入口检查通过，不代表代码安全审计。`}
+        />
+      );
+    }
+    return (
+      <Alert
+        type="error"
+        showIcon
+        style={{ marginTop: 12 }}
+        message="代码模型包校验未通过"
+        description={
+          <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+            {(codeCheck.reasons || []).map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        }
+      />
+    );
+  };
 
   return (
     <PageContainer
-      title={pageTitle}
-      subTitle={
-        isExperimentContinue
-          ? `在同一 experimentId（${experimentId}）下创建新版本，versionNo 自动递增`
-          : '将自动生成唯一 experimentId，并创建 versionNo=1'
-      }
+      title={isExperimentContinue ? '基于此版本继续训练' : '发起训练'}
+      subTitle="选择已有代码模型包与数据包，通过 Kubernetes 提交固定训练方案训练"
       onBack={() =>
         history.push(
           isExperimentContinue
@@ -351,49 +374,256 @@ const TaskCreate: React.FC = () => {
           showIcon
           style={{ marginBottom: 16 }}
           message="基于此版本继续训练"
-          description="已预填所选历史版本的模型、数据集、代码与超参数。提交后将在同一 experimentId 下创建下一版（versionNo 自动递增）；历史版本的超参数记录不会被修改。"
+          description="已尝试预填上一版本的代码模型版本、数据集与训练方案。提交后将在同一 experimentId 下创建下一版。"
         />
       )}
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="代码模型包（过渡概念）"
+        description="本页仅从已有资产中选择代码模型包与数据包；如需上传新包，请前往代码模型包管理页或数据集管理页。元数据仍使用 codeVersionId 追踪；当前训练方案不会自动加载 weights/ 下的权重文件。"
+      />
+
       <Form
         form={form}
         preserve
         layout="vertical"
         initialValues={{
-          codeVersionId: 'frontend-training-demo',
-          hyperParams: JSON.stringify(DEFAULT_HYPER_PARAMS, null, 2),
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && currentStep < STEP_COUNT - 1) {
-            e.preventDefault();
-          }
+          trainingProfile: CONSISTENCY_TRAINING_PROFILE,
+          hyperParams: JSON.stringify(FUSION_HYPER_PARAMS_DEFAULT, null, 2),
         }}
       >
         <Steps
           current={currentStep}
-          items={steps.map(({ title }) => ({ title }))}
+          items={stepItems}
           style={{ marginBottom: 24 }}
         />
-        <div style={{ minHeight: 200, marginBottom: 24 }}>
-          {steps.map((step, index) => (
-            <div
-              key={step.title}
-              style={{ display: index === currentStep ? 'block' : 'none' }}
+
+        <div style={{ minHeight: 240, marginBottom: 24 }}>
+          {currentStep === 0 && (
+            <>
+              <Form.Item
+                name="codeVersionId"
+                label="代码模型版本"
+                extra="仅展示已通过准入校验（APPROVED）且 READY 的代码模型版本"
+              >
+                <Select
+                  placeholder="请选择代码模型版本"
+                  showSearch
+                  loading={codeLoading}
+                  optionFilterProp="label"
+                  value={selectedCodeVersionId}
+                  onChange={handleCodeVersionChange}
+                  options={codeOptions.map((item: any) => ({
+                    value: item.codeVersionId,
+                    label: `${item.codeAssetName} / ${item.version} / ${item.codeVersionId}`,
+                  }))}
+                />
+              </Form.Item>
+              {selectedCode && (
+                <Descriptions
+                  size="small"
+                  column={1}
+                  bordered
+                  style={{ marginTop: 8 }}
+                >
+                  <Descriptions.Item label="codeVersionId">
+                    <Typography.Text copyable code>
+                      {selectedCode.codeVersionId}
+                    </Typography.Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="名称">
+                    {selectedCode.codeAssetName}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="版本">
+                    {selectedCode.version}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="训练方案">
+                    {PROFILE_DISPLAY_NAME}
+                    <Typography.Text
+                      type="secondary"
+                      style={{ marginLeft: 8, fontSize: 12 }}
+                    >
+                      （{selectedCode.trainingProfile}）
+                    </Typography.Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    <Space>
+                      <Tag
+                        color={
+                          selectedCode.status === 'READY'
+                            ? 'success'
+                            : 'default'
+                        }
+                      >
+                        {selectedCode.status}
+                      </Tag>
+                      <Tag
+                        color={
+                          selectedCodeApprovalStatus === 'APPROVED'
+                            ? 'success'
+                            : 'warning'
+                        }
+                      >
+                        {selectedCodeApprovalStatus || '-'}
+                      </Tag>
+                    </Space>
+                  </Descriptions.Item>
+                </Descriptions>
+              )}
+              {renderCheckAlert()}
+            </>
+          )}
+
+          {currentStep === 1 && (
+            <Form.Item
+              name="datasetVersionId"
+              label="数据集版本"
+              extra="当前训练方案需要 NLP 类型数据集（如 consistency_test_fusion_data_min.zip）"
             >
-              {step.content}
-            </div>
-          ))}
+              <Select
+                placeholder="请选择数据集版本"
+                showSearch
+                loading={datasetLoading}
+                optionFilterProp="label"
+                value={selectedDatasetVersionId}
+                onChange={(value: string) => {
+                  setSelectedDatasetVersionId(value);
+                  form.setFieldValue('datasetVersionId', value);
+                }}
+                options={filteredDatasetOptions.flatMap(
+                  (d: API.DatasetItem) => {
+                    const versionId = d.versionId;
+                    if (!versionId) return [];
+                    const desc = d.versionRemark?.trim();
+                    const descPart = desc
+                      ? ` · ${desc.length > 40 ? `${desc.slice(0, 40)}…` : desc}`
+                      : '';
+                    return [
+                      {
+                        value: versionId,
+                        label: `${d.name} / ${d.version || 'v?'} / ${d.type}${descPart} / ${versionId}`,
+                      },
+                    ];
+                  },
+                )}
+              />
+            </Form.Item>
+          )}
+
+          {currentStep === 2 && (
+            <>
+              <Form.Item name="name" label="任务名称（可选）">
+                <Input placeholder="例如：fusion-k8s-train" />
+              </Form.Item>
+              <Form.Item
+                name="trainingProfile"
+                label="训练方案"
+                rules={[{ required: true, message: '训练方案不能为空' }]}
+                extra={
+                  <span>
+                    当前唯一方案：{PROFILE_DISPLAY_NAME}
+                    <Typography.Text
+                      type="secondary"
+                      style={{ marginLeft: 8, fontSize: 12 }}
+                    >
+                      （内部 ID：{CONSISTENCY_TRAINING_PROFILE}）
+                    </Typography.Text>
+                  </span>
+                }
+              >
+                <Select
+                  disabled
+                  options={[
+                    {
+                      value: CONSISTENCY_TRAINING_PROFILE,
+                      label: PROFILE_DISPLAY_NAME,
+                    },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                name="hyperParams"
+                label="hyperParams（JSON）"
+                extra="仅记录/预留，不能覆盖 Worker 固定训练命令；代码模型包内 weights/ 不会被当前训练方案自动加载"
+                rules={[
+                  { required: true, message: '请输入 hyperParams JSON' },
+                  {
+                    validator: async (_: any, value: string) => {
+                      try {
+                        JSON.parse(value || '{}');
+                        return Promise.resolve();
+                      } catch {
+                        return Promise.reject(new Error('JSON 格式不正确'));
+                      }
+                    },
+                  },
+                ]}
+              >
+                <Input.TextArea rows={8} />
+              </Form.Item>
+              <Form.Item name="remark" label="备注（可选）">
+                <Input placeholder="例如：create-page k8s test" />
+              </Form.Item>
+            </>
+          )}
+
+          {currentStep === 3 && (
+            <>
+              {!codeCheck.passed && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="代码模型包校验未通过，不能用于训练"
+                  description={(codeCheck.reasons || []).join('；')}
+                />
+              )}
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="执行方式">
+                  Kubernetes Job
+                </Descriptions.Item>
+                <Descriptions.Item label="训练方案">
+                  {PROFILE_DISPLAY_NAME}
+                  <Typography.Text
+                    type="secondary"
+                    style={{ marginLeft: 8, fontSize: 12 }}
+                  >
+                    （{CONSISTENCY_TRAINING_PROFILE}）
+                  </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="codeVersionId">
+                  <Typography.Text copyable code>
+                    {selectedCodeVersionId || '-'}
+                  </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="datasetVersionId">
+                  <Typography.Text copyable code>
+                    {selectedDatasetVersionId || '-'}
+                  </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="hyperParams">
+                  <code>{form.getFieldValue('hyperParams') || '{}'}</code>
+                </Descriptions.Item>
+                <Descriptions.Item label="Worker 固定命令">
+                  <Typography.Paragraph copyable style={{ marginBottom: 0 }}>
+                    python scripts/training/train_fusion_baseline.py --data-dir
+                    data --model logreg --out-dir outputs/fusion_baseline_logreg
+                  </Typography.Paragraph>
+                </Descriptions.Item>
+              </Descriptions>
+            </>
+          )}
         </div>
-        <div>
+
+        <Space>
           {currentStep > 0 && (
-            <Button
-              htmlType="button"
-              onClick={handlePrev}
-              style={{ marginRight: 8 }}
-            >
+            <Button htmlType="button" onClick={handlePrev}>
               上一步
             </Button>
           )}
-          {currentStep < STEP_COUNT - 1 ? (
+          {currentStep < 3 ? (
             <Button type="primary" htmlType="button" onClick={handleNext}>
               下一步
             </Button>
@@ -401,12 +631,13 @@ const TaskCreate: React.FC = () => {
             <Button
               type="primary"
               htmlType="button"
-              onClick={handleSubmitClick}
+              disabled={!codeCheck.passed}
+              onClick={handleSubmit}
             >
-              {isExperimentContinue ? '提交并创建新版本' : '提交训练'}
+              {isExperimentContinue ? '提交并创建新版本' : '提交 K8s 训练'}
             </Button>
           )}
-        </div>
+        </Space>
       </Form>
     </PageContainer>
   );

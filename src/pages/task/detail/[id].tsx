@@ -27,13 +27,15 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
+  downloadObject,
   fetchTaskDetail,
   getExperimentVersion,
   listExperimentVersions,
+  triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
 import {
@@ -70,9 +72,10 @@ type TaskDetailInfo = API.TaskItem & {
   completeTime?: string;
   duration?: string;
   metrics?: Record<string, any>;
-  files?: { name: string; desc: string }[];
+  files?: { name: string; desc: string; objectName?: string }[];
   hyperParams?: Record<string, any>;
   codeVersionId?: string;
+  trainingProfile?: string;
 };
 
 function _shortId(v?: string, keep = 10) {
@@ -140,6 +143,119 @@ function mapVersionToTaskDetail(
     createTime: data.createTime || data.createdAt || '',
     runId: data.runId || (data as any).run_id,
   };
+}
+
+const CONSISTENCY_PROFILE = 'image_text_consistency_fusion_logreg';
+
+const CONSISTENCY_SPLITS = ['train', 'val', 'test'] as const;
+
+const CONSISTENCY_METRIC_KEYS = [
+  'accuracy',
+  'precision',
+  'recall',
+  'f1',
+  'roc_auc',
+] as const;
+
+const CONSISTENCY_ARTIFACT_FILES = [
+  'fusion_model.pkl',
+  'metrics.json',
+  'val_predictions.csv',
+  'test_predictions.csv',
+] as const;
+
+function isConsistencyProfileTask(metrics?: Record<string, any>) {
+  return metrics?.trainingProfile === CONSISTENCY_PROFILE;
+}
+
+function formatMetricValue(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toFixed(4);
+  }
+  return value != null && value !== '' ? String(value) : '-';
+}
+
+function buildConsistencyMetricsRows(metrics?: Record<string, any>) {
+  if (!metrics) return [];
+  return CONSISTENCY_SPLITS.map((split) => {
+    const label =
+      split === 'train' ? '训练集' : split === 'val' ? '验证集' : '测试集';
+    const row: Record<string, string | number> = {
+      key: split,
+      split: label,
+      rows: metrics[`${split}_rows`] ?? '-',
+      positive: metrics[`${split}_positive`] ?? '-',
+      negative: metrics[`${split}_negative`] ?? '-',
+    };
+    CONSISTENCY_METRIC_KEYS.forEach((metric) => {
+      row[metric] = formatMetricValue(metrics[`${split}_${metric}`]);
+    });
+    return row;
+  });
+}
+
+function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
+  const items: {
+    name: string;
+    desc: string;
+    objectName?: string;
+  }[] = [];
+  if (outputPath) {
+    const base = minioPathToObjectName(outputPath);
+    CONSISTENCY_ARTIFACT_FILES.forEach((fileName) => {
+      if (!base) return;
+      items.push({
+        name: fileName,
+        desc: `minio://${base}/${fileName}`,
+        objectName: `${base}/${fileName}`,
+      });
+    });
+  }
+  if (logPath) {
+    const logObj = logPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
+    items.push({ name: 'train.log', desc: logPath, objectName: logObj });
+  }
+  return items;
+}
+
+function minioPathToObjectName(path?: string): string | undefined {
+  if (!path) return undefined;
+  // Worker stores artifacts under the full key training-results/<id>/artifacts/<file>
+  // in the default MinIO bucket, so only strip the minio:// scheme (not path segments).
+  const normalized = path.replace(/^minio:\/\//, '').replace(/\/$/, '');
+  const parts = normalized.split('/');
+  // Be tolerant of minio://<bucket>/training-results/... style paths.
+  if (parts.length > 1 && parts[1] === 'training-results') {
+    return parts.slice(1).join('/');
+  }
+  return normalized;
+}
+
+function isLikelyDirectoryPath(path?: string) {
+  if (!path) return false;
+  const normalized = path.replace(/^minio:\/\//, '');
+  if (normalized.endsWith('/')) return true;
+  const basename = normalized.split('/').pop() || '';
+  return !basename.includes('.');
+}
+
+async function errorMessageFromDownloadError(error: any) {
+  const data = error?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      const json = JSON.parse(text);
+      return json?.errorMessage || json?.message || text;
+    } catch {
+      return '文件不存在或下载失败';
+    }
+  }
+  return (
+    error?.response?.data?.errorMessage ||
+    error?.response?.data?.message ||
+    error?.message ||
+    '文件不存在或下载失败'
+  );
 }
 
 const TaskDetail: React.FC = () => {
@@ -402,7 +518,7 @@ const TaskDetail: React.FC = () => {
       ),
     },
     {
-      title: '代码版本',
+      title: '代码模型版本',
       dataIndex: 'codeVersionId',
       ellipsis: true,
       render: (v: any) => (
@@ -457,7 +573,7 @@ const TaskDetail: React.FC = () => {
   return (
     <PageContainer
       title="训练结果详情"
-      subTitle="按 experimentId 追溯各次训练：代码版本、数据集版本与超参数为只读快照"
+      subTitle="按 experimentId 追溯各次训练：代码模型版本、数据集版本与超参数为只读快照"
       onBack={() => history.push('/task/list')}
       extra={
         <Space wrap>
@@ -498,7 +614,7 @@ const TaskDetail: React.FC = () => {
           message={`正在追溯历史版本 v${viewingVersionNo}`}
           description={
             <>
-              下方展示的是该次训练提交时的配置快照（代码版本、数据集版本、超参数），不会被修改。
+              下方展示的是该次训练提交时的配置快照（代码模型版本、数据集版本、超参数），不会被修改。
               {latestVersion ? (
                 <> 该实验最新版本为 v{latestVersion.versionNo}。</>
               ) : null}
@@ -563,9 +679,21 @@ const TaskDetail: React.FC = () => {
               {getDatasetVersionDisplayLabel(taskInfo.datasetVersionId)}
             </Tooltip>
           </Descriptions.Item>
-          <Descriptions.Item label="代码版本标识" span={2}>
+          <Descriptions.Item label="代码模型版本标识" span={2}>
             {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
           </Descriptions.Item>
+          {(taskInfo as TaskDetailInfo).trainingProfile && (
+            <Descriptions.Item label="训练方案" span={2}>
+              图文一致性基线训练
+              <Typography.Text
+                type="secondary"
+                style={{ marginLeft: 8, fontSize: 12 }}
+              >
+                （内部 ID：
+                <code>{(taskInfo as TaskDetailInfo).trainingProfile}</code>）
+              </Typography.Text>
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label="该版本超参数" span={2}>
             {renderHyperParamsCell((taskInfo as TaskDetailInfo).hyperParams)}
           </Descriptions.Item>
@@ -692,7 +820,7 @@ const TaskDetail: React.FC = () => {
               ),
             },
             {
-              title: '代码版本',
+              title: '代码模型版本',
               dataIndex: 'codeVersionId',
               ellipsis: true,
               render: (v: any) => (
@@ -856,11 +984,52 @@ const TaskDetail: React.FC = () => {
         </Space>
       </Card>
 
+      {isConsistencyProfileTask(taskInfo.metrics) && (
+        <Card
+          title="图文一致性训练指标"
+          extra={
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              训练方案：图文一致性基线训练（{CONSISTENCY_PROFILE}）
+            </span>
+          }
+          style={{ marginBottom: 16 }}
+        >
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="key"
+            dataSource={buildConsistencyMetricsRows(taskInfo.metrics)}
+            columns={[
+              { title: '数据集', dataIndex: 'split', width: 80 },
+              {
+                title: '样本数',
+                dataIndex: 'rows',
+                width: 80,
+                render: (_: unknown, record: any) => (
+                  <Tooltip
+                    title={`正样本 ${record.positive} / 负样本 ${record.negative}`}
+                  >
+                    <span>{record.rows}</span>
+                  </Tooltip>
+                ),
+              },
+              ...CONSISTENCY_METRIC_KEYS.map((metric) => ({
+                title: metric,
+                dataIndex: metric,
+                render: (v: string) => (
+                  <span style={{ fontFamily: 'monospace' }}>{v}</span>
+                ),
+              })),
+            ]}
+          />
+        </Card>
+      )}
+
       <Card
-        title="训练指标可视化"
+        title="训练指标可视化（MLflow）"
         extra={
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-            支持多种图表样式；训练中自动刷新 MLflow 指标
+            优先使用后端返回的 runId；无数据时可手动输入
           </span>
         }
         style={{ marginBottom: 16 }}
@@ -882,35 +1051,112 @@ const TaskDetail: React.FC = () => {
         />
       </Card>
 
-      {(taskInfo.files && taskInfo.files.length > 0) ||
-      taskInfo.logPath ||
-      taskInfo.outputPath ? (
-        <Card title="结果文件">
-          <List
-            dataSource={[
-              ...(taskInfo.files || []),
-              ...(taskInfo.logPath
-                ? [{ name: '训练日志', desc: taskInfo.logPath }]
-                : []),
-              ...(taskInfo.outputPath
-                ? [{ name: '训练输出', desc: taskInfo.outputPath }]
-                : []),
-            ]}
-            renderItem={(item) => (
-              <List.Item
-                actions={[
-                  <Button type="link" key="download">
+      <Card title="训练产物" style={{ marginBottom: 16 }}>
+        <TrainingArtifactsList
+          outputPath={taskInfo.outputPath}
+          logPath={taskInfo.logPath}
+          files={taskInfo.files}
+        />
+      </Card>
+    </PageContainer>
+  );
+};
+
+const TrainingArtifactsList: React.FC<{
+  outputPath?: string;
+  logPath?: string;
+  files?: { name: string; desc: string; objectName?: string }[];
+}> = ({ outputPath, logPath, files }) => {
+  const [downloadingKey, setDownloadingKey] = useState<string>();
+  const consistencyItems = useMemo(
+    () => buildConsistencyArtifactItems(outputPath, logPath),
+    [outputPath, logPath],
+  );
+  const legacyItems = useMemo(() => {
+    const list: { name: string; desc: string; objectName?: string }[] = [
+      ...(files || []),
+    ];
+    if (logPath) {
+      list.push({
+        name: 'train.log',
+        desc: logPath,
+        objectName: minioPathToObjectName(logPath),
+      });
+    }
+    if (outputPath) {
+      const outputObjectName = minioPathToObjectName(outputPath);
+      list.push({
+        name: '训练输出目录',
+        desc: outputPath,
+        objectName: isLikelyDirectoryPath(outputPath)
+          ? undefined
+          : outputObjectName,
+      });
+    }
+    return list;
+  }, [files, logPath, outputPath]);
+
+  const items = consistencyItems.length ? consistencyItems : legacyItems;
+
+  if (!items.length) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="暂无训练产物"
+        description="任务完成后，产物文件（fusion_model.pkl、metrics.json、predictions、train.log 等）将在此展示。"
+      />
+    );
+  }
+
+  return (
+    <List
+      size="small"
+      dataSource={items}
+      renderItem={(item) => (
+        <List.Item
+          actions={
+            item.objectName
+              ? [
+                  <Button
+                    type="link"
+                    key="download"
+                    loading={downloadingKey === item.objectName}
+                    onClick={async () => {
+                      if (!item.objectName) return;
+                      setDownloadingKey(item.objectName);
+                      try {
+                        const blob = await downloadObject(item.objectName);
+                        triggerBlobDownload(blob, item.name);
+                      } catch (error: any) {
+                        message.error(
+                          await errorMessageFromDownloadError(error),
+                        );
+                      } finally {
+                        setDownloadingKey(undefined);
+                      }
+                    }}
+                  >
                     下载
                   </Button>,
-                ]}
+                ]
+              : undefined
+          }
+        >
+          <List.Item.Meta
+            title={item.name}
+            description={
+              <Typography.Text
+                copyable
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
               >
-                <List.Item.Meta title={item.name} description={item.desc} />
-              </List.Item>
-            )}
+                {item.desc}
+              </Typography.Text>
+            }
           />
-        </Card>
-      ) : null}
-    </PageContainer>
+        </List.Item>
+      )}
+    />
   );
 };
 

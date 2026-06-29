@@ -72,6 +72,7 @@ function mapDatasetVersion(
     ...version,
     id: versionId,
     size: formatBytes(version.sizeBytes),
+    status: version.status,
   };
 }
 
@@ -82,8 +83,11 @@ function mapDatasetVersion(
  * 资产/版本管理、分片断点续传，以及 CV 图片文件夹直传打包。
  */
 
-/** 后端当前只允许两类任务类型，上传和训练创建都会做强校验。新增点云数据集类型 */
+/** 训练创建使用的任务类型（不含 MULTIMODAL） */
 export type TaskType = 'CV' | 'NLP' | 'POINT_CLOUD';
+
+/** 数据集模块类型（含多模态） */
+export type DatasetType = TaskType | 'MULTIMODAL';
 
 /** CV 子任务（module2-api-doc 1.3） */
 export type CvTaskType =
@@ -110,7 +114,7 @@ export type AnnotationFormat =
 export type DatasetAsset = {
   id: string;
   name: string;
-  type?: TaskType;
+  type?: DatasetType;
   remark?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -125,6 +129,7 @@ export type DatasetVersion = {
   storagePath?: string;
   sizeBytes?: number;
   remark?: string;
+  status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
   createdAt?: string;
 };
 
@@ -133,10 +138,11 @@ export type DatasetListItem = {
   id: string;
   assetId: string;
   name: string;
-  type: TaskType;
+  type: DatasetType;
   remark?: string;
   versionId?: string;
   version?: string;
+  versionStatus?: string;
   fileName?: string;
   storagePath?: string;
   size?: string;
@@ -146,28 +152,41 @@ export type DatasetListItem = {
   uploadTime?: string;
   createdAt?: string;
   updatedAt?: string;
+  latestDraftVersionId?: string | null;
+  importJobId?: string | null;
+  importStatus?: 'PENDING' | 'RUNNING' | 'FAILED' | string | null;
+  importProgress?: number | null;
+  importErrorMessage?: string | null;
 };
 
 /** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
 export type DatasetListQuery = {
-  type?: TaskType | 'ROBOT';
+  type?: DatasetType | 'ROBOT';
   keyword?: string;
   current?: number;
   pageSize?: number;
   page?: number;
 };
 
+/** 多模态 zip 样本分组方式（module2-api-doc §6.1） */
+export type MultimodalSampleGrouping = 'MANIFEST' | 'AUTO_DIRECTORY';
+
 /** 初始化数据集分片上传时需要提交的元信息。 */
 export type DatasetUploadInitParams = {
   fileName: string;
   fileSize: number;
   fileFingerprint?: string;
+  assetId?: string;
   datasetName: string;
   version?: string;
-  type: TaskType;
+  versionLabel?: string;
+  type: DatasetType;
   cvTaskType?: CvTaskType;
   annotationFormat?: AnnotationFormat;
   remark?: string;
+  description?: string;
+  sampleGrouping?: MultimodalSampleGrouping;
+  manifestPath?: string;
 };
 
 /**
@@ -196,15 +215,20 @@ export type DatasetUploadProgress = {
 export type DatasetUploadCompleteResult = {
   uploadId: string;
   id: string;
+  datasetVersionId?: string;
   assetId: string;
   name: string;
   version: string;
-  type: TaskType;
+  type: DatasetType;
   remark?: string;
   fileName: string;
-  storagePath: string;
-  sizeBytes: number;
+  storagePath?: string;
+  sizeBytes?: number;
   status: string;
+  uploadStatus?: string;
+  versionStatus?: 'DRAFT' | 'READY' | string;
+  importJobId?: string | null;
+  importStatus?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -476,15 +500,32 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     return { data: undefined };
   }
   let listLatestVersionId: string | undefined;
+  let importMeta: Pick<
+    DatasetListItem,
+    | 'latestDraftVersionId'
+    | 'importJobId'
+    | 'importStatus'
+    | 'importProgress'
+    | 'importErrorMessage'
+  > = {};
   try {
     const listRes = await getDatasetList(
-      { pageSize: 200, type: asset.type as TaskType },
+      { pageSize: 200, type: asset.type as DatasetType },
       options,
     );
     const row = (listRes?.data?.data ?? []).find(
       (item) => (item.assetId || item.id) === asset.id,
     );
     listLatestVersionId = row?.versionId;
+    if (row) {
+      importMeta = {
+        latestDraftVersionId: row.latestDraftVersionId,
+        importJobId: row.importJobId,
+        importStatus: row.importStatus,
+        importProgress: row.importProgress,
+        importErrorMessage: row.importErrorMessage,
+      };
+    }
   } catch {
     // 列表兜底失败不影响详情主流程
   }
@@ -519,7 +560,7 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     data: {
       id: asset.id,
       name: asset.name,
-      type: asset.type as TaskType,
+      type: asset.type as DatasetType,
       remark: asset.remark,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,
@@ -528,18 +569,29 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
       versions,
       /** 列表接口返回的最新版本 ID，供预览兜底 */
       defaultVersionId,
-    } as API.DatasetDetail & { defaultVersionId?: string },
+      ...importMeta,
+    } as API.DatasetDetail & {
+      defaultVersionId?: string;
+      latestDraftVersionId?: string | null;
+      importJobId?: string | null;
+      importStatus?: string | null;
+      importProgress?: number | null;
+      importErrorMessage?: string | null;
+    },
   };
 }
 
 export type UploadDatasetCompatParams = {
   name: string;
   files: File[];
-  type?: TaskType;
+  type?: DatasetType;
   version?: string;
+  assetId?: string;
   cvTaskType?: CvTaskType;
   annotationFormat?: AnnotationFormat;
   remark?: string;
+  sampleGrouping?: MultimodalSampleGrouping;
+  manifestPath?: string;
   /** 与 backend-api 一致；不传则按「文件名|大小|数据集名|版本|类型」自动生成稳定指纹 */
   fileFingerprint?: string;
   /** 单文件分片上传时进度 0–100 */
@@ -558,9 +610,12 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
     files,
     type = 'CV',
     version = 'v1',
+    assetId,
     cvTaskType,
     annotationFormat,
     remark,
+    sampleGrouping,
+    manifestPath,
     fileFingerprint,
     onProgress,
     onUploadSession,
@@ -573,20 +628,32 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
     const fp =
       fileFingerprint ||
       [file.name, String(file.size), name, version || 'v1', type].join('|');
-    const initRes = await datasetUploadInit(
-      {
-        fileName: file.name,
-        fileSize: file.size,
-        fileFingerprint: fp,
-        datasetName: name,
-        version,
-        type,
-        cvTaskType,
-        annotationFormat,
-        remark,
-      },
-      options,
-    );
+    const initBody: DatasetUploadInitParams = {
+      fileName: file.name,
+      fileSize: file.size,
+      fileFingerprint: fp,
+      datasetName: name,
+      version,
+      versionLabel: version,
+      type,
+      cvTaskType,
+      annotationFormat,
+      remark,
+      description: remark,
+    };
+    if (assetId) {
+      initBody.assetId = assetId;
+    }
+    if (type === 'MULTIMODAL') {
+      initBody.sampleGrouping = sampleGrouping ?? 'AUTO_DIRECTORY';
+      if (
+        initBody.sampleGrouping === 'MANIFEST' &&
+        manifestPath?.trim()
+      ) {
+        initBody.manifestPath = manifestPath.trim();
+      }
+    }
+    const initRes = await datasetUploadInit(initBody, options);
     const progress = initRes?.data;
     const uploadId = progress?.uploadId;
     if (!uploadId) {

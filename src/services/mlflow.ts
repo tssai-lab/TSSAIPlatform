@@ -13,7 +13,7 @@ interface MlflowMetricsResponse {
 }
 
 /** 与标准 key 对应的 MLflow 常见别名（如 Ultralytics / 自定义脚本） */
-export const MLFLOW_METRIC_ALIASES: Record<TrainingMlflowMetricKey, string[]> = {
+export const MLFLOW_METRIC_ALIASES: Partial<Record<TrainingMlflowMetricKey, string[]>> = {
   train_loss: ['loss', 'train/loss', 'metrics/train/loss', 'training_loss'],
   val_accuracy: ['accuracy', 'val/accuracy', 'metrics/accuracy', 'top1_acc'],
   val_mAP50: ['val/mAP50', 'mAP50', 'metrics/mAP50', 'val/mAP50(B)', 'mAP_0.5'],
