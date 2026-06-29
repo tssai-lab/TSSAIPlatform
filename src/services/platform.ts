@@ -68,8 +68,18 @@ export {
   type MultimodalSampleAnnotation,
 } from './datasetMultimodal';
 
-export { uploadCodeZip, approveCodeVersion, fetchApprovedCodeVersions } from './code';
-export type { CodeUploadResult, CodeVersionApprovalResult, CodeVersionListItem } from './code';
+export {
+  uploadCodeZip,
+  approveCodeVersion,
+  fetchApprovedCodeVersions,
+  checkCodeVersionForTraining,
+} from './code';
+export type {
+  CodeUploadResult,
+  CodeVersionApprovalResult,
+  CodeVersionListItem,
+  CodeVersionTrainingCheckResult,
+} from './code';
 
 export {
   fetchTaskList,

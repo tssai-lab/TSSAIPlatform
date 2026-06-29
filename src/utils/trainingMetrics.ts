@@ -5,6 +5,12 @@ export const METRIC_LABELS: Record<string, string> = {
   val_accuracy: '验证准确率',
   val_mAP50: '验证 mAP50',
   val_mAP50_95: '验证 mAP50-95',
+  loss: '损失',
+  accuracy: '准确率',
+  precision: '精确率',
+  recall: '召回率',
+  f1: 'F1',
+  roc_auc: 'ROC AUC',
 };
 
 /** 训练可视化标准 MLflow 指标（与训练脚本约定一致） */
@@ -13,6 +19,12 @@ export const TRAINING_MLFLOW_METRIC_KEYS = [
   'val_accuracy',
   'val_mAP50',
   'val_mAP50_95',
+  'loss',
+  'accuracy',
+  'precision',
+  'recall',
+  'f1',
+  'roc_auc',
 ] as const;
 
 export type TrainingMlflowMetricKey =
@@ -36,6 +48,11 @@ export const TASK_STATUS_POLL_INTERVAL_MS = 3000;
 const METRIC_SUMMARY_FIELDS: { keys: string[]; label: string }[] = [
   { keys: ['train_loss', 'loss'], label: '训练损失' },
   { keys: ['val_accuracy', 'accuracy'], label: '验证准确率' },
+  { keys: ['test_accuracy'], label: '测试准确率' },
+  { keys: ['test_precision', 'precision'], label: '测试精确率' },
+  { keys: ['test_recall', 'recall'], label: '测试召回率' },
+  { keys: ['test_f1', 'f1'], label: '测试 F1' },
+  { keys: ['test_roc_auc', 'roc_auc'], label: '测试 ROC AUC' },
   { keys: ['val_mAP50'], label: '验证 mAP50' },
   { keys: ['val_mAP50_95'], label: '验证 mAP50-95' },
   { keys: ['epochs', 'epoch'], label: '训练轮数' },

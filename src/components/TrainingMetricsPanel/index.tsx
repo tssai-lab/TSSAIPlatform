@@ -246,7 +246,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     return (
       <div style={{ padding: 24, background: '#fafafa', borderRadius: 8 }}>
         <div style={{ marginBottom: 12, color: '#8c8c8c' }}>
-          任务详情未包含 run_id，或后端尚未返回。可手动输入 MLflow Run ID
+          当前任务未关联 MLflow Run，或暂无可视化指标。可手动输入 MLflow Run ID
           进行联调：
         </div>
         <Input.Search

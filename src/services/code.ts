@@ -91,3 +91,34 @@ export async function approveCodeVersion(
     ...(options || {}),
   });
 }
+
+export type CodeVersionTrainingCheckResult = {
+  codeVersionId: string;
+  trainingProfile: string;
+  trainingProfileDisplayName?: string;
+  passed: boolean;
+  approvalStatus?: string;
+  reasons?: string[];
+  checkedAt?: string;
+};
+
+/** 代码模型包准入校验（通过后后端自动 APPROVED） */
+export async function checkCodeVersionForTraining(
+  codeVersionId: string,
+  trainingProfile: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success: boolean;
+    data: CodeVersionTrainingCheckResult;
+    errorMessage?: string;
+  }>(
+    `/code/version/${encodeURIComponent(
+      codeVersionId,
+    )}/training-check?trainingProfile=${encodeURIComponent(trainingProfile)}`,
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
+}

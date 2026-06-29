@@ -27,11 +27,12 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
   fetchTaskDetail,
+  getDownloadUrl,
   getExperimentVersion,
   listExperimentVersions,
   updateExperimentHyperParams,
@@ -193,20 +194,39 @@ function buildConsistencyMetricsRows(metrics?: Record<string, any>) {
 }
 
 function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
-  const items: { name: string; desc: string }[] = [];
+  const items: {
+    name: string;
+    desc: string;
+    objectName?: string;
+  }[] = [];
   if (outputPath) {
     const base = outputPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
+    const objectBase = base.replace(/^[^/]+\/[^/]+\//, '');
     CONSISTENCY_ARTIFACT_FILES.forEach((fileName) => {
       items.push({
         name: fileName,
         desc: `minio://${base}/${fileName}`,
+        objectName: `${objectBase}/${fileName}`,
       });
     });
   }
   if (logPath) {
-    items.push({ name: '训练日志', desc: logPath });
+    const logObj = logPath
+      .replace(/^minio:\/\//, '')
+      .replace(/^[^/]+\/[^/]+\//, '');
+    items.push({ name: 'train.log', desc: logPath, objectName: logObj });
   }
   return items;
+}
+
+function minioPathToObjectName(path?: string): string | undefined {
+  if (!path) return undefined;
+  const cleaned = path.replace(/^minio:\/\//, '').replace(/\/$/, '');
+  if (!cleaned.includes('/')) return cleaned;
+  // strip leading bucket/namespace segments (e.g. models/ or training-results/)
+  const parts = cleaned.split('/');
+  if (parts.length <= 2) return cleaned;
+  return parts.slice(2).join('/');
 }
 
 const TaskDetail: React.FC = () => {
@@ -630,8 +650,15 @@ const TaskDetail: React.FC = () => {
             {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
           </Descriptions.Item>
           {(taskInfo as TaskDetailInfo).trainingProfile && (
-            <Descriptions.Item label="训练 Profile" span={2}>
-              <code>{(taskInfo as TaskDetailInfo).trainingProfile}</code>
+            <Descriptions.Item label="训练方案" span={2}>
+              图文一致性基线训练
+              <Typography.Text
+                type="secondary"
+                style={{ marginLeft: 8, fontSize: 12 }}
+              >
+                （内部 ID：
+                <code>{(taskInfo as TaskDetailInfo).trainingProfile}</code>）
+              </Typography.Text>
             </Descriptions.Item>
           )}
           <Descriptions.Item label="该版本超参数" span={2}>
@@ -920,7 +947,7 @@ const TaskDetail: React.FC = () => {
           title="图文一致性训练指标"
           extra={
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              profile: {CONSISTENCY_PROFILE}
+              训练方案：图文一致性基线训练（{CONSISTENCY_PROFILE}）
             </span>
           }
           style={{ marginBottom: 16 }}
@@ -953,44 +980,14 @@ const TaskDetail: React.FC = () => {
               })),
             ]}
           />
-          {buildConsistencyArtifactItems(taskInfo.outputPath, taskInfo.logPath)
-            .length > 0 && (
-            <>
-              <Typography.Title level={5} style={{ marginTop: 16 }}>
-                产物文件
-              </Typography.Title>
-              <List
-                size="small"
-                dataSource={buildConsistencyArtifactItems(
-                  taskInfo.outputPath,
-                  taskInfo.logPath,
-                )}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      title={item.name}
-                      description={
-                        <Typography.Text
-                          copyable
-                          style={{ fontFamily: 'monospace', fontSize: 12 }}
-                        >
-                          {item.desc}
-                        </Typography.Text>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
-            </>
-          )}
         </Card>
       )}
 
       <Card
-        title="训练指标可视化"
+        title="训练指标可视化（MLflow）"
         extra={
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-            支持多种图表样式；训练中自动刷新 MLflow 指标
+            优先使用后端返回的 runId；无数据时可手动输入
           </span>
         }
         style={{ marginBottom: 16 }}
@@ -1012,35 +1009,97 @@ const TaskDetail: React.FC = () => {
         />
       </Card>
 
-      {(taskInfo.files && taskInfo.files.length > 0) ||
-      taskInfo.logPath ||
-      taskInfo.outputPath ? (
-        <Card title="结果文件">
-          <List
-            dataSource={[
-              ...(taskInfo.files || []),
-              ...(taskInfo.logPath
-                ? [{ name: '训练日志', desc: taskInfo.logPath }]
-                : []),
-              ...(taskInfo.outputPath
-                ? [{ name: '训练输出', desc: taskInfo.outputPath }]
-                : []),
-            ]}
-            renderItem={(item) => (
-              <List.Item
-                actions={[
-                  <Button type="link" key="download">
+      <Card title="训练产物" style={{ marginBottom: 16 }}>
+        <TrainingArtifactsList
+          outputPath={taskInfo.outputPath}
+          logPath={taskInfo.logPath}
+          files={taskInfo.files}
+        />
+      </Card>
+    </PageContainer>
+  );
+};
+
+const TrainingArtifactsList: React.FC<{
+  outputPath?: string;
+  logPath?: string;
+  files?: { name: string; desc: string }[];
+}> = ({ outputPath, logPath, files }) => {
+  const consistencyItems = useMemo(
+    () => buildConsistencyArtifactItems(outputPath, logPath),
+    [outputPath, logPath],
+  );
+  const legacyItems = useMemo(() => {
+    const list: { name: string; desc: string; objectName?: string }[] = [
+      ...(files || []),
+    ];
+    if (logPath) {
+      list.push({
+        name: 'train.log',
+        desc: logPath,
+        objectName: minioPathToObjectName(logPath),
+      });
+    }
+    if (outputPath) {
+      list.push({
+        name: '训练输出目录',
+        desc: outputPath,
+        objectName: minioPathToObjectName(outputPath),
+      });
+    }
+    return list;
+  }, [files, logPath, outputPath]);
+
+  const items = consistencyItems.length ? consistencyItems : legacyItems;
+
+  if (!items.length) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="暂无训练产物"
+        description="任务完成后，产物文件（fusion_model.pkl、metrics.json、predictions、train.log 等）将在此展示。"
+      />
+    );
+  }
+
+  return (
+    <List
+      size="small"
+      dataSource={items}
+      renderItem={(item) => (
+        <List.Item
+          actions={
+            item.objectName
+              ? [
+                  <Button
+                    type="link"
+                    key="download"
+                    onClick={() => {
+                      if (!item.objectName) return;
+                      window.open(getDownloadUrl(item.objectName), '_blank');
+                    }}
+                  >
                     下载
                   </Button>,
-                ]}
+                ]
+              : undefined
+          }
+        >
+          <List.Item.Meta
+            title={item.name}
+            description={
+              <Typography.Text
+                copyable
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
               >
-                <List.Item.Meta title={item.name} description={item.desc} />
-              </List.Item>
-            )}
+                {item.desc}
+              </Typography.Text>
+            }
           />
-        </Card>
-      ) : null}
-    </PageContainer>
+        </List.Item>
+      )}
+    />
   );
 };
 
