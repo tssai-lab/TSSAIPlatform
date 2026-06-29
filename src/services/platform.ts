@@ -115,7 +115,7 @@ export {
   cancelResourceQueueTask,
 } from './resourceMonitor';
 
-export { fileHealth, uploadObject, getDownloadUrl, deleteObject } from './files';
+export { fileHealth, uploadObject, getDownloadUrl, downloadObject, deleteObject } from './files';
 
 export {
   getPointCloudPreview,

@@ -53,6 +53,16 @@ export function getDownloadUrl(objectName: string) {
   return `/api/files/download?objectName=${encodeURIComponent(objectName)}`;
 }
 
+export async function downloadObject(objectName: string, options?: { [key: string]: any }) {
+  return request<Blob>('/files/download', {
+    method: 'GET',
+    params: { objectName },
+    responseType: 'blob',
+    skipErrorHandler: true,
+    ...(options || {}),
+  });
+}
+
 /**
  * 删除 MinIO 中的单个对象。
  *

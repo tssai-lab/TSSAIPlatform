@@ -31,10 +31,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
+  downloadObject,
   fetchTaskDetail,
-  getDownloadUrl,
   getExperimentVersion,
   listExperimentVersions,
+  triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
 import {
@@ -71,7 +72,7 @@ type TaskDetailInfo = API.TaskItem & {
   completeTime?: string;
   duration?: string;
   metrics?: Record<string, any>;
-  files?: { name: string; desc: string }[];
+  files?: { name: string; desc: string; objectName?: string }[];
   hyperParams?: Record<string, any>;
   codeVersionId?: string;
   trainingProfile?: string;
@@ -200,20 +201,18 @@ function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
     objectName?: string;
   }[] = [];
   if (outputPath) {
-    const base = outputPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
-    const objectBase = base.replace(/^[^/]+\/[^/]+\//, '');
+    const base = minioPathToObjectName(outputPath);
     CONSISTENCY_ARTIFACT_FILES.forEach((fileName) => {
+      if (!base) return;
       items.push({
         name: fileName,
         desc: `minio://${base}/${fileName}`,
-        objectName: `${objectBase}/${fileName}`,
+        objectName: `${base}/${fileName}`,
       });
     });
   }
   if (logPath) {
-    const logObj = logPath
-      .replace(/^minio:\/\//, '')
-      .replace(/^[^/]+\/[^/]+\//, '');
+    const logObj = logPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
     items.push({ name: 'train.log', desc: logPath, objectName: logObj });
   }
   return items;
@@ -221,12 +220,42 @@ function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
 
 function minioPathToObjectName(path?: string): string | undefined {
   if (!path) return undefined;
-  const cleaned = path.replace(/^minio:\/\//, '').replace(/\/$/, '');
-  if (!cleaned.includes('/')) return cleaned;
-  // strip leading bucket/namespace segments (e.g. models/ or training-results/)
-  const parts = cleaned.split('/');
-  if (parts.length <= 2) return cleaned;
-  return parts.slice(2).join('/');
+  // Worker stores artifacts under the full key training-results/<id>/artifacts/<file>
+  // in the default MinIO bucket, so only strip the minio:// scheme (not path segments).
+  const normalized = path.replace(/^minio:\/\//, '').replace(/\/$/, '');
+  const parts = normalized.split('/');
+  // Be tolerant of minio://<bucket>/training-results/... style paths.
+  if (parts.length > 1 && parts[1] === 'training-results') {
+    return parts.slice(1).join('/');
+  }
+  return normalized;
+}
+
+function isLikelyDirectoryPath(path?: string) {
+  if (!path) return false;
+  const normalized = path.replace(/^minio:\/\//, '');
+  if (normalized.endsWith('/')) return true;
+  const basename = normalized.split('/').pop() || '';
+  return !basename.includes('.');
+}
+
+async function errorMessageFromDownloadError(error: any) {
+  const data = error?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      const json = JSON.parse(text);
+      return json?.errorMessage || json?.message || text;
+    } catch {
+      return '文件不存在或下载失败';
+    }
+  }
+  return (
+    error?.response?.data?.errorMessage ||
+    error?.response?.data?.message ||
+    error?.message ||
+    '文件不存在或下载失败'
+  );
 }
 
 const TaskDetail: React.FC = () => {
@@ -1023,8 +1052,9 @@ const TaskDetail: React.FC = () => {
 const TrainingArtifactsList: React.FC<{
   outputPath?: string;
   logPath?: string;
-  files?: { name: string; desc: string }[];
+  files?: { name: string; desc: string; objectName?: string }[];
 }> = ({ outputPath, logPath, files }) => {
+  const [downloadingKey, setDownloadingKey] = useState<string>();
   const consistencyItems = useMemo(
     () => buildConsistencyArtifactItems(outputPath, logPath),
     [outputPath, logPath],
@@ -1041,10 +1071,13 @@ const TrainingArtifactsList: React.FC<{
       });
     }
     if (outputPath) {
+      const outputObjectName = minioPathToObjectName(outputPath);
       list.push({
         name: '训练输出目录',
         desc: outputPath,
-        objectName: minioPathToObjectName(outputPath),
+        objectName: isLikelyDirectoryPath(outputPath)
+          ? undefined
+          : outputObjectName,
       });
     }
     return list;
@@ -1075,9 +1108,20 @@ const TrainingArtifactsList: React.FC<{
                   <Button
                     type="link"
                     key="download"
-                    onClick={() => {
+                    loading={downloadingKey === item.objectName}
+                    onClick={async () => {
                       if (!item.objectName) return;
-                      window.open(getDownloadUrl(item.objectName), '_blank');
+                      setDownloadingKey(item.objectName);
+                      try {
+                        const blob = await downloadObject(item.objectName);
+                        triggerBlobDownload(blob, item.name);
+                      } catch (error: any) {
+                        message.error(
+                          await errorMessageFromDownloadError(error),
+                        );
+                      } finally {
+                        setDownloadingKey(undefined);
+                      }
                     }}
                   >
                     下载
