@@ -54,7 +54,7 @@ public class TrainingKubernetesProperties {
     private int jobActiveDeadlineSeconds = 3600;
 
     /** Job 完成后保留时间（秒） */
-    private int jobTtlSecondsAfterFinished = 86400;
+    private int jobTtlSecondsAfterFinished = 3600;
 
     /** Worker 回调内部 token（通过环境变量 TRAINING_K8S_INTERNAL_CALLBACK_TOKEN 覆盖） */
     private String internalCallbackToken = "tss-internal-callback-dev";

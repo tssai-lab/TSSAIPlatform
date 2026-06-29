@@ -10,7 +10,7 @@ spec:
     limits.cpu: "4"
     limits.memory: 12Gi
     pods: "10"
-    count/jobs.batch: "20"
+    count/jobs.batch: "50"
     count/secrets: "20"
     count/configmaps: "20"
 ---
