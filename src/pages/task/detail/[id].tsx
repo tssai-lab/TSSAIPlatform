@@ -518,7 +518,7 @@ const TaskDetail: React.FC = () => {
       ),
     },
     {
-      title: '代码模型版本',
+      title: '训练代码版本',
       dataIndex: 'codeVersionId',
       ellipsis: true,
       render: (v: any) => (
@@ -569,7 +569,7 @@ const TaskDetail: React.FC = () => {
   return (
     <PageContainer
       title="训练结果详情"
-      subTitle="按 experimentId 追溯各次训练：代码模型版本、数据集版本与超参数为只读快照"
+      subTitle="按 experimentId 追溯各次训练：基础模型权重、训练代码、数据集版本与超参数为只读快照"
       onBack={() => history.push('/task/list')}
       extra={
         <Space wrap>
@@ -610,7 +610,7 @@ const TaskDetail: React.FC = () => {
           message={`正在追溯历史版本 v${viewingVersionNo}`}
           description={
             <>
-              下方展示的是该次训练提交时的配置快照（代码模型版本、数据集版本、超参数），不会被修改。
+              下方展示的是该次训练提交时的配置快照（基础模型权重、训练代码、数据集版本、超参数），不会被修改。
               {latestVersion ? (
                 <> 该实验最新版本为 v{latestVersion.versionNo}。</>
               ) : null}
@@ -665,9 +665,18 @@ const TaskDetail: React.FC = () => {
               )}
             </Space>
           </Descriptions.Item>
-          <Descriptions.Item label="模型版本">
-            <Tooltip title={taskInfo.modelVersionId || ''}>
-              {getModelVersionDisplayLabel(taskInfo.modelVersionId)}
+          <Descriptions.Item label="基础模型权重">
+            <Tooltip
+              title={
+                (taskInfo as TaskDetailInfo).baseModelVersionId ||
+                taskInfo.modelVersionId ||
+                ''
+              }
+            >
+              {getModelVersionDisplayLabel(
+                (taskInfo as TaskDetailInfo).baseModelVersionId ||
+                  taskInfo.modelVersionId,
+              )}
             </Tooltip>
           </Descriptions.Item>
           <Descriptions.Item label="数据集版本">
@@ -675,7 +684,7 @@ const TaskDetail: React.FC = () => {
               {getDatasetVersionDisplayLabel(taskInfo.datasetVersionId)}
             </Tooltip>
           </Descriptions.Item>
-          <Descriptions.Item label="代码模型版本标识" span={2}>
+          <Descriptions.Item label="训练代码版本" span={2}>
             {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
           </Descriptions.Item>
           {(taskInfo as TaskDetailInfo).trainingProfile && (
@@ -816,7 +825,7 @@ const TaskDetail: React.FC = () => {
               ),
             },
             {
-              title: '代码模型版本',
+              title: '训练代码版本',
               dataIndex: 'codeVersionId',
               ellipsis: true,
               render: (v: any) => (

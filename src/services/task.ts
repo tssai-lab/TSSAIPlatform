@@ -50,6 +50,7 @@ export const CONSISTENCY_TRAINING_PROFILE = CONSISTENCY_DEMO_PARAMS.trainingProf
 export async function createTask(
   params: {
     name?: string;
+    baseModelVersionId?: string;
     modelVersionId?: string;
     codeVersionId: string;
     datasetVersionId: string;
@@ -146,6 +147,7 @@ export async function createExperimentVersion(
   experimentId: string,
   body: {
     name?: string;
+    baseModelVersionId?: string;
     modelVersionId?: string;
     codeVersionId?: string;
     datasetVersionId?: string;

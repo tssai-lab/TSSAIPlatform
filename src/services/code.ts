@@ -17,7 +17,7 @@ export type CodeUploadResult = {
   approvalStatus: string;
 };
 
-/** 上传代码模型包 ZIP，创建 code_asset + code_version */
+/** 上传训练代码 ZIP，创建 code_asset + code_version */
 export async function uploadCodeZip(
   params: {
     file: File;
@@ -66,7 +66,7 @@ export type CodeVersionListItem = {
   status: string;
 };
 
-/** 已审核、可用于 K8s 训练的代码模型版本列表 */
+/** 已审核、可用于 K8s 训练的训练代码版本列表 */
 export async function fetchApprovedCodeVersions(options?: { [key: string]: any }) {
   return request<{ success: boolean; data: CodeVersionListItem[]; errorMessage?: string }>(
     '/code/version/list',
@@ -77,7 +77,7 @@ export async function fetchApprovedCodeVersions(options?: { [key: string]: any }
   );
 }
 
-/** 管理员审核通过代码模型版本 */
+/** 管理员审核通过训练代码版本 */
 export async function approveCodeVersion(
   codeVersionId: string,
   options?: { [key: string]: any },

@@ -152,6 +152,7 @@ declare namespace API {
     versionNo: number;
     name?: string;
     modelVersionId?: string;
+    baseModelVersionId?: string;
     codeVersionId: string;
     trainingProfile?: string;
     datasetVersionId: string;
