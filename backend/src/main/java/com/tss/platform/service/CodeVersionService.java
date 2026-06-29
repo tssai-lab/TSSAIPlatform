@@ -49,9 +49,9 @@ public class CodeVersionService {
     @Transactional
     public CodeVersionApprovalDto approve(String codeVersionId) {
         CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + codeVersionId));
+                .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + codeVersionId));
         if (!"READY".equals(codeVersion.getStatus())) {
-            throw new IllegalArgumentException("代码模型版本必须为 READY 状态才能审核");
+            throw new IllegalArgumentException("训练代码版本必须为 READY 状态才能审核");
         }
         codeVersion.setApprovalStatus(CodeApprovalStatus.APPROVED);
         codeVersionRepo.save(codeVersion);
@@ -100,15 +100,15 @@ public class CodeVersionService {
     @Transactional(readOnly = true)
     public void requireApprovedForTraining(String codeVersionId) {
         CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + codeVersionId));
+                .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + codeVersionId));
         if (!"READY".equals(codeVersion.getStatus())) {
-            throw new IllegalArgumentException("代码模型版本必须为 READY 状态");
+            throw new IllegalArgumentException("训练代码版本必须为 READY 状态");
         }
         if (codeVersion.getStoragePath() == null || codeVersion.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("代码模型版本缺少 storagePath");
+            throw new IllegalArgumentException("训练代码版本缺少 storagePath");
         }
         if (!CodeApprovalStatus.isApproved(codeVersion.getApprovalStatus())) {
-            throw new IllegalArgumentException("代码模型版本未通过准入校验，不能用于训练");
+            throw new IllegalArgumentException("训练代码版本未通过准入校验，不能用于训练");
         }
         CodeAsset codeAsset = codeAssetRepo.findByIdAndDeletedFalse(codeVersion.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("代码资产不存在: " + codeVersion.getAssetId()));
@@ -132,14 +132,14 @@ public class CodeVersionService {
         CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
                 .orElse(null);
         if (codeVersion == null) {
-            reasons.add("代码模型版本不存在: " + codeVersionId);
+            reasons.add("训练代码版本不存在: " + codeVersionId);
             return buildCheckDto(codeVersionId, profile, false, null, reasons, checkedAt);
         }
         if (!"READY".equals(codeVersion.getStatus())) {
-            reasons.add("代码模型版本必须为 READY 状态");
+            reasons.add("训练代码版本必须为 READY 状态");
         }
         if (codeVersion.getStoragePath() == null || codeVersion.getStoragePath().isBlank()) {
-            reasons.add("代码模型版本缺少 storagePath");
+            reasons.add("训练代码版本缺少 storagePath");
         }
         if (!TrainingProfileRegistry.isSupported(profile)) {
             reasons.add("不支持的训练方案: " + profile);
@@ -165,7 +165,7 @@ public class CodeVersionService {
                         return;
                     }
                     if (!zipEntries.contains(required)) {
-                        reasons.add("代码模型包缺少固定入口脚本: " + required);
+                        reasons.add("训练代码包缺少固定入口脚本: " + required);
                     }
                 });
             } catch (Exception e) {

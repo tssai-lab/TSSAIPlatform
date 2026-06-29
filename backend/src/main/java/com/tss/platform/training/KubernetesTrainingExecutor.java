@@ -3,9 +3,11 @@ package com.tss.platform.training;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     private final TrainingExperimentVersionRepository repository;
     private final CodeVersionRepository codeVersionRepository;
     private final DatasetVersionRepository datasetVersionRepository;
+    private final ModelVersionRepository modelVersionRepository;
     private final KubernetesJobManifestBuilder manifestBuilder;
     private final ShellCommandRunner shellCommandRunner;
     private final TransactionTemplate transactionTemplate;
@@ -48,6 +51,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingExperimentVersionRepository repository,
             CodeVersionRepository codeVersionRepository,
             DatasetVersionRepository datasetVersionRepository,
+            ModelVersionRepository modelVersionRepository,
             KubernetesJobManifestBuilder manifestBuilder,
             ShellCommandRunner shellCommandRunner,
             TransactionTemplate transactionTemplate
@@ -57,6 +61,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
         this.repository = repository;
         this.codeVersionRepository = codeVersionRepository;
         this.datasetVersionRepository = datasetVersionRepository;
+        this.modelVersionRepository = modelVersionRepository;
         this.manifestBuilder = manifestBuilder;
         this.shellCommandRunner = shellCommandRunner;
         this.transactionTemplate = transactionTemplate;
@@ -112,12 +117,18 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingProfileRegistry.requireSupported(task.getTrainingProfile());
 
             CodeVersion codeVersion = codeVersionRepository.findByIdAndDeletedFalse(task.getCodeVersionId())
-                    .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + task.getCodeVersionId()));
+                    .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + task.getCodeVersionId()));
             DatasetVersion datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
                     .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在"));
+            if (task.getModelVersionId() == null || task.getModelVersionId().isBlank()) {
+                throw new IllegalStateException("基础模型权重版本不能为空");
+            }
+            ModelVersion modelVersion = modelVersionRepository.findByIdAndDeletedFalse(task.getModelVersionId())
+                    .orElseThrow(() -> new IllegalArgumentException("基础模型权重版本不存在: " + task.getModelVersionId()));
 
             String yaml = manifestBuilder.buildJobYaml(
                     task,
+                    modelVersion,
                     codeVersion,
                     datasetVersion,
                     minioAccessKey,

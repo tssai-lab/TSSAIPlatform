@@ -25,6 +25,7 @@ except ImportError:
 # 不依赖 mlflow Python SDK，兼容平台 lite MLflow server（仅实现 REST 子集，无 artifact 存储）。
 
 WORKSPACE = Path("/workspace/job")
+MODEL_DIR = WORKSPACE / "model"
 
 PROFILES = {
     "image_text_consistency_fusion_logreg": {
@@ -314,6 +315,39 @@ def safe_extract_zip(data: bytes, dest: Path) -> None:
             log(f"解压: {name}")
 
 
+def safe_extract_model_zip(data: bytes, dest: Path) -> None:
+    """基础模型权重 ZIP：仅解压到 model/，不执行其中任何文件。"""
+    blocked_ext = {".py", ".sh", ".bash", ".exe", ".bat", ".cmd", ".dll", ".so", ".jar"}
+    allowed_ext = {
+        ".pt", ".pth", ".onnx", ".pkl", ".joblib",
+        ".yaml", ".yml", ".json", ".txt", ".md",
+    }
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        found_file = False
+        for member in zf.infolist():
+            name = normalize_zip_name(member.filename)
+            if not is_safe_zip_member(name):
+                raise ValueError(f"拒绝解压不安全路径: {name}")
+            if name.endswith("/"):
+                continue
+            found_file = True
+            ext = Path(name).suffix.lower()
+            if not ext:
+                raise ValueError(f"模型权重包包含无扩展名文件: {name}")
+            if ext in blocked_ext:
+                raise ValueError(f"模型权重包不允许脚本或可执行文件: {name}")
+            if ext not in allowed_ext:
+                raise ValueError(f"模型权重包包含不支持的文件类型: {name}")
+            target = dest / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member, "r") as src, target.open("wb") as dst:
+                dst.write(src.read())
+            log(f"解压模型权重: {name}")
+        if not found_file:
+            raise ValueError("模型权重 zip 不能为空")
+
+
 def upload_file(client: Minio, bucket: str, object_name: str, file_path: Path, content_type: str) -> None:
     log(f"上传产物: {object_name}")
     client.fput_object(bucket, object_name, str(file_path), content_type=content_type)
@@ -345,11 +379,26 @@ def run_profile_training(
 
     code_path = env("CODE_STORAGE_PATH")
     dataset_path = env("DATASET_STORAGE_PATH")
+    model_path = env("MODEL_STORAGE_PATH")
+    base_model_version_id = env("BASE_MODEL_VERSION_ID")
     if not code_path or not dataset_path:
         raise ValueError("CODE_STORAGE_PATH 与 DATASET_STORAGE_PATH 均不能为空")
+    if not model_path:
+        raise ValueError("MODEL_STORAGE_PATH 不能为空")
 
     callback("running", 10)
     WORKSPACE.mkdir(parents=True, exist_ok=True)
+
+    model_bytes = download_object(client, bucket, model_path)
+    callback("running", 15)
+    safe_extract_model_zip(model_bytes, MODEL_DIR)
+    log(
+        f"已下载基础模型权重 baseModelVersionId={base_model_version_id or env('MODEL_VERSION_ID')} "
+        f"到 {MODEL_DIR}"
+    )
+    log(
+        "当前训练方案 image_text_consistency_fusion_logreg 不自动加载基础模型权重"
+    )
 
     code_bytes = download_object(client, bucket, code_path)
     dataset_bytes = download_object(client, bucket, dataset_path)
@@ -371,6 +420,8 @@ def run_profile_training(
         "trainingProfileDisplayName": PROFILE_DISPLAY_NAMES.get(profile_name, profile_name),
         "codeVersionId": env("CODE_VERSION_ID"),
         "datasetVersionId": env("DATASET_VERSION_ID"),
+        "baseModelVersionId": env("BASE_MODEL_VERSION_ID") or env("MODEL_VERSION_ID"),
+        "modelStoragePath": model_path,
         "codeStoragePath": code_path,
         "datasetStoragePath": dataset_path,
         "hyperParams": env("HYPER_PARAMS_JSON"),

@@ -99,15 +99,27 @@ public class TrainingExperimentService {
         Object initialParams = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
 
         if (trainingProfile != null) {
+            String baseModelVersionId = resolveBaseModelVersionId(
+                    req.getBaseModelVersionId(),
+                    req.getModelVersionId()
+            );
+            requireText(baseModelVersionId, "baseModelVersionId 不能为空");
             codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
             TrainingProfileRegistry.requireSupported(trainingProfile);
+            validateBaseModelVersion(baseModelVersionId);
             validateProfileTraining(req.getCodeVersionId(), req.getDatasetVersionId(), trainingProfile);
             if (initialParams == null) {
                 initialParams = Map.of();
             }
+            req.setModelVersionId(baseModelVersionId);
         } else {
-            requireText(req.getModelVersionId(), "modelVersionId 不能为空");
-            validateModelDatasetMatch(req.getModelVersionId(), req.getDatasetVersionId());
+            String modelVersionId = resolveBaseModelVersionId(
+                    req.getBaseModelVersionId(),
+                    req.getModelVersionId()
+            );
+            requireText(modelVersionId, "modelVersionId 不能为空");
+            validateModelDatasetMatch(modelVersionId, req.getDatasetVersionId());
+            req.setModelVersionId(modelVersionId);
             if (initialParams == null) {
                 throw new IllegalArgumentException("hyperParams 不能为空");
             }
@@ -148,15 +160,22 @@ public class TrainingExperimentService {
         version.setExperimentId(experimentId);
         version.setVersionNo(latest.getVersionNo() + 1);
         version.setName(defaultName(req.getName(), latest.getName()));
-        version.setModelVersionId(firstText(req.getModelVersionId(), latest.getModelVersionId()));
+        String resolvedModelVersionId = resolveBaseModelVersionId(
+                req.getBaseModelVersionId(),
+                firstText(req.getModelVersionId(), latest.getModelVersionId())
+        );
+        version.setModelVersionId(resolvedModelVersionId);
         version.setCodeVersionId(firstRequiredText(req.getCodeVersionId(), latest.getCodeVersionId(), "codeVersionId 不能为空"));
         version.setDatasetVersionId(firstRequiredText(req.getDatasetVersionId(), latest.getDatasetVersionId(), "datasetVersionId 不能为空"));
         version.setTrainingProfile(latest.getTrainingProfile());
         if (latest.getTrainingProfile() != null && !latest.getTrainingProfile().isBlank()) {
+            requireText(resolvedModelVersionId, "baseModelVersionId 不能为空");
+            validateBaseModelVersion(resolvedModelVersionId);
             codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
             validateProfileTraining(version.getCodeVersionId(), version.getDatasetVersionId(), latest.getTrainingProfile());
         } else {
-            validateModelDatasetMatch(version.getModelVersionId(), version.getDatasetVersionId());
+            requireText(resolvedModelVersionId, "modelVersionId 不能为空");
+            validateModelDatasetMatch(resolvedModelVersionId, version.getDatasetVersionId());
         }
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
@@ -334,6 +353,7 @@ public class TrainingExperimentService {
         dto.setVersionNo(version.getVersionNo());
         dto.setName(version.getName());
         dto.setModelVersionId(version.getModelVersionId());
+        dto.setBaseModelVersionId(version.getModelVersionId());
         dto.setCodeVersionId(version.getCodeVersionId());
         dto.setTrainingProfile(version.getTrainingProfile());
         dto.setDatasetVersionId(version.getDatasetVersionId());
@@ -524,7 +544,7 @@ public class TrainingExperimentService {
     private void validateProfileTraining(String codeVersionId, String datasetVersionId, String trainingProfile) {
         TrainingProfileRegistry.requireSupported(trainingProfile);
         CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("代码模型版本不存在: " + codeVersionId));
+                .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + codeVersionId));
         CodeAsset codeAsset = codeAssetRepo.findByIdAndDeletedFalse(codeVersion.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("代码资产不存在: " + codeVersion.getAssetId()));
         if (codeAsset.getTrainingProfile() == null
@@ -539,6 +559,28 @@ public class TrainingExperimentService {
             throw new IllegalArgumentException(
                     "数据集类型与 trainingProfile 不匹配：需要 " + spec.requiredDatasetType() + "，实际 " + datasetType);
         }
+    }
+
+    private void validateBaseModelVersion(String modelVersionId) {
+        requireText(modelVersionId, "baseModelVersionId 不能为空");
+        ModelVersion version = modelVersionRepo.findByIdAndDeletedFalse(modelVersionId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("基础模型权重版本不存在: " + modelVersionId));
+        ModelAsset asset = modelAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
+        Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
+        authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
+        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
+            throw new IllegalArgumentException("基础模型权重版本缺少 storagePath");
+        }
+    }
+
+    private String resolveBaseModelVersionId(String baseModelVersionId, String modelVersionId) {
+        String base = blankToNull(baseModelVersionId);
+        String legacy = blankToNull(modelVersionId);
+        if (base != null && legacy != null && !base.equals(legacy)) {
+            throw new IllegalArgumentException("baseModelVersionId 与 modelVersionId 不一致");
+        }
+        return base != null ? base : legacy;
     }
 
     private void validateModelDatasetMatch(String modelVersionId, String datasetVersionId) {

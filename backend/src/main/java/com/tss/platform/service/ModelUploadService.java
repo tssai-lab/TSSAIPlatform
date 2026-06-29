@@ -502,32 +502,11 @@ public class ModelUploadService {
     }
 
     private void validateModelObjectFormat(String objectName) throws Exception {
-        int entries = 0;
-        boolean foundFile = false;
-        long totalUncompressedBytes = 0;
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         );
              ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                entries += 1;
-                if (entries > MAX_MODEL_ZIP_ENTRIES) {
-                    throw new IllegalArgumentException("模型 zip 文件条目过多");
-                }
-                String entryName = normalizeZipEntryName(entry.getName());
-                if (!isSafeZipEntryPath(entryName)) {
-                    throw new IllegalArgumentException("模型 zip 包含非法路径: " + entry.getName());
-                }
-                if (!entry.isDirectory()) {
-                    foundFile = true;
-                    totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes, MAX_MODEL_UNCOMPRESSED_BYTES);
-                }
-                zip.closeEntry();
-            }
-        }
-        if (!foundFile) {
-            throw new IllegalArgumentException("模型 zip 不能为空");
+            ModelWeightZipValidator.validate(zip);
         }
     }
 

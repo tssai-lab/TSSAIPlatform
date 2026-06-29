@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +18,7 @@ public class KubernetesJobManifestBuilder {
 
     public String buildJobYaml(
             TrainingExperimentVersion task,
+            ModelVersion modelVersion,
             CodeVersion codeVersion,
             DatasetVersion datasetVersion,
             String minioAccessKey,
@@ -31,8 +33,10 @@ public class KubernetesJobManifestBuilder {
         );
         String codePath = escapeYaml(codeVersion.getStoragePath());
         String datasetPath = escapeYaml(datasetVersion.getStoragePath());
+        String modelPath = escapeYaml(modelVersion.getStoragePath());
         String codeVersionId = escapeYaml(task.getCodeVersionId());
         String datasetVersionId = escapeYaml(task.getDatasetVersionId());
+        String modelVersionId = escapeYaml(task.getModelVersionId());
         String trainingProfile = escapeYaml(
                 task.getTrainingProfile() == null ? "" : task.getTrainingProfile()
         );
@@ -92,9 +96,15 @@ public class KubernetesJobManifestBuilder {
                               value: "%s"
                             - name: DATASET_VERSION_ID
                               value: "%s"
+                            - name: BASE_MODEL_VERSION_ID
+                              value: "%s"
+                            - name: MODEL_VERSION_ID
+                              value: "%s"
                             - name: CODE_STORAGE_PATH
                               value: "%s"
                             - name: DATASET_STORAGE_PATH
+                              value: "%s"
+                            - name: MODEL_STORAGE_PATH
                               value: "%s"
                             - name: HYPER_PARAMS_JSON
                               value: "%s"
@@ -140,8 +150,11 @@ public class KubernetesJobManifestBuilder {
                 trainingProfile,
                 codeVersionId,
                 datasetVersionId,
+                modelVersionId,
+                modelVersionId,
                 codePath,
                 datasetPath,
+                modelPath,
                 hyperParams,
                 properties.getMinioServiceUrl(),
                 escapeYaml(minioAccessKey),

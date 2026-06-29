@@ -12,6 +12,8 @@ public class TrainingExperimentVersionDto {
     private Integer versionNo;
     private String name;
     private String modelVersionId;
+    /** 与 modelVersionId 相同，供前端展示“基础模型权重” */
+    private String baseModelVersionId;
     private String codeVersionId;
     private String trainingProfile;
     private String datasetVersionId;

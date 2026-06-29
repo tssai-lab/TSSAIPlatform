@@ -7,7 +7,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 代码模型包 ZIP 内容校验：路径安全、扩展名白名单/黑名单、体积与条目限制。
+ * 训练代码包 ZIP 内容校验：路径安全、扩展名白名单/黑名单、体积与条目限制。
  */
 final class CodeModelZipValidator {
 
@@ -21,12 +21,7 @@ final class CodeModelZipValidator {
             ".yml",
             ".txt",
             ".md",
-            ".jsonl",
-            ".pt",
-            ".pth",
-            ".onnx",
-            ".pkl",
-            ".joblib"
+            ".jsonl"
     );
 
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
@@ -51,11 +46,11 @@ final class CodeModelZipValidator {
         while ((entry = zip.getNextEntry()) != null) {
             entries += 1;
             if (entries > MAX_ENTRIES) {
-                throw new IllegalArgumentException("代码模型包 zip 文件条目过多");
+                throw new IllegalArgumentException("训练代码包 zip 文件条目过多");
             }
             String entryName = normalizeZipEntryName(entry.getName());
             if (!isSafeZipEntryPath(entryName)) {
-                throw new IllegalArgumentException("代码模型包 zip 包含非法路径: " + entry.getName());
+                throw new IllegalArgumentException("训练代码包 zip 包含非法路径: " + entry.getName());
             }
             if (!entry.isDirectory()) {
                 foundFile = true;
@@ -65,23 +60,23 @@ final class CodeModelZipValidator {
             zip.closeEntry();
         }
         if (!foundFile) {
-            throw new IllegalArgumentException("代码模型包 zip 不能为空");
+            throw new IllegalArgumentException("训练代码包 zip 不能为空");
         }
     }
 
     /** 仅基于已读取的文件条目名做路径与扩展名校验（不重读解压体积）。 */
     static void validateEntryNames(List<String> entryNames) {
         if (entryNames == null || entryNames.isEmpty()) {
-            throw new IllegalArgumentException("代码模型包 zip 不能为空");
+            throw new IllegalArgumentException("训练代码包 zip 不能为空");
         }
         if (entryNames.size() > MAX_ENTRIES) {
-            throw new IllegalArgumentException("代码模型包 zip 文件条目过多");
+            throw new IllegalArgumentException("训练代码包 zip 文件条目过多");
         }
         boolean foundFile = false;
         for (String raw : entryNames) {
             String name = normalizeZipEntryName(raw);
             if (!isSafeZipEntryPath(name)) {
-                throw new IllegalArgumentException("代码模型包 zip 包含非法路径: " + raw);
+                throw new IllegalArgumentException("训练代码包 zip 包含非法路径: " + raw);
             }
             if (name.endsWith("/") ) {
                 continue;
@@ -90,20 +85,20 @@ final class CodeModelZipValidator {
             validateFileExtension(name);
         }
         if (!foundFile) {
-            throw new IllegalArgumentException("代码模型包 zip 不能为空");
+            throw new IllegalArgumentException("训练代码包 zip 不能为空");
         }
     }
 
     private static void validateFileExtension(String entryName) {
         String ext = extensionOf(entryName);
         if (ext == null || ext.isEmpty()) {
-            throw new IllegalArgumentException("代码模型包包含无扩展名文件: " + entryName);
+            throw new IllegalArgumentException("训练代码包包含无扩展名文件: " + entryName);
         }
         if (BLOCKED_EXTENSIONS.contains(ext)) {
-            throw new IllegalArgumentException("代码模型包不允许可执行/脚本入口文件: " + entryName);
+            throw new IllegalArgumentException("训练代码包不允许可执行/脚本入口文件: " + entryName);
         }
         if (!ALLOWED_EXTENSIONS.contains(ext)) {
-            throw new IllegalArgumentException("代码模型包包含不支持的文件类型: " + entryName);
+            throw new IllegalArgumentException("训练代码包包含不支持的文件类型: " + entryName);
         }
     }
 
@@ -114,7 +109,7 @@ final class CodeModelZipValidator {
         while ((len = zip.read(buffer)) != -1) {
             total += len;
             if (total > MAX_UNCOMPRESSED_BYTES) {
-                throw new IllegalArgumentException("代码模型包 zip 解压后体积过大");
+                throw new IllegalArgumentException("训练代码包 zip 解压后体积过大");
             }
         }
         return total;

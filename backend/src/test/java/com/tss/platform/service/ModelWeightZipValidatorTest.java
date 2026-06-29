@@ -12,76 +12,46 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class CodeModelZipValidatorTest {
+class ModelWeightZipValidatorTest {
 
     @Test
-    void rejectsWeightsInCodeZip() throws Exception {
+    void acceptsAllowedWeightFiles() throws Exception {
         byte[] zip = buildZip(
-                entry("scripts/training/train_fusion_baseline.py", "print('ok')"),
-                entry("weights/best.pt", "FAKE")
-        );
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
-                () -> validate(zip)
-        );
-        assertEquals("训练代码包包含不支持的文件类型: weights/best.pt", error.getMessage());
-    }
-
-    @Test
-    void acceptsCodeWithConfigYaml() throws Exception {
-        byte[] zip = buildZip(
-                entry("scripts/training/train_fusion_baseline.py", "print('ok')"),
-                entry("config/model.yaml", "model: logreg\n")
+                entry("weights/best.pt", "FAKE"),
+                entry("config/model.yaml", "model: logreg\n"),
+                entry("meta.json", "{}")
         );
         assertDoesNotThrow(() -> validate(zip));
     }
 
     @Test
-    void acceptsMetadataJsonl() throws Exception {
-        byte[] zip = buildZip(
-                entry("scripts/train.py", "pass"),
-                entry("metadata/index.jsonl", "{\"id\":1}\n")
-        );
-        assertDoesNotThrow(() -> validate(zip));
-    }
-
-    @Test
-    void rejectsBlockedShellScript() throws Exception {
-        byte[] zip = buildZip(
-                entry("scripts/run.sh", "#!/bin/bash"),
-                entry("scripts/train.py", "pass")
-        );
+    void rejectsPythonScript() throws Exception {
+        byte[] zip = buildZip(entry("scripts/load.py", "import os"));
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("训练代码包不允许可执行/脚本入口文件: scripts/run.sh", error.getMessage());
+        assertEquals("模型权重包不允许脚本或可执行文件: scripts/load.py", error.getMessage());
     }
 
     @Test
     void rejectsUnsupportedExtension() throws Exception {
-        byte[] zip = buildZip(
-                entry("scripts/train.py", "pass"),
-                entry("weights/model.bin", "binary")
-        );
+        byte[] zip = buildZip(entry("weights/model.bin", "binary"));
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("训练代码包包含不支持的文件类型: weights/model.bin", error.getMessage());
+        assertEquals("模型权重包包含不支持的文件类型: weights/model.bin", error.getMessage());
     }
 
     @Test
     void rejectsFileWithoutExtension() throws Exception {
-        byte[] zip = buildZip(
-                entry("scripts/train.py", "pass"),
-                entry("weights/best", "noext")
-        );
+        byte[] zip = buildZip(entry("weights/best", "noext"));
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("训练代码包包含无扩展名文件: weights/best", error.getMessage());
+        assertEquals("模型权重包包含无扩展名文件: weights/best", error.getMessage());
     }
 
     @Test
@@ -91,7 +61,7 @@ class CodeModelZipValidatorTest {
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("训练代码包 zip 包含非法路径: ../etc/passwd", error.getMessage());
+        assertEquals("模型权重 zip 包含非法路径: ../etc/passwd", error.getMessage());
     }
 
     @Test
@@ -101,7 +71,7 @@ class CodeModelZipValidatorTest {
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("训练代码包 zip 不能为空", error.getMessage());
+        assertEquals("模型权重 zip 不能为空", error.getMessage());
     }
 
     private static ZipEntrySpec entry(String name, String content) {
@@ -123,7 +93,7 @@ class CodeModelZipValidatorTest {
 
     private static void validate(byte[] zipBytes) throws Exception {
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
-            CodeModelZipValidator.validate(zip);
+            ModelWeightZipValidator.validate(zip);
         }
     }
 
