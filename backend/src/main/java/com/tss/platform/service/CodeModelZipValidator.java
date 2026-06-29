@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -62,6 +63,31 @@ final class CodeModelZipValidator {
                 totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes);
             }
             zip.closeEntry();
+        }
+        if (!foundFile) {
+            throw new IllegalArgumentException("代码模型包 zip 不能为空");
+        }
+    }
+
+    /** 仅基于已读取的文件条目名做路径与扩展名校验（不重读解压体积）。 */
+    static void validateEntryNames(List<String> entryNames) {
+        if (entryNames == null || entryNames.isEmpty()) {
+            throw new IllegalArgumentException("代码模型包 zip 不能为空");
+        }
+        if (entryNames.size() > MAX_ENTRIES) {
+            throw new IllegalArgumentException("代码模型包 zip 文件条目过多");
+        }
+        boolean foundFile = false;
+        for (String raw : entryNames) {
+            String name = normalizeZipEntryName(raw);
+            if (!isSafeZipEntryPath(name)) {
+                throw new IllegalArgumentException("代码模型包 zip 包含非法路径: " + raw);
+            }
+            if (name.endsWith("/") ) {
+                continue;
+            }
+            foundFile = true;
+            validateFileExtension(name);
         }
         if (!foundFile) {
             throw new IllegalArgumentException("代码模型包 zip 不能为空");

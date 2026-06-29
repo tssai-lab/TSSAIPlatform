@@ -16,6 +16,10 @@
 
 **训练行为**：当前唯一 profile `image_text_consistency_fusion_logreg` 的 Worker **不会**自动加载 `weights/` 下权重；仍执行硬编码白名单命令。`hyperParams` 仅记录/预留，不能覆盖命令。
 
+**训练方案文案**：后端字段仍为 `trainingProfile`（`image_text_consistency_fusion_logreg`），用户可见文案统一为「训练方案 / 图文一致性基线训练」；前端在训练配置区与详情页展示展示名，内部 ID 仅作为小字/高级信息显示。
+
+**训练产物下载**：详情页训练产物（`fusion_model.pkl`、`metrics.json`、`val_predictions.csv`、`test_predictions.csv`、`train.log`）复用 `GET /api/files/download?objectName=`；前端将 `minio://training-results/.../artifacts/<file>` 转换为 `objectName` 后下载，用户无需手动复制 `minio://` 路径。
+
 **后续设计**：更严谨版本将拆分为 `codeVersionId`（训练代码）+ `baseModelVersionId`（基础权重）。
 
 ## 当前定位
@@ -24,15 +28,37 @@ TSS 平台**不是**开放式任意代码执行平台。带 `codeVersionId` 的 
 
 1. 平台预注册的 `trainingProfile`（当前：`image_text_consistency_fusion_logreg`）
 2. Worker 内硬编码的白名单命令（不可通过 `hyperParams` 覆盖）
-3. 经管理员审核（`approval_status = APPROVED`）的代码模型版本
+3. 经管理员审核（`approval_status = APPROVED`）或自动准入校验通过的代码模型版本
 
 ## approval_status（平台级）
 
 | 状态 | 含义 |
 | --- | --- |
 | `PENDING` | 上传后默认状态，**不可**用于创建训练任务 |
-| `APPROVED` | 管理员审核通过，可用于 profile 训练 |
+| `APPROVED` | 准入校验通过，可用于 profile 训练 |
 | `REJECTED` | 预留，本阶段无 reject API |
+
+### 准入校验接口（training-check）
+
+```
+GET /api/code/version/{codeVersionId}/training-check?trainingProfile=image_text_consistency_fusion_logreg
+```
+
+后端按顺序检查：
+
+1. codeVersion 存在
+2. `status = READY`
+3. `storagePath` 非空
+4. `trainingProfile` 受支持
+5. `codeAsset.trainingProfile` 与传入 profile 匹配
+6. ZIP 通过 `CodeModelZipValidator` 路径/扩展名校验
+7. ZIP 包含固定入口脚本（fusion profile 要求 `scripts/training/train_fusion_baseline.py`）
+
+全部通过时后端自动将 `approval_status` 置为 `APPROVED`，并返回 `passed=true`；任一不通过则 `passed=false` 并返回 `reasons[]`，`approval_status` 保持原状。
+
+### 自动 APPROVED ≠ 代码安全审计
+
+**重要**：`training-check` 自动写入的 `APPROVED` 只代表**结构、元数据、固定入口检查通过**，**不代表**已完成代码安全审计。当前自动校验只能检查 ZIP 结构、扩展名白/黑名单与入口脚本是否存在，无法证明用户代码绝对安全。真正的代码安全审计仍需后续沙箱化能力（容器隔离、网络限制、产物扫描等）。
 
 ### 校验时机
 
@@ -42,9 +68,9 @@ TSS 平台**不是**开放式任意代码执行平台。带 `codeVersionId` 的 
 - `approval_status = APPROVED`
 - 当前用户有 owner 访问权限
 
-未通过时返回：**代码模型版本未审核通过，不能用于训练**，且**不会**创建 K8s Job。
+未通过时返回：**代码模型版本未通过准入校验，不能用于训练**，且**不会**创建 K8s Job。
 
-### 审核接口
+### 审核接口（保留，管理员手动）
 
 ```
 POST /api/code/version/{codeVersionId}/approve
@@ -61,7 +87,7 @@ POST /api/code/version/{codeVersionId}/approve
 
 ## APPROVED ≠ 沙箱隔离
 
-`APPROVED` 仅表示**准入审核**（人工确认代码模型包可用于固定 profile 演示/测试），**不代表**已完成沙箱隔离。
+`APPROVED`（无论是管理员手动审核还是 `training-check` 自动写入）仅表示**准入校验**（人工或自动确认代码模型包结构、元数据、固定入口满足要求），**不代表**已完成沙箱隔离。
 
 后续仍需：
 

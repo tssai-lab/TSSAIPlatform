@@ -13,6 +13,16 @@ public final class TrainingProfileRegistry {
 
     private static final Set<String> SUPPORTED = Set.of(IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
 
+    /** 训练方案展示名（用户可见文案，内部值仍用 profile 常量） */
+    public static final Map<String, String> PROFILE_DISPLAY_NAMES = Map.of(
+            IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG, "图文一致性基线训练"
+    );
+
+    public static String displayNameOf(String profile) {
+        if (profile == null) return null;
+        return PROFILE_DISPLAY_NAMES.getOrDefault(profile.trim(), profile);
+    }
+
     private TrainingProfileRegistry() {
     }
 
@@ -40,6 +50,7 @@ public final class TrainingProfileRegistry {
                             "--model", "logreg",
                             "--out-dir", "outputs/fusion_baseline_logreg"
                     ),
+                    "scripts/training/train_fusion_baseline.py",
                     "outputs/fusion_baseline_logreg/metrics.json",
                     "outputs/fusion_baseline_logreg",
                     List.of(
@@ -57,6 +68,7 @@ public final class TrainingProfileRegistry {
     public record ProfileSpec(
             String name,
             List<String> command,
+            String requiredEntryScript,
             String metricsRelativePath,
             String outputRelativeDir,
             List<String> artifactFiles,

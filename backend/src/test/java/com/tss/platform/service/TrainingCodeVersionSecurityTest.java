@@ -17,6 +17,7 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.training.TrainingProfileRegistry;
+import io.minio.MinioClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -46,7 +47,10 @@ class TrainingCodeVersionSecurityTest {
         codeVersionRepo = mock(CodeVersionRepository.class);
         codeAssetRepo = mock(CodeAssetRepository.class);
         authContext = mock(AuthContext.class);
-        codeVersionService = new CodeVersionService(codeVersionRepo, codeAssetRepo, authContext);
+        MinioClient minioClient = mock(MinioClient.class);
+        com.tss.platform.config.MinioConfig minioConfig = mock(com.tss.platform.config.MinioConfig.class);
+        when(minioConfig.getBucket()).thenReturn("test-bucket");
+        codeVersionService = new CodeVersionService(codeVersionRepo, codeAssetRepo, authContext, minioClient, minioConfig);
 
         datasetVersionRepo = mock(DatasetVersionRepository.class);
         datasetAssetRepo = mock(DatasetAssetRepository.class);
@@ -78,7 +82,7 @@ class TrainingCodeVersionSecurityTest {
                 IllegalArgumentException.class,
                 () -> codeVersionService.requireApprovedForTraining(pending.getId())
         );
-        assertEquals("代码模型版本未审核通过，不能用于训练", error.getMessage());
+        assertEquals("代码模型版本未通过准入校验，不能用于训练", error.getMessage());
     }
 
     @Test

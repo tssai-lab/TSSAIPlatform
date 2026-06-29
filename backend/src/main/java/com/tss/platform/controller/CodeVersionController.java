@@ -3,11 +3,13 @@ package com.tss.platform.controller;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CodeVersionApprovalDto;
 import com.tss.platform.dto.CodeVersionListItemDto;
+import com.tss.platform.dto.CodeVersionTrainingCheckDto;
 import com.tss.platform.service.CodeVersionService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -34,5 +36,13 @@ public class CodeVersionController {
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
+    }
+
+    @GetMapping("/{codeVersionId}/training-check")
+    public ApiResponse<CodeVersionTrainingCheckDto> trainingCheck(
+            @PathVariable String codeVersionId,
+            @RequestParam("trainingProfile") String trainingProfile
+    ) {
+        return ApiResponse.ok(codeVersionService.trainingCheck(codeVersionId, trainingProfile));
     }
 }
