@@ -313,35 +313,71 @@ declare namespace API {
     points: API.ResourceMonitorMetricPoint[];
   };
 
-  /** 推理模态 */
-  type InferenceModality = 'CV' | 'NLP' | 'MULTIMODAL';
+  // 模型推理任务（见 docs/模型推理设计.md）
+  type InferenceTaskStatus =
+    | 'pending'
+    | 'queued'
+    | 'running'
+    | 'success'
+    | 'failed'
+    | 'stopped';
 
-  /** 可推理的训练产出候选项（训练成功列表） */
-  type InferenceTrainingCandidate = {
-    experimentId: string;
-    versionNo: number;
-    taskRecordId?: string;
+  type InferenceTaskType = 'CV' | 'NLP' | 'MULTIMODAL';
+
+  type InferenceInputMode = 'single' | 'batch';
+
+  type InferenceModelOption = {
+    inferenceModelId: string;
     name: string;
-    modelName: string;
-    versionLabel: string;
-    modality: InferenceModality;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
-    finishedAt?: string;
+    version: string;
+    taskType: InferenceTaskType;
+    displayName: string;
+    source?: string;
     remark?: string;
+    defaultInferenceParams?: Record<string, string | number>;
   };
 
-  /** 训练产出推理上下文（experimentId + versionNo） */
-  type InferenceTrainingContext = {
-    experimentId: string;
-    versionNo: number;
-    taskRecordId?: string;
+  type InferenceTaskListItem = {
+    id: string;
     name: string;
-    modality: InferenceModality;
-    modelName: string;
-    versionLabel: string;
-    outputPath?: string;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    taskType: InferenceTaskType;
+    inputMode: InferenceInputMode;
+    inferenceModelId: string;
+    modelDisplayName: string;
+    datasetDisplayName?: string;
+    datasetSizeBytes?: number;
+    datasetItemCount?: number;
+    inputDisplayName?: string;
+    inputFileName?: string;
+    inputSizeBytes?: number;
+    hasInferenceInput?: boolean;
+    useCustomScript?: boolean;
+    status: InferenceTaskStatus;
+    progress?: number;
+    createdAt: string;
+    finishedAt?: string;
+  };
+
+  type InferenceTaskStats = {
+    total: number;
+    running: number;
+    success: number;
+    failed: number;
+  };
+
+  type CreateInferenceTaskRequest = {
+    name: string;
+    inferenceModelId: string;
+    inputMode: InferenceInputMode;
     remark?: string;
+    datasetVersionId?: string;
+    inferenceInputId?: string;
+    text?: string;
+    prompt?: string;
+    inferenceParams?: Record<string, string | number>;
+    useCustomScript?: boolean;
+    customScriptId?: string;
+    scriptEntryPoint?: string;
   };
 
   type InferenceCvPrediction = {
@@ -357,31 +393,113 @@ declare namespace API {
     end: number;
   };
 
-  /** 在线推理响应 */
-  type InferencePredictResult = {
-    recordId?: string;
-    type: InferenceModality;
-    cvTaskType?: string;
+  type InferenceResultPreviewItem = {
+    index: number;
+    inputName: string;
+    /** 批量 NLP 等：输入文本摘要/预览（非仅文件名） */
+    inputPreview?: string;
+    status: 'success' | 'failed';
+    summary?: string;
+  };
+
+  type InferenceTaskResult = {
     latencyMs?: number;
     predictions?: InferenceCvPrediction[];
+    annotatedImageUrl?: string;
     label?: string;
     score?: number;
     generatedText?: string;
-    tokenCount?: number;
     entities?: InferenceNlpEntity[];
     answer?: string;
-    scene?: string;
-    semanticLabels?: string[];
-    annotatedImageUrl?: string;
-    modelName?: string;
-    modelVersion?: string;
+    summary?: {
+      total: number;
+      success: number;
+      failed: number;
+    };
+    previewItems?: InferenceResultPreviewItem[];
+    outputObjectName?: string;
+    outputDownloadUrl?: string;
   };
 
-  type InferenceParams = {
-    confidence?: number;
-    topK?: number;
-    temperature?: number;
-    maxTokens?: number;
-    topP?: number;
+  type InferenceTaskDetail = {
+    id: string;
+    name: string;
+    taskType: InferenceTaskType;
+    inputMode: InferenceInputMode;
+    inferenceModelId: string;
+    modelDisplayName: string;
+    inputDisplayName: string;
+    datasetVersionId?: string;
+    inferenceInputId?: string;
+    inputPreviewUrl?: string;
+    /** NLP 单文件粘贴的完整输入文本 */
+    inputText?: string;
+    /** 多模态单文件的 Prompt */
+    prompt?: string;
+    inferenceParams?: Record<string, string | number>;
+    useCustomScript?: boolean;
+    customScriptId?: string;
+    scriptFileName?: string;
+    scriptEntryPoint?: string;
+    status: InferenceTaskStatus;
+    progress: number;
+    progressMessage?: string;
+    processedCount?: number;
+    totalCount?: number;
+    errorMessage?: string | null;
+    remark?: string;
+    createdAt: string;
+    startedAt?: string;
+    finishedAt?: string;
+    result?: InferenceTaskResult;
+  };
+
+  type InferenceTaskDeleteResult = {
+    id: string;
+    deleted: boolean;
+    resultsDeleted: boolean;
+    inputDeleted?: boolean;
+    scriptDeleted?: boolean;
+  };
+
+  type InferenceScriptUploadResult = {
+    customScriptId: string;
+    fileName: string;
+    sizeBytes: number;
+    objectName: string;
+  };
+
+  type InferenceParamSchema = {
+    taskType: InferenceTaskType;
+    common: {
+      key: string;
+      label: string;
+      type: 'number' | 'select' | 'string';
+      default: string | number;
+      min?: number;
+      max?: number;
+      step?: number;
+      options?: { label: string; value: string | number }[];
+      tooltip?: string;
+    }[];
+    specific: {
+      key: string;
+      label: string;
+      type: 'number' | 'select' | 'string';
+      default: string | number;
+      min?: number;
+      max?: number;
+      step?: number;
+      options?: { label: string; value: string | number }[];
+      tooltip?: string;
+    }[];
+  };
+
+  type InferenceInputUploadResult = {
+    inferenceInputId: string;
+    fileName: string;
+    sizeBytes: number;
+    objectName: string;
+    previewUrl?: string;
   };
 }

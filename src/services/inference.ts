@@ -1,455 +1,204 @@
 /**
- * 在线推理 - Services 层
- *
- * 训练产出来源：任务列表（success）+ 实验版本历史（复用 task.ts）
- * 推理请求：POST /inference/predict/*，sourceType=TRAINING_OUTPUT
+ * 模型推理 - Services 层
+ * 优先请求真实接口，失败时 fallback Mock
+ * @see docs/模型推理设计.md §7
  */
 import { request } from '@umijs/max';
-import { INFERENCE_TASK_FETCH_PAGE_SIZE } from '@/constants/inference';
-import type {
-  CvBatchSubMode,
-  InferenceInputMode,
-  NlpBatchSubMode,
-} from '@/constants/inference';
-import { API_CONFIG, INFERENCE_CONFIG } from '@/constants/platform';
-import { uploadObject } from '@/services/files';
-import { getModelDetail } from '@/services/model';
+import { API_CONFIG } from '@/constants/platform';
 import {
-  fetchTaskList,
-  getExperimentVersion,
-  listExperimentVersions,
-} from '@/services/task';
-import {
-  toInferenceModality,
-  type InferenceModelItem,
-} from '@/utils/inferenceModality';
+  mockCreateInferenceTask,
+  mockDeleteInferenceTask,
+  mockFetchInferenceModels,
+  mockFetchInferenceTaskDetail,
+  mockFetchInferenceTaskList,
+  mockFetchInferenceTaskStats,
+  mockStopInferenceTask,
+  mockUploadInferenceInput,
+  mockUploadInferenceScript,
+} from '@/constants/inference/mockData';
+import { mockInferenceParamSchema } from '@/constants/inference/inferenceParamSchema';
 
-export type { InferenceModelItem };
+const { ENDPOINTS } = API_CONFIG;
 
-const PREDICT_OPTIONS = { timeout: INFERENCE_CONFIG.PREDICT_TIMEOUT_MS };
-
-/** 表单输入状态（Page 层维护，提交时传入 runInference） */
-export type CvInputState = {
-  file?: File;
-  previewUrl?: string;
-  objectName?: string;
-};
-
-export type NlpInputState = {
-  text: string;
-};
-
-export type MultimodalInputState = {
-  file?: File;
-  previewUrl?: string;
-  objectName?: string;
-  prompt: string;
-};
-
-export type CvBatchInputState = {
-  subMode: CvBatchSubMode;
-  files: File[];
-};
-
-export type NlpBatchInputState = {
-  subMode: NlpBatchSubMode;
-  pasteText: string;
-  files: File[];
-};
-
-export type CustomScriptInputState = {
-  scriptFile?: File;
-  dataFiles: File[];
-};
-
-export type RunInferenceParams = {
-  model: InferenceModelItem;
-  params: API.InferenceParams;
-  inputMode?: InferenceInputMode;
-  cvInput?: CvInputState;
-  nlpInput?: NlpInputState;
-  multimodalInput?: MultimodalInputState;
-  cvBatchInput?: CvBatchInputState;
-  nlpBatchInput?: NlpBatchInputState;
-  customScriptInput?: CustomScriptInputState;
-};
-
-type TrainingOutputPayload = {
-  sourceType: 'TRAINING_OUTPUT';
-  experimentId: string;
-  versionNo: number;
-};
-
-type PredictResponse = {
-  success?: boolean;
-  data?: API.InferencePredictResult;
-  errorMessage?: string | null;
-};
-
-type ModelMeta = {
-  name: string;
-  modality: API.InferenceModality;
-};
-
-const modelMetaCache = new Map<string, ModelMeta>();
-
-async function resolveModelMeta(
-  modelVersionId?: string,
-  options?: { skipErrorHandler?: boolean },
-): Promise<ModelMeta> {
-  if (!modelVersionId) {
-    return { name: '未知模型', modality: 'CV' };
-  }
-  const cached = modelMetaCache.get(modelVersionId);
-  if (cached) return cached;
-
+export async function fetchInferenceTaskStats(options?: { skipErrorHandler?: boolean }) {
   try {
-    const res = await getModelDetail(modelVersionId, {
-      skipErrorHandler: options?.skipErrorHandler ?? true,
-    });
-    const item = res?.data;
-    if (item?.name) {
-      const meta: ModelMeta = {
-        name: item.name,
-        modality: toInferenceModality(item.type, item.remark),
-      };
-      modelMetaCache.set(modelVersionId, meta);
-      return meta;
-    }
+    return await request<{ success: boolean; data: API.InferenceTaskStats }>(
+      ENDPOINTS.INFERENCE_TASK_STATS,
+      { method: 'GET', ...(options || {}) },
+    );
   } catch {
-    // 单条解析失败时回退
+    return mockFetchInferenceTaskStats();
   }
-
-  const fallback = {
-    name: modelVersionId,
-    modality: 'CV' as API.InferenceModality,
-  };
-  modelMetaCache.set(modelVersionId, fallback);
-  return fallback;
 }
 
-function versionRunKey(version: API.TrainingExperimentVersion) {
-  return `${version.experimentId}:${version.versionNo}`;
-}
-
-function finishedAtMs(value?: string) {
-  if (!value) return 0;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function sortVersionsByFinishedAtDesc(
-  versions: API.TrainingExperimentVersion[],
+export async function fetchInferenceTaskList(
+  params?: {
+    current?: number;
+    pageSize?: number;
+    status?: string;
+    keyword?: string;
+  },
+  options?: { skipErrorHandler?: boolean },
 ) {
-  return [...versions].sort(
-    (a, b) => finishedAtMs(b.finishedAt) - finishedAtMs(a.finishedAt),
-  );
-}
-
-function sortCandidatesByFinishedAtDesc(
-  candidates: API.InferenceTrainingCandidate[],
-) {
-  return [...candidates].sort(
-    (a, b) => finishedAtMs(b.finishedAt) - finishedAtMs(a.finishedAt),
-  );
-}
-
-async function fetchAllSuccessTasks(options?: { skipErrorHandler?: boolean }) {
-  const reqOpts = { skipErrorHandler: options?.skipErrorHandler ?? true };
-  const pageSize = INFERENCE_TASK_FETCH_PAGE_SIZE;
-  const tasks: API.TaskItem[] = [];
-  let current = 1;
-  let total = Number.POSITIVE_INFINITY;
-
-  while (tasks.length < total) {
-    const listRes = await fetchTaskList({
-      current,
-      pageSize,
-      status: 'success',
-      ...reqOpts,
+  try {
+    return await request<{
+      success: boolean;
+      data: { data: API.InferenceTaskListItem[]; total: number };
+    }>(ENDPOINTS.INFERENCE_TASK_LIST, {
+      method: 'GET',
+      params,
+      ...(options || {}),
     });
-    const page: API.TaskItem[] =
-      (listRes as { data?: { data?: API.TaskItem[] } })?.data?.data ?? [];
-    total =
-      (listRes as { data?: { total?: number } })?.data?.total ?? page.length;
-    tasks.push(...page);
-    if (page.length < pageSize) break;
-    current += 1;
-  }
-
-  return tasks;
-}
-
-async function fetchSuccessfulTrainingVersions(options?: {
-  skipErrorHandler?: boolean;
-}) {
-  const reqOpts = { skipErrorHandler: options?.skipErrorHandler ?? true };
-  const tasks = await fetchAllSuccessTasks(options);
-
-  const experimentIds = Array.from(
-    new Set(
-      tasks
-        .map((task) => task.experimentId)
-        .filter((id): id is string => !!id),
-    ),
-  );
-
-  if (experimentIds.length === 0) {
-    return [];
-  }
-
-  const versionGroups = await Promise.all(
-    experimentIds.map(async (experimentId) => {
-      try {
-        const res = await listExperimentVersions(experimentId, reqOpts);
-        return (res?.data ?? []).filter((item) => item.status === 'success');
-      } catch {
-        return [] as API.TrainingExperimentVersion[];
-      }
-    }),
-  );
-
-  const deduped = new Map<string, API.TrainingExperimentVersion>();
-  for (const version of versionGroups.flat()) {
-    deduped.set(versionRunKey(version), version);
-  }
-  return sortVersionsByFinishedAtDesc(Array.from(deduped.values()));
-}
-
-async function versionToTrainingContext(
-  version: API.TrainingExperimentVersion,
-  options?: { skipErrorHandler?: boolean },
-): Promise<API.InferenceTrainingContext> {
-  const meta = await resolveModelMeta(version.modelVersionId, options);
-  return {
-    experimentId: version.experimentId,
-    versionNo: version.versionNo,
-    taskRecordId: version.id,
-    name: version.name || `训练 v${version.versionNo}`,
-    modality: meta.modality,
-    modelName: meta.name,
-    versionLabel: `v${version.versionNo}`,
-    outputPath: version.outputPath,
-    status: version.status,
-    remark: version.remark,
-  };
-}
-
-async function versionToCandidate(
-  version: API.TrainingExperimentVersion,
-  options?: { skipErrorHandler?: boolean },
-): Promise<API.InferenceTrainingCandidate> {
-  const meta = await resolveModelMeta(version.modelVersionId, options);
-  return {
-    experimentId: version.experimentId,
-    versionNo: version.versionNo,
-    taskRecordId: version.id,
-    name: version.name || `训练 v${version.versionNo}`,
-    modelName: meta.name,
-    versionLabel: `v${version.versionNo}`,
-    modality: meta.modality,
-    status: version.status,
-    finishedAt: version.finishedAt,
-    remark: version.remark,
-  };
-}
-
-function buildTrainingOutputPayload(
-  model: InferenceModelItem,
-): TrainingOutputPayload {
-  if (!model.experimentId || model.versionNo == null) {
-    throw new Error('缺少训练产出标识（experimentId / versionNo）');
-  }
-  return {
-    sourceType: 'TRAINING_OUTPUT',
-    experimentId: model.experimentId,
-    versionNo: model.versionNo,
-  };
-}
-
-function enrichPredictResult(
-  data: API.InferencePredictResult,
-  model: InferenceModelItem,
-): API.InferencePredictResult {
-  return {
-    ...data,
-    modelName: model.name,
-    modelVersion: model.version,
-  };
-}
-
-async function ensureInputObjectName(file: File, existing?: string) {
-  if (existing) return existing;
-  const res = await uploadObject(
-    file,
-    `inference/inputs/${Date.now()}_${file.name}`,
-    { skipErrorHandler: true },
-  );
-  const objectName = (res as { data?: { objectName?: string } })?.data
-    ?.objectName;
-  if (!objectName) {
-    throw new Error('输入文件上传失败');
-  }
-  return objectName;
-}
-
-async function resolveImageObjectName(input: {
-  file?: File;
-  objectName?: string;
-}) {
-  if (input.objectName) return input.objectName;
-  if (input.file) {
-    return ensureInputObjectName(input.file);
-  }
-  throw new Error('请先上传图片');
-}
-
-function validateCvBatchInput(input?: CvBatchInputState) {
-  if (!input?.files?.length) {
-    throw new Error('请先上传批量输入文件');
+  } catch {
+    return mockFetchInferenceTaskList(params);
   }
 }
 
-function validateNlpBatchInput(input?: NlpBatchInputState) {
-  if (!input) {
-    throw new Error('请先配置批量输入');
-  }
-  if (input.subMode === 'paste') {
-    if (!input.pasteText.trim()) {
-      throw new Error('请粘贴待推理文本');
-    }
-    return;
-  }
-  if (!input.files.length) {
-    throw new Error('请先上传批量输入文件');
-  }
-}
-
-function validateBatchInput(
-  modality: API.InferenceModality,
-  ctx: RunInferenceParams,
-) {
-  if (modality === 'CV' || modality === 'MULTIMODAL') {
-    validateCvBatchInput(ctx.cvBatchInput);
-    return;
-  }
-  if (modality === 'NLP') {
-    validateNlpBatchInput(ctx.nlpBatchInput);
-  }
-}
-
-function validateCustomScriptInput(ctx: RunInferenceParams) {
-  if (!ctx.customScriptInput?.scriptFile) {
-    throw new Error('请先上传推理脚本');
-  }
-  if (!ctx.customScriptInput.dataFiles.length) {
-    throw new Error('请先上传数据文件');
-  }
-}
-
-async function postPredict(
-  endpoint: string,
-  data: Record<string, unknown>,
-  options?: Record<string, unknown>,
-): Promise<PredictResponse> {
-  const res = await request<PredictResponse>(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    data,
-    skipErrorHandler: true,
-    ...PREDICT_OPTIONS,
-    ...options,
-  });
-  if (!res?.success || !res.data) {
-    throw new Error(res?.errorMessage || '推理失败');
-  }
-  return res;
-}
-
-/** 获取可推理的训练产出列表（仅 status=success，按完成时间倒序） */
-export async function fetchInferenceTrainingCandidates(options?: {
-  skipErrorHandler?: boolean;
-}) {
-  const versions = await fetchSuccessfulTrainingVersions(options);
-  const candidates = await Promise.all(
-    versions.map((version) => versionToCandidate(version, options)),
-  );
-  return sortCandidatesByFinishedAtDesc(candidates);
-}
-
-/** 加载指定训练产出的推理上下文 */
-export async function fetchTrainingInferenceContext(
-  experimentId: string,
-  versionNo: number,
-  options?: { skipErrorHandler?: boolean },
-): Promise<API.InferenceTrainingContext> {
-  const res = await getExperimentVersion(experimentId, versionNo, {
-    skipErrorHandler: options?.skipErrorHandler ?? true,
-  });
-  if (!res?.success || !res.data) {
-    throw new Error(res?.errorMessage || '训练产出加载失败');
-  }
-  if (res.data.status !== 'success') {
-    throw new Error('该训练版本尚未成功完成，暂无法推理');
-  }
-  return versionToTrainingContext(res.data, options);
-}
-
-/** 执行一次在线推理 */
-export async function runInference(
-  ctx: RunInferenceParams,
+export async function fetchInferenceTaskDetail(
+  id: string,
   options?: { skipErrorHandler?: boolean },
 ) {
-  const { model, params, inputMode = 'single' } = ctx;
-  const source = buildTrainingOutputPayload(model);
-  const reqOpts = { skipErrorHandler: options?.skipErrorHandler ?? true };
-
-  if (inputMode === 'batch') {
-    validateBatchInput(model.modality, ctx);
-    throw new Error('批量推理接口开发中，请稍后重试');
-  }
-  if (inputMode === 'custom') {
-    validateCustomScriptInput(ctx);
-    throw new Error('自定义推理脚本接口开发中，请稍后重试');
-  }
-
-  let res: PredictResponse;
-
-  if (model.modality === 'CV') {
-    if (!ctx.cvInput?.file && !ctx.cvInput?.objectName) {
-      throw new Error('请先上传图片');
-    }
-    const objectName = await resolveImageObjectName(ctx.cvInput);
-    res = await postPredict(
-      API_CONFIG.ENDPOINTS.INFERENCE_PREDICT_CV,
-      { ...source, inputObjectName: objectName, params },
-      reqOpts,
+  try {
+    return await request<{ success: boolean; data: API.InferenceTaskDetail }>(
+      ENDPOINTS.INFERENCE_TASK_DETAIL(id),
+      { method: 'GET', ...(options || {}) },
     );
-  } else if (model.modality === 'NLP') {
-    const text = ctx.nlpInput?.text?.trim();
-    if (!text) {
-      throw new Error('请输入文本');
-    }
-    res = await postPredict(
-      API_CONFIG.ENDPOINTS.INFERENCE_PREDICT_NLP,
-      { ...source, text, params },
-      reqOpts,
-    );
-  } else {
-    const prompt = ctx.multimodalInput?.prompt?.trim();
-    if (!prompt) {
-      throw new Error('请输入问题或 Prompt');
-    }
-    if (!ctx.multimodalInput?.file && !ctx.multimodalInput?.objectName) {
-      throw new Error('请先上传图片');
-    }
-    const objectName = await resolveImageObjectName(ctx.multimodalInput);
-    res = await postPredict(
-      API_CONFIG.ENDPOINTS.INFERENCE_PREDICT_MULTIMODAL,
-      { ...source, inputObjectName: objectName, prompt, params },
-      reqOpts,
-    );
+  } catch {
+    const mock = mockFetchInferenceTaskDetail(id);
+    if (!mock) throw new Error('推理任务不存在');
+    return mock;
   }
+}
 
-  return enrichPredictResult(res.data!, model);
+export async function createInferenceTask(
+  body: API.CreateInferenceTaskRequest,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<{ success: boolean; data: API.InferenceTaskDetail }>(
+      ENDPOINTS.INFERENCE_TASK_CREATE,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        data: body,
+        ...(options || {}),
+      },
+    );
+  } catch {
+    return mockCreateInferenceTask(body);
+  }
+}
+
+export async function deleteInferenceTask(
+  id: string,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<{ success: boolean; data: API.InferenceTaskDeleteResult }>(
+      ENDPOINTS.INFERENCE_TASK_DELETE(id),
+      { method: 'DELETE', ...(options || {}) },
+    );
+  } catch {
+    return mockDeleteInferenceTask(id);
+  }
+}
+
+export async function stopInferenceTask(
+  id: string,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<{ success: boolean; data: API.InferenceTaskDetail }>(
+      ENDPOINTS.INFERENCE_TASK_STOP(id),
+      { method: 'POST', ...(options || {}) },
+    );
+  } catch {
+    return mockStopInferenceTask(id);
+  }
+}
+
+/** 可推理模型 — 创建页唯一模型数据源 */
+export async function fetchInferenceModels(
+  params?: {
+    current?: number;
+    pageSize?: number;
+    taskType?: string;
+    keyword?: string;
+  },
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<{
+      success: boolean;
+      data: { data: API.InferenceModelOption[]; total: number };
+    }>(ENDPOINTS.INFERENCE_MODEL_LIST, {
+      method: 'GET',
+      params,
+      ...(options || {}),
+    });
+  } catch {
+    return mockFetchInferenceModels(params);
+  }
+}
+
+/** 推理专用上传 — 禁止 /files/upload */
+export async function uploadInferenceInput(
+  file: File,
+  taskType: API.InferenceTaskType,
+  options?: { skipErrorHandler?: boolean },
+) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('taskType', taskType);
+  try {
+    return await request<{ success: boolean; data: API.InferenceInputUploadResult }>(
+      ENDPOINTS.INFERENCE_INPUT_UPLOAD,
+      {
+        method: 'POST',
+        data: formData,
+        requestType: 'form',
+        ...(options || {}),
+      },
+    );
+  } catch {
+    return mockUploadInferenceInput(file);
+  }
+}
+
+export async function fetchInferenceParamSchema(
+  taskType: API.InferenceTaskType,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<{ success: boolean; data: API.InferenceParamSchema }>(
+      ENDPOINTS.INFERENCE_PARAM_SCHEMA,
+      { method: 'GET', params: { taskType }, ...(options || {}) },
+    );
+  } catch {
+    return mockInferenceParamSchema(taskType);
+  }
+}
+
+/** 自定义推理脚本上传 — 禁止 /files/upload */
+export async function uploadInferenceScript(
+  file: File,
+  taskType: API.InferenceTaskType,
+  options?: { skipErrorHandler?: boolean },
+) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('taskType', taskType);
+  try {
+    return await request<{ success: boolean; data: API.InferenceScriptUploadResult }>(
+      ENDPOINTS.INFERENCE_SCRIPT_UPLOAD,
+      {
+        method: 'POST',
+        data: formData,
+        requestType: 'form',
+        ...(options || {}),
+      },
+    );
+  } catch {
+    return mockUploadInferenceScript(file);
+  }
 }

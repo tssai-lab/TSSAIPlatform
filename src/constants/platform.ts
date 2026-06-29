@@ -63,10 +63,24 @@ export const API_CONFIG = {
     /** GPU 资源概况（待后端实现） */
     GPU_OVERVIEW: '/resource/gpu/overview',
 
-    /** 在线推理（训练产出来自 task API，此处仅 predict） */
-    INFERENCE_PREDICT_CV: '/inference/predict/cv',
-    INFERENCE_PREDICT_NLP: '/inference/predict/nlp',
-    INFERENCE_PREDICT_MULTIMODAL: '/inference/predict/multimodal',
+    /** 模型推理任务 */
+    INFERENCE_TASK_STATS: '/inference/tasks/stats',
+    INFERENCE_TASK_LIST: '/inference/tasks',
+    INFERENCE_TASK_CREATE: '/inference/tasks',
+    INFERENCE_TASK_DETAIL: (id: string) =>
+      `/inference/tasks/${encodeURIComponent(id)}`,
+    INFERENCE_TASK_STOP: (id: string) =>
+      `/inference/tasks/${encodeURIComponent(id)}/stop`,
+    INFERENCE_TASK_DELETE: (id: string) =>
+      `/inference/tasks/${encodeURIComponent(id)}`,
+    INFERENCE_MODEL_LIST: '/inference/models',
+    INFERENCE_PARAM_SCHEMA: '/inference/param-schema',
+    INFERENCE_INPUT_UPLOAD: '/inference/inputs/upload',
+    INFERENCE_INPUT_UPLOAD_INIT: '/inference/inputs/upload/init',
+    INFERENCE_INPUT_UPLOAD_CHUNK: '/inference/inputs/upload/chunk',
+    INFERENCE_INPUT_UPLOAD_PROGRESS: '/inference/inputs/upload/progress',
+    INFERENCE_INPUT_UPLOAD_COMPLETE: '/inference/inputs/upload/complete',
+    INFERENCE_SCRIPT_UPLOAD: '/inference/scripts/upload',
   },
 } as const;
 

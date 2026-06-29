@@ -439,14 +439,8 @@ const TaskDetail: React.FC = () => {
     { title: '时间', dataIndex: 'createdAt', width: 180 },
   ];
 
-  const handleGoInference = (versionNo: number) => {
-    if (!experimentId) {
-      message.warning('缺少 experimentId，无法进入在线推理');
-      return;
-    }
-    history.push(
-      `/inference/playground?experimentId=${encodeURIComponent(experimentId)}&versionNo=${versionNo}`,
-    );
+  const handleGoInference = () => {
+    history.push('/inference/create');
   };
 
   const handleCompareVersions = () => {
@@ -751,7 +745,7 @@ const TaskDetail: React.FC = () => {
                     <Button
                       type="link"
                       style={{ paddingInline: 4 }}
-                      onClick={() => handleGoInference(record.versionNo)}
+                      onClick={() => handleGoInference()}
                     >
                       在线推理
                     </Button>

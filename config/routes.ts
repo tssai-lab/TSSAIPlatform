@@ -122,11 +122,23 @@ export default [
     name: '模型推理',
     icon: 'experiment',
     routes: [
-      { path: '/inference', redirect: '/inference/playground' },
+      { path: '/inference', redirect: '/inference/list' },
       {
-        path: '/inference/playground',
-        name: '在线推理',
-        component: './inference/playground',
+        path: '/inference/list',
+        name: '推理任务列表',
+        component: './inference/list',
+      },
+      {
+        path: '/inference/create',
+        name: '创建推理任务',
+        component: './inference/create',
+        hideInMenu: true,
+      },
+      {
+        path: '/inference/detail/:id',
+        name: '推理任务详情',
+        component: './inference/detail/[id]',
+        hideInMenu: true,
       },
     ],
   },

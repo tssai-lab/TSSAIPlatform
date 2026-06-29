@@ -4,7 +4,7 @@
  * @see services/model.ts - 模型
  * @see services/dataset.ts - 数据集
  * @see services/task.ts - 任务
- * @see services/inference.ts - 在线推理
+ * @see services/inference.ts - 模型推理
  */
 export {
   fetchModelList,
@@ -106,16 +106,15 @@ export {
 } from './datasetPreview';
 
 export {
-  fetchInferenceTrainingCandidates,
-  fetchTrainingInferenceContext,
-  runInference,
-  type CvBatchInputState,
-  type CvInputState,
-  type CustomScriptInputState,
-  type MultimodalInputState,
-  type NlpBatchInputState,
-  type NlpInputState,
-  type RunInferenceParams,
+  fetchInferenceTaskStats,
+  fetchInferenceTaskList,
+  fetchInferenceTaskDetail,
+  createInferenceTask,
+  deleteInferenceTask,
+  stopInferenceTask,
+  fetchInferenceModels,
+  uploadInferenceInput,
+  uploadInferenceScript,
+  fetchInferenceParamSchema,
 } from './inference';
 
-export type { InferenceModelItem } from '@/utils/inferenceModality';
