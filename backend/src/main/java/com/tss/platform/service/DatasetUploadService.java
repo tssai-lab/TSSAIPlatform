@@ -275,15 +275,16 @@ public class DatasetUploadService {
         if (req.getFileSize() == null || req.getFileSize() <= 0) {
             throw new IllegalArgumentException("fileSize must be greater than 0");
         }
+        DatasetVersion draft = requireAppendDraft(draftVersionId);
+        DatasetAsset asset = requireAppendAsset(draft);
+        String taskType = DatasetTaskType.normalize(asset.getType());
         String sampleGrouping = normalizeSampleGroupingForTask(
-                "MULTIMODAL",
+                taskType,
                 req.getSampleGrouping()
         );
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
-        validateDatasetFileNameForTask("MULTIMODAL", req.getFileName());
-
-        DatasetVersion draft = requireAppendDraft(draftVersionId);
-        DatasetAsset asset = requireAppendAsset(draft);
+        validateGroupingForTask(taskType, sampleGrouping);
+        validateAppendPackageFileNameForTask(taskType, req.getFileName());
 
         DatasetUploadSession session = new DatasetUploadSession();
         session.setId("dataset-upload-" + System.currentTimeMillis() + "-"
@@ -300,7 +301,7 @@ public class DatasetUploadService {
         session.setVersionLabel(draft.getVersionLabel());
         session.setVersionNo(draft.getVersionNo());
         session.setVersionLabelGenerated(false);
-        session.setType("MULTIMODAL");
+        session.setType(taskType);
         session.setCvTaskType(draft.getCvTaskType());
         session.setAnnotationFormat(draft.getAnnotationFormat());
         session.setParentVersionId(draft.getParentVersionId());
@@ -441,6 +442,14 @@ public class DatasetUploadService {
             if (stat.size() != claimed.getFileSize()) {
                 throw new IllegalArgumentException(
                         "composed append package size does not match upload session"
+                );
+            }
+            if (!"MULTIMODAL".equals(DatasetTaskType.normalize(claimed.getType()))) {
+                validateDatasetObjectFormat(
+                        claimed.getType(),
+                        claimed.getAnnotationFormat(),
+                        claimed.getFileName(),
+                        destinationObject
                 );
             }
             completed = transactionTemplate.execute(status ->
@@ -1140,11 +1149,6 @@ public class DatasetUploadService {
                     "dataset workspace version not found or no permission"
             );
         }
-        if (!"MULTIMODAL".equals(DatasetTaskType.normalize(asset.getType()))) {
-            throw new IllegalArgumentException(
-                    "append package is only supported for MULTIMODAL datasets"
-            );
-        }
         return asset;
     }
 
@@ -1158,9 +1162,17 @@ public class DatasetUploadService {
                     "append upload session does not belong to draft version"
             );
         }
-        if (!isMultimodalGrouping(session.getSampleGrouping())) {
+        String taskType = DatasetTaskType.normalize(session.getType());
+        if ("MULTIMODAL".equals(taskType) && !isMultimodalGrouping(session.getSampleGrouping())) {
             throw new IllegalArgumentException(
                     "append upload session sampleGrouping must be MANIFEST or AUTO_DIRECTORY"
+            );
+        }
+        if (!"MULTIMODAL".equals(taskType)
+                && (session.getSampleGrouping() != null
+                || session.getManifestPath() != null)) {
+            throw new IllegalArgumentException(
+                    "single-modal append upload cannot use sampleGrouping or manifestPath"
             );
         }
     }
@@ -1770,6 +1782,14 @@ public class DatasetUploadService {
             }
             return;
         }
+    }
+
+    static void validateAppendPackageFileNameForTask(String taskType, String fileName) {
+        String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".zip")) {
+            throw new IllegalArgumentException("append package only supports zip files");
+        }
+        validateDatasetFileNameForTask(taskType, fileName);
     }
 
     static String normalizeSampleGrouping(String value) {

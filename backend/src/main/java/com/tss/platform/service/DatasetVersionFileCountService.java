@@ -27,9 +27,13 @@ public class DatasetVersionFileCountService {
         if (version == null) {
             return null;
         }
+        long metadataCount = dataRepo.countByDatasetVersionId(version.getId())
+                + annotationRepo.countByDatasetVersionId(version.getId());
         if (asset != null && "MULTIMODAL".equalsIgnoreCase(asset.getType())) {
-            return dataRepo.countByDatasetVersionId(version.getId())
-                    + annotationRepo.countByDatasetVersionId(version.getId());
+            return metadataCount;
+        }
+        if (metadataCount > 0) {
+            return metadataCount;
         }
         if (isBlank(version.getStoragePath())) {
             return null;

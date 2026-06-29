@@ -38,6 +38,18 @@ class DatasetVersionFileCountServiceTest {
     }
 
     @Test
+    void countsSingleModalMetadataBackedVersionFromSamples() {
+        DatasetAsset asset = asset("CV");
+        DatasetVersion version = version("dataset.zip", "users/7/datasets/a/v2/dataset.zip");
+        when(dataRepo.countByDatasetVersionId(version.getId())).thenReturn(4L);
+        when(annotationRepo.countByDatasetVersionId(version.getId())).thenReturn(1L);
+
+        Long count = service.countCurrentVersionFiles(asset, version);
+
+        assertEquals(5L, count);
+    }
+
+    @Test
     void countsNonArchiveVersionAsOneFile() {
         DatasetAsset asset = asset("NLP");
         DatasetVersion version = version("dataset.jsonl", "users/7/datasets/a/v1/dataset.jsonl");

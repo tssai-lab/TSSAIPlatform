@@ -95,7 +95,7 @@ public class DatasetWorkspaceService {
         draft.setDeleted(false);
         draft.setDeletedAt(null);
         DatasetVersion saved = versionRepo.save(draft);
-        materializer.materialize(parent, saved);
+        materializer.materialize(asset, parent, saved);
 
         DatasetWorkspaceDraftDto dto = new DatasetWorkspaceDraftDto();
         dto.setDraftVersionId(saved.getId());

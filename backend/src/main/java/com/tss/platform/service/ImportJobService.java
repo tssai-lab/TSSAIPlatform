@@ -11,6 +11,7 @@ import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
+import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.model.manifest.ManifestAnnotation;
 import com.tss.platform.model.manifest.ManifestData;
@@ -71,6 +72,7 @@ public class ImportJobService {
     private final ManifestZipReader manifestReader;
     private final ManifestParser manifestParser;
     private final AutoDirectoryManifestBuilder autoDirectoryManifestBuilder;
+    private final SingleModalImportPlanBuilder singleModalImportPlanBuilder;
     private final TransactionTemplate writeTransaction;
     private final TransactionTemplate statusTransaction;
     private final Map<String, String> activeExecutors = new ConcurrentHashMap<>();
@@ -90,6 +92,7 @@ public class ImportJobService {
             ManifestZipReader manifestReader,
             ManifestParser manifestParser,
             AutoDirectoryManifestBuilder autoDirectoryManifestBuilder,
+            SingleModalImportPlanBuilder singleModalImportPlanBuilder,
             PlatformTransactionManager transactionManager
     ) {
         this.jobRepo = jobRepo;
@@ -106,6 +109,7 @@ public class ImportJobService {
         this.manifestReader = manifestReader;
         this.manifestParser = manifestParser;
         this.autoDirectoryManifestBuilder = autoDirectoryManifestBuilder;
+        this.singleModalImportPlanBuilder = singleModalImportPlanBuilder;
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.statusTransaction = new TransactionTemplate(transactionManager);
         this.statusTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -188,11 +192,19 @@ public class ImportJobService {
         if (!version.getId().equals(session.getVersionId())) {
             throw new IllegalArgumentException("upload session version does not match import job");
         }
+        String taskType = DatasetTaskType.normalize(session.getType());
         String sampleGrouping = session.getSampleGrouping();
-        if (!GROUPING_MANIFEST.equals(sampleGrouping)
+        boolean multimodal = "MULTIMODAL".equals(taskType);
+        if (multimodal
+                && !GROUPING_MANIFEST.equals(sampleGrouping)
                 && !GROUPING_AUTO_DIRECTORY.equals(sampleGrouping)) {
             throw new IllegalArgumentException(
                     "upload session sampleGrouping must be MANIFEST or AUTO_DIRECTORY"
+            );
+        }
+        if (!multimodal && sampleGrouping != null) {
+            throw new IllegalArgumentException(
+                    "single-modal import cannot use sampleGrouping"
             );
         }
 
@@ -240,16 +252,24 @@ public class ImportJobService {
             packageManifestPath = datasetPackage.getManifestPath();
         }
 
-        if (GROUPING_MANIFEST.equals(sampleGrouping)) {
+        if (multimodal && GROUPING_MANIFEST.equals(sampleGrouping)) {
             manifestPath = DatasetUploadService.normalizeManifestPath(
                     GROUPING_MANIFEST,
                     manifestPath
             );
-        } else {
+        } else if (multimodal) {
             if ((manifestPath != null && !manifestPath.isBlank())
                     || (packageManifestPath != null && !packageManifestPath.isBlank())) {
                 throw new IllegalArgumentException(
                         "AUTO_DIRECTORY import cannot use manifestPath"
+                );
+            }
+            manifestPath = null;
+        } else {
+            if ((manifestPath != null && !manifestPath.isBlank())
+                    || (packageManifestPath != null && !packageManifestPath.isBlank())) {
+                throw new IllegalArgumentException(
+                        "single-modal import cannot use manifestPath"
                 );
             }
             manifestPath = null;
@@ -259,6 +279,7 @@ public class ImportJobService {
                 importJobId,
                 version.getId(),
                 version.getAssetId(),
+                taskType,
                 packageId,
                 packageRole,
                 objectName,
@@ -273,6 +294,13 @@ public class ImportJobService {
             long objectSize
     ) throws Exception {
         int generatedStart = generatedSampleIndexStart(context);
+        if (!"MULTIMODAL".equals(context.taskType())) {
+            return singleModalImportPlanBuilder.build(
+                    context.taskType(),
+                    entries,
+                    generatedStart
+            );
+        }
         if (GROUPING_AUTO_DIRECTORY.equals(context.sampleGrouping())) {
             return autoDirectoryManifestBuilder.build(entries, generatedStart);
         }
@@ -712,6 +740,7 @@ public class ImportJobService {
             String importJobId,
             String versionId,
             String assetId,
+            String taskType,
             String packageId,
             String packageRole,
             String objectName,

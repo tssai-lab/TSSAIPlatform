@@ -334,10 +334,13 @@ class MultimodalDatasetLifecycleAcceptanceTest {
 
             DatasetWorkspaceMaterializer materializer =
                     new DatasetWorkspaceMaterializer(
+                            packageRepo,
                             versionPackageRepo,
                             sampleRepo,
                             dataRepo,
                             annotationRepo,
+                            zipReader,
+                            new SingleModalImportPlanBuilder(),
                             entityManager,
                             new ObjectMapper()
                     );
@@ -382,6 +385,7 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     manifestReader,
                     manifestParser,
                     autoDirectoryManifestBuilder,
+                    new SingleModalImportPlanBuilder(),
                     transactionManager
             );
             mutationService = new DatasetWorkspaceSampleMutationService(
@@ -493,6 +497,7 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             session.setVersionId(V1_ID);
             session.setAssetId(ASSET_ID);
             session.setImportJobId(INITIAL_JOB_ID);
+            session.setType("MULTIMODAL");
             session.setSampleGrouping(sampleGrouping);
             session.setManifestPath(
                     "MANIFEST".equals(sampleGrouping) ? "manifest.json" : null

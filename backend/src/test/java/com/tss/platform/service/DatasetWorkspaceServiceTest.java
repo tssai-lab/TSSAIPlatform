@@ -64,7 +64,7 @@ class DatasetWorkspaceServiceTest {
         assertNull(draft.getPublishedAt());
         assertFalse(Boolean.TRUE.equals(draft.getDeleted()));
         verify(fixture.assetRepo, never()).save(any(DatasetAsset.class));
-        verify(fixture.materializer).materialize(fixture.parent, draft);
+        verify(fixture.materializer).materialize(fixture.asset, fixture.parent, draft);
     }
 
     @Test
@@ -79,7 +79,11 @@ class DatasetWorkspaceServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
         doThrow(new IllegalStateException("copy failed"))
                 .when(fixture.materializer)
-                .materialize(eq(fixture.parent), any(DatasetVersion.class));
+                .materialize(
+                        eq(fixture.asset),
+                        eq(fixture.parent),
+                        any(DatasetVersion.class)
+                );
 
         IllegalStateException error = assertThrows(
                 IllegalStateException.class,
@@ -108,7 +112,11 @@ class DatasetWorkspaceServiceTest {
         assertEquals("DRAFT", result.getStatus());
         ArgumentCaptor<DatasetVersion> draftCaptor =
                 ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(fixture.materializer).materialize(eq(fixture.parent), draftCaptor.capture());
+        verify(fixture.materializer).materialize(
+                eq(fixture.asset),
+                eq(fixture.parent),
+                draftCaptor.capture()
+        );
         assertNull(draftCaptor.getValue().getStoragePath());
     }
 

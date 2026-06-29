@@ -2,11 +2,15 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.DatasetAnnotation;
+import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
+import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.repository.DatasetAnnotationRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
@@ -75,7 +79,7 @@ class DatasetWorkspaceMaterializerTest {
                 ))
                 .thenReturn(List.of(parentAnnotation));
 
-        fixture.materializer.materialize(fixture.parent, fixture.draft);
+        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
 
         ArgumentCaptor<List<DatasetVersionPackage>> relationCaptor =
                 ArgumentCaptor.forClass(List.class);
@@ -169,7 +173,7 @@ class DatasetWorkspaceMaterializerTest {
                 ))
                 .thenReturn(List.of());
 
-        fixture.materializer.materialize(fixture.parent, fixture.draft);
+        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
 
         ArgumentCaptor<List<DatasetSample>> sampleCaptor = ArgumentCaptor.forClass(List.class);
         verify(fixture.sampleRepo).saveAll(sampleCaptor.capture());
@@ -215,7 +219,9 @@ class DatasetWorkspaceMaterializerTest {
                 ))
                 .thenReturn(List.of());
 
-        fixture.materializer.materialize(fixture.parent, fixture.draft);
+        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
+
+        verify(fixture.packageRepo, never()).saveAndFlush(any());
 
         verify(fixture.versionPackageRepo, never()).saveAll(any());
         ArgumentCaptor<List<DatasetSample>> sampleCaptor = ArgumentCaptor.forClass(List.class);
@@ -238,11 +244,38 @@ class DatasetWorkspaceMaterializerTest {
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
-                () -> fixture.materializer.materialize(fixture.parent, fixture.draft)
+                () -> fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft)
         );
 
         assertEquals(
                 "READY dataset version has no package relation or storagePath: ready-2",
+                error.getMessage()
+        );
+        verify(fixture.sampleRepo, never())
+                .findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
+                        any(),
+                        any()
+                );
+    }
+
+    @Test
+    void rejectsSingleModalParentWithoutPackagesWhenSourceIsNotZip() {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("NLP");
+        fixture.parent.setFileName("dataset.txt");
+        fixture.parent.setStoragePath("users/7/datasets/asset-1/v2/dataset.txt");
+        fixture.parent.setSizeBytes(1024L);
+        when(fixture.versionPackageRepo.findByDatasetVersionIdOrderByPackageOrderAsc(
+                fixture.parent.getId()
+        )).thenReturn(List.of());
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft)
+        );
+
+        assertEquals(
+                "single-modal workspace requires ZIP-backed READY version: ready-2",
                 error.getMessage()
         );
         verify(fixture.sampleRepo, never())
@@ -287,12 +320,81 @@ class DatasetWorkspaceMaterializerTest {
 
         IllegalStateException error = assertThrows(
                 IllegalStateException.class,
-                () -> fixture.materializer.materialize(fixture.parent, fixture.draft)
+                () -> fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft)
         );
 
         assertEquals(
                 "annotation references sample data outside copied parent batch: parent-data-missing",
                 error.getMessage()
+        );
+        verify(fixture.annotationRepo, never()).saveAll(any());
+    }
+
+    @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void materializesZipBackedSingleModalParentIntoPrimaryPackageAndSamples()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("CV");
+        fixture.parent.setFileName("dataset.zip");
+        fixture.parent.setSizeBytes(1024L);
+        when(fixture.versionPackageRepo.findByDatasetVersionIdOrderByPackageOrderAsc(
+                fixture.parent.getId()
+        )).thenReturn(List.of());
+        when(fixture.packageRepo.saveAndFlush(any())).thenAnswer(invocation ->
+                invocation.getArgument(0)
+        );
+        when(fixture.zipReader.read(
+                fixture.parent.getStoragePath(),
+                fixture.parent.getSizeBytes()
+        )).thenReturn(List.of(
+                zipEntry("images/front.jpg"),
+                zipEntry("labels/front.json")
+        ));
+
+        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
+
+        ArgumentCaptor<DatasetPackage> packageCaptor =
+                ArgumentCaptor.forClass(DatasetPackage.class);
+        verify(fixture.packageRepo).saveAndFlush(packageCaptor.capture());
+        DatasetPackage primaryPackage = packageCaptor.getValue();
+        assertEquals(fixture.asset.getId(), primaryPackage.getDatasetAssetId());
+        assertEquals(fixture.parent.getStoragePath(), primaryPackage.getStoragePath());
+        assertEquals("dataset.zip", primaryPackage.getFileName());
+        assertEquals(1024L, primaryPackage.getSizeBytes());
+        assertEquals("READY", primaryPackage.getStatus());
+
+        ArgumentCaptor<List<DatasetVersionPackage>> relationCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(fixture.versionPackageRepo).saveAll(relationCaptor.capture());
+        assertEquals(1, relationCaptor.getValue().size());
+        DatasetVersionPackage relation = relationCaptor.getValue().get(0);
+        assertEquals(fixture.draft.getId(), relation.getDatasetVersionId());
+        assertEquals(primaryPackage.getId(), relation.getPackageId());
+        assertEquals("PRIMARY", relation.getPackageRole());
+        assertEquals(0, relation.getPackageOrder());
+
+        ArgumentCaptor<List<DatasetSample>> sampleCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DatasetSampleData>> dataCaptor = ArgumentCaptor.forClass(List.class);
+        verify(fixture.sampleRepo).saveAll(sampleCaptor.capture());
+        verify(fixture.dataRepo).saveAll(dataCaptor.capture());
+        assertEquals(
+                List.of("images/front.jpg", "labels/front.json"),
+                sampleCaptor.getValue().stream().map(DatasetSample::getExternalId).toList()
+        );
+        assertEquals(
+                List.of(primaryPackage.getId(), primaryPackage.getId()),
+                sampleCaptor.getValue().stream()
+                        .map(DatasetSample::getCreatedByPackageId)
+                        .toList()
+        );
+        assertEquals(
+                List.of("IMAGE", "TEXT"),
+                dataCaptor.getValue().stream().map(DatasetSampleData::getDataType).toList()
+        );
+        assertEquals(
+                List.of(primaryPackage.getId(), primaryPackage.getId()),
+                dataCaptor.getValue().stream().map(DatasetSampleData::getPackageId).toList()
         );
         verify(fixture.annotationRepo, never()).saveAll(any());
     }
@@ -437,7 +539,24 @@ class DatasetWorkspaceMaterializerTest {
         return relation;
     }
 
+    private static ZipEntryInfo zipEntry(String path) {
+        return new ZipEntryInfo(
+                path,
+                path,
+                8,
+                1L,
+                1L,
+                1L,
+                0L,
+                0L,
+                false,
+                false
+        );
+    }
+
     private static final class Fixture {
+        private final DatasetPackageRepository packageRepo =
+                mock(DatasetPackageRepository.class);
         private final DatasetVersionPackageRepository versionPackageRepo =
                 mock(DatasetVersionPackageRepository.class);
         private final DatasetSampleRepository sampleRepo =
@@ -446,18 +565,33 @@ class DatasetWorkspaceMaterializerTest {
                 mock(DatasetSampleDataRepository.class);
         private final DatasetAnnotationRepository annotationRepo =
                 mock(DatasetAnnotationRepository.class);
+        private final ZipCentralDirectoryReader zipReader =
+                mock(ZipCentralDirectoryReader.class);
         private final EntityManager entityManager = mock(EntityManager.class);
         private final DatasetWorkspaceMaterializer materializer =
                 new DatasetWorkspaceMaterializer(
+                        packageRepo,
                         versionPackageRepo,
                         sampleRepo,
                         dataRepo,
                         annotationRepo,
+                        zipReader,
+                        new SingleModalImportPlanBuilder(),
                         entityManager,
                         new ObjectMapper()
                 );
+        private final DatasetAsset asset = asset();
         private final DatasetVersion parent = version("ready-2", "READY");
         private final DatasetVersion draft = version("draft-3", "DRAFT");
+
+        private static DatasetAsset asset() {
+            DatasetAsset asset = new DatasetAsset();
+            asset.setId("asset-1");
+            asset.setType("MULTIMODAL");
+            asset.setOwnerUserId(7);
+            asset.setDeleted(false);
+            return asset;
+        }
 
         private static DatasetVersion version(String id, String status) {
             DatasetVersion version = new DatasetVersion();

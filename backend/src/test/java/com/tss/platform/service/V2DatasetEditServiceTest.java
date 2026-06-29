@@ -133,6 +133,18 @@ class V2DatasetEditServiceTest {
     }
 
     @Test
+    void exposesAddDataActionForSingleModalEditSession() {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("CV");
+        fixture.stubEditSessionState();
+
+        V2DatasetEditSessionDto result =
+                fixture.service.getEditSession(fixture.draft.getId());
+
+        assertTrue(result.getAvailableActions().contains("ADD_DATA"));
+    }
+
+    @Test
     void initializesAppendUploadThroughSharedV2UploadFacade() {
         Fixture fixture = new Fixture();
         fixture.stubEditSessionState();

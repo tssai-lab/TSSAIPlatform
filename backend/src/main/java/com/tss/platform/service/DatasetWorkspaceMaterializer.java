@@ -3,11 +3,19 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.DatasetAnnotation;
+import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
+import com.tss.platform.model.DatasetTaskType;
+import com.tss.platform.model.ZipEntryInfo;
+import com.tss.platform.model.manifest.ManifestData;
+import com.tss.platform.model.manifest.ManifestImportPlan;
+import com.tss.platform.model.manifest.ManifestSample;
 import com.tss.platform.repository.DatasetAnnotationRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
@@ -34,34 +42,64 @@ public class DatasetWorkspaceMaterializer {
     private static final TypeReference<Map<String, Object>> JSON_MAP_TYPE =
             new TypeReference<>() {
             };
+    private static final String READY = "READY";
+    private static final String PRIMARY = "PRIMARY";
 
+    private final DatasetPackageRepository packageRepo;
     private final DatasetVersionPackageRepository versionPackageRepo;
     private final DatasetSampleRepository sampleRepo;
     private final DatasetSampleDataRepository dataRepo;
     private final DatasetAnnotationRepository annotationRepo;
+    private final ZipCentralDirectoryReader zipReader;
+    private final SingleModalImportPlanBuilder singleModalImportPlanBuilder;
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
 
     public DatasetWorkspaceMaterializer(
+            DatasetPackageRepository packageRepo,
             DatasetVersionPackageRepository versionPackageRepo,
             DatasetSampleRepository sampleRepo,
             DatasetSampleDataRepository dataRepo,
             DatasetAnnotationRepository annotationRepo,
+            ZipCentralDirectoryReader zipReader,
+            SingleModalImportPlanBuilder singleModalImportPlanBuilder,
             EntityManager entityManager,
             ObjectMapper objectMapper
     ) {
+        this.packageRepo = packageRepo;
         this.versionPackageRepo = versionPackageRepo;
         this.sampleRepo = sampleRepo;
         this.dataRepo = dataRepo;
         this.annotationRepo = annotationRepo;
+        this.zipReader = zipReader;
+        this.singleModalImportPlanBuilder = singleModalImportPlanBuilder;
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
-    public void materialize(DatasetVersion parent, DatasetVersion draft) {
+    public void materialize(
+            DatasetAsset asset,
+            DatasetVersion parent,
+            DatasetVersion draft
+    ) {
         Instant now = Instant.now();
-        copyPackageRelations(parent, draft.getId(), now);
+        String generatedPrimaryPackageId = copyPackageRelations(
+                asset,
+                parent,
+                draft.getId(),
+                now
+        );
+        if (generatedPrimaryPackageId != null) {
+            materializeSingleModalZip(
+                    asset,
+                    parent,
+                    draft,
+                    generatedPrimaryPackageId,
+                    now
+            );
+            return;
+        }
 
         Pageable pageable = PageRequest.of(0, BATCH_SIZE);
         while (true) {
@@ -85,7 +123,8 @@ public class DatasetWorkspaceMaterializer {
         }
     }
 
-    private void copyPackageRelations(
+    private String copyPackageRelations(
+            DatasetAsset asset,
             DatasetVersion parent,
             String draftVersionId,
             Instant now
@@ -99,13 +138,125 @@ public class DatasetWorkspaceMaterializer {
                                 + parent.getId()
                 );
             }
-            return;
+            if (isZipBackedSingleModal(asset, parent)) {
+                DatasetPackage primaryPackage = createPrimaryPackage(
+                        asset,
+                        parent,
+                        now
+                );
+                DatasetVersionPackage relation = new DatasetVersionPackage();
+                relation.setDatasetVersionId(draftVersionId);
+                relation.setPackageId(primaryPackage.getId());
+                relation.setPackageRole(PRIMARY);
+                relation.setPackageOrder(0);
+                relation.setCreatedAt(now);
+                versionPackageRepo.saveAll(List.of(relation));
+                return primaryPackage.getId();
+            }
+            if (isSingleModal(asset)) {
+                throw new IllegalArgumentException(
+                        "single-modal workspace requires ZIP-backed READY version: "
+                                + parent.getId()
+                );
+            }
+            return null;
         }
 
         List<DatasetVersionPackage> copiedRelations = parentRelations.stream()
                 .map(source -> copyPackageRelation(source, draftVersionId, now))
                 .toList();
         versionPackageRepo.saveAll(copiedRelations);
+        return null;
+    }
+
+    private DatasetPackage createPrimaryPackage(
+            DatasetAsset asset,
+            DatasetVersion parent,
+            Instant now
+    ) {
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId(id("dataset-pkg"));
+        datasetPackage.setDatasetAssetId(asset.getId());
+        datasetPackage.setStoragePath(parent.getStoragePath());
+        datasetPackage.setFileName(sourceName(parent));
+        datasetPackage.setSizeBytes(parent.getSizeBytes());
+        datasetPackage.setStatus(READY);
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        return packageRepo.saveAndFlush(datasetPackage);
+    }
+
+    private boolean isZipBackedSingleModal(DatasetAsset asset, DatasetVersion parent) {
+        if (asset == null
+                || asset.getType() == null
+                || asset.getType().isBlank()
+                || parent.getSizeBytes() == null) {
+            return false;
+        }
+        String taskType = DatasetTaskType.normalize(asset.getType());
+        return !"MULTIMODAL".equals(taskType) && isZip(sourceName(parent));
+    }
+
+    private boolean isSingleModal(DatasetAsset asset) {
+        return asset != null
+                && asset.getType() != null
+                && !asset.getType().isBlank()
+                && !"MULTIMODAL".equals(DatasetTaskType.normalize(asset.getType()));
+    }
+
+    private String sourceName(DatasetVersion version) {
+        return version.getFileName() == null || version.getFileName().isBlank()
+                ? version.getStoragePath()
+                : version.getFileName();
+    }
+
+    private boolean isZip(String path) {
+        return path != null && path.toLowerCase().endsWith(".zip");
+    }
+
+    private void materializeSingleModalZip(
+            DatasetAsset asset,
+            DatasetVersion parent,
+            DatasetVersion draft,
+            String packageId,
+            Instant now
+    ) {
+        List<ZipEntryInfo> entries;
+        try {
+            entries = zipReader.read(parent.getStoragePath(), parent.getSizeBytes());
+        } catch (Exception exception) {
+            throw new IllegalArgumentException(
+                    "READY single-modal ZIP could not be indexed: "
+                            + exception.getMessage(),
+                    exception
+            );
+        }
+        ManifestImportPlan plan = singleModalImportPlanBuilder.build(
+                DatasetTaskType.normalize(asset.getType()),
+                entries,
+                0
+        );
+        List<DatasetSample> samples = new ArrayList<>(plan.totalSamples());
+        List<DatasetSampleData> dataItems = new ArrayList<>(plan.totalDataCount());
+        for (ManifestSample manifestSample : plan.samples()) {
+            DatasetSample sample = toSample(draft, packageId, manifestSample, now);
+            samples.add(sample);
+            for (ManifestData manifestData : manifestSample.data()) {
+                dataItems.add(toSampleData(
+                        draft,
+                        sample,
+                        packageId,
+                        manifestData,
+                        now
+                ));
+            }
+        }
+        sampleRepo.saveAll(samples);
+        if (!dataItems.isEmpty()) {
+            dataRepo.saveAll(dataItems);
+        }
+        entityManager.flush();
+        entityManager.clear();
     }
 
     private void copySampleBatch(
@@ -191,6 +342,28 @@ public class DatasetWorkspaceMaterializer {
         return copied;
     }
 
+    private DatasetSample toSample(
+            DatasetVersion draft,
+            String packageId,
+            ManifestSample source,
+            Instant now
+    ) {
+        DatasetSample target = new DatasetSample();
+        target.setId(id("sample"));
+        target.setDatasetVersionId(draft.getId());
+        target.setCreatedByPackageId(packageId);
+        target.setExternalId(source.externalId());
+        target.setSampleIndex(source.sampleIndex());
+        target.setTags(source.tags());
+        target.setMetadata(source.metadata());
+        target.setOwnerUserId(draft.getOwnerUserId());
+        target.setCreatedAt(now);
+        target.setUpdatedAt(now);
+        target.setDeleted(false);
+        target.setDeletedAt(null);
+        return target;
+    }
+
     private DatasetVersionPackage copyPackageRelation(
             DatasetVersionPackage source,
             String draftVersionId,
@@ -257,6 +430,50 @@ public class DatasetWorkspaceMaterializer {
         target.setCreatedAt(now);
         target.setUpdatedAt(now);
         return target;
+    }
+
+    private DatasetSampleData toSampleData(
+            DatasetVersion draft,
+            DatasetSample sample,
+            String packageId,
+            ManifestData source,
+            Instant now
+    ) {
+        ZipEntryInfo entry = source.zipEntryInfo();
+        DatasetSampleData target = new DatasetSampleData();
+        target.setId(id("data"));
+        target.setSampleId(sample.getId());
+        target.setDatasetVersionId(draft.getId());
+        target.setPackageId(packageId);
+        target.setDataType(source.dataType());
+        target.setSensor(source.sensor());
+        target.setChannel(source.channel());
+        target.setSeq(source.seq());
+        target.setFormat(source.format());
+        target.setOriginalPath(source.path());
+        target.setFileName(source.fileName());
+        target.setSizeBytes(entry.uncompressedSize());
+        target.setContentType(source.contentType());
+        target.setZipEntryOffset(entry.localHeaderOffset());
+        target.setZipDataOffset(entry.zipDataOffset());
+        target.setCompressedSize(entry.compressedSize());
+        target.setUncompressedSize(entry.uncompressedSize());
+        target.setCompressionMethod(compressionMethod(entry.method()));
+        target.setCrc32(entry.crc32());
+        target.setMetadata(source.metadata());
+        target.setCreatedAt(now);
+        target.setUpdatedAt(now);
+        return target;
+    }
+
+    private static String compressionMethod(int method) {
+        return switch (method) {
+            case 0 -> "STORED";
+            case 8 -> "DEFLATED";
+            default -> throw new IllegalArgumentException(
+                    "unsupported ZIP compression method: " + method
+            );
+        };
     }
 
     private DatasetAnnotation copyAnnotation(

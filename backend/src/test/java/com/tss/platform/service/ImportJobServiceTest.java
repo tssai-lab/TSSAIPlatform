@@ -208,6 +208,44 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void appendsSingleModalPackageFromZipEntriesWithoutSampleGrouping() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.asset.setType("CV");
+        fixture.session.setType("CV");
+        fixture.session.setSampleGrouping(null);
+        fixture.session.setManifestPath(null);
+        fixture.datasetPackage.setManifestPath(null);
+        fixture.asset.setCurrentVersionId("ready-1");
+        when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                fixture.version.getId()
+        )).thenReturn(9);
+        fixture.stubContext();
+        when(fixture.zipReader.read(
+                fixture.datasetPackage.getStoragePath(),
+                fixture.datasetPackage.getSizeBytes()
+        )).thenReturn(List.of(fixture.zipEntry("images/front.jpg")));
+
+        fixture.service.execute(fixture.job.getId());
+
+        DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
+        DatasetSampleData data = captureSaved(fixture.dataRepo, DatasetSampleData.class);
+        assertEquals("images/front.jpg", sample.getExternalId());
+        assertEquals(10, sample.getSampleIndex());
+        assertEquals(fixture.datasetPackage.getId(), sample.getCreatedByPackageId());
+        assertEquals("IMAGE", data.getDataType());
+        assertEquals("front.jpg", data.getFileName());
+        assertEquals(fixture.datasetPackage.getId(), data.getPackageId());
+        assertEquals("SUCCESS", fixture.job.getStatus());
+        assertEquals("READY", fixture.datasetPackage.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        assertEquals("ready-1", fixture.asset.getCurrentVersionId());
+        verify(fixture.manifestReader, never()).readManifest(any(), anyLong(), any());
+        verify(fixture.autoBuilder, never()).build(any(), any(Integer.class));
+        verify(fixture.annotationRepo).saveAllAndFlush(List.of());
+    }
+
+    @Test
     void appendExternalIdConflictFailsPackageWithoutWritingRows() throws Exception {
         Fixture fixture = new Fixture();
         fixture.asAppendPackage();
@@ -455,6 +493,8 @@ class ImportJobServiceTest {
         private final ManifestParser parser = mock(ManifestParser.class);
         private final AutoDirectoryManifestBuilder autoBuilder =
                 mock(AutoDirectoryManifestBuilder.class);
+        private final SingleModalImportPlanBuilder singleModalBuilder =
+                new SingleModalImportPlanBuilder();
         private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
         private final ImportJob job = job();
         private final DatasetVersion version = version();
@@ -477,6 +517,7 @@ class ImportJobServiceTest {
                 manifestReader,
                 parser,
                 autoBuilder,
+                singleModalBuilder,
                 transactionManager
         );
 
@@ -616,6 +657,7 @@ class ImportJobServiceTest {
                     manifestReader,
                     selectedParser,
                     autoBuilder,
+                    singleModalBuilder,
                     transactionManager
             );
         }
@@ -685,6 +727,21 @@ class ImportJobServiceTest {
             );
         }
 
+        private ZipEntryInfo zipEntry(String path) {
+            return new ZipEntryInfo(
+                    path,
+                    path,
+                    8,
+                    80,
+                    100,
+                    123,
+                    10,
+                    40,
+                    false,
+                    false
+            );
+        }
+
         private ImportJob job() {
             ImportJob value = new ImportJob();
             value.setId("ijob-1");
@@ -740,6 +797,7 @@ class ImportJobServiceTest {
             value.setId("upload-1");
             value.setImportJobId("ijob-1");
             value.setVersionId("version-2");
+            value.setType("MULTIMODAL");
             value.setManifestPath("manifest.json");
             value.setSampleGrouping("MANIFEST");
             value.setStatus("COMPLETED");

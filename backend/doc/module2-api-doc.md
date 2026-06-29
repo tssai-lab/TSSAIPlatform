@@ -274,8 +274,8 @@ profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、training
 | `GET /api/dataset-sample-data/{dataId}/preview` | 预览 ZIP 内数据项 | IMAGE/TEXT/POINT_CLOUD/安全文本类 OTHER 使用 D2 全量流；STORED VIDEO 支持单段 HTTP Range |
 | `GET /api/dataset-sample-data/{dataId}/download` | 下载 ZIP 内数据项 | 使用 ZIP Entry Index + MinIO range 流式读取，不支持 HTTP Range |
 | `GET /api/dataset-annotations/{annotationId}/download` | 下载 ZIP 内 annotation | 只返回文件流，不暴露 ZIP 路径或索引 |
-| `POST /api/dataset-versions/{readyVersionId}/draft` | 基于 READY 创建维护工作区 | 物化复制 Sample/Data/Annotation 元数据并复用 package，不复制 MinIO ZIP，不改变 `currentVersionId` |
-| `POST /api/dataset-versions/{draftVersionId}/packages/init` | 初始化 DRAFT 追加 ZIP 上传 | 仅允许 MULTIMODAL DRAFT；分片仍使用通用 chunk/progress 接口 |
+| `POST /api/dataset-versions/{readyVersionId}/draft` | 基于 READY 创建维护工作区 | 物化父版本元数据；ZIP-backed 单模态旧版本会索引父 ZIP，不复制 MinIO ZIP，不改变 `currentVersionId` |
+| `POST /api/dataset-versions/{draftVersionId}/packages/init` | 初始化 DRAFT 追加 ZIP 上传 | 支持 MULTIMODAL DRAFT 和 ZIP-backed 单模态 DRAFT；分片仍使用通用 chunk/progress 接口 |
 | `POST /api/dataset-versions/{draftVersionId}/packages/complete` | 完成追加 ZIP 上传 | 创建 APPEND package、版本关系和独立 ImportJob；导入成功后 DRAFT 仍保持 DRAFT |
 | `GET /api/dataset-versions/{draftVersionId}/workspace/samples` | 查询 DRAFT 工作区样本 | 支持分页及 `includeDeleted`，只允许访问有权限的未删除 DRAFT |
 | `GET /api/dataset-samples/{sampleId}/workspace` | 查询 DRAFT 样本详情 | 返回物化后的 data 和 annotations，不返回 package 或 ZIP 定位字段 |
@@ -1323,7 +1323,7 @@ GET /api/dataset/list
 - 列表优先使用 `dataset_asset.current_version_id`；如果为空或不可用，则回退到该资产下 `status=READY` 且 `versionNo` 最大的版本。
 - `fileCount` 与 `currentVersionFileCount` 当前都表示当前推荐版本文件数；没有当前推荐版本或计数不可用时为 `null`。
 - `versionCount` 表示当前资产下未删除版本数量。
-- 普通 ZIP 数据集按当前版本源 ZIP 的非目录条目数计数；非压缩单文件版本计为 1；MULTIMODAL 按当前版本的 Sample Data 与 Annotation 元数据条目数相加。
+- 已物化为 Sample/Data/Annotation 元数据的版本按 Sample Data 与 Annotation 条目数相加；传统普通 ZIP 数据集按当前版本源 ZIP 的非目录条目数计数；非压缩单文件版本计为 1。
 
 ## 8. 数据集资产 CRUD 接口
 
@@ -1447,8 +1447,10 @@ POST /api/dataset-versions/{readyVersionId}/draft
 - 新版本分配新的 `versionNo` 和默认 `versionLabel=v{versionNo}`。
 - `parentVersionId` 指向请求中的 READY 版本。
 - 新版本状态固定为 `DRAFT`，`publishedAt` 为空。
-- 物化复制父 READY 中未删除的 DatasetSample、DatasetSampleData 和 DatasetAnnotation，复制记录使用新 ID，Annotation 的 sampleDataId 映射到 DRAFT 内的新 Data。
+- 若父 READY 已有 Sample/Data/Annotation 元数据，物化复制其中未删除的 DatasetSample、DatasetSampleData 和 DatasetAnnotation，复制记录使用新 ID，Annotation 的 sampleDataId 映射到 DRAFT 内的新 Data。
 - 复制父版本的 `dataset_version_package` 关系，复用同一批 `dataset_package` 和 ZIP 对象；不复制 MinIO ZIP。
+- ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 旧版本若没有 package 元数据，创建 DRAFT 时会把父 ZIP 登记为 `PRIMARY` package，并按 ZIP 非目录 entry 生成一文件一样本的 Sample/Data 元数据。
+- 非 ZIP 单模态旧版本不能创建维护工作区；需要先重新上传为 ZIP 数据集。
 - DRAFT 的样本元数据是独立数据库记录，后续软删除、恢复或追加不会修改父 READY。
 - 不创建 ImportJob，不读取 manifest，不执行导入。
 - 不更新 DatasetAsset.currentVersionId；当前版本仍保持原 READY 版本。
@@ -1490,8 +1492,8 @@ Content-Type: application/json
 | `fileName` | string | 是 | 必须是 `.zip` |
 | `fileSize` | number | 是 | ZIP 字节数，必须大于 0 |
 | `fileFingerprint` | string | 否 | 客户端文件指纹 |
-| `sampleGrouping` | string | 否 | 默认 `AUTO_DIRECTORY`；可显式传 `MANIFEST` |
-| `manifestPath` | string | 否 | 仅 `MANIFEST` 允许，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 不允许传 |
+| `sampleGrouping` | string | 否 | 仅 `MULTIMODAL` 使用；未传默认 `AUTO_DIRECTORY`，可显式传 `MANIFEST`；单模态禁止传 |
+| `manifestPath` | string | 否 | 仅 `MULTIMODAL + MANIFEST` 允许，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 和单模态都禁止传 |
 
 init 返回通用上传进度结构。后续分片继续调用：
 
@@ -1511,8 +1513,10 @@ Content-Type: application/json
 
 要求与结果：
 
-- 版本必须是调用方有权限访问的、未删除的 `MULTIMODAL DRAFT`。
+- 版本必须是调用方有权限访问的、未删除的 DRAFT；支持 `MULTIMODAL` 以及 ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`。
 - complete 创建新的 `dataset_package`、`APPEND` 版本关系和独立 ImportJob。
+- `MULTIMODAL` APPEND 继续按 `MANIFEST` 或 `AUTO_DIRECTORY` 生成导入计划。
+- 单模态 APPEND 只接受 ZIP，禁止 `sampleGrouping` 和 `manifestPath`；complete 会执行对应任务类型的 ZIP 安全与文件白名单校验，ImportJob 再按 ZIP entry 生成一文件一样本的 Sample/Data。
 - APPEND 导入只新增 Sample/Data/Annotation，来源字段指向新 package；不会修改继承样本。
 - APPEND 导入计划的未删除 `externalId` 或 `sampleIndex` 与当前 DRAFT 冲突时导入失败，不做跨包合并；AUTO_DIRECTORY 同样适用。
 - 导入成功后 package 状态变为 READY，但 DatasetVersion 仍保持 DRAFT，`currentVersionId` 不变。
@@ -1567,7 +1571,7 @@ POST /api/dataset-versions/{draftVersionId}/publish
 
 - `dataset_package` 表示一个物理 ZIP，包括归属资产、对象路径、文件信息、manifest 路径、状态和软删除信息。
 - `dataset_version_package` 表示某个版本使用哪些物理包，`PRIMARY` 是初始包，`APPEND` 是后续追加包，`packageOrder` 定义稳定顺序。
-- READY 创建 DRAFT 时只复制版本与 package 的关系，复用物理包；追加上传再为 DRAFT 增加新的 APPEND package。
+- READY 创建 DRAFT 时优先复制版本与 package 的关系，复用物理包；ZIP-backed 单模态旧版本没有 package 关系时会补建 PRIMARY package 关系；追加上传再为 DRAFT 增加新的 APPEND package。
 - Sample 记录 `createdByPackageId`，Data/Annotation 记录 `packageId`，文件服务据此解析实际 ZIP。
 - 旧数据没有 packageId 时继续使用 `DatasetVersion.storagePath`，因此原有已导入版本仍可读取。
 
@@ -2502,7 +2506,7 @@ Content-Type: application/json
 - `READY` 是稳定快照，后续 Sample/Data/Annotation 维护不得直接写入 READY。
 - 样本维护服务必须先调用 `DatasetVersionLifecycleService.assertMutableDraftVersion(versionId)`。
 - 需要稳定快照的内部流程可调用 `assertReadyVersion(versionId)`。
-- `POST /api/dataset-versions/{readyVersionId}/draft` 物化复制父 READY 的未删除样本元数据，并复用父版本 package 关系，不复制 ZIP。
+- `POST /api/dataset-versions/{readyVersionId}/draft` 物化复制父 READY 的未删除样本元数据，并复用父版本 package 关系，不复制 ZIP；ZIP-backed 单模态旧版本会先从父 ZIP 建立 PRIMARY package 和 Sample/Data 元数据。
 - DRAFT 使用 workspace 专用接口查询、软删除和恢复样本；普通样本接口仍只接受 READY。
 - APPEND ZIP 通过独立 package init/complete 接口加入同一 DRAFT，导入成功只扩充工作区，不更新 `currentVersionId`。
 - `POST /api/dataset-versions/{draftVersionId}/publish` 完成完整性校验后把工作区原地发布为新 READY，并在事务成功时更新 `currentVersionId`。
@@ -2514,7 +2518,7 @@ Content-Type: application/json
 - 当前定时维护每小时扫描失败超过 7 天的 ImportJob，并软删除其 DRAFT。只有不存在其他未删除 DatasetVersion 使用相同 `storagePath` 时，才会把该 MinIO 对象加入删除队列；工作区 DRAFT 与父 READY 共享的 PRIMARY ZIP 不会因此被删除。
 - 上述保护是活动 DatasetVersion 的共享路径检查，不等同于完整的 package 引用感知物理清理；package 级清理仍属于后续增强。
 
-## 17. 多模态数据管理当前范围
+## 17. 多模态与工作区数据管理当前范围
 
 当前后端已经提供多模态数据上传和持久化导入能力：
 
@@ -2533,10 +2537,11 @@ Content-Type: application/json
 - 支持 STORED VIDEO 的单段 HTTP Range preview，DEFLATED VIDEO 仅支持 download。
 - 支持 `dataset_package` / `dataset_version_package`，一个版本可按 PRIMARY + APPEND 顺序使用多个物理 ZIP。
 - 支持基于 READY 创建 DRAFT，并物化继承 Sample/Data/Annotation；复用 package，不复制 ZIP，不改变当前 READY。
-- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照。
+- ZIP-backed 单模态旧版本创建 DRAFT 时可从父 ZIP 建立 PRIMARY package 和一文件一样本的 Sample/Data 元数据；非 ZIP 单模态旧版本不支持维护工作区。
+- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照；多模态 APPEND 使用 `MANIFEST/AUTO_DIRECTORY`，单模态 APPEND 禁止 `sampleGrouping/manifestPath`。
 - 发布后 `currentVersionId` 指向新 READY，父 READY 保持不变，软删除样本不进入正式查询和文件访问。
 - 已提供 READY/DRAFT 生命周期断言，统一拒绝对 READY 的直接样本修改。
-- MULTIMODAL complete 不执行现有 CV/NLP/POINT_CLOUD/ROBOT zip 白名单和全量解压校验。
+- MULTIMODAL complete 不执行现有 CV/NLP/POINT_CLOUD/ROBOT zip 白名单和全量解压校验；单模态 APPEND complete 继续执行对应任务类型的 ZIP 安全与文件白名单校验。
 
 ### 17.1 后续增强（E0-G 不实现）
 
@@ -2617,7 +2622,7 @@ IMPORT_FAILED > IMPORTING > EDITING > READY > EMPTY
 
 ### 18.2 数据集编辑会话
 
-V2 直接使用现有 DRAFT version ID 作为 `editSessionId`，不新增编辑会话表。
+V2 直接使用现有 DRAFT version ID 作为 `editSessionId`，不新增编辑会话表。编辑会话支持 `MULTIMODAL` 以及 ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`；非 ZIP 单模态旧版本需要重新上传为 ZIP 后再进入维护工作区。
 
 | 接口 | 说明 |
 | --- | --- |
@@ -2655,18 +2660,17 @@ publish 成功直接返回：
 `sampleGrouping` 时后端默认使用 `AUTO_DIRECTORY`，普通用户不需要提供
 `manifest.json`；高级兼容场景可以显式使用 `MANIFEST`。
 
-APPEND init 请求：
+单模态 APPEND init 请求：
 
 ```json
 {
   "fileName": "append.zip",
   "fileSize": 104857600,
-  "fileFingerprint": "sha256:...",
-  "sampleGrouping": "AUTO_DIRECTORY"
+  "fileFingerprint": "sha256:..."
 }
 ```
 
-`sampleGrouping` 未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
+单模态 APPEND 必须省略 `sampleGrouping` 和 `manifestPath`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
 
 上传响应统一返回 `uploadId`、分片进度、`datasetId`、可选
 `editSessionId`、`versionLabel`、`displayStatus`、`importProgress` 和

@@ -275,6 +275,16 @@ POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
 - 重试会清空错误字段并重置进度，但不会清理已落库的半导入样本；若检测到已有样本，会拒绝重试。
 - DatasetVersion 在导入成功前仍保持 `DRAFT`。
 
+### 6.1.2 已有数据集维护工作区
+
+已有 READY 数据集可以创建 DRAFT 维护工作区，用于在不修改父 READY 的前提下软删除、恢复和追加数据，最终通过 publish 成为新的 READY 版本并更新 `currentVersionId`。
+
+- `MULTIMODAL` 继续支持 `MANIFEST` 或 `AUTO_DIRECTORY` ZIP 追加。
+- ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 也支持工作区增删和 ZIP 追加；单模态追加必须省略 `sampleGrouping` 和 `manifestPath`，后端按任务类型校验 ZIP 内容，并按 ZIP entry 生成一文件一样本的元数据。
+- 没有 package 元数据的 ZIP-backed 单模态旧版本创建 DRAFT 时会把父 ZIP 登记为 `PRIMARY` package，并生成 Sample/Data 元数据，因而可以在工作区删除已有文件。
+- 非 ZIP 单模态旧版本不能创建维护工作区；需要重新上传为 ZIP 数据集。
+- DRAFT 查询、删除、恢复和发布必须使用 workspace/edit-session 专用接口；普通样本查询仍只承诺 READY 版本。
+
 ### 6.2 数据集消费清单
 
 新模块读取数据集内容时，优先使用 V2 只读消费清单：
@@ -334,7 +344,7 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 | `updatedAt` | 资产更新时间 |
 | `currentVersionNo` / `currentVersionLabel` | 当前推荐 `READY` 版本的序号和展示标签 |
 | `versionStatus` | 当前推荐版本状态；新建 `MULTIMODAL` 只有 DRAFT 时可为 `null` |
-| `currentVersionFileCount` / `fileCount` | 当前版本文件计数，无法计算时为 `null` |
+| `currentVersionFileCount` / `fileCount` | 当前版本文件计数；元数据化版本按 Sample Data 与 Annotation 计数，传统 ZIP 按 ZIP 非目录 entry 计数，无法计算时为 `null` |
 | `latestDraftVersionId` | 最新未删除 DRAFT 版本 ID |
 | `importJobId` / `importStatus` / `importProgress` | 最新 DRAFT 的导入任务展示字段 |
 

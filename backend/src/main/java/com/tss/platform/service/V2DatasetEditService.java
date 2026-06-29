@@ -140,9 +140,7 @@ public class V2DatasetEditService {
 
         List<String> actions = new ArrayList<>();
         actions.add("VIEW");
-        if ("MULTIMODAL".equals(asset.getType())) {
-            actions.add("ADD_DATA");
-        }
+        actions.add("ADD_DATA");
         if (canPublish) {
             actions.add("PUBLISH");
         }

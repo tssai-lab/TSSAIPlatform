@@ -88,6 +88,50 @@ class DatasetAppendPackageUploadTest {
     }
 
     @Test
+    void initializesSingleModalAppendWithoutSampleGrouping() {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("CV");
+        fixture.version.setCvTaskType("OBJECT_DETECTION");
+        fixture.version.setAnnotationFormat("COCO");
+        fixture.stubOwnedDraft();
+        AtomicReference<DatasetUploadSession> saved = new AtomicReference<>();
+        when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> {
+            DatasetUploadSession value = invocation.getArgument(0);
+            saved.set(value);
+            return value;
+        });
+        DatasetPackageAppendInitRequest request = fixture.request();
+        request.setSampleGrouping(null);
+        request.setManifestPath(null);
+
+        fixture.service.initAppendPackage(fixture.version.getId(), request);
+
+        assertEquals("CV", saved.get().getType());
+        assertEquals("OBJECT_DETECTION", saved.get().getCvTaskType());
+        assertEquals("COCO", saved.get().getAnnotationFormat());
+        assertNull(saved.get().getSampleGrouping());
+        assertNull(saved.get().getManifestPath());
+    }
+
+    @Test
+    void rejectsSingleModalAppendSampleGrouping() {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("CV");
+        fixture.stubOwnedDraft();
+        DatasetPackageAppendInitRequest request = fixture.request();
+        request.setSampleGrouping("AUTO_DIRECTORY");
+        request.setManifestPath(null);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.initAppendPackage(fixture.version.getId(), request)
+        );
+
+        assertTrue(error.getMessage().contains("仅 MULTIMODAL 数据集支持 sampleGrouping"));
+        verify(fixture.sessionRepo, never()).save(any());
+    }
+
+    @Test
     void rejectsManifestPathForAutoDirectoryAppend() {
         Fixture fixture = new Fixture();
         fixture.stubOwnedDraft();
