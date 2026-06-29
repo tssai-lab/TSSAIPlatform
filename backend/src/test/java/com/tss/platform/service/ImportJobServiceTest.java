@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -227,7 +228,8 @@ class ImportJobServiceTest {
         fixture.service.execute(fixture.job.getId());
 
         assertEquals("FAILED", fixture.job.getStatus());
-        assertTrue(fixture.job.getErrorMessage().contains("external_id already exists"));
+        assertEquals("DUPLICATE_SAMPLE", fixture.job.getErrorCode());
+        assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         assertEquals("DRAFT", fixture.version.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
@@ -256,7 +258,8 @@ class ImportJobServiceTest {
         fixture.service.execute(fixture.job.getId());
 
         assertEquals("FAILED", fixture.job.getStatus());
-        assertTrue(fixture.job.getErrorMessage().contains("sample_index already exists"));
+        assertEquals("DUPLICATE_SAMPLE", fixture.job.getErrorCode());
+        assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
     }
@@ -322,7 +325,9 @@ class ImportJobServiceTest {
         service.execute(fixture.job.getId());
 
         assertEquals("FAILED", fixture.job.getStatus());
-        assertTrue(fixture.job.getErrorMessage().contains("path not found in zip"));
+        assertEquals("INVALID_MANIFEST", fixture.job.getErrorCode());
+        assertEquals("Manifest 内容无效，请检查后重试", fixture.job.getErrorMessage());
+        assertFalse(fixture.job.getErrorMessage().contains("missing.png"));
         assertEquals("DRAFT", fixture.version.getStatus());
         assertNull(fixture.version.getPublishedAt());
         assertEquals("version-ready", fixture.asset.getCurrentVersionId());
@@ -343,6 +348,40 @@ class ImportJobServiceTest {
         assertEquals("DRAFT", fixture.version.getStatus());
         assertNull(fixture.asset.getCurrentVersionId());
         assertTrue(fixture.transactionManager.rollbackCount > 0);
+    }
+
+    @Test
+    void storesGenericStructuredFailureWithoutLeakingTechnicalMessage() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubContext();
+        when(fixture.minioService.stat(any()))
+                .thenThrow(new RuntimeException("MinIO bucket=models object=secret.zip"));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertEquals("IMPORT_FAILED", fixture.job.getErrorCode());
+        assertEquals("数据导入失败，请检查上传内容后重试", fixture.job.getErrorMessage());
+        assertNull(fixture.job.getErrorDetailsJson());
+    }
+
+    @Test
+    void storesManifestFailureCodeAndDetails() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubContext();
+        when(fixture.minioService.stat(any()))
+                .thenThrow(new ManifestValidationException(
+                        "DUPLICATE_SAMPLE",
+                        "样本 scene-1 已存在",
+                        Map.of("sampleName", "scene-1")
+                ));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertEquals("DUPLICATE_SAMPLE", fixture.job.getErrorCode());
+        assertEquals("样本 scene-1 已存在", fixture.job.getErrorMessage());
+        assertTrue(fixture.job.getErrorDetailsJson().contains("\"sampleName\":\"scene-1\""));
     }
 
     @Test
@@ -368,7 +407,15 @@ class ImportJobServiceTest {
                 any(),
                 any()
         )).thenReturn(0);
-        when(fixture.jobRepo.markFailedIfOwned(any(), any(), any(), any(), any())).thenReturn(0);
+        when(fixture.jobRepo.markFailedIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(0);
 
         fixture.service.execute(fixture.job.getId());
 
@@ -481,10 +528,20 @@ class ImportJobServiceTest {
                 job.setFinishedAt(invocation.getArgument(4));
                 return 1;
             });
-            when(jobRepo.markFailedIfOwned(any(), any(), any(), any(), any())).thenAnswer(invocation -> {
+            when(jobRepo.markFailedIfOwned(
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any()
+            )).thenAnswer(invocation -> {
                 job.setStatus("FAILED");
                 job.setErrorMessage(invocation.getArgument(3));
-                job.setFinishedAt(invocation.getArgument(4));
+                job.setErrorCode(invocation.getArgument(4));
+                job.setErrorDetailsJson(invocation.getArgument(5));
+                job.setFinishedAt(invocation.getArgument(6));
                 return 1;
             });
             String objectName = job.getPackageId() == null

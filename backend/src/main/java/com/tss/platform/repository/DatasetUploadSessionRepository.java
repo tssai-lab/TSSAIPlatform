@@ -30,6 +30,11 @@ public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUpl
             Integer ownerUserId
     );
 
+    Optional<DatasetUploadSession> findFirstByVersionIdAndUploadPurposeOrderByCreatedAtDesc(
+            String versionId,
+            String uploadPurpose
+    );
+
     @Modifying(flushAutomatically = true, clearAutomatically = false)
     @Query("""
             update DatasetUploadSession s

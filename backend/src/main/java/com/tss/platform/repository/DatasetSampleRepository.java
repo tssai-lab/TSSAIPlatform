@@ -50,6 +50,11 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
 
     long countByDatasetVersionIdAndCreatedByPackageIdIsNull(String datasetVersionId);
 
+    long countByDatasetVersionIdAndCreatedByPackageIdAndDeletedFalse(
+            String datasetVersionId,
+            String createdByPackageId
+    );
+
     @Query("""
             select s.externalId
             from DatasetSample s

@@ -1,9 +1,12 @@
 package com.tss.platform.service;
 
 import com.tss.platform.config.MinioConfig;
+import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.ModelUploadProgressDto;
 import com.tss.platform.dto.UploadCompleteRequest;
 import com.tss.platform.dto.UploadInitRequest;
+import com.tss.platform.dto.v2.V2ModelUploadDto;
+import com.tss.platform.dto.v2.V2ModelUploadInitRequest;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelUploadChunk;
 import com.tss.platform.entity.ModelUploadSession;
@@ -22,6 +25,7 @@ import io.minio.PutObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -117,6 +121,51 @@ public class ModelUploadService {
     }
 
     @Transactional
+    public V2ModelUploadDto initV2(V2ModelUploadInitRequest req) {
+        try {
+            validateV2Init(req);
+            Integer ownerUserId = authContext.currentUserId();
+            ModelBusinessMetadata metadata = resolveV2Metadata(req, ownerUserId);
+            String fingerprint = normalizeText(req.getFileFingerprint());
+            if (fingerprint != null) {
+                ModelUploadSession existing = sessionRepo
+                        .findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+                                fingerprint,
+                                STATUS_UPLOADING,
+                                ownerUserId
+                        )
+                        .orElse(null);
+                if (existing != null && sameV2Upload(existing, req, metadata)) {
+                    existing.setUpdatedAt(Instant.now());
+                    return toV2(sessionRepo.save(existing));
+                }
+            }
+
+            ModelUploadSession session = new ModelUploadSession();
+            session.setId("model-upload-" + System.currentTimeMillis() + "-"
+                    + UUID.randomUUID().toString().replace("-", ""));
+            session.setFileFingerprint(fingerprint);
+            session.setFileName(req.getFileName().trim());
+            session.setFileSize(req.getFileSize());
+            session.setChunkSize(CHUNK_SIZE);
+            session.setTotalChunks((int) Math.ceil(req.getFileSize() / (double) CHUNK_SIZE));
+            session.setTargetAssetId(metadata.targetAssetId());
+            session.setModelName(metadata.modelName());
+            session.setModelVersion(req.getModelVersion().trim());
+            session.setTaskType(metadata.taskType());
+            session.setRemark(metadata.remark());
+            session.setStatus(STATUS_UPLOADING);
+            session.setOwnerUserId(ownerUserId);
+            Instant now = Instant.now();
+            session.setCreatedAt(now);
+            session.setUpdatedAt(now);
+            return toV2(sessionRepo.save(session));
+        } catch (IllegalArgumentException exception) {
+            throw mapV2ModelUploadFailure(exception);
+        }
+    }
+
+    @Transactional
     public ModelUploadProgressDto saveChunk(String uploadId, Integer partIndex, MultipartFile file) {
         ModelUploadSession session = getSession(uploadId);
         if (STATUS_COMPLETED.equals(session.getStatus())) {
@@ -168,6 +217,29 @@ public class ModelUploadService {
     @Transactional(readOnly = true)
     public ModelUploadProgressDto getProgress(String uploadId) {
         return progress(getSession(uploadId));
+    }
+
+    @Transactional(readOnly = true)
+    public V2ModelUploadDto getProgressV2(String uploadId) {
+        try {
+            return toV2(getSession(uploadId));
+        } catch (IllegalArgumentException exception) {
+            throw mapV2ModelUploadFailure(exception);
+        }
+    }
+
+    @Transactional
+    public V2ModelUploadDto saveChunkV2(
+            String uploadId,
+            Integer partIndex,
+            MultipartFile file
+    ) {
+        try {
+            saveChunk(uploadId, partIndex, file);
+            return toV2(getSession(uploadId));
+        } catch (IllegalArgumentException exception) {
+            throw mapV2ModelUploadFailure(exception);
+        }
     }
 
     @Transactional
@@ -264,6 +336,35 @@ public class ModelUploadService {
         return completedPayload(session, asset.getName(), ver.getVersion(), asset.getType(), asset.getRemark());
     }
 
+    @Transactional
+    public V2ModelUploadDto completeV2(String uploadId) {
+        try {
+            ModelUploadSession session = getSession(uploadId);
+            requireText(session.getModelVersion(), "modelVersion 不能为空");
+            requireText(session.getModelName(), "modelName 不能为空");
+            requireText(session.getTaskType(), "taskType 不能为空");
+            requireText(session.getRemark(), "remark 不能为空");
+
+            UploadCompleteRequest request = new UploadCompleteRequest();
+            request.setUploadId(uploadId);
+            request.setAssetId(session.getTargetAssetId());
+            request.setModelName(session.getModelName());
+            request.setVersion(session.getModelVersion());
+            request.setType(session.getTaskType());
+            request.setRemark(session.getRemark());
+            Map<String, Object> completed = complete(request);
+
+            V2ModelUploadDto dto = toV2(session);
+            dto.setStatus(stringValue(completed.get("status")));
+            dto.setModelId(stringValue(completed.get("id")));
+            dto.setAssetId(stringValue(completed.get("assetId")));
+            dto.setUpdatedAt(session.getUpdatedAt());
+            return dto;
+        } catch (IllegalArgumentException exception) {
+            throw mapV2ModelUploadFailure(exception);
+        }
+    }
+
     private void validateCompleteRequest(UploadCompleteRequest req) {
         if (req == null) {
             throw new IllegalArgumentException("请求体不能为空");
@@ -323,6 +424,65 @@ public class ModelUploadService {
         if (req.getFileSize() == null || req.getFileSize() <= 0) {
             throw new IllegalArgumentException("fileSize 必须大于 0");
         }
+    }
+
+    private void validateV2Init(V2ModelUploadInitRequest req) {
+        if (req == null) {
+            throw new IllegalArgumentException("请求体不能为空");
+        }
+        requireText(req.getFileName(), "fileName 不能为空");
+        validateModelFileName(req.getFileName());
+        if (req.getFileSize() == null || req.getFileSize() <= 0) {
+            throw new IllegalArgumentException("fileSize 必须大于 0");
+        }
+        requireText(req.getModelVersion(), "modelVersion 不能为空");
+    }
+
+    private ModelBusinessMetadata resolveV2Metadata(
+            V2ModelUploadInitRequest req,
+            Integer ownerUserId
+    ) {
+        String targetAssetId = normalizeText(req.getTargetAssetId());
+        if (targetAssetId == null) {
+            requireText(req.getModelName(), "modelName 不能为空");
+            requireText(req.getRemark(), "remark 不能为空");
+            return new ModelBusinessMetadata(
+                    null,
+                    req.getModelName().trim(),
+                    TaskType.normalize(req.getTaskType()),
+                    req.getRemark().trim()
+            );
+        }
+
+        ModelAsset asset = modelAssetRepo.findByIdAndDeletedFalse(targetAssetId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "model asset not found: " + targetAssetId
+                ));
+        if (!Objects.equals(ownerUserId, asset.getOwnerUserId())) {
+            throw new IllegalArgumentException(
+                    "no permission for asset: " + targetAssetId
+            );
+        }
+        String requestedName = normalizeText(req.getModelName());
+        if (requestedName != null && !requestedName.equals(asset.getName())) {
+            throw new IllegalArgumentException("modelName does not match existing asset");
+        }
+        String taskType = TaskType.normalize(asset.getType());
+        String requestedType = normalizeText(req.getTaskType());
+        if (requestedType != null
+                && !TaskType.normalize(requestedType).equals(taskType)) {
+            throw new IllegalArgumentException("model type does not match existing asset");
+        }
+        String requestedRemark = normalizeText(req.getRemark());
+        if (requestedRemark != null && !requestedRemark.equals(asset.getRemark())) {
+            throw new IllegalArgumentException("remark does not match existing asset");
+        }
+        return new ModelBusinessMetadata(
+                asset.getId(),
+                asset.getName(),
+                taskType,
+                asset.getRemark()
+        );
     }
 
     private ModelUploadSession getSession(String uploadId) {
@@ -387,6 +547,30 @@ public class ModelUploadService {
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setCreatedAt(session.getCreatedAt());
+        dto.setUpdatedAt(session.getUpdatedAt());
+        return dto;
+    }
+
+    private V2ModelUploadDto toV2(ModelUploadSession session) {
+        ModelUploadProgressDto progress = progress(session);
+        V2ModelUploadDto dto = new V2ModelUploadDto();
+        dto.setUploadId(progress.getUploadId());
+        dto.setStatus(progress.getStatus());
+        dto.setFileName(progress.getFileName());
+        dto.setFileSize(progress.getFileSize());
+        dto.setChunkSize(progress.getChunkSize());
+        dto.setTotalChunks(progress.getTotalChunks());
+        dto.setUploadedChunks(progress.getUploadedChunks());
+        dto.setUploadedBytes(progress.getUploadedBytes());
+        dto.setUploadedPartIndexes(progress.getUploadedPartIndexes());
+        dto.setTargetAssetId(session.getTargetAssetId());
+        dto.setModelId(session.getVersionId());
+        dto.setAssetId(session.getAssetId());
+        dto.setModelName(session.getModelName());
+        dto.setModelVersion(session.getModelVersion());
+        dto.setTaskType(session.getTaskType());
+        dto.setRemark(session.getRemark());
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
@@ -482,6 +666,60 @@ public class ModelUploadService {
     private boolean sameUpload(ModelUploadSession session, UploadInitRequest req) {
         return session.getFileName().equals(req.getFileName().trim())
                 && session.getFileSize().equals(req.getFileSize());
+    }
+
+    private boolean sameV2Upload(
+            ModelUploadSession session,
+            V2ModelUploadInitRequest req,
+            ModelBusinessMetadata metadata
+    ) {
+        return session.getFileName().equals(req.getFileName().trim())
+                && session.getFileSize().equals(req.getFileSize())
+                && Objects.equals(session.getTargetAssetId(), metadata.targetAssetId())
+                && Objects.equals(session.getModelName(), metadata.modelName())
+                && Objects.equals(
+                        session.getModelVersion(),
+                        req.getModelVersion().trim()
+                )
+                && Objects.equals(session.getTaskType(), metadata.taskType())
+                && Objects.equals(session.getRemark(), metadata.remark());
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private V2BusinessException mapV2ModelUploadFailure(
+            IllegalArgumentException exception
+    ) {
+        String message = exception.getMessage() == null ? "" : exception.getMessage();
+        if (message.contains("already exists")) {
+            return new V2BusinessException(
+                    HttpStatus.CONFLICT,
+                    "MODEL_VERSION_CONFLICT",
+                    "该模型版本已存在"
+            );
+        }
+        if (message.contains("not found") || message.contains("no permission")) {
+            return new V2BusinessException(
+                    HttpStatus.NOT_FOUND,
+                    "MODEL_ASSET_NOT_FOUND",
+                    "模型资产不存在或无权访问"
+            );
+        }
+        if (message.contains("uploadId")
+                || message.contains("not accessible")) {
+            return new V2BusinessException(
+                    HttpStatus.NOT_FOUND,
+                    "MODEL_UPLOAD_NOT_FOUND",
+                    "模型上传任务不存在或无权访问"
+            );
+        }
+        return new V2BusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "MODEL_UPLOAD_FAILED",
+                "模型上传无法完成，请检查文件后重试"
+        );
     }
 
     private String normalizeText(String value) {
@@ -602,6 +840,14 @@ public class ModelUploadService {
             Integer ownerUserId,
             String taskType,
             boolean createAsset
+    ) {
+    }
+
+    private record ModelBusinessMetadata(
+            String targetAssetId,
+            String modelName,
+            String taskType,
+            String remark
     ) {
     }
 }

@@ -53,6 +53,21 @@ public class ModelUploadSession {
     @Column(name = "version_id", length = 64)
     private String versionId;
 
+    @Column(name = "target_asset_id", length = 64)
+    private String targetAssetId;
+
+    @Column(name = "model_name", length = 255)
+    private String modelName;
+
+    @Column(name = "model_version", length = 64)
+    private String modelVersion;
+
+    @Column(name = "task_type", length = 64)
+    private String taskType;
+
+    @Column(name = "remark", length = 1024)
+    private String remark;
+
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 

@@ -21,6 +21,7 @@ import com.tss.platform.security.AuthContext;
 import io.minio.MinioClient;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
@@ -33,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -161,6 +163,78 @@ class DatasetUploadManifestCompletionTest {
         request.setParentVersionId(parent.getId());
 
         assertThrows(IllegalArgumentException.class, () -> fixture.service.init(request));
+    }
+
+    @Test
+    void completeManifestUploadRejectsExistingAssetWithActiveDraftBeforeCreatingVersion() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetUploadSession session = fixture.multimodalSession();
+        session.setAssetId("dataset-asset-1");
+        session.setParentVersionId("dataset-ver-ready");
+        DatasetUploadChunk chunk = fixture.chunk(session);
+        DatasetAsset asset = new DatasetAsset();
+        asset.setId("dataset-asset-1");
+        asset.setType("MULTIMODAL");
+        asset.setOwnerUserId(7);
+        DatasetVersion activeDraft = new DatasetVersion();
+        activeDraft.setId("dataset-ver-draft");
+        activeDraft.setAssetId("dataset-asset-1");
+        activeDraft.setStatus("DRAFT");
+        activeDraft.setDeleted(false);
+
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
+        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId())).thenReturn(List.of(chunk));
+        when(fixture.assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
+        when(fixture.versionRepo.findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                "dataset-asset-1",
+                "DRAFT"
+        )).thenReturn(Optional.of(activeDraft));
+
+        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
+        request.setUploadId(session.getId());
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.complete(request)
+        );
+
+        assertTrue(error.getMessage().contains("active DRAFT"), error.getMessage());
+        verify(fixture.versionRepo, never()).saveAndFlush(any(DatasetVersion.class));
+        verify(fixture.minioClient, never()).composeObject(any());
+    }
+
+    @Test
+    void completeManifestUploadMapsActiveDraftUniqueViolationBeforeComposingObject() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetUploadSession session = fixture.multimodalSession();
+        session.setAssetId("dataset-asset-1");
+        session.setParentVersionId("dataset-ver-ready");
+        DatasetUploadChunk chunk = fixture.chunk(session);
+        DatasetAsset asset = new DatasetAsset();
+        asset.setId("dataset-asset-1");
+        asset.setType("MULTIMODAL");
+        asset.setOwnerUserId(7);
+
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
+        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId())).thenReturn(List.of(chunk));
+        when(fixture.assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate key value violates unique constraint \"uk_dataset_version_one_active_draft\""
+                ));
+
+        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
+        request.setUploadId(session.getId());
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.complete(request)
+        );
+
+        assertTrue(error.getMessage().contains("active DRAFT"), error.getMessage());
+        verify(fixture.minioClient, never()).composeObject(any());
     }
 
     @Test

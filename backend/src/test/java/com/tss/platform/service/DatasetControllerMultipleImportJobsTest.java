@@ -30,8 +30,15 @@ class DatasetControllerMultipleImportJobsTest {
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         ImportJobRepository importJobRepo = mock(ImportJobRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        DatasetVersionFileCountService fileCountService = mock(DatasetVersionFileCountService.class);
         DatasetController controller =
-                new DatasetController(assetRepo, versionRepo, importJobRepo, authContext);
+                new DatasetController(
+                        assetRepo,
+                        versionRepo,
+                        importJobRepo,
+                        authContext,
+                        fileCountService
+                );
 
         DatasetAsset asset = new DatasetAsset();
         asset.setId("dataset-asset-1");
@@ -90,8 +97,15 @@ class DatasetControllerMultipleImportJobsTest {
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         ImportJobRepository importJobRepo = mock(ImportJobRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        DatasetVersionFileCountService fileCountService = mock(DatasetVersionFileCountService.class);
         DatasetController controller =
-                new DatasetController(assetRepo, versionRepo, importJobRepo, authContext);
+                new DatasetController(
+                        assetRepo,
+                        versionRepo,
+                        importJobRepo,
+                        authContext,
+                        fileCountService
+                );
 
         DatasetAsset asset = new DatasetAsset();
         asset.setId("dataset-asset-1");

@@ -1,5 +1,7 @@
 package com.tss.platform.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetPackage;
@@ -24,6 +26,7 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import io.minio.StatObjectResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -40,6 +43,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@Slf4j
 public class ImportJobService {
 
     private static final String JOB_PENDING = "PENDING";
@@ -51,6 +55,7 @@ public class ImportJobService {
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
     private static final String GROUPING_MANIFEST = "MANIFEST";
     private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
+    private static final ObjectMapper ERROR_DETAILS_MAPPER = new ObjectMapper();
 
     private final ImportJobRepository jobRepo;
     private final DatasetVersionRepository versionRepo;
@@ -127,8 +132,16 @@ public class ImportJobService {
             ManifestImportPlan plan = buildPlan(context, entries, objectSize);
             writeTransaction.executeWithoutResult(status -> persistPlan(context, plan, executorId));
         } catch (Exception exception) {
-            String message = rootMessage(exception);
-            statusTransaction.executeWithoutResult(status -> markFailed(importJobId, executorId, message));
+            log.error(
+                    "Import job failed: importJobId={}, executorId={}",
+                    importJobId,
+                    executorId,
+                    exception
+            );
+            ImportFailure failure = importFailure(exception);
+            statusTransaction.executeWithoutResult(
+                    status -> markFailed(importJobId, executorId, failure)
+            );
         } finally {
             activeExecutors.remove(importJobId, executorId);
         }
@@ -433,13 +446,19 @@ public class ImportJobService {
         return current.getVersionNo() < candidate.getVersionNo();
     }
 
-    private void markFailed(String importJobId, String executorId, String errorMessage) {
+    private void markFailed(
+            String importJobId,
+            String executorId,
+            ImportFailure failure
+    ) {
         Instant now = Instant.now();
         int failed = jobRepo.markFailedIfOwned(
                 importJobId,
                 executorId,
                 JOB_RUNNING,
-                truncateError(errorMessage),
+                truncateError(failure.message()),
+                failure.code(),
+                failure.detailsJson(),
                 now
         );
         if (failed != 1) {
@@ -582,6 +601,106 @@ public class ImportJobService {
                 : message;
     }
 
+    private static ImportFailure importFailure(Exception exception) {
+        ManifestValidationException validation = findCause(
+                exception,
+                ManifestValidationException.class
+        );
+        if (validation != null) {
+            if (!"INVALID_MANIFEST".equals(validation.getErrorCode())) {
+                return new ImportFailure(
+                        validation.getErrorCode(),
+                        validation.getMessage(),
+                        toJson(validation.getDetails())
+                );
+            }
+            String code = classifyManifestFailure(validation.getMessage());
+            return new ImportFailure(
+                    code,
+                    manifestUserMessage(code),
+                    toJson(validation.getDetails())
+            );
+        }
+
+        String message = rootMessage(exception);
+        if (message.contains("external_id already exists")
+                || message.contains("sample_index already exists")) {
+            return new ImportFailure(
+                    "DUPLICATE_SAMPLE",
+                    "上传内容包含已存在的样本",
+                    null
+            );
+        }
+        return new ImportFailure(
+                "IMPORT_FAILED",
+                "数据导入失败，请检查上传内容后重试",
+                null
+        );
+    }
+
+    private static String classifyManifestFailure(String message) {
+        String normalized = message == null
+                ? ""
+                : message.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("duplicate external_id")
+                || normalized.contains("duplicate sample_index")) {
+            return "DUPLICATE_SAMPLE";
+        }
+        if (normalized.contains("ambiguous")
+                && normalized.contains("annotation")) {
+            return "ANNOTATION_TARGET_AMBIGUOUS";
+        }
+        if (normalized.contains("annotation")
+                && normalized.contains("not found")) {
+            return "ANNOTATION_TARGET_NOT_FOUND";
+        }
+        if (normalized.contains("unsupported")) {
+            return "UNSUPPORTED_SAMPLE_FILE";
+        }
+        if (normalized.contains("sample directory")
+                || normalized.contains("root-level")
+                || normalized.contains("auto_directory")) {
+            return "INVALID_SAMPLE_DIRECTORY";
+        }
+        return "INVALID_MANIFEST";
+    }
+
+    private static String manifestUserMessage(String code) {
+        return switch (code) {
+            case "DUPLICATE_SAMPLE" -> "上传内容包含重复样本";
+            case "ANNOTATION_TARGET_NOT_FOUND" -> "标注文件找不到对应的数据文件";
+            case "ANNOTATION_TARGET_AMBIGUOUS" -> "标注文件对应多个数据文件";
+            case "UNSUPPORTED_SAMPLE_FILE" -> "上传内容包含不支持的样本文件";
+            case "INVALID_SAMPLE_DIRECTORY" -> "样本目录结构不符合要求";
+            default -> "Manifest 内容无效，请检查后重试";
+        };
+    }
+
+    private static String toJson(Map<String, Object> details) {
+        if (details == null || details.isEmpty()) {
+            return null;
+        }
+        try {
+            return ERROR_DETAILS_MAPPER.writeValueAsString(details);
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private static <T extends Throwable> T findCause(
+            Throwable throwable,
+            Class<T> type
+    ) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
     private static String truncateError(String message) {
         if (message == null || message.isBlank()) {
             return "Import failed";
@@ -602,5 +721,12 @@ public class ImportJobService {
         private boolean appendPackage() {
             return PACKAGE_ROLE_APPEND.equals(packageRole);
         }
+    }
+
+    private record ImportFailure(
+            String code,
+            String message,
+            String detailsJson
+    ) {
     }
 }

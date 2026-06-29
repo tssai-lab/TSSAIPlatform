@@ -9,6 +9,7 @@ import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.DatasetVersionFileCountService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Comparator;
@@ -27,17 +28,20 @@ public class DatasetController {
     private final DatasetVersionRepository versionRepo;
     private final ImportJobRepository importJobRepo;
     private final AuthContext authContext;
+    private final DatasetVersionFileCountService fileCountService;
 
     public DatasetController(
             DatasetAssetRepository assetRepo,
             DatasetVersionRepository versionRepo,
             ImportJobRepository importJobRepo,
-            AuthContext authContext
+            AuthContext authContext,
+            DatasetVersionFileCountService fileCountService
     ) {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
         this.importJobRepo = importJobRepo;
         this.authContext = authContext;
+        this.fileCountService = fileCountService;
     }
 
     @GetMapping("/list")
@@ -73,6 +77,10 @@ public class DatasetController {
         List<DatasetVersion> versions = assetIds.isEmpty()
                 ? List.of()
                 : versionRepo.findByAssetIdInAndDeletedFalse(assetIds);
+        Map<String, DatasetAsset> assetById = filteredAssets.stream()
+                .collect(Collectors.toMap(DatasetAsset::getId, asset -> asset));
+        Map<String, DatasetVersion> versionById = versions.stream()
+                .collect(Collectors.toMap(DatasetVersion::getId, version -> version));
         Map<String, List<DatasetVersion>> versionsByAssetId = versions.stream()
                 .collect(Collectors.groupingBy(DatasetVersion::getAssetId));
         Map<String, DatasetVersion> latestDraftByAssetId = versions.stream()
@@ -108,6 +116,7 @@ public class DatasetController {
                 ))
                 .collect(Collectors.toList());
         List<Map<String, Object>> data = paginate(allData, page, current, pageSize);
+        enrichCurrentVersionFileCounts(data, assetById, versionById);
 
         Map<String, Object> result = new HashMap<>();
         result.put("data", data);
@@ -151,7 +160,9 @@ public class DatasetController {
         item.put("sizeBytes", version != null ? version.getSizeBytes() : null);
         item.put("size", formatBytes(version != null ? version.getSizeBytes() : null));
         item.put("versionRemark", version != null ? version.getRemark() : null);
-        item.put("fileCount", versions.size());
+        item.put("versionCount", versions.size());
+        item.put("currentVersionFileCount", null);
+        item.put("fileCount", null);
         item.put("uploadTime", version != null && version.getCreatedAt() != null
                 ? version.getCreatedAt()
                 : asset.getCreatedAt());
@@ -163,6 +174,21 @@ public class DatasetController {
         item.put("importProgress", importJob != null ? importJob.getProgress() : null);
         item.put("importErrorMessage", importJob != null ? importJob.getErrorMessage() : null);
         return item;
+    }
+
+    private void enrichCurrentVersionFileCounts(
+            List<Map<String, Object>> items,
+            Map<String, DatasetAsset> assetById,
+            Map<String, DatasetVersion> versionById
+    ) {
+        for (Map<String, Object> item : items) {
+            DatasetAsset asset = assetById.get((String) item.get("assetId"));
+            DatasetVersion version = versionById.get((String) item.get("currentVersionId"));
+            Long currentVersionFileCount =
+                    fileCountService.countCurrentVersionFiles(asset, version);
+            item.put("currentVersionFileCount", currentVersionFileCount);
+            item.put("fileCount", currentVersionFileCount);
+        }
     }
 
     private DatasetVersion newerVersion(DatasetVersion left, DatasetVersion right) {

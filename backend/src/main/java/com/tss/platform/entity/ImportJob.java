@@ -48,6 +48,12 @@ public class ImportJob {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(name = "error_code", length = 64)
+    private String errorCode;
+
+    @Column(name = "error_details_json", columnDefinition = "TEXT")
+    private String errorDetailsJson;
+
     @Column(name = "heartbeat_at")
     private Instant heartbeatAt;
 

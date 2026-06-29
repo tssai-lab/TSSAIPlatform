@@ -9,6 +9,8 @@ import java.util.Collection;
 import java.util.List;
 
 public interface DatasetSampleDataRepository extends JpaRepository<DatasetSampleData, String> {
+    long countByDatasetVersionId(String datasetVersionId);
+
     long countByDatasetVersionIdAndPackageIdIsNull(String datasetVersionId);
 
     @Query("""

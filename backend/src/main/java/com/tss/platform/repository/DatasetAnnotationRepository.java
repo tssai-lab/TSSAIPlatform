@@ -9,6 +9,8 @@ import java.util.Collection;
 import java.util.List;
 
 public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnotation, String> {
+    long countByDatasetVersionId(String datasetVersionId);
+
     long countByDatasetVersionIdAndPackageIdIsNull(String datasetVersionId);
 
     @Query("""

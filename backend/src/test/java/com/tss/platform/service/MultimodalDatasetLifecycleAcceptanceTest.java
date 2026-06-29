@@ -432,7 +432,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     assetRepo,
                     versionRepo,
                     jobRepo,
-                    authContext
+                    authContext,
+                    new DatasetVersionFileCountService(dataRepo, annotationRepo, zipReader)
             );
         }
 
@@ -802,6 +803,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     anyString(),
                     anyString(),
                     anyString(),
+                    anyString(),
+                    any(),
                     any(Instant.class)
             )).thenAnswer(invocation -> {
                 ImportJob job = jobs.get(invocation.getArgument(0));
@@ -812,7 +815,9 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                 }
                 job.setStatus("FAILED");
                 job.setErrorMessage(invocation.getArgument(3));
-                job.setFinishedAt(invocation.getArgument(4));
+                job.setErrorCode(invocation.getArgument(4));
+                job.setErrorDetailsJson(invocation.getArgument(5));
+                job.setFinishedAt(invocation.getArgument(6));
                 return 1;
             });
         }

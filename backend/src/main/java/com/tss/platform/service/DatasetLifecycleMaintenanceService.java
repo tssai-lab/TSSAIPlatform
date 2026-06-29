@@ -103,7 +103,12 @@ public class DatasetLifecycleMaintenanceService {
         version.setDeleted(true);
         version.setDeletedAt(now);
         versionRepo.saveAndFlush(version);
-        if (version.getStoragePath() != null && !version.getStoragePath().isBlank()) {
+        if (version.getStoragePath() != null
+                && !version.getStoragePath().isBlank()
+                && !versionRepo.existsByStoragePathAndDeletedFalseAndIdNot(
+                        version.getStoragePath(),
+                        version.getId()
+                )) {
             deleteTaskService.enqueueDefaultBucketDelete(
                     version.getStoragePath(),
                     MinioDeleteTaskService.SOURCE_DATASET_VERSION,

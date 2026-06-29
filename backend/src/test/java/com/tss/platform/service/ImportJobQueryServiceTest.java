@@ -5,6 +5,7 @@ import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
@@ -58,8 +59,17 @@ class ImportJobQueryServiceTest {
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         private final AuthContext authContext = mock(AuthContext.class);
+        private final ImportJobLauncher importJobLauncher = mock(ImportJobLauncher.class);
+        private final DatasetSampleRepository sampleRepo = mock(DatasetSampleRepository.class);
         private final ImportJobQueryService service =
-                new ImportJobQueryService(jobRepo, versionRepo, assetRepo, authContext);
+                new ImportJobQueryService(
+                        jobRepo,
+                        versionRepo,
+                        assetRepo,
+                        authContext,
+                        importJobLauncher,
+                        sampleRepo
+                );
 
         private ImportJob job() {
             ImportJob job = new ImportJob();

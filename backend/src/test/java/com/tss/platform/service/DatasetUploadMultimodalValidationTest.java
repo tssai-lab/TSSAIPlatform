@@ -48,6 +48,19 @@ class DatasetUploadMultimodalValidationTest {
     }
 
     @Test
+    void defaultsMultimodalGroupingToAutoDirectory() {
+        assertEquals(
+                "AUTO_DIRECTORY",
+                DatasetUploadService.normalizeSampleGroupingForTask("MULTIMODAL", null)
+        );
+        assertEquals(
+                "MANIFEST",
+                DatasetUploadService.normalizeSampleGroupingForTask("MULTIMODAL", "manifest")
+        );
+        assertNull(DatasetUploadService.normalizeSampleGroupingForTask("CV", null));
+    }
+
+    @Test
     void autoDirectoryRejectsManifestPath() {
         assertNull(DatasetUploadService.normalizeManifestPath("AUTO_DIRECTORY", null));
         assertThrows(

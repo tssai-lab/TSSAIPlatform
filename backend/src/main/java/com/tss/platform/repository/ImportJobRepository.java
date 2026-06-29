@@ -42,7 +42,9 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
                 j.heartbeatAt = :now,
                 j.updatedAt = :now,
                 j.finishedAt = null,
-                j.errorMessage = null
+                j.errorMessage = null,
+                j.errorCode = null,
+                j.errorDetailsJson = null
             where j.id = :id
               and j.status = :pendingStatus
               and j.executorId is null
@@ -78,6 +80,8 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
                 j.totalSamples = :totalSamples,
                 j.importedSamples = :totalSamples,
                 j.errorMessage = null,
+                j.errorCode = null,
+                j.errorDetailsJson = null,
                 j.finishedAt = :finishedAt,
                 j.updatedAt = :updatedAt,
                 j.heartbeatAt = :updatedAt
@@ -101,6 +105,8 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
                 j.progress = 0,
                 j.importedSamples = 0,
                 j.errorMessage = :errorMessage,
+                j.errorCode = :errorCode,
+                j.errorDetailsJson = :errorDetailsJson,
                 j.finishedAt = :finishedAt,
                 j.updatedAt = :finishedAt,
                 j.heartbeatAt = :finishedAt
@@ -113,6 +119,8 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
             @Param("executorId") String executorId,
             @Param("runningStatus") String runningStatus,
             @Param("errorMessage") String errorMessage,
+            @Param("errorCode") String errorCode,
+            @Param("errorDetailsJson") String errorDetailsJson,
             @Param("finishedAt") Instant finishedAt
     );
 

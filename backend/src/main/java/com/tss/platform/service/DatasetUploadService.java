@@ -31,6 +31,7 @@ import io.minio.PutObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,6 +94,12 @@ public class DatasetUploadService {
     );
     private static final Set<String> POINT_CLOUD_ZIP_ALLOWED_EXTENSIONS = Set.of(
             ".ply", ".pcd", ".txt", ".json", ".yaml", ".yml"
+    );
+    private static final Set<String> ROBOT_ALLOWED_EXTENSIONS = Set.of(
+            ".xml", ".yaml", ".yml"
+    );
+    private static final Set<String> ROBOT_ZIP_ALLOWED_EXTENSIONS = Set.of(
+            ".xml", ".yaml", ".yml", ".json", ".txt"
     );
     private static final int MAX_DATASET_ZIP_ENTRIES = 100_000;
     private static final long MAX_DATASET_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
@@ -189,7 +196,10 @@ public class DatasetUploadService {
         validateInit(req);
         Integer operatorUserId = authContext.currentUserId();
         String taskType = DatasetTaskType.normalize(req.getType());
-        String sampleGrouping = normalizeSampleGrouping(req.getSampleGrouping());
+        String sampleGrouping = normalizeSampleGroupingForTask(
+                taskType,
+                req.getSampleGrouping()
+        );
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
         validateGroupingForTask(taskType, sampleGrouping);
         String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
@@ -265,12 +275,10 @@ public class DatasetUploadService {
         if (req.getFileSize() == null || req.getFileSize() <= 0) {
             throw new IllegalArgumentException("fileSize must be greater than 0");
         }
-        String sampleGrouping = normalizeSampleGrouping(req.getSampleGrouping());
-        if (!isMultimodalGrouping(sampleGrouping)) {
-            throw new IllegalArgumentException(
-                    "append package requires sampleGrouping=MANIFEST or AUTO_DIRECTORY"
-            );
-        }
+        String sampleGrouping = normalizeSampleGroupingForTask(
+                "MULTIMODAL",
+                req.getSampleGrouping()
+        );
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
         validateDatasetFileNameForTask("MULTIMODAL", req.getFileName());
 
@@ -657,6 +665,9 @@ public class DatasetUploadService {
                 ? "dataset-asset-" + UUID.randomUUID().toString().replace("-", "")
                 : session.getAssetId();
         VersionAllocation allocation = allocateVersion(session, assetId, createAsset);
+        if (!createAsset) {
+            requireNoActiveDraft(assetId);
+        }
         requireUniqueVersionLabel(assetId, allocation.versionLabel());
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
         String destName = manifestDestinationObject(
@@ -700,7 +711,16 @@ public class DatasetUploadService {
         version.setCreatedBy(authContext.currentUserId());
         version.setCreatedAt(now);
         version.setDeleted(false);
-        versionRepo.saveAndFlush(version);
+        try {
+            versionRepo.saveAndFlush(version);
+        } catch (DataIntegrityViolationException e) {
+            if (isOneActiveDraftViolation(e)) {
+                throw new IllegalArgumentException(
+                        "dataset asset already has an active DRAFT version: " + assetId
+                );
+            }
+            throw e;
+        }
 
         session.setAssetId(assetId);
         session.setVersionId(versionId);
@@ -1070,7 +1090,10 @@ public class DatasetUploadService {
             requireText(req.getDatasetName(), "datasetName 不能为空");
         }
         String taskType = DatasetTaskType.normalize(req.getType());
-        String sampleGrouping = normalizeSampleGrouping(req.getSampleGrouping());
+        String sampleGrouping = normalizeSampleGroupingForTask(
+                taskType,
+                req.getSampleGrouping()
+        );
         normalizeManifestPath(sampleGrouping, req.getManifestPath());
         validateGroupingForTask(taskType, sampleGrouping);
         CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
@@ -1678,6 +1701,23 @@ public class DatasetUploadService {
         }
     }
 
+    private void requireNoActiveDraft(String assetId) {
+        versionRepo.findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                assetId,
+                VERSION_STATUS_DRAFT
+        ).ifPresent(activeDraft -> {
+            throw new IllegalArgumentException(activeDraftMessage(activeDraft));
+        });
+    }
+
+    private String activeDraftMessage(DatasetVersion activeDraft) {
+        String id = activeDraft.getId();
+        if (id == null || id.isBlank()) {
+            return "dataset asset already has an active DRAFT version";
+        }
+        return "dataset asset already has an active DRAFT version: " + id;
+    }
+
     private String normalizeText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
@@ -1717,7 +1757,12 @@ public class DatasetUploadService {
             return;
         }
         if ("ROBOT".equals(taskType)) {
-            throw new IllegalArgumentException("ROBOT dataset upload is not supported yet");
+            if (!lower.endsWith(".zip") && !ROBOT_ALLOWED_EXTENSIONS.contains(extensionOf(lower))) {
+                throw new IllegalArgumentException(
+                        "ROBOT dataset only supports .xml, .yaml, .yml, or zip containing robot metadata files"
+                );
+            }
+            return;
         }
         if ("MULTIMODAL".equals(taskType)) {
             if (!lower.endsWith(".zip")) {
@@ -1737,6 +1782,14 @@ public class DatasetUploadService {
             throw new IllegalArgumentException(
                     "sampleGrouping 仅支持 MANIFEST 或 AUTO_DIRECTORY"
             );
+        }
+        return normalized;
+    }
+
+    static String normalizeSampleGroupingForTask(String taskType, String value) {
+        String normalized = normalizeSampleGrouping(value);
+        if ("MULTIMODAL".equals(taskType) && normalized == null) {
+            return GROUPING_AUTO_DIRECTORY;
         }
         return normalized;
     }
@@ -1883,6 +1936,14 @@ public class DatasetUploadService {
                         }
                         foundPointCloud = foundPointCloud || POINT_CLOUD_EXTENSIONS.contains(ext);
                         found = true;
+                    } else if ("ROBOT".equals(taskType)) {
+                        if (!ROBOT_ZIP_ALLOWED_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException(
+                                    "ROBOT zip dataset only allows .xml, .yaml, .yml, .json, or .txt files: "
+                                            + entryName
+                            );
+                        }
+                        found = true;
                     } else {
                         throw new IllegalArgumentException(taskType + " zip dataset format is not supported");
                     }
@@ -1911,6 +1972,11 @@ public class DatasetUploadService {
             if ("NLP".equals(taskType)) {
                 throw new IllegalArgumentException(
                         "NLP zip dataset must contain .txt, .json, .jsonl, .csv, .xlsx, .xls, .pdf, .docx, or .xml files"
+                );
+            }
+            if ("ROBOT".equals(taskType)) {
+                throw new IllegalArgumentException(
+                        "ROBOT zip dataset must contain .xml, .yaml, .yml, .json, or .txt files"
                 );
             }
         }
@@ -1957,6 +2023,20 @@ public class DatasetUploadService {
             current = current.getCause();
         }
         return current.getMessage() == null ? e.getMessage() : current.getMessage();
+    }
+
+    private boolean isOneActiveDraftViolation(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null
+                    && message.toLowerCase(Locale.ROOT)
+                            .contains("uk_dataset_version_one_active_draft")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     static String manifestDestinationObject(DatasetUploadSession session) {

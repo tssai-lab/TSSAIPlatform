@@ -10,6 +10,7 @@ import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.MinioDeleteTaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -55,13 +56,14 @@ public class DatasetVersionCrudController {
     }
 
     @PostMapping
+    @Transactional
     public ApiResponse<DatasetVersion> create(@RequestBody DatasetVersion body) {
         if (body.getAssetId() == null || body.getAssetId().isBlank()) {
             return ApiResponse.fail("assetId cannot be empty");
         }
         body.setAssetId(body.getAssetId().trim());
         body.setId("dataset-ver-" + UUID.randomUUID().toString().replace("-", ""));
-        Optional<DatasetAsset> asset = assetRepo.findByIdAndDeletedFalse(body.getAssetId());
+        Optional<DatasetAsset> asset = assetRepo.findByIdAndDeletedFalseForUpdate(body.getAssetId());
         if (asset.isEmpty()) {
             return ApiResponse.fail("dataset asset not found: " + body.getAssetId());
         }
@@ -98,6 +100,14 @@ public class DatasetVersionCrudController {
         if (!STATUS_DRAFT.equals(targetStatus)) {
             return ApiResponse.fail("manual dataset version creation only supports DRAFT");
         }
+        Optional<DatasetVersion> activeDraft =
+                repo.findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                        body.getAssetId(),
+                        STATUS_DRAFT
+                );
+        if (activeDraft.isPresent()) {
+            return ApiResponse.fail(activeDraftMessage(activeDraft.get()));
+        }
         body.setStatus(targetStatus);
         body.setOwnerUserId(ownerUserId != null ? ownerUserId : authContext.currentUserId());
         body.setCreatedBy(authContext.currentUserId());
@@ -109,7 +119,14 @@ public class DatasetVersionCrudController {
         }
         body.setDeleted(false);
         body.setDeletedAt(null);
-        return ApiResponse.ok(repo.save(body));
+        try {
+            return ApiResponse.ok(repo.saveAndFlush(body));
+        } catch (DataIntegrityViolationException e) {
+            if (isOneActiveDraftViolation(e)) {
+                return ApiResponse.fail("dataset asset already has an active DRAFT version");
+            }
+            throw e;
+        }
     }
 
     @GetMapping("/{id}")
@@ -351,6 +368,28 @@ public class DatasetVersionCrudController {
             throw new IllegalArgumentException("status only supports READY, DEPRECATED, ARCHIVED");
         }
         return normalized;
+    }
+
+    private String activeDraftMessage(DatasetVersion activeDraft) {
+        String id = activeDraft.getId();
+        if (id == null || id.isBlank()) {
+            return "dataset asset already has an active DRAFT version";
+        }
+        return "dataset asset already has an active DRAFT version: " + id;
+    }
+
+    private boolean isOneActiveDraftViolation(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null
+                    && message.toLowerCase(Locale.ROOT)
+                            .contains("uk_dataset_version_one_active_draft")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private boolean storageMetadataChanged(DatasetVersion existing, DatasetVersion body) {

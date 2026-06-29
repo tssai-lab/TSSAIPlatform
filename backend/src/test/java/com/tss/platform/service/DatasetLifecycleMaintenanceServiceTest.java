@@ -43,12 +43,43 @@ class DatasetLifecycleMaintenanceServiceTest {
         when(fixture.assetRepo.findById(version.getAssetId())).thenReturn(Optional.of(asset));
         when(fixture.sessionRepo.findByImportJobId(job.getId())).thenReturn(Optional.of(session));
         when(fixture.versionRepo.countByAssetIdAndDeletedFalse(asset.getId())).thenReturn(0L);
+        when(fixture.versionRepo.existsByStoragePathAndDeletedFalseAndIdNot(
+                version.getStoragePath(),
+                version.getId()
+        )).thenReturn(false);
 
         fixture.service.cleanupFailedDrafts();
 
         assertTrue(version.getDeleted());
         assertTrue(asset.getDeleted());
         verify(fixture.deleteTaskService).enqueueDefaultBucketDelete(
+                version.getStoragePath(),
+                MinioDeleteTaskService.SOURCE_DATASET_VERSION,
+                version.getId(),
+                version.getOwnerUserId()
+        );
+    }
+
+    @Test
+    void doesNotDeleteStorageSharedWithActiveReadyVersion() {
+        Fixture fixture = new Fixture();
+        ImportJob job = fixture.failedJob();
+        DatasetVersion version = fixture.version();
+        DatasetAsset asset = fixture.asset();
+        when(fixture.jobRepo.findByStatusAndFinishedAtBefore(eq("FAILED"), any()))
+                .thenReturn(List.of(job));
+        when(fixture.jobRepo.findById(job.getId())).thenReturn(Optional.of(job));
+        when(fixture.versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
+        when(fixture.assetRepo.findById(version.getAssetId())).thenReturn(Optional.of(asset));
+        when(fixture.versionRepo.existsByStoragePathAndDeletedFalseAndIdNot(
+                version.getStoragePath(),
+                version.getId()
+        )).thenReturn(true);
+
+        fixture.service.cleanupFailedDrafts();
+
+        assertTrue(version.getDeleted());
+        verify(fixture.deleteTaskService, never()).enqueueDefaultBucketDelete(
                 version.getStoragePath(),
                 MinioDeleteTaskService.SOURCE_DATASET_VERSION,
                 version.getId(),
