@@ -42,6 +42,9 @@ public class TrainingKubernetesProperties {
     private String minioServiceUrl = "http://tss-minio:9000";
     private String mlflowServiceUrl = "http://tss-mlflow:5000";
 
+    /** K8s Worker 写入 MLflow 的 experiment 名称（可通过 env 覆盖） */
+    private String mlflowExperimentName = "TSSAI-K8s-Training";
+
     private String cpuRequest = "500m";
     private String cpuLimit = "2";
     private String memoryRequest = "512Mi";

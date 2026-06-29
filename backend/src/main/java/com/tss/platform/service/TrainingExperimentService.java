@@ -342,6 +342,8 @@ public class TrainingExperimentService {
         dto.setProgress(version.getProgress() != null ? version.getProgress() : progressOf(version.getStatus()));
         dto.setMetrics(fromJson(version.getMetricsJson()));
         dto.setRunId(version.getRunId());
+        dto.setMlflowExperimentId(version.getMlflowExperimentId());
+        dto.setMlflowTrackingUri(version.getMlflowTrackingUri());
         dto.setLogPath(version.getLogPath());
         dto.setOutputPath(version.getOutputPath());
         dto.setErrorMessage(version.getErrorMessage());
@@ -410,6 +412,12 @@ public class TrainingExperimentService {
         }
         if (req.getRunId() != null) {
             version.setRunId(blankToNull(req.getRunId()));
+        }
+        if (req.getMlflowExperimentId() != null) {
+            version.setMlflowExperimentId(blankToNull(req.getMlflowExperimentId()));
+        }
+        if (req.getMlflowTrackingUri() != null) {
+            version.setMlflowTrackingUri(blankToNull(req.getMlflowTrackingUri()));
         }
         if (req.getLogPath() != null) {
             version.setLogPath(blankToNull(req.getLogPath()));

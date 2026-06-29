@@ -7,7 +7,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from io import BytesIO
@@ -18,6 +20,9 @@ try:
 except ImportError:
     print("minio package not installed", file=sys.stderr)
     sys.exit(1)
+
+# MLflow logging 通过 REST API 直写（与后端 MlflowTrackingService 一致），
+# 不依赖 mlflow Python SDK，兼容平台 lite MLflow server（仅实现 REST 子集，无 artifact 存储）。
 
 WORKSPACE = Path("/workspace/job")
 
@@ -44,6 +49,169 @@ PROFILES = {
     }
 }
 
+PROFILE_DISPLAY_NAMES = {
+    "image_text_consistency_fusion_logreg": "图文一致性基线训练",
+}
+
+# 训练完成后从 metrics.json 读取并写入 MLflow 的指标键（统一前缀）
+MLFLOW_METRIC_KEYS = [
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "roc_auc",
+]
+MLFLOW_METRIC_SPLITS = ["train", "val", "test"]
+
+
+class MlflowLogger:
+    """观测能力：通过 REST 记录 params/metrics/tags。任何异常只 warning，不阻断训练。
+
+    平台 MLflow server 为 lite 实现，**不支持 artifact 存储**；
+    训练产物（含 metrics.json/csv/train.log/fusion_model.pkl）仍以 MinIO 为主。
+    """
+
+    def __init__(self, training_id: str, profile_name: str):
+        self.training_id = training_id
+        self.profile_name = profile_name
+        self.base_url = env("MLFLOW_TRACKING_URI", "").rstrip("/")
+        self.experiment_name = env("MLFLOW_EXPERIMENT_NAME", "TSSAI-K8s-Training")
+        self.enabled = bool(self.base_url)
+        self.run_id: str | None = None
+        self.experiment_id: str | None = None
+        self.tracking_uri: str | None = None
+
+    def start(self) -> None:
+        if not self.enabled:
+            log("MLflow 未启用（MLFLOW_TRACKING_URI 未设置），跳过 MLflow logging")
+            return
+        try:
+            self.tracking_uri = self.base_url
+            log(f"MLflow tracking URI: {self.tracking_uri}")
+            log(f"MLflow experiment name: {self.experiment_name}")
+            self.experiment_id = self._ensure_experiment()
+            self.run_id = self._create_run()
+            log(f"MLflow runId: {self.run_id}")
+        except Exception as e:
+            log(f"MLflow 启动失败，训练继续（不写 MLflow）: {e}")
+            self.run_id = None
+
+    def log_params(self, params: dict) -> None:
+        if not self.run_id:
+            return
+        records = [{"key": k, "value": _truncate_param(v)} for k, v in params.items()]
+        try:
+            self._post("/api/2.0/mlflow/runs/log-batch", {"run_id": self.run_id, "params": records})
+            log(f"MLflow log params: {list(params.keys())}")
+        except Exception as e:
+            log(f"MLflow log params 失败，训练继续: {e}")
+
+    def log_metrics_from_file(self, metrics_path: Path) -> None:
+        if not self.run_id or not metrics_path.exists():
+            return
+        try:
+            raw = json.loads(metrics_path.read_text(encoding="utf-8"))
+            records = []
+            ts = _now_ms()
+            for split in MLFLOW_METRIC_SPLITS:
+                section = raw.get(split)
+                if not isinstance(section, dict):
+                    continue
+                for key in MLFLOW_METRIC_KEYS:
+                    value = section.get(key)
+                    if isinstance(value, (int, float)):
+                        records.append({"key": f"{split}_{key}", "value": float(value), "timestamp": ts, "step": 0})
+            if records:
+                self._post("/api/2.0/mlflow/runs/log-batch", {"run_id": self.run_id, "metrics": records})
+                log(f"MLflow log metrics: {[r['key'] for r in records]}")
+            else:
+                log("MLflow 未从 metrics.json 解析到可记录指标")
+        except Exception as e:
+            log(f"MLflow log metrics 失败，训练继续: {e}")
+
+    def log_artifacts(self, output_dir: Path, log_file: Path | None) -> None:
+        # lite MLflow server 不支持 artifact 存储；产物以 MinIO 为主。
+        if self.run_id:
+            log("MLflow artifact 存储不支持（lite server），产物以 MinIO 为主")
+
+    def finish(self, success: bool) -> None:
+        if not self.run_id:
+            return
+        try:
+            self._post("/api/2.0/mlflow/runs/update", {
+                "run_id": self.run_id,
+                "status": "FINISHED" if success else "FAILED",
+                "end_time": _now_ms(),
+            })
+            log(f"MLflow end_run status={'FINISHED' if success else 'FAILED'}")
+        except Exception as e:
+            log(f"MLflow end_run 失败: {e}")
+
+    def _ensure_experiment(self) -> str:
+        # get-by-name
+        try:
+            resp = self._get(f"/api/2.0/mlflow/experiments/get-by-name?experiment_name={urllib.parse.quote(self.experiment_name)}")
+            exp = resp.get("experiment")
+            if exp and exp.get("experiment_id"):
+                return str(exp["experiment_id"])
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+        # create
+        resp = self._post("/api/2.0/mlflow/experiments/create", {"name": self.experiment_name})
+        if not resp.get("experiment_id"):
+            raise RuntimeError("MLflow 创建 experiment 未返回 experiment_id")
+        return str(resp["experiment_id"])
+
+    def _create_run(self) -> str:
+        tags = [
+            {"key": "mlflow.runName", "value": f"{self.training_id}-{self.profile_name}"},
+            {"key": "tss.training_id", "value": self.training_id},
+            {"key": "tss.training_profile", "value": self.profile_name},
+            {"key": "tss.training_profile_display_name", "value": PROFILE_DISPLAY_NAMES.get(self.profile_name, self.profile_name)},
+            {"key": "tss.code_version_id", "value": env("CODE_VERSION_ID")},
+            {"key": "tss.dataset_version_id", "value": env("DATASET_VERSION_ID")},
+        ]
+        body = {
+            "experiment_id": self.experiment_id,
+            "start_time": _now_ms(),
+            "tags": tags,
+        }
+        resp = self._post("/api/2.0/mlflow/runs/create", body)
+        run = resp.get("run") or {}
+        info = run.get("info") or {}
+        if not info.get("run_id"):
+            raise RuntimeError("MLflow 创建 run 未返回 run_id")
+        return str(info["run_id"])
+
+    def _get(self, path: str) -> dict:
+        url = self.base_url + path
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _post(self, path: str, body: dict) -> dict:
+        url = self.base_url + path
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _truncate_param(value) -> str:
+    if value is None:
+        return ""
+    return str(value)[:6000]
+
 
 def env(name: str, default: str = "") -> str:
     value = os.environ.get(name, default)
@@ -61,6 +229,9 @@ def callback(
     error_message=None,
     log_path=None,
     output_path=None,
+    mlflow_run_id=None,
+    mlflow_experiment_id=None,
+    mlflow_tracking_uri=None,
 ) -> None:
     url = env("BACKEND_CALLBACK_URL")
     token = env("INTERNAL_CALLBACK_TOKEN")
@@ -76,6 +247,12 @@ def callback(
         payload["logPath"] = log_path
     if output_path:
         payload["outputPath"] = output_path
+    if mlflow_run_id:
+        payload["runId"] = mlflow_run_id
+    if mlflow_experiment_id:
+        payload["mlflowExperimentId"] = mlflow_experiment_id
+    if mlflow_tracking_uri:
+        payload["mlflowTrackingUri"] = mlflow_tracking_uri
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -155,7 +332,13 @@ def flatten_metrics(raw: dict) -> dict:
     return flat
 
 
-def run_profile_training(client: Minio, bucket: str, training_id: str, profile_name: str) -> None:
+def run_profile_training(
+    client: Minio,
+    bucket: str,
+    training_id: str,
+    profile_name: str,
+    mlflow_logger: MlflowLogger,
+) -> None:
     profile = PROFILES.get(profile_name)
     if profile is None:
         raise ValueError(f"不支持的 trainingProfile: {profile_name}")
@@ -180,6 +363,20 @@ def run_profile_training(client: Minio, bucket: str, training_id: str, profile_n
     if command[0].endswith(".sh"):
         raise ValueError("禁止执行 shell 脚本")
 
+    # 启动 MLflow run 并记录 params（观测能力，失败不阻断训练）
+    mlflow_logger.start()
+    mlflow_logger.log_params({
+        "trainingId": training_id,
+        "trainingProfile": profile_name,
+        "trainingProfileDisplayName": PROFILE_DISPLAY_NAMES.get(profile_name, profile_name),
+        "codeVersionId": env("CODE_VERSION_ID"),
+        "datasetVersionId": env("DATASET_VERSION_ID"),
+        "codeStoragePath": code_path,
+        "datasetStoragePath": dataset_path,
+        "hyperParams": env("HYPER_PARAMS_JSON"),
+        "fixedCommand": " ".join(command),
+    })
+
     log(f"执行固定 profile 命令: {' '.join(command)}")
     proc = subprocess.run(
         command,
@@ -202,6 +399,9 @@ def run_profile_training(client: Minio, bucket: str, training_id: str, profile_n
 
     raw_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     metrics = flatten_metrics(raw_metrics)
+
+    # 写入 MLflow metrics（从 metrics.json 解析 train/val/test × accuracy/.../roc_auc）
+    mlflow_logger.log_metrics_from_file(metrics_path)
 
     output_prefix = f"training-results/{training_id}/artifacts"
     output_dir = WORKSPACE / profile["output_dir"]
@@ -233,12 +433,20 @@ def run_profile_training(client: Minio, bucket: str, training_id: str, profile_n
         content_type="text/plain",
     )
 
+    # MLflow artifact 存储由 lite server 限制，产物以 MinIO 为主；保留调用以记录日志说明。
+    mlflow_logger.log_artifacts(output_dir, None)
+
+    mlflow_logger.finish(success=True)
+
     callback(
         "success",
         100,
         metrics=metrics,
         log_path=f"minio://{log_object}",
         output_path=f"minio://{output_prefix}/",
+        mlflow_run_id=mlflow_logger.run_id,
+        mlflow_experiment_id=mlflow_logger.experiment_id,
+        mlflow_tracking_uri=mlflow_logger.tracking_uri,
     )
 
 
@@ -258,13 +466,15 @@ def main() -> None:
         secure=secure,
     )
     bucket = env("MINIO_BUCKET", "models")
+    mlflow_logger = MlflowLogger(training_id, profile_name)
 
     try:
         callback("running", 5)
-        run_profile_training(client, bucket, training_id, profile_name)
+        run_profile_training(client, bucket, training_id, profile_name, mlflow_logger)
         log("训练完成")
     except Exception as e:
         log(f"训练失败: {e}")
+        mlflow_logger.finish(success=False)
         callback("failed", 0, error_message=str(e))
         sys.exit(1)
 

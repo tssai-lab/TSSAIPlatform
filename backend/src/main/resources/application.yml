@@ -100,6 +100,7 @@ training:
     backend-service-url: ${TRAINING_K8S_BACKEND_SERVICE_URL:http://tss-backend:8080}
     minio-service-url: ${TRAINING_K8S_MINIO_SERVICE_URL:http://tss-minio:9000}
     mlflow-service-url: ${TRAINING_K8S_MLFLOW_SERVICE_URL:http://tss-mlflow:5000}
+    mlflow-experiment-name: ${TRAINING_K8S_MLFLOW_EXPERIMENT_NAME:TSSAI-K8s-Training}
     cpu-request: ${TRAINING_K8S_CPU_REQUEST:500m}
     cpu-limit: ${TRAINING_K8S_CPU_LIMIT:2}
     memory-request: ${TRAINING_K8S_MEMORY_REQUEST:512Mi}

@@ -31,9 +31,12 @@ public class KubernetesJobManifestBuilder {
         );
         String codePath = escapeYaml(codeVersion.getStoragePath());
         String datasetPath = escapeYaml(datasetVersion.getStoragePath());
+        String codeVersionId = escapeYaml(task.getCodeVersionId());
+        String datasetVersionId = escapeYaml(task.getDatasetVersionId());
         String trainingProfile = escapeYaml(
                 task.getTrainingProfile() == null ? "" : task.getTrainingProfile()
         );
+        String mlflowExperimentName = escapeYaml(properties.getMlflowExperimentName());
         String callbackUrl = properties.getBackendServiceUrl()
                 + "/api/internal/training/result?id=" + task.getId();
 
@@ -85,6 +88,10 @@ public class KubernetesJobManifestBuilder {
                               value: "%s"
                             - name: TRAINING_PROFILE
                               value: "%s"
+                            - name: CODE_VERSION_ID
+                              value: "%s"
+                            - name: DATASET_VERSION_ID
+                              value: "%s"
                             - name: CODE_STORAGE_PATH
                               value: "%s"
                             - name: DATASET_STORAGE_PATH
@@ -100,6 +107,8 @@ public class KubernetesJobManifestBuilder {
                             - name: MINIO_BUCKET
                               value: "%s"
                             - name: MLFLOW_TRACKING_URI
+                              value: "%s"
+                            - name: MLFLOW_EXPERIMENT_NAME
                               value: "%s"
                             - name: BACKEND_CALLBACK_URL
                               value: "%s"
@@ -129,6 +138,8 @@ public class KubernetesJobManifestBuilder {
                 properties.getWorkerImagePullPolicy(),
                 escapeYaml(task.getId()),
                 trainingProfile,
+                codeVersionId,
+                datasetVersionId,
                 codePath,
                 datasetPath,
                 hyperParams,
@@ -137,6 +148,7 @@ public class KubernetesJobManifestBuilder {
                 escapeYaml(minioSecretKey),
                 escapeYaml(minioBucket),
                 properties.getMlflowServiceUrl(),
+                mlflowExperimentName,
                 callbackUrl,
                 escapeYaml(properties.getInternalCallbackToken()),
                 properties.getCpuRequest(),

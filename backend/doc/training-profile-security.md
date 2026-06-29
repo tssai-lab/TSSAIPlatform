@@ -20,6 +20,24 @@
 
 **训练产物下载**：详情页训练产物（`fusion_model.pkl`、`metrics.json`、`val_predictions.csv`、`test_predictions.csv`、`train.log`）复用 `GET /api/files/download?objectName=`；前端将 `minio://training-results/.../artifacts/<file>` 转换为 `objectName` 后下载，用户无需手动复制 `minio://` 路径。
 
+### K8s Worker MLflow logging（观测能力）
+
+K8s Worker（`k8s/training-worker/train.py`）在 Pod 内通过 MLflow REST API 直写（与后端 `MlflowTrackingService` 同一套端点），**不依赖 `mlflow` Python SDK**，兼容平台 lite MLflow server（仅实现 REST 子集，无 artifact 存储）。
+
+- **Tracking URI**：Pod 内 `MLFLOW_TRACKING_URI=http://tss-mlflow:5000`（K8s Service，与宿主机 `127.0.0.1:5000` 同一实例）。
+- **Experiment**：`MLFLOW_EXPERIMENT_NAME`，默认 `TSSAI-K8s-Training`（`training.kubernetes.mlflow-experiment-name`，可 env 覆盖）。
+- **Run name**：`{trainingId}-{trainingProfile}`。
+- **Params**：`trainingId`、`trainingProfile`、`trainingProfileDisplayName`、`codeVersionId`、`datasetVersionId`、`codeStoragePath`、`datasetStoragePath`、`hyperParams`、`fixedCommand`。
+- **Metrics**（从 `metrics.json` 解析，统一键名）：`train_/val_/test_` × `accuracy/precision/recall/f1/roc_auc`。
+- **Artifacts**：平台 lite MLflow server **未实现 artifact 存储**，故 MLflow 仅记录 params/metrics/tags；训练产物（`fusion_model.pkl`、`metrics.json`、`val_predictions.csv`、`test_predictions.csv`、`train.log`）仍以 MinIO 为主，详情页统一展示并复用 `/api/files/download`。如需 MLflow 内浏览 artifacts，需后续将 lite server 升级为完整 `mlflow server`（含 artifact store）。
+- **回写**：回调 `/api/internal/training/result` 携带 `runId`、`mlflowExperimentId`、`mlflowTrackingUri`；后端 `applyResult` 存入 `training_experiment_version`（`run_id`、`mlflow_experiment_id`、`mlflow_tracking_uri`），`/api/task/detail` 返回 `runId`，前端详情页自动加载 MLflow 指标。
+
+**容错（关键）**：MLflow 是观测能力，**不得影响训练成败**。所有 MLflow 调用包 try/except，失败时 Worker 打 warning 并继续；训练仍可 `success`，回调 `runId` 为空；前端显示「当前任务未关联 MLflow Run，或暂无可视化指标」空状态。
+
+**K8s Job env**（`KubernetesJobManifestBuilder`）：`TRAINING_ID`、`TRAINING_PROFILE`、`CODE_VERSION_ID`、`DATASET_VERSION_ID`、`CODE_STORAGE_PATH`、`DATASET_STORAGE_PATH`、`HYPER_PARAMS_JSON`、`MINIO_*`、`MLFLOW_TRACKING_URI`、`MLFLOW_EXPERIMENT_NAME`、`BACKEND_CALLBACK_URL`、`INTERNAL_CALLBACK_TOKEN`。
+
+**前端联调**：前端 `/mlflow-api/` 代理需指向**同一个** MLflow 实例（`DEV_MLFLOW_TARGET=http://127.0.0.1:5000`），否则看不到 Worker 写入的 run。local MLflow 同时支持 `/api/` 与 `/ajax-api/`，与现有 rewrite 兼容。
+
 **后续设计**：更严谨版本将拆分为 `codeVersionId`（训练代码）+ `baseModelVersionId`（基础权重）。
 
 ## 当前定位

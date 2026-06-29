@@ -68,6 +68,12 @@ public class TrainingExperimentVersion {
     @Column(name = "run_id", length = 128)
     private String runId;
 
+    @Column(name = "mlflow_experiment_id", length = 64)
+    private String mlflowExperimentId;
+
+    @Column(name = "mlflow_tracking_uri", length = 512)
+    private String mlflowTrackingUri;
+
     @Column(name = "log_path", length = 1024)
     private String logPath;
 
