@@ -154,7 +154,7 @@ export type DatasetListItem = {
   size?: string;
   sizeBytes?: number;
   versionRemark?: string;
-  fileCount: number;
+  fileCount?: number | null;
   uploadTime?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -412,6 +412,18 @@ export async function getDatasetList(params?: DatasetListQuery, options?: { [key
   });
 }
 
+// ——— 分片上传 ———
+
+/** 分片 init/chunk/complete 及合并阶段可能较慢，需长于全局 10s */
+const DATASET_UPLOAD_REQUEST_TIMEOUT = 5 * 60 * 1000;
+
+function withDatasetUploadRequestOptions(options?: { [key: string]: unknown }) {
+  return {
+    ...(options || {}),
+    timeout: DATASET_UPLOAD_REQUEST_TIMEOUT,
+  };
+}
+
 /**
  * 初始化或恢复数据集分片上传。
  *
@@ -425,7 +437,7 @@ export async function datasetUploadInit(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: body,
-    ...(options || {}),
+    ...withDatasetUploadRequestOptions(options),
   });
 }
 
@@ -447,7 +459,7 @@ export async function datasetUploadChunk(
   return request<{ data: DatasetUploadProgress }>('/dataset/upload/chunk', {
     method: 'POST',
     data: formData,
-    ...(options || {}),
+    ...withDatasetUploadRequestOptions(options),
   });
 }
 
@@ -456,7 +468,7 @@ export async function datasetUploadProgress(uploadId: string, options?: { [key: 
   return request<{ data: DatasetUploadProgress }>('/dataset/upload/progress', {
     method: 'GET',
     params: { uploadId },
-    ...(options || {}),
+    ...withDatasetUploadRequestOptions(options),
   });
 }
 
@@ -470,7 +482,7 @@ export async function datasetUploadComplete(uploadId: string, options?: { [key: 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: { uploadId },
-    ...(options || {}),
+    ...withDatasetUploadRequestOptions(options),
   });
 }
 
@@ -584,7 +596,7 @@ export async function datasetUploadFolder(
   return request<{ data: DatasetUploadCompleteResult }>('/dataset/upload/folder', {
     method: 'POST',
     data: formData,
-    ...(options || {}),
+    ...withDatasetUploadRequestOptions(options),
   });
 }
 
@@ -631,7 +643,8 @@ function mergeV1ListWithV2Display(
       importErrorMessage: overlay.importErrorMessage ?? item.importErrorMessage,
       versionId: item.versionId ?? overlay.versionId,
       version: item.version ?? overlay.version,
-      fileCount: item.fileCount ?? overlay.fileCount,
+      fileCount:
+        item.fileCount != null ? item.fileCount : overlay.fileCount,
     };
   });
 }

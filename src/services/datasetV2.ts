@@ -106,7 +106,7 @@ export function mapV2DatasetToListItem(row: V2DatasetListItem): DatasetListItem 
     versionId: current?.versionId,
     version: current?.versionLabel,
     versionStatus: current?.status,
-    fileCount: row.currentVersionFileCount ?? 0,
+    fileCount: row.currentVersionFileCount ?? undefined,
     uploadTime: row.uploadTime,
     sizeBytes: row.sizeBytes,
     size: formatBytes(row.sizeBytes),
