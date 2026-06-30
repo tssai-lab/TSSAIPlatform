@@ -87,19 +87,17 @@ public class ZipCentralDirectoryReader {
         if (path == null || path.isEmpty()) {
             throw new IllegalArgumentException("ZIP entry path cannot be empty");
         }
-        if (path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
+        String normalizedPath = path.replace('\\', '/');
+        if (normalizedPath.startsWith("/") || normalizedPath.matches("^[A-Za-z]:.*")) {
             throw new IllegalArgumentException("ZIP entry path cannot be absolute: " + path);
         }
-        if (path.indexOf('\\') >= 0) {
-            throw new IllegalArgumentException("ZIP entry path cannot contain backslashes: " + path);
-        }
-        if (path.indexOf('\0') >= 0) {
+        if (normalizedPath.indexOf('\0') >= 0) {
             throw new IllegalArgumentException("ZIP entry path cannot contain null bytes");
         }
 
-        boolean directory = path.endsWith("/");
+        boolean directory = normalizedPath.endsWith("/");
         List<String> parts = new ArrayList<>();
-        for (String part : path.split("/", -1)) {
+        for (String part : normalizedPath.split("/", -1)) {
             if (part.isEmpty() || ".".equals(part)) {
                 continue;
             }
@@ -233,7 +231,7 @@ public class ZipCentralDirectoryReader {
                     crc32,
                     localHeaderOffset,
                     encrypted,
-                    path.endsWith("/")
+                    path.endsWith("/") || path.endsWith("\\")
             ));
             cursor += recordLength;
         }

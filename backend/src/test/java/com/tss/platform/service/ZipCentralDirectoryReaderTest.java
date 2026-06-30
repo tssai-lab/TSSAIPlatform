@@ -37,6 +37,34 @@ class ZipCentralDirectoryReaderTest {
     }
 
     @Test
+    void normalizesBackslashEntryPathsAsDirectorySeparators() throws Exception {
+        byte[] zip = ZipTestFixtures.zip(
+                ZipTestFixtures.stored("data\\scores.jsonl", "{}")
+        );
+        ZipCentralDirectoryReader reader = readerFor(zip);
+
+        List<ZipEntryInfo> entries = reader.read("dataset.zip", zip.length);
+
+        assertEquals(1, entries.size());
+        assertEquals("data\\scores.jsonl", entries.get(0).path());
+        assertEquals("data/scores.jsonl", entries.get(0).normalizedPath());
+    }
+
+    @Test
+    void treatsBackslashTerminatedEntriesAsDirectories() throws Exception {
+        byte[] zip = ZipTestFixtures.zip(
+                ZipTestFixtures.stored("data\\", "")
+        );
+        ZipCentralDirectoryReader reader = readerFor(zip);
+
+        List<ZipEntryInfo> entries = reader.read("dataset.zip", zip.length);
+
+        assertEquals(1, entries.size());
+        assertEquals("data/", entries.get(0).normalizedPath());
+        assertTrue(entries.get(0).directory());
+    }
+
+    @Test
     void rejectsParentDirectoryTraversal() throws Exception {
         byte[] zip = ZipTestFixtures.zip(ZipTestFixtures.stored("../manifest.json", "{}"));
 
