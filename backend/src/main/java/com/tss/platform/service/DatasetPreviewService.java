@@ -598,25 +598,7 @@ public class DatasetPreviewService {
     }
 
     private String normalizeZipEntryPath(String path) {
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException("zip entry path cannot be empty");
-        }
-        if (path.indexOf('\0') >= 0) {
-            throw new IllegalArgumentException("zip entry path is illegal");
-        }
-        String normalized = path.replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*")) {
-            throw new IllegalArgumentException("zip entry path is illegal: " + path);
-        }
-        for (String part : normalized.split("/")) {
-            if ("..".equals(part) || part.indexOf('\0') >= 0) {
-                throw new IllegalArgumentException("zip entry path is illegal: " + path);
-            }
-        }
-        if (normalized.isBlank()) {
-            throw new IllegalArgumentException("zip entry path cannot be empty");
-        }
-        return normalized;
+        return ZipPathValidator.normalizeEntryPath(path);
     }
 
     private String sourceName(DatasetVersion version) {

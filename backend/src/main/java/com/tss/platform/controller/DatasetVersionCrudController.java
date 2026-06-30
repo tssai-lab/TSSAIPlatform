@@ -381,6 +381,10 @@ public class DatasetVersionCrudController {
     private boolean isOneActiveDraftViolation(Throwable exception) {
         Throwable current = exception;
         while (current != null) {
+            if (current instanceof org.hibernate.exception.ConstraintViolationException constraint
+                    && "uk_dataset_version_one_active_draft".equalsIgnoreCase(constraint.getConstraintName())) {
+                return true;
+            }
             String message = current.getMessage();
             if (message != null
                     && message.toLowerCase(Locale.ROOT)

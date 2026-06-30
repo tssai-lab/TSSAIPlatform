@@ -22,6 +22,7 @@ import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
+import com.tss.platform.repository.UploadChunkProgressSummary;
 import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
@@ -1210,8 +1211,13 @@ public class DatasetUploadService {
     }
 
     private DatasetUploadProgressDto progress(DatasetUploadSession session) {
-        List<DatasetUploadChunk> chunks = chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId());
         boolean completed = STATUS_COMPLETED.equals(session.getStatus());
+        UploadChunkProgressSummary summary = completed
+                ? null
+                : chunkRepo.summarizeProgressByUploadId(session.getId());
+        List<Integer> uploadedPartIndexes = completed
+                ? completedPartIndexes(session.getTotalChunks())
+                : chunkRepo.findPartIndexesByUploadIdOrderByPartIndexAsc(session.getId());
         DatasetUploadProgressDto dto = new DatasetUploadProgressDto();
         dto.setUploadId(session.getId());
         dto.setStatus(session.getStatus());
@@ -1219,13 +1225,11 @@ public class DatasetUploadService {
         dto.setFileSize(session.getFileSize());
         dto.setChunkSize(session.getChunkSize());
         dto.setTotalChunks(session.getTotalChunks());
-        dto.setUploadedChunks(completed ? session.getTotalChunks() : chunks.size());
+        dto.setUploadedChunks(completed ? session.getTotalChunks() : uploadedChunks(summary));
         dto.setUploadedBytes(completed
                 ? session.getFileSize()
-                : chunks.stream().mapToLong(c -> c.getSizeBytes() == null ? 0L : c.getSizeBytes()).sum());
-        dto.setUploadedPartIndexes(completed
-                ? completedPartIndexes(session.getTotalChunks())
-                : chunks.stream().map(DatasetUploadChunk::getPartIndex).collect(Collectors.toList()));
+                : uploadedBytes(summary));
+        dto.setUploadedPartIndexes(uploadedPartIndexes);
         dto.setStoragePath(
                 UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose())
                         ? null
@@ -1251,6 +1255,16 @@ public class DatasetUploadService {
             indexes.add(i);
         }
         return indexes;
+    }
+
+    private int uploadedChunks(UploadChunkProgressSummary summary) {
+        Long value = summary == null ? null : summary.getUploadedChunks();
+        return value == null ? 0 : Math.toIntExact(value);
+    }
+
+    private long uploadedBytes(UploadChunkProgressSummary summary) {
+        Long value = summary == null ? null : summary.getUploadedBytes();
+        return value == null ? 0L : value;
     }
 
     private Map<String, Object> completedPayload(DatasetUploadSession session) {
@@ -2048,6 +2062,10 @@ public class DatasetUploadService {
     private boolean isOneActiveDraftViolation(Throwable exception) {
         Throwable current = exception;
         while (current != null) {
+            if (current instanceof org.hibernate.exception.ConstraintViolationException constraint
+                    && "uk_dataset_version_one_active_draft".equalsIgnoreCase(constraint.getConstraintName())) {
+                return true;
+            }
             String message = current.getMessage();
             if (message != null
                     && message.toLowerCase(Locale.ROOT)

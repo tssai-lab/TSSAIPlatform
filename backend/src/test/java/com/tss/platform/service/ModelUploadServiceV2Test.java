@@ -40,6 +40,19 @@ import static org.mockito.Mockito.when;
 class ModelUploadServiceV2Test {
 
     @Test
+    void progressDoesNotLoadFullChunkEntities() {
+        Fixture fixture = new Fixture();
+        ModelUploadSession session = fixture.session();
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+
+        V2ModelUploadDto result = fixture.service.getProgressV2(session.getId());
+
+        assertEquals(0, result.getUploadedChunks());
+        verify(fixture.chunkRepo, org.mockito.Mockito.never())
+                .findByUploadIdOrderByPartIndexAsc(session.getId());
+    }
+
+    @Test
     void initPersistsFileAndBusinessMetadata() {
         Fixture fixture = new Fixture();
         when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -118,6 +131,13 @@ class ModelUploadServiceV2Test {
                 ArgumentCaptor.forClass(ModelVersion.class);
         verify(fixture.versionRepo).saveAndFlush(versionCaptor.capture());
         assertEquals("v1", versionCaptor.getValue().getVersion());
+        assertEquals("READY", versionCaptor.getValue().getStatus());
+        assertEquals("detector model", versionCaptor.getValue().getChangeLog());
+        assertEquals(7, versionCaptor.getValue().getCreatedBy());
+        assertEquals(
+                versionCaptor.getValue().getCreatedAt(),
+                versionCaptor.getValue().getPublishedAt()
+        );
         assertEquals("COMPLETED", result.getStatus());
         assertTrue(result.getModelId().startsWith("model-ver-"));
         String json = new ObjectMapper()
@@ -194,6 +214,22 @@ class ModelUploadServiceV2Test {
         assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, error.getStatus());
         assertEquals("MODEL_UPLOAD_NOT_FOUND", error.getErrorCode());
         assertEquals("模型上传任务不存在或无权访问", error.getMessage());
+    }
+
+    @Test
+    void genericV2FailureIncludesOriginalValidationReasonInDetails() {
+        Fixture fixture = new Fixture();
+        ModelUploadSession session = fixture.session();
+        session.setRemark(null);
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+
+        com.tss.platform.controller.v2.V2BusinessException error = assertThrows(
+                com.tss.platform.controller.v2.V2BusinessException.class,
+                () -> fixture.service.completeV2(session.getId())
+        );
+
+        assertEquals("MODEL_UPLOAD_FAILED", error.getErrorCode());
+        assertEquals("remark 不能为空", error.getDetails().get("reason"));
     }
 
     private static byte[] zipBytes() throws Exception {

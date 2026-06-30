@@ -222,7 +222,12 @@ class DatasetUploadManifestCompletionTest {
         when(fixture.assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
                 .thenThrow(new DataIntegrityViolationException(
-                        "duplicate key value violates unique constraint \"uk_dataset_version_one_active_draft\""
+                        "duplicate key",
+                        new org.hibernate.exception.ConstraintViolationException(
+                                "duplicate",
+                                null,
+                                "uk_dataset_version_one_active_draft"
+                        )
                 ));
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();

@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,6 +29,16 @@ import java.util.stream.Collectors;
 public class ModelVersionCrudController {
 
     private static final Logger log = LoggerFactory.getLogger(ModelVersionCrudController.class);
+    private static final String STATUS_READY = "READY";
+    private static final String STATUS_DRAFT = "DRAFT";
+    private static final String STATUS_DEPRECATED = "DEPRECATED";
+    private static final String STATUS_ARCHIVED = "ARCHIVED";
+    private static final Set<String> VALID_STATUSES = Set.of(
+            STATUS_DRAFT,
+            STATUS_READY,
+            STATUS_DEPRECATED,
+            STATUS_ARCHIVED
+    );
 
     private final ModelVersionRepository repo;
     private final ModelAssetRepository assetRepo;
@@ -74,6 +85,13 @@ public class ModelVersionCrudController {
         if (body.getCreatedAt() == null) {
             body.setCreatedAt(Instant.now());
         }
+        body.setCreatedBy(authContext.currentUserId());
+        try {
+            body.setStatus(normalizeStatus(body.getStatus(), STATUS_READY));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+        publishIfReady(body);
         body.setDeleted(false);
         body.setDeletedAt(null);
         return ApiResponse.ok(repo.save(body));
@@ -147,8 +165,42 @@ public class ModelVersionCrudController {
             e.setStoragePath(body.getStoragePath());
             e.setSizeBytes(body.getSizeBytes());
         }
+        e.setDescription(body.getDescription());
+        e.setChangeLog(body.getChangeLog());
+        if (body.getStatus() != null && !body.getStatus().isBlank()) {
+            try {
+                e.setStatus(normalizeStatus(body.getStatus(), e.getStatus()));
+            } catch (IllegalArgumentException ex) {
+                return ApiResponse.fail(ex.getMessage());
+            }
+            publishIfReady(e);
+        }
         e.setOwnerUserId(ownerUserId != null ? ownerUserId : e.getOwnerUserId());
         return ApiResponse.ok(repo.save(e));
+    }
+
+    @PatchMapping("/{id}/status")
+    public ApiResponse<ModelVersion> updateStatus(
+            @PathVariable String id,
+            @RequestBody Map<String, String> body
+    ) {
+        Optional<ModelVersion> existing = repo.findByIdAndDeletedFalse(id);
+        if (existing.isEmpty()) {
+            return ApiResponse.fail("not found or no permission: " + id);
+        }
+        ModelVersion version = existing.get();
+        if (!authContext.canAccessOwner(effectiveOwner(version))) {
+            return ApiResponse.fail("not found or no permission: " + id);
+        }
+        String targetStatus;
+        try {
+            targetStatus = normalizeStatus(body == null ? null : body.get("status"), null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+        version.setStatus(targetStatus);
+        publishIfReady(version);
+        return ApiResponse.ok(repo.save(version));
     }
 
     @DeleteMapping("/{id}")
@@ -231,6 +283,26 @@ public class ModelVersionCrudController {
         return (body.getStoragePath() != null && !body.getStoragePath().equals(existing.getStoragePath()))
                 || (body.getFileName() != null && !body.getFileName().equals(existing.getFileName()))
                 || (body.getSizeBytes() != null && !body.getSizeBytes().equals(existing.getSizeBytes()));
+    }
+
+    private String normalizeStatus(String status, String defaultStatus) {
+        if (status == null || status.isBlank()) {
+            if (defaultStatus != null) {
+                return defaultStatus;
+            }
+            throw new IllegalArgumentException("status cannot be empty");
+        }
+        String normalized = status.trim().toUpperCase(Locale.ROOT);
+        if (!VALID_STATUSES.contains(normalized)) {
+            throw new IllegalArgumentException("unsupported model version status: " + status);
+        }
+        return normalized;
+    }
+
+    private void publishIfReady(ModelVersion version) {
+        if (STATUS_READY.equals(version.getStatus()) && version.getPublishedAt() == null) {
+            version.setPublishedAt(version.getCreatedAt() != null ? version.getCreatedAt() : Instant.now());
+        }
     }
 }
 

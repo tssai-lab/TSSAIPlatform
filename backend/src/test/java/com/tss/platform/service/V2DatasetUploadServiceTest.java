@@ -6,6 +6,7 @@ import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
 import com.tss.platform.dto.v2.V2DatasetUploadDto;
+import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
@@ -17,12 +18,34 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class V2DatasetUploadServiceTest {
+
+    @Test
+    void initFailureIncludesOriginalValidationReasonInDetails() {
+        Fixture fixture = new Fixture();
+        DatasetUploadInitRequest request = new DatasetUploadInitRequest();
+        request.setFileName("dataset.zip");
+        request.setFileSize(128L);
+        when(fixture.uploadService.init(request))
+                .thenThrow(new IllegalArgumentException("CV zip must contain at least 1 image file"));
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.init(request)
+        );
+
+        assertEquals("INVALID_UPLOAD_REQUEST", error.getErrorCode());
+        assertEquals(
+                "CV zip must contain at least 1 image file",
+                error.getDetails().get("reason")
+        );
+    }
 
     @Test
     void initialUploadDelegatesToExistingUploadService() {

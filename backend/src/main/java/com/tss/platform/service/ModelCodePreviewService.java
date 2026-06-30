@@ -159,15 +159,11 @@ public class ModelCodePreviewService {
     }
 
     private boolean isSafePath(String path) {
-        return path != null
-                && !path.isBlank()
-                && !path.startsWith("/")
-                && !path.contains("../")
-                && !path.contains("..\\");
+        return ZipPathValidator.isSafeEntryPath(path);
     }
 
     private String normalizePath(String path) {
-        return path == null ? "" : path.replace('\\', '/').replaceAll("^/+", "");
+        return path == null ? "" : path.replace('\\', '/');
     }
 
     private String fileNameOf(String path) {

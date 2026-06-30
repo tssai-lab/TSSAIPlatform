@@ -43,6 +43,21 @@ public class ModelVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "description", length = 2048)
+    private String description;
+
+    @Column(name = "change_log")
+    private String changeLog;
+
+    @Column(name = "status", nullable = false, length = 32)
+    private String status = "READY";
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "created_by")
+    private Integer createdBy;
+
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 

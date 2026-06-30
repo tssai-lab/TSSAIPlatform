@@ -323,20 +323,14 @@ public class PointCloudPreviewService {
     }
 
     private String normalizeZipEntryPath(String path) {
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException("zip entry path 不能为空");
+        try {
+            return ZipPathValidator.normalizeEntryPath(path);
+        } catch (IllegalArgumentException exception) {
+            if (path == null || path.isBlank()) {
+                throw new IllegalArgumentException("zip entry path 不能为空", exception);
+            }
+            throw new IllegalArgumentException("zip entry path 非法: " + path, exception);
         }
-        if (path.indexOf('\0') >= 0) {
-            throw new IllegalArgumentException("zip entry path 非法");
-        }
-        String normalized = path.replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*") || normalized.contains("..")) {
-            throw new IllegalArgumentException("zip entry path 非法: " + path);
-        }
-        if (normalized.isBlank()) {
-            throw new IllegalArgumentException("zip entry path 不能为空");
-        }
-        return normalized;
     }
 
     private String sourceName(DatasetVersion version) {

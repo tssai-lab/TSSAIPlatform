@@ -16,6 +16,7 @@ import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelUploadChunkRepository;
 import com.tss.platform.repository.ModelUploadSessionRepository;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.repository.UploadChunkProgressSummary;
 import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
@@ -316,6 +317,10 @@ public class ModelUploadService {
             ver.setSizeBytes(session.getFileSize());
             ver.setOwnerUserId(target.ownerUserId());
             ver.setCreatedAt(now);
+            ver.setStatus("READY");
+            ver.setChangeLog(normalizeText(req.getRemark()));
+            ver.setPublishedAt(now);
+            ver.setCreatedBy(authContext.currentUserId());
             modelVersionRepo.saveAndFlush(ver);
 
             session.setStatus(STATUS_COMPLETED);
@@ -528,8 +533,13 @@ public class ModelUploadService {
     }
 
     private ModelUploadProgressDto progress(ModelUploadSession session) {
-        List<ModelUploadChunk> chunks = chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId());
         boolean completed = STATUS_COMPLETED.equals(session.getStatus());
+        UploadChunkProgressSummary summary = completed
+                ? null
+                : chunkRepo.summarizeProgressByUploadId(session.getId());
+        List<Integer> uploadedPartIndexes = completed
+                ? completedPartIndexes(session.getTotalChunks())
+                : chunkRepo.findPartIndexesByUploadIdOrderByPartIndexAsc(session.getId());
         ModelUploadProgressDto dto = new ModelUploadProgressDto();
         dto.setUploadId(session.getId());
         dto.setStatus(session.getStatus());
@@ -537,13 +547,11 @@ public class ModelUploadService {
         dto.setFileSize(session.getFileSize());
         dto.setChunkSize(session.getChunkSize());
         dto.setTotalChunks(session.getTotalChunks());
-        dto.setUploadedChunks(completed ? session.getTotalChunks() : chunks.size());
+        dto.setUploadedChunks(completed ? session.getTotalChunks() : uploadedChunks(summary));
         dto.setUploadedBytes(completed
                 ? session.getFileSize()
-                : chunks.stream().mapToLong(c -> c.getSizeBytes() == null ? 0L : c.getSizeBytes()).sum());
-        dto.setUploadedPartIndexes(completed
-                ? completedPartIndexes(session.getTotalChunks())
-                : chunks.stream().map(ModelUploadChunk::getPartIndex).collect(Collectors.toList()));
+                : uploadedBytes(summary));
+        dto.setUploadedPartIndexes(uploadedPartIndexes);
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
@@ -582,6 +590,16 @@ public class ModelUploadService {
             indexes.add(i);
         }
         return indexes;
+    }
+
+    private int uploadedChunks(UploadChunkProgressSummary summary) {
+        Long value = summary == null ? null : summary.getUploadedChunks();
+        return value == null ? 0 : Math.toIntExact(value);
+    }
+
+    private long uploadedBytes(UploadChunkProgressSummary summary) {
+        Long value = summary == null ? null : summary.getUploadedBytes();
+        return value == null ? 0L : value;
     }
 
     private Map<String, Object> completedPayload(
@@ -718,8 +736,15 @@ public class ModelUploadService {
         return new V2BusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY,
                 "MODEL_UPLOAD_FAILED",
-                "模型上传无法完成，请检查文件后重试"
+                "模型上传无法完成，请检查文件后重试",
+                reasonDetails(message)
         );
+    }
+
+    private Map<String, Object> reasonDetails(String message) {
+        return message == null || message.isBlank()
+                ? Map.of()
+                : Map.of("reason", message);
     }
 
     private String normalizeText(String value) {

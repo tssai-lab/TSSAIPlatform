@@ -114,6 +114,17 @@ class PointCloudPreviewServiceTest {
     }
 
     @Test
+    void zipPreviewAllowsDoubleDotInsideLegalFileName() throws Exception {
+        byte[] zip = zip(entry("clouds/foo..bar.pcd", "pcd"));
+        TestFixture fixture = fixture("pointcloud.zip", "POINT_CLOUD", 7, (long) zip.length, 100_000, zip);
+
+        PointCloudPreviewDto preview = fixture.service.preview("dataset-ver-1");
+
+        assertTrue(preview.isPreviewSupported());
+        assertEquals("clouds/foo..bar.pcd", preview.getPointCloudFiles().get(0).getPath());
+    }
+
+    @Test
     void rejectsNonPointCloudDataset() {
         TestFixture fixture = fixture("image.zip", "CV", 7, 1024L, 100_000, null);
 

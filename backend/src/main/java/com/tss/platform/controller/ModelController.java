@@ -116,6 +116,11 @@ public class ModelController {
         item.put("storagePath", version.getStoragePath());
         item.put("fileName", version.getFileName());
         item.put("sizeBytes", version.getSizeBytes());
+        item.put("description", version.getDescription());
+        item.put("changeLog", version.getChangeLog());
+        item.put("status", version.getStatus());
+        item.put("publishedAt", version.getPublishedAt());
+        item.put("createdBy", version.getCreatedBy());
         item.put("createdAt", version.getCreatedAt());
         return item;
     }
@@ -140,7 +145,13 @@ public class ModelController {
         item.put("remark", a.map(ModelAsset::getRemark).orElse(null));
         item.put("ownerUserId", ver.getOwnerUserId());
         item.put("storagePath", ver.getStoragePath());
+        item.put("fileName", ver.getFileName());
         item.put("sizeBytes", ver.getSizeBytes());
+        item.put("description", ver.getDescription());
+        item.put("changeLog", ver.getChangeLog());
+        item.put("status", ver.getStatus());
+        item.put("publishedAt", ver.getPublishedAt());
+        item.put("createdBy", ver.getCreatedBy());
         item.put("createdAt", ver.getCreatedAt());
         return ApiResponse.ok(item);
     }

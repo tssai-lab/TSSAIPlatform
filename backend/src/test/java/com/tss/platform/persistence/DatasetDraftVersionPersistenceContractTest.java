@@ -11,7 +11,7 @@ class DatasetDraftVersionPersistenceContractTest {
 
     @Test
     void migrationEnforcesOnlyOneActiveDraftPerDatasetAsset() throws Exception {
-        String resource = "db/migration/V15__dataset_version_one_active_draft.sql";
+        String resource = "db/migration/V18__dataset_version_one_active_draft.sql";
         try (var input = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource)) {
             assertNotNull(input, resource);
             String sql = new String(input.readAllBytes(), StandardCharsets.UTF_8);

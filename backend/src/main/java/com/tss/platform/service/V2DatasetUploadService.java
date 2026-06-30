@@ -49,7 +49,8 @@ public class V2DatasetUploadService {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "INVALID_UPLOAD_REQUEST",
-                    "上传请求无效，请检查 ZIP 文件和数据集信息"
+                    "上传请求无效，请检查 ZIP 文件和数据集信息",
+                    reasonDetails(exception)
             );
         }
     }
@@ -64,7 +65,8 @@ public class V2DatasetUploadService {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "INVALID_UPLOAD_REQUEST",
-                    "上传请求无效，请检查 ZIP 文件和上传参数"
+                    "上传请求无效，请检查 ZIP 文件和上传参数",
+                    reasonDetails(exception)
             );
         }
     }
@@ -80,7 +82,8 @@ public class V2DatasetUploadService {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "UPLOAD_CHUNK_FAILED",
-                    "文件分片上传失败，请重试"
+                    "文件分片上传失败，请重试",
+                    reasonDetails(exception)
             );
         }
     }
@@ -117,7 +120,8 @@ public class V2DatasetUploadService {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "DATASET_UPLOAD_NOT_COMPLETABLE",
-                    "上传尚未完成或文件校验失败，请检查后重试"
+                    "上传尚未完成或文件校验失败，请检查后重试",
+                    reasonDetails(exception)
             );
         }
     }
@@ -212,5 +216,12 @@ public class V2DatasetUploadService {
                 "DATASET_UPLOAD_NOT_FOUND",
                 "数据集上传任务不存在或无权访问"
         );
+    }
+
+    private Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank()
+                ? Map.of()
+                : Map.of("reason", message);
     }
 }
