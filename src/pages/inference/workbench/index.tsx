@@ -232,11 +232,11 @@ const InferenceWorkbench: React.FC = () => {
     setCreating(true);
     try {
       const params = parseJson(values.paramsJson);
-      let inputObjectName = values.inputObjectName?.trim();
-      if (values.inputMode === 'SINGLE_OBJECT' && !inputObjectName) {
+      let inputObjectName: string | undefined;
+      if (values.inputMode === 'SINGLE_OBJECT') {
         const file = inputFileList[0]?.originFileObj as File | undefined;
         if (!file) {
-          throw new Error('请选择单文件输入或填写已有对象路径');
+          throw new Error('请选择单文件输入');
         }
         const objectName = `inference-inputs/${Date.now()}-${file.name}`;
         const uploadRes = await uploadObject(file, objectName, {
@@ -266,7 +266,6 @@ const InferenceWorkbench: React.FC = () => {
       setInputFileList([]);
       taskForm.setFieldsValue({
         name: '',
-        inputObjectName: '',
         remark: '',
       });
       actionRef.current?.reload();
@@ -504,7 +503,7 @@ const InferenceWorkbench: React.FC = () => {
                 </Form.Item>
               ) : (
                 <>
-                  <Form.Item label="上传单文件">
+                  <Form.Item label="上传单文件" required>
                     <Upload
                       maxCount={1}
                       fileList={inputFileList}
@@ -515,9 +514,6 @@ const InferenceWorkbench: React.FC = () => {
                     >
                       <Button icon={<UploadOutlined />}>选择文件</Button>
                     </Upload>
-                  </Form.Item>
-                  <Form.Item name="inputObjectName" label="已有对象路径">
-                    <Input placeholder="users/{userId}/files/..." />
                   </Form.Item>
                 </>
               )}
