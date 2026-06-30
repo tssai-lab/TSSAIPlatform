@@ -22,8 +22,10 @@ class DatasetUploadMultimodalValidationTest {
                 () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "/manifest.json"));
         assertThrows(IllegalArgumentException.class,
                 () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "../manifest.json"));
-        assertThrows(IllegalArgumentException.class,
-                () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "dir\\manifest.json"));
+        assertEquals(
+                "dir/manifest.json",
+                DatasetUploadService.normalizeManifestPath("MANIFEST", "dir\\manifest.json")
+        );
         assertThrows(IllegalArgumentException.class,
                 () -> DatasetUploadService.normalizeManifestPath("MANIFEST", "bad\u0000manifest.json"));
     }

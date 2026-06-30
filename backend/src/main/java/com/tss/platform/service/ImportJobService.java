@@ -393,6 +393,7 @@ public class ImportJobService {
         sampleRepo.saveAllAndFlush(samples);
         dataRepo.saveAllAndFlush(dataItems);
         annotationRepo.saveAllAndFlush(annotations);
+        version.setFileCount(countPersistedFiles(version.getId()));
 
         int completed = jobRepo.completeSuccessIfOwned(
                 context.importJobId(),
@@ -411,9 +412,10 @@ public class ImportJobService {
                     .findByIdAndDeletedFalse(context.packageId())
                     .orElseThrow(() -> new IllegalArgumentException(
                             "dataset package not found: " + context.packageId()
-                    ));
+            ));
             datasetPackage.setStatus(VERSION_READY);
             packageRepo.saveAndFlush(datasetPackage);
+            versionRepo.saveAndFlush(version);
         } else {
             version.setStatus(VERSION_READY);
             version.setPublishedAt(now);
@@ -425,6 +427,11 @@ public class ImportJobService {
                 assetRepo.saveAndFlush(asset);
             }
         }
+    }
+
+    private long countPersistedFiles(String versionId) {
+        return dataRepo.countByDatasetVersionId(versionId)
+                + annotationRepo.countByDatasetVersionId(versionId);
     }
 
     private void validateAppendConflicts(

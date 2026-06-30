@@ -78,3 +78,11 @@ Flyway repair 或重新基线化。
 - 将历史版本状态回填为 `READY`，并将每个资产当前版本指向未删除且 `version_no` 最大的版本。
 - 增加 `(asset_id, version_no)` 唯一索引、版本状态约束、父版本外键和当前版本外键。
 - 为 `dataset_upload_session` 增加版本说明和父版本字段，支持上传过程中保留版本元数据。
+
+## V21__dataset_version_file_count_and_catalog_indexes.sql
+
+为数据集版本增加持久化文件数，并补充数据集列表查询索引。
+
+- 为 `dataset_version` 增加 nullable `file_count`，旧版本可在首次列表命中时懒计算回填。
+- 为 `dataset_asset` 增加 owner/type/deleted/time 维度列表索引，支持普通用户数据集列表分页。
+- 为 `dataset_asset` 增加 admin/type/deleted/time 维度列表索引，支持管理员数据集列表分页。

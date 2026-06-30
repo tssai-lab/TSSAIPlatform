@@ -26,6 +26,19 @@ class ManifestZipReaderTest {
     }
 
     @Test
+    void readsManifestWhenRequestedPathUsesBackslashes() throws Exception {
+        byte[] zip = ZipTestFixtures.zip(
+                ZipTestFixtures.stored("manifests/manifest.json", "{\"nested\":true}")
+        );
+        ManifestZipReader reader = readerFor(zip);
+
+        assertEquals(
+                "{\"nested\":true}",
+                reader.readManifest("dataset.zip", zip.length, "manifests\\manifest.json")
+        );
+    }
+
+    @Test
     void rejectsMissingManifest() throws Exception {
         byte[] zip = ZipTestFixtures.zip(ZipTestFixtures.stored("other.json", "{}"));
         ManifestZipReader reader = readerFor(zip);

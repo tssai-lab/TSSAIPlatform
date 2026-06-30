@@ -71,6 +71,38 @@ class ManifestParserTest {
     }
 
     @Test
+    void normalizesBackslashManifestPathsBeforeMatchingZipEntries() {
+        String json = """
+                {
+                  "version": "1.0",
+                  "samples": [{
+                    "external_id": "scene_001",
+                    "data": [{
+                      "path": "samples\\\\rgb.png",
+                      "data_type": "IMAGE"
+                    }],
+                    "annotations": [{
+                      "path": "labels\\\\rgb.json",
+                      "annotation_type": "BBOX",
+                      "format": "COCO",
+                      "ref_data_path": "samples\\\\rgb.png"
+                    }]
+                  }]
+                }
+                """;
+
+        ManifestImportPlan plan = parser.parse(
+                json,
+                entries("meta/manifest.json", "samples/rgb.png", "labels/rgb.json"),
+                "meta\\manifest.json"
+        );
+
+        assertEquals("samples/rgb.png", plan.samples().get(0).data().get(0).path());
+        assertEquals("labels/rgb.json", plan.samples().get(0).annotations().get(0).path());
+        assertEquals("samples/rgb.png", plan.samples().get(0).annotations().get(0).refDataPath());
+    }
+
+    @Test
     void generatesMissingSampleIndexFromArrayPosition() {
         String json = manifest(samples(
                 sample("first", null, "first.png"),

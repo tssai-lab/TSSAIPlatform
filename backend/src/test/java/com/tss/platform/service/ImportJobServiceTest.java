@@ -186,6 +186,10 @@ class ImportJobServiceTest {
         when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
                 fixture.version.getId()
         )).thenReturn(4);
+        when(fixture.dataRepo.countByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(1L);
+        when(fixture.annotationRepo.countByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(1L);
         fixture.stubSuccessfulImport();
 
         fixture.service.execute(fixture.job.getId());
@@ -203,7 +207,11 @@ class ImportJobServiceTest {
         assertEquals("DRAFT", fixture.version.getStatus());
         assertNull(fixture.version.getPublishedAt());
         assertEquals("ready-1", fixture.asset.getCurrentVersionId());
-        verify(fixture.versionRepo, never()).saveAndFlush(fixture.version);
+        ArgumentCaptor<DatasetVersion> versionCaptor =
+                ArgumentCaptor.forClass(DatasetVersion.class);
+        verify(fixture.versionRepo).saveAndFlush(versionCaptor.capture());
+        assertEquals(fixture.version.getId(), versionCaptor.getValue().getId());
+        assertEquals(2L, versionCaptor.getValue().getFileCount());
         verify(fixture.assetRepo, never()).saveAndFlush(fixture.asset);
     }
 

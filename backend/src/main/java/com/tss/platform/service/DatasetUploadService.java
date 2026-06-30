@@ -118,6 +118,7 @@ public class DatasetUploadService {
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final TransactionTemplate transactionTemplate;
     private ImportJobLauncher importJobLauncher;
+    private ZipCentralDirectoryReader zipCentralDirectoryReader;
 
     @Autowired
     public DatasetUploadService(
@@ -151,6 +152,11 @@ public class DatasetUploadService {
     @Autowired
     void setImportJobLauncher(ImportJobLauncher importJobLauncher) {
         this.importJobLauncher = importJobLauncher;
+    }
+
+    @Autowired(required = false)
+    void setZipCentralDirectoryReader(ZipCentralDirectoryReader zipCentralDirectoryReader) {
+        this.zipCentralDirectoryReader = zipCentralDirectoryReader;
     }
 
     DatasetUploadService(
@@ -450,7 +456,8 @@ public class DatasetUploadService {
                         claimed.getType(),
                         claimed.getAnnotationFormat(),
                         claimed.getFileName(),
-                        destinationObject
+                        destinationObject,
+                        stat.size()
                 );
             }
             completed = transactionTemplate.execute(status ->
@@ -506,6 +513,7 @@ public class DatasetUploadService {
         String destName = "users/" + session.getOwnerUserId()
                 + "/datasets/" + assetId + "/" + sanitizeSegment("v" + allocation.versionNo())
                 + "/" + sanitizeSegment(session.getFileName());
+        Long fileCount;
         try {
             List<ComposeSource> sources = chunks.stream()
                     .map(chunk -> ComposeSource.builder()
@@ -520,7 +528,13 @@ public class DatasetUploadService {
                             .sources(sources)
                             .build()
             );
-            validateDatasetObjectFormat(session.getType(), session.getAnnotationFormat(), session.getFileName(), destName);
+            fileCount = validateDatasetObjectFormat(
+                    session.getType(),
+                    session.getAnnotationFormat(),
+                    session.getFileName(),
+                    destName,
+                    session.getFileSize()
+            );
         } catch (Exception e) {
             removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
@@ -551,6 +565,7 @@ public class DatasetUploadService {
             version.setFileName(session.getFileName());
             version.setStoragePath(destName);
             version.setSizeBytes(session.getFileSize());
+            version.setFileCount(fileCount);
             version.setCvTaskType(session.getCvTaskType());
             version.setAnnotationFormat(session.getAnnotationFormat());
             version.setRemark(session.getRemark());
@@ -1007,7 +1022,13 @@ public class DatasetUploadService {
                                 .build()
                 );
             }
-            validateDatasetObjectFormat(taskType, annotationFormat, fileName, destName);
+            Long fileCount = validateDatasetObjectFormat(
+                    taskType,
+                    annotationFormat,
+                    fileName,
+                    destName,
+                    sizeBytes
+            );
 
             Instant now = Instant.now();
             DatasetAsset asset = allocation.asset();
@@ -1033,6 +1054,7 @@ public class DatasetUploadService {
             versionEntity.setFileName(fileName);
             versionEntity.setStoragePath(destName);
             versionEntity.setSizeBytes(sizeBytes);
+            versionEntity.setFileCount(fileCount);
             versionEntity.setCvTaskType(cvTaskType);
             versionEntity.setAnnotationFormat(annotationFormat);
             versionEntity.setRemark(remark);
@@ -1829,7 +1851,9 @@ public class DatasetUploadService {
     }
 
     static String normalizeManifestPath(String sampleGrouping, String value) {
-        String normalized = value == null || value.isBlank() ? null : value.trim();
+        String normalized = value == null || value.isBlank()
+                ? null
+                : value.trim().replace('\\', '/');
         if (GROUPING_AUTO_DIRECTORY.equals(sampleGrouping)) {
             if (normalized != null) {
                 throw new IllegalArgumentException(
@@ -1852,7 +1876,6 @@ public class DatasetUploadService {
         if (normalized.length() > 255
                 || normalized.startsWith("/")
                 || normalized.matches("^[A-Za-z]:.*")
-                || normalized.contains("\\")
                 || normalized.contains("\u0000")) {
             throw new IllegalArgumentException("manifestPath 非法");
         }
@@ -1901,24 +1924,32 @@ public class DatasetUploadService {
                 || GROUPING_AUTO_DIRECTORY.equals(sampleGrouping);
     }
 
-    private void validateDatasetObjectFormat(
+    private Long validateDatasetObjectFormat(
             String taskType,
             String annotationFormat,
             String fileName,
-            String objectName
+            String objectName,
+            long objectSize
     ) throws Exception {
         String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
         if (!lower.endsWith(".zip")) {
-            return;
+            return 1L;
         }
+        long streamedFileCount;
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         )) {
-            validateDatasetZipEntries(taskType, annotationFormat, is);
+            streamedFileCount = validateDatasetZipEntries(taskType, annotationFormat, is);
         }
+        if (zipCentralDirectoryReader == null) {
+            return streamedFileCount;
+        }
+        return zipCentralDirectoryReader.read(objectName, objectSize).stream()
+                .filter(entry -> !entry.directory())
+                .count();
     }
 
-    static void validateDatasetZipEntries(
+    static long validateDatasetZipEntries(
             String taskType,
             String annotationFormat,
             InputStream inputStream
@@ -1928,6 +1959,7 @@ public class DatasetUploadService {
         boolean foundCvAnnotation = false;
         boolean foundPointCloud = false;
         int entries = 0;
+        long files = 0;
         long totalUncompressedBytes = 0;
         try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(inputStream))) {
             ZipEntry entry;
@@ -1937,10 +1969,11 @@ public class DatasetUploadService {
                     throw new IllegalArgumentException("数据集 zip 文件条目过多");
                 }
                 String entryName = normalizeZipEntryName(entry.getName());
-                if (!isSafeZipEntryPath(entryName)) {
+                if (!ZipPathValidator.isSafeEntryPath(entryName)) {
                     throw new IllegalArgumentException("数据集 zip 包含非法路径: " + entry.getName());
                 }
                 if (!entry.isDirectory()) {
+                    files += 1;
                     String ext = extensionOf(entryName);
                     if ("CV".equals(taskType)) {
                         if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)) {
@@ -2014,6 +2047,7 @@ public class DatasetUploadService {
                 );
             }
         }
+        return files;
     }
 
     private static long drainZipEntry(ZipInputStream zip, long currentTotal) throws Exception {
@@ -2031,18 +2065,6 @@ public class DatasetUploadService {
 
     private static String normalizeZipEntryName(String name) {
         return name == null ? "" : name.replace('\\', '/');
-    }
-
-    private static boolean isSafeZipEntryPath(String path) {
-        if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
-            return false;
-        }
-        for (String part : path.split("/")) {
-            if ("..".equals(part) || part.contains("\u0000")) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static String extensionOf(String name) {

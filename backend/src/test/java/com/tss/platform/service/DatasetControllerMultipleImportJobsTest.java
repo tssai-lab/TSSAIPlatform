@@ -10,6 +10,8 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,6 +20,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -75,7 +79,12 @@ class DatasetControllerMultipleImportJobsTest {
 
         when(authContext.isAdmin()).thenReturn(false);
         when(authContext.currentUserId()).thenReturn(7);
-        when(assetRepo.findByOwnerUserIdAndDeletedFalse(7)).thenReturn(List.of(asset));
+        when(assetRepo.searchCatalogForOwner(
+                eq(7),
+                nullable(String.class),
+                nullable(String.class),
+                org.mockito.ArgumentMatchers.any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(asset), Pageable.unpaged(), 1));
         when(versionRepo.findByAssetIdInAndDeletedFalse(anyCollection())).thenReturn(List.of(draft));
         when(importJobRepo.findByDatasetVersionIdIn(anyCollection())).thenReturn(List.of(older, newer));
 
@@ -131,7 +140,12 @@ class DatasetControllerMultipleImportJobsTest {
 
         when(authContext.isAdmin()).thenReturn(false);
         when(authContext.currentUserId()).thenReturn(7);
-        when(assetRepo.findByOwnerUserIdAndDeletedFalse(7)).thenReturn(List.of(asset));
+        when(assetRepo.searchCatalogForOwner(
+                eq(7),
+                nullable(String.class),
+                nullable(String.class),
+                org.mockito.ArgumentMatchers.any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(asset), Pageable.unpaged(), 1));
         when(versionRepo.findByAssetIdInAndDeletedFalse(anyCollection()))
                 .thenReturn(List.of(parent, published));
 

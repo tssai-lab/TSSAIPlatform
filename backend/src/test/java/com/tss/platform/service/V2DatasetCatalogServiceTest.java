@@ -12,6 +12,8 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
@@ -21,7 +23,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class V2DatasetCatalogServiceTest {
@@ -168,6 +174,30 @@ class V2DatasetCatalogServiceTest {
         assertFalse(json.contains("compressedSize"));
     }
 
+    @Test
+    void enrichesOnlyAssetsReturnedByDatabasePage() {
+        Fixture fixture = new Fixture();
+        DatasetAsset first = fixture.asset("asset-1", "first");
+        DatasetAsset second = fixture.asset("asset-2", "second");
+        DatasetVersion firstReady = fixture.version("ready-1", "asset-1", "READY", 1);
+        DatasetVersion secondReady = fixture.version("ready-2", "asset-2", "READY", 1);
+        first.setCurrentVersionId(firstReady.getId());
+        second.setCurrentVersionId(secondReady.getId());
+        fixture.stubPage(List.of(second), 2L, List.of(secondReady), List.of());
+        when(fixture.fileCountService.countCurrentVersionFiles(second, secondReady)).thenReturn(22L);
+
+        PageResponse<V2DatasetListItem> page = fixture.service.list(null, null, 2, null, 1);
+
+        assertEquals(2L, page.getTotal());
+        assertEquals(2, page.getPage());
+        assertEquals(1, page.getPageSize());
+        assertEquals(1, page.getData().size());
+        assertEquals("asset-2", page.getData().get(0).getDatasetId());
+        assertEquals(22L, page.getData().get(0).getFileCount());
+        verify(fixture.fileCountService).countCurrentVersionFiles(second, secondReady);
+        verify(fixture.fileCountService, never()).countCurrentVersionFiles(first, firstReady);
+    }
+
     private static final class Fixture {
         private final DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         private final DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
@@ -193,7 +223,23 @@ class V2DatasetCatalogServiceTest {
         ) {
             when(authContext.isAdmin()).thenReturn(false);
             when(authContext.currentUserId()).thenReturn(7);
-            when(assetRepo.findByOwnerUserIdAndDeletedFalse(7)).thenReturn(assets);
+            stubPage(assets, assets.size(), versions, jobs);
+        }
+
+        private void stubPage(
+                List<DatasetAsset> assets,
+                long total,
+                List<DatasetVersion> versions,
+                List<ImportJob> jobs
+        ) {
+            when(authContext.isAdmin()).thenReturn(false);
+            when(authContext.currentUserId()).thenReturn(7);
+            when(assetRepo.searchCatalogForOwner(
+                    eq(7),
+                    nullable(String.class),
+                    nullable(String.class),
+                    org.mockito.ArgumentMatchers.any(Pageable.class)
+            )).thenReturn(new PageImpl<>(assets, Pageable.unpaged(), total));
             when(versionRepo.findByAssetIdInAndDeletedFalse(anyCollection())).thenReturn(versions);
             when(importJobRepo.findByDatasetVersionIdIn(anyCollection())).thenReturn(jobs);
             for (DatasetVersion version : versions) {
@@ -216,10 +262,21 @@ class V2DatasetCatalogServiceTest {
             return asset;
         }
 
+        private DatasetAsset asset(String id, String name) {
+            DatasetAsset asset = asset();
+            asset.setId(id);
+            asset.setName(name);
+            return asset;
+        }
+
         private DatasetVersion version(String id, String status, int versionNo) {
+            return version(id, "asset-1", status, versionNo);
+        }
+
+        private DatasetVersion version(String id, String assetId, String status, int versionNo) {
             DatasetVersion version = new DatasetVersion();
             version.setId(id);
-            version.setAssetId("asset-1");
+            version.setAssetId(assetId);
             version.setVersion("v" + versionNo);
             version.setVersionLabel("v" + versionNo);
             version.setVersionNo(versionNo);

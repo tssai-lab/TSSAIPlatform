@@ -551,6 +551,22 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                                     ? List.of(asset)
                                     : List.of()
                     );
+            when(assetRepo.searchCatalogForOwner(
+                    anyInt(),
+                    org.mockito.ArgumentMatchers.nullable(String.class),
+                    org.mockito.ArgumentMatchers.nullable(String.class),
+                    any(Pageable.class)
+            )).thenAnswer(invocation -> {
+                List<DatasetAsset> assets =
+                        Integer.valueOf(7).equals(invocation.getArgument(0))
+                                ? List.of(asset)
+                                : List.of();
+                return new PageImpl<>(
+                        assets,
+                        invocation.getArgument(3),
+                        assets.size()
+                );
+            });
             when(assetRepo.save(any(DatasetAsset.class)))
                     .thenAnswer(invocation -> invocation.getArgument(0));
             when(assetRepo.saveAndFlush(any(DatasetAsset.class)))

@@ -5,6 +5,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.repository.DatasetAnnotationRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
+import com.tss.platform.repository.DatasetVersionRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -12,6 +13,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class DatasetVersionFileCountServiceTest {
@@ -22,8 +26,21 @@ class DatasetVersionFileCountServiceTest {
             mock(DatasetAnnotationRepository.class);
     private final ZipCentralDirectoryReader zipReader =
             mock(ZipCentralDirectoryReader.class);
+    private final DatasetVersionRepository versionRepo =
+            mock(DatasetVersionRepository.class);
     private final DatasetVersionFileCountService service =
-            new DatasetVersionFileCountService(dataRepo, annotationRepo, zipReader);
+            new DatasetVersionFileCountService(dataRepo, annotationRepo, zipReader, versionRepo);
+
+    @Test
+    void returnsPersistedFileCountWithoutRecomputing() {
+        DatasetVersion version = version("dataset.zip", "users/7/datasets/a/v1/dataset.zip");
+        version.setFileCount(42L);
+
+        Long count = service.countCurrentVersionFiles(asset("CV"), version);
+
+        assertEquals(42L, count);
+        verifyNoInteractions(dataRepo, annotationRepo, zipReader, versionRepo);
+    }
 
     @Test
     void countsMultimodalDataAndAnnotationFiles() {
@@ -35,6 +52,8 @@ class DatasetVersionFileCountServiceTest {
         Long count = service.countCurrentVersionFiles(asset, version);
 
         assertEquals(5L, count);
+        assertEquals(5L, version.getFileCount());
+        verify(versionRepo).saveAndFlush(version);
     }
 
     @Test
@@ -74,6 +93,23 @@ class DatasetVersionFileCountServiceTest {
         Long count = service.countCurrentVersionFiles(asset, version);
 
         assertEquals(2L, count);
+        assertEquals(2L, version.getFileCount());
+        verify(versionRepo).saveAndFlush(version);
+    }
+
+    @Test
+    void returnsNullWithoutPersistingWhenZipCountFails() throws Exception {
+        DatasetAsset asset = asset("CV");
+        DatasetVersion version = version("dataset.zip", "users/7/datasets/a/v1/dataset.zip");
+        version.setSizeBytes(1024L);
+        when(zipReader.read(version.getStoragePath(), version.getSizeBytes()))
+                .thenThrow(new IllegalArgumentException("bad zip"));
+
+        Long count = service.countCurrentVersionFiles(asset, version);
+
+        assertNull(count);
+        assertNull(version.getFileCount());
+        verify(versionRepo, never()).saveAndFlush(version);
     }
 
     @Test

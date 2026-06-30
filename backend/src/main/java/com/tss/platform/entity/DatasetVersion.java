@@ -49,6 +49,9 @@ public class DatasetVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "file_count")
+    private Long fileCount;
+
     @Column(name = "cv_task_type", length = 64)
     private String cvTaskType;
 
