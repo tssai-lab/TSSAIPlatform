@@ -106,6 +106,7 @@ export {
 export {
   uploadCodeZip,
   approveCodeVersion,
+  deleteCodeVersion,
   fetchCodeVersionList,
   fetchApprovedCodeVersions,
   getCodeVersionDetail,
@@ -117,6 +118,7 @@ export {
 export type {
   CodeUploadResult,
   CodeVersionApprovalResult,
+  CodeDeleteResult,
   CodeVersionListItem,
   CodeVersionDetail,
   CodeVersionPreviewBundle,
