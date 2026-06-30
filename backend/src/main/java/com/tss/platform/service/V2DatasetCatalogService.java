@@ -176,9 +176,9 @@ public class V2DatasetCatalogService {
                 ready.getVersionNo(),
                 ready.getStatus()
         ));
-        item.setCurrentVersionFileCount(
-                fileCountService.countCurrentVersionFiles(asset, ready)
-        );
+        Long currentVersionFileCount = fileCountService.countCurrentVersionFiles(asset, ready);
+        item.setCurrentVersionFileCount(currentVersionFileCount);
+        item.setFileCount(currentVersionFileCount);
         item.setDisplayStatus(displayStatus);
         item.setHasDraft(draft != null);
         item.setEditSessionId(draft == null ? null : draft.getId());

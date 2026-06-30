@@ -53,6 +53,8 @@ class V2DatasetCatalogServiceTest {
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
 
         String json = new ObjectMapper().writeValueAsString(item);
+        assertTrue(json.contains("\"currentVersionFileCount\":9"));
+        assertTrue(json.contains("\"fileCount\":9"));
         assertFalse(json.contains("storagePath"));
         assertFalse(json.contains("ownerUserId"));
         assertFalse(json.contains("currentVersionId"));

@@ -11,6 +11,7 @@ public class V2DatasetListItem {
     private String type;
     private V2DatasetVersionSummary currentVersion;
     private Long currentVersionFileCount;
+    private Long fileCount;
     private String displayStatus;
     private Boolean hasDraft;
     private String editSessionId;
