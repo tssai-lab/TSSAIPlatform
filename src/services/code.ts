@@ -66,15 +66,39 @@ export type CodeVersionListItem = {
   status: string;
 };
 
+/** 训练代码版本列表（含用户上传的全部版本） */
+export async function fetchCodeVersionList(
+  params?: {
+    approvalStatus?: string;
+    codeName?: string;
+    current?: number;
+    pageSize?: number;
+  },
+  options?: { [key: string]: any },
+) {
+  const { current, pageSize, ...rest } = params || {};
+  return request<{
+    success: boolean;
+    data: CodeVersionListItem[];
+    total?: number;
+    errorMessage?: string;
+  }>('/code/version/list', {
+    method: 'GET',
+    params: { current, pageSize, ...rest },
+    ...(options || {}),
+  });
+}
+
 /** 已审核、可用于 K8s 训练的训练代码版本列表 */
 export async function fetchApprovedCodeVersions(options?: { [key: string]: any }) {
-  return request<{ success: boolean; data: CodeVersionListItem[]; errorMessage?: string }>(
-    '/code/version/list',
-    {
-      method: 'GET',
-      ...(options || {}),
-    },
-  );
+  const res = await fetchCodeVersionList(undefined, options);
+  if (!res?.data) {
+    return res;
+  }
+  return {
+    ...res,
+    data: res.data.filter((item) => item.approvalStatus === 'APPROVED'),
+  };
 }
 
 /** 管理员审核通过训练代码版本 */
@@ -101,6 +125,108 @@ export type CodeVersionTrainingCheckResult = {
   reasons?: string[];
   checkedAt?: string;
 };
+
+export type CodeVersionDetail = CodeVersionListItem & {
+  storagePath?: string;
+  sizeBytes?: number;
+  remark?: string;
+  createdAt?: string;
+};
+
+export type CodeVersionPreviewBundle = {
+  codeFiles: API.ModelCodeFile[];
+  codeContent?: string;
+  codeFileName?: string;
+  codeFilePath?: string;
+};
+
+/** 训练代码版本详情 */
+export async function getCodeVersionDetail(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success: boolean;
+    data: CodeVersionDetail;
+    errorMessage?: string;
+  }>(`/code/version/${encodeURIComponent(codeVersionId)}`, {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+/** 列出训练代码 zip 内可预览文件（与模型 code-files 对齐，id=codeVersionId） */
+export async function listCodeVersionFiles(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success?: boolean;
+    data: API.ModelCodeFile[];
+    errorMessage?: string;
+  }>('/code/code-files', {
+    method: 'GET',
+    params: { id: codeVersionId },
+    ...(options || {}),
+  });
+}
+
+/** 预览训练代码 zip 内单个文件 */
+export async function previewCodeVersionFile(
+  codeVersionId: string,
+  path: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success?: boolean;
+    data: API.ModelCodePreview;
+    errorMessage?: string;
+  }>('/code/previewCode', {
+    method: 'GET',
+    params: { id: codeVersionId, path },
+    ...(options || {}),
+  });
+}
+
+/** 加载训练代码默认预览（首个可预览文件） */
+export async function fetchCodeVersionCodePreview(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  let codeFiles: API.ModelCodeFile[] = [];
+  let codeContent: string | undefined;
+  let codeFileName: string | undefined;
+  let codeFilePath: string | undefined;
+
+  try {
+    const codeFilesRes = await listCodeVersionFiles(codeVersionId, options);
+    codeFiles = codeFilesRes?.data ?? [];
+    if (codeFiles.length > 0 && codeFiles[0].path) {
+      const previewRes = await previewCodeVersionFile(
+        codeVersionId,
+        codeFiles[0].path,
+        options,
+      );
+      if (previewRes?.data?.content) {
+        codeContent = previewRes.data.content;
+        codeFileName =
+          previewRes.data.fileName || codeFiles[0].fileName || codeFiles[0].path;
+        codeFilePath = previewRes.data.path || codeFiles[0].path;
+      }
+    }
+  } catch {
+    codeFiles = [];
+  }
+
+  return {
+    data: {
+      codeFiles,
+      codeContent,
+      codeFileName,
+      codeFilePath,
+    } as CodeVersionPreviewBundle,
+  };
+}
 
 /** 代码模型包准入校验（通过后后端自动 APPROVED） */
 export async function checkCodeVersionForTraining(

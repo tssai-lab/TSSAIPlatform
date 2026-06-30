@@ -25,6 +25,7 @@ import {
   getDatasetPreviewImage,
 } from '@/services/datasetPreview';
 import { getApiErrorMessage } from '@/utils/apiError';
+import TableEllipsisCell from './TableEllipsisCell';
 
 const KIND_OPTIONS: { value: DatasetPreviewFileKind; label: string }[] = [
   { value: DatasetPreviewFileKind.IMAGE, label: '图片' },
@@ -48,9 +49,11 @@ function formatBytes(size?: number | null): string {
 }
 
 const DEFAULT_CSV_PAGE_SIZE = 50;
+const DEFAULT_TEXT_PAGE_SIZE = 100;
 const CSV_PAGE_SIZE_OPTIONS = ['20', '50', '100', '200'];
+const TEXT_PAGE_SIZE_OPTIONS = ['50', '100', '200', '500'];
 
-function isCsvBackendPagination(
+function isContentBackendPagination(
   data: DatasetPreviewContentData | null | undefined,
 ): data is DatasetPreviewContentData & { total: number } {
   return (
@@ -62,7 +65,7 @@ function isCsvBackendPagination(
 }
 
 /** 后端未返回 total 时的兜底：固定展示 2 个页码 */
-function getCsvFallbackVisiblePageNumbers(
+function getContentFallbackVisiblePageNumbers(
   currentPage: number,
   hasMoreRows: boolean,
 ): number[] {
@@ -73,6 +76,163 @@ function getCsvFallbackVisiblePageNumbers(
     return [currentPage - 1, currentPage];
   }
   return [1];
+}
+
+function getFileLabel(file: DatasetPreviewFileItem): string {
+  return file.path || file.fileName;
+}
+
+function isJsonlFile(file: DatasetPreviewFileItem): boolean {
+  const label = getFileLabel(file).toLowerCase();
+  return label.endsWith('.jsonl') || file.extension?.toLowerCase() === 'jsonl';
+}
+
+function resolvePreviewKind(
+  file: DatasetPreviewFileItem,
+): DatasetPreviewFileKind {
+  if (isJsonlFile(file)) {
+    return DatasetPreviewFileKind.TEXT;
+  }
+  return file.kind;
+}
+
+function canPreviewFile(file: DatasetPreviewFileItem): boolean {
+  if (isJsonlFile(file)) {
+    return true;
+  }
+  if (!file.previewAllowed) {
+    return false;
+  }
+  return (
+    file.kind === DatasetPreviewFileKind.IMAGE ||
+    file.kind === DatasetPreviewFileKind.TEXT ||
+    file.kind === DatasetPreviewFileKind.TABLE
+  );
+}
+
+function isTextContentPreview(
+  selected: DatasetPreviewFileItem | null,
+  contentData: DatasetPreviewContentData | null,
+): boolean {
+  if (!selected || !contentData) return false;
+  if (isJsonlFile(selected) && contentData.content != null) return true;
+  return contentData.contentType === 'TEXT';
+}
+
+function countTextLines(content?: string | null): number {
+  if (!content) return 0;
+  return content.split('\n').length;
+}
+
+type ContentPageControlsProps = {
+  page: number;
+  pageSize: number;
+  loading: boolean;
+  useBackendPagination: boolean;
+  total?: number | null;
+  totalPages?: number | null;
+  hasMoreRows: boolean;
+  pageSizeOptions: string[];
+  unitLabel: string;
+  onChange: (page: number, pageSize: number) => void;
+};
+
+function ContentPageControls({
+  page,
+  pageSize,
+  loading,
+  useBackendPagination,
+  total,
+  totalPages,
+  hasMoreRows,
+  pageSizeOptions,
+  unitLabel,
+  onChange,
+}: ContentPageControlsProps) {
+  const fallbackPages = getContentFallbackVisiblePageNumbers(page, hasMoreRows);
+  const maxPage = totalPages ?? (useBackendPagination ? page : undefined);
+  const canGoNext = useBackendPagination
+    ? maxPage != null
+      ? page < maxPage
+      : hasMoreRows
+    : hasMoreRows;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 8,
+      }}
+    >
+      {useBackendPagination && total != null ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          共 {total} {unitLabel}
+          {totalPages != null ? `，${totalPages} 页` : ''}
+        </Typography.Text>
+      ) : (
+        <span />
+      )}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 8,
+        }}
+      >
+        <Button
+          size="small"
+          disabled={page <= 1 || loading}
+          onClick={() => onChange(page - 1, pageSize)}
+        >
+          上一页
+        </Button>
+        {(useBackendPagination && totalPages != null && totalPages > 0
+          ? Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+              const start = Math.max(1, Math.min(page - 3, totalPages - 6));
+              return start + i;
+            }).filter((p) => p <= totalPages)
+          : fallbackPages
+        ).map((pageNum) => (
+          <Button
+            key={pageNum}
+            size="small"
+            type={pageNum === page ? 'primary' : 'default'}
+            disabled={loading}
+            onClick={() => {
+              if (pageNum !== page) {
+                onChange(pageNum, pageSize);
+              }
+            }}
+          >
+            {pageNum}
+          </Button>
+        ))}
+        <Button
+          size="small"
+          disabled={!canGoNext || loading}
+          onClick={() => onChange(page + 1, pageSize)}
+        >
+          下一页
+        </Button>
+        <Select
+          size="small"
+          value={pageSize}
+          style={{ width: 128 }}
+          options={pageSizeOptions.map((value) => ({
+            value: Number(value),
+            label: `${value} ${unitLabel}/页`,
+          }))}
+          onChange={(nextPageSize) => onChange(1, nextPageSize)}
+        />
+      </div>
+    </div>
+  );
 }
 
 export type DatasetPreviewPanelProps = {
@@ -239,7 +399,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       setContentData(null);
       revokeImageUrl();
 
-      if (!file.previewAllowed) {
+      if (!canPreviewFile(file)) {
         setPreviewError(file.message || '该文件不支持在线预览');
         return;
       }
@@ -249,15 +409,22 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       loadAbortRef.current = controller;
       setPreviewLoading(true);
 
+      const previewKind = resolvePreviewKind(file);
+      const initialPageSize =
+        previewKind === DatasetPreviewFileKind.TABLE
+          ? DEFAULT_CSV_PAGE_SIZE
+          : DEFAULT_TEXT_PAGE_SIZE;
+
       try {
-        if (file.kind === DatasetPreviewFileKind.IMAGE) {
+        if (previewKind === DatasetPreviewFileKind.IMAGE) {
           await loadImagePreview(file, controller.signal);
         } else if (
-          file.kind === DatasetPreviewFileKind.TEXT ||
-          file.kind === DatasetPreviewFileKind.TABLE
+          previewKind === DatasetPreviewFileKind.TEXT ||
+          previewKind === DatasetPreviewFileKind.TABLE
         ) {
           setContentPage(1);
-          await loadContentPreview(file, 1, contentPageSize, controller.signal);
+          setContentPageSize(initialPageSize);
+          await loadContentPreview(file, 1, initialPageSize, controller.signal);
         } else {
           setPreviewError(
             file.message || '该文件类型暂不支持在线预览，请下载后查看',
@@ -271,21 +438,16 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         setPreviewLoading(false);
       }
     },
-    [
-      versionId,
-      loadContentPreview,
-      loadImagePreview,
-      revokeImageUrl,
-      contentPageSize,
-    ],
+    [versionId, loadContentPreview, loadImagePreview, revokeImageUrl],
   );
 
   const goToContentPage = useCallback(
     async (page: number, pageSize: number) => {
+      if (!selected || !versionId) return;
+      const previewKind = resolvePreviewKind(selected);
       if (
-        !selected ||
-        !versionId ||
-        selected.kind !== DatasetPreviewFileKind.TABLE
+        previewKind !== DatasetPreviewFileKind.TABLE &&
+        previewKind !== DatasetPreviewFileKind.TEXT
       ) {
         return;
       }
@@ -313,14 +475,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       dataIndex: 'fileName',
       key: 'fileName',
       ellipsis: true,
-      render: (_, record) => (
-        <Typography.Text
-          ellipsis={{ tooltip: record.path || record.fileName }}
-          style={{ maxWidth: compact ? 160 : 220 }}
-        >
-          {record.path || record.fileName}
-        </Typography.Text>
-      ),
+      render: (_, record) => <TableEllipsisCell text={getFileLabel(record)} />,
     },
     {
       title: '类型',
@@ -344,7 +499,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       width: 72,
       render: (_, record) => (
         <Typography.Link
-          disabled={!record.previewAllowed}
+          disabled={!canPreviewFile(record)}
           onClick={(e) => {
             e.stopPropagation();
             openPreview(record);
@@ -376,12 +531,12 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     }) ?? [];
 
   const csvRowCount = contentData?.rows?.length ?? 0;
-  const csvUseBackendPagination = isCsvBackendPagination(contentData);
+  const contentUseBackendPagination = isContentBackendPagination(contentData);
   const csvHasMoreRows = csvRowCount >= contentPageSize;
-  const csvFallbackVisiblePages = getCsvFallbackVisiblePageNumbers(
-    contentPage,
-    csvHasMoreRows,
-  );
+  const textLineCount = countTextLines(contentData?.content);
+  const textHasMoreRows = textLineCount >= contentPageSize;
+  const showTextPreview =
+    !!selected && !!contentData && isTextContentPreview(selected, contentData);
 
   const handleCsvTableChange = (pagination: TablePaginationConfig) => {
     void goToContentPage(
@@ -469,10 +624,10 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
               const active = key === selKey;
               return {
                 onClick: () => {
-                  if (record.previewAllowed) openPreview(record);
+                  if (canPreviewFile(record)) openPreview(record);
                 },
                 style: {
-                  cursor: record.previewAllowed ? 'pointer' : 'default',
+                  cursor: canPreviewFile(record) ? 'pointer' : 'default',
                   background: active ? '#e6f4ff' : undefined,
                 },
               };
@@ -504,7 +659,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
             !previewLoading &&
             !previewError &&
             imageUrl &&
-            selected.kind === DatasetPreviewFileKind.IMAGE && (
+            resolvePreviewKind(selected) === DatasetPreviewFileKind.IMAGE && (
               <div
                 style={{
                   textAlign: 'center',
@@ -523,13 +678,13 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
             !previewLoading &&
             !previewError &&
             contentData &&
-            contentData.contentType === 'TEXT' && (
+            showTextPreview && (
               <Space direction="vertical" style={{ width: '100%' }}>
                 {contentData.truncated && (
                   <Alert
                     type="info"
                     showIcon
-                    message="内容已截断，仅展示允许的最大字节数"
+                    message="内容已截断，仅展示允许的最大可读范围"
                   />
                 )}
                 {contentData.message && (
@@ -551,13 +706,28 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                 >
                   {contentData.content ?? ''}
                 </pre>
+                <ContentPageControls
+                  page={contentPage}
+                  pageSize={contentPageSize}
+                  loading={previewLoading}
+                  useBackendPagination={contentUseBackendPagination}
+                  total={contentData.total}
+                  totalPages={contentData.totalPages}
+                  hasMoreRows={textHasMoreRows}
+                  pageSizeOptions={TEXT_PAGE_SIZE_OPTIONS}
+                  unitLabel="行"
+                  onChange={(page, pageSize) => {
+                    void goToContentPage(page, pageSize);
+                  }}
+                />
               </Space>
             )}
           {selected &&
             !previewLoading &&
             !previewError &&
             contentData &&
-            contentData.contentType === 'CSV' && (
+            contentData.contentType === 'CSV' &&
+            !isJsonlFile(selected) && (
               <Space direction="vertical" style={{ width: '100%' }}>
                 {contentData.truncated && (
                   <Alert
@@ -574,7 +744,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                   columns={csvColumns}
                   dataSource={csvDataSource}
                   pagination={
-                    csvUseBackendPagination
+                    contentUseBackendPagination
                       ? {
                           current: contentPage,
                           pageSize: contentPageSize,
@@ -592,65 +762,25 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                       : false
                   }
                   onChange={
-                    csvUseBackendPagination ? handleCsvTableChange : undefined
+                    contentUseBackendPagination
+                      ? handleCsvTableChange
+                      : undefined
                   }
                   scroll={{ x: 'max-content', y: compact ? 280 : 400 }}
                 />
-                {!csvUseBackendPagination && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'flex-end',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                      marginTop: 8,
+                {!contentUseBackendPagination && (
+                  <ContentPageControls
+                    page={contentPage}
+                    pageSize={contentPageSize}
+                    loading={previewLoading}
+                    useBackendPagination={false}
+                    hasMoreRows={csvHasMoreRows}
+                    pageSizeOptions={CSV_PAGE_SIZE_OPTIONS}
+                    unitLabel="条"
+                    onChange={(page, pageSize) => {
+                      void goToContentPage(page, pageSize);
                     }}
-                  >
-                    <Button
-                      size="small"
-                      disabled={contentPage <= 1 || previewLoading}
-                      onClick={() =>
-                        goToContentPage(contentPage - 1, contentPageSize)
-                      }
-                    >
-                      上一页
-                    </Button>
-                    {csvFallbackVisiblePages.map((pageNum) => (
-                      <Button
-                        key={pageNum}
-                        size="small"
-                        type={pageNum === contentPage ? 'primary' : 'default'}
-                        disabled={previewLoading}
-                        onClick={() => {
-                          if (pageNum !== contentPage) {
-                            void goToContentPage(pageNum, contentPageSize);
-                          }
-                        }}
-                      >
-                        {pageNum}
-                      </Button>
-                    ))}
-                    <Button
-                      size="small"
-                      disabled={!csvHasMoreRows || previewLoading}
-                      onClick={() =>
-                        goToContentPage(contentPage + 1, contentPageSize)
-                      }
-                    >
-                      下一页
-                    </Button>
-                    <Select
-                      size="small"
-                      value={contentPageSize}
-                      style={{ width: 116 }}
-                      options={CSV_PAGE_SIZE_OPTIONS.map((value) => ({
-                        value: Number(value),
-                        label: `${value} 条/页`,
-                      }))}
-                      onChange={(pageSize) => goToContentPage(1, pageSize)}
-                    />
-                  </div>
+                  />
                 )}
               </Space>
             )}

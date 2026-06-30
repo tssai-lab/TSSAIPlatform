@@ -1,4 +1,5 @@
 import { DownloadOutlined } from '@ant-design/icons';
+import { request } from '@umijs/max';
 import {
   Button,
   Descriptions,
@@ -14,6 +15,8 @@ import {
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  type ConsumerManifestSample,
+  fetchConsumerManifest,
   fetchMultimodalAnnotationDownload,
   fetchMultimodalDataDownload,
   fetchMultimodalDataPreview,
@@ -26,6 +29,21 @@ import {
   triggerBlobDownload,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+
+function normalizeApiPath(url: string): string {
+  return url.startsWith('/api') ? url.slice(4) : url;
+}
+
+async function fetchBlobFromApiUrl(
+  url: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(normalizeApiPath(url), {
+    method: 'GET',
+    responseType: 'blob',
+    ...(options || {}),
+  });
+}
 
 function formatBytes(size?: number): string {
   if (size == null || size < 0) return '-';
@@ -85,9 +103,13 @@ const MultimodalDataPreview: React.FC<{
     const load = async () => {
       setLoading(true);
       try {
-        const blob = await fetchMultimodalDataPreview(item.sampleDataId, {
-          skipErrorHandler: true,
-        });
+        const blob = item.previewUrl
+          ? await fetchBlobFromApiUrl(item.previewUrl, {
+              skipErrorHandler: true,
+            })
+          : await fetchMultimodalDataPreview(item.sampleDataId, {
+              skipErrorHandler: true,
+            });
         if (item.dataType === 'IMAGE') {
           const url = URL.createObjectURL(blob);
           urlRef.current = url;
@@ -119,9 +141,13 @@ const MultimodalDataPreview: React.FC<{
 
   const handleDownload = async () => {
     try {
-      const blob = await fetchMultimodalDataDownload(item.sampleDataId, {
-        skipErrorHandler: true,
-      });
+      const blob = item.downloadUrl
+        ? await fetchBlobFromApiUrl(item.downloadUrl, {
+            skipErrorHandler: true,
+          })
+        : await fetchMultimodalDataDownload(item.sampleDataId, {
+            skipErrorHandler: true,
+          });
       triggerBlobDownload(blob, item.fileName || 'data');
     } catch (e: unknown) {
       setError(getApiErrorMessage(e));
@@ -206,27 +232,57 @@ const MultimodalPreviewPanel: React.FC<MultimodalPreviewPanelProps> = ({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<MultimodalSampleDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const manifestCacheRef = useRef<Map<string, ConsumerManifestSample>>(
+    new Map(),
+  );
 
   const loadSamples = useCallback(
     async (nextPage: number, nextPageSize: number) => {
       if (!versionId) return;
       setListLoading(true);
       setListError(null);
+      manifestCacheRef.current.clear();
       try {
-        const res = await fetchMultimodalSamples(
+        const manifest = await fetchConsumerManifest(
           versionId,
           { page: nextPage, pageSize: nextPageSize },
           { skipErrorHandler: true },
         );
-        const pageData = res?.data;
-        setSamples(pageData?.data ?? []);
-        setTotal(pageData?.total ?? 0);
-        setPage(pageData?.page ?? nextPage);
-        setPageSize(pageData?.pageSize ?? nextPageSize);
-      } catch (e: unknown) {
-        setSamples([]);
-        setTotal(0);
-        setListError(getApiErrorMessage(e));
+        const manifestSamples = manifest?.samples ?? [];
+        manifestSamples.forEach((sample) => {
+          manifestCacheRef.current.set(sample.sampleId, sample);
+        });
+        setSamples(
+          manifestSamples.map((sample) => ({
+            sampleId: sample.sampleId,
+            datasetVersionId: sample.datasetVersionId,
+            externalId: sample.externalId,
+            sampleIndex: sample.sampleIndex,
+            tags: sample.tags,
+            metadata: sample.metadata,
+            createdAt: sample.createdAt,
+          })),
+        );
+        setTotal(manifest?.totalSamples ?? manifestSamples.length);
+        setPage(manifest?.page ?? nextPage);
+        setPageSize(manifest?.pageSize ?? nextPageSize);
+      } catch {
+        try {
+          const res = await fetchMultimodalSamples(
+            versionId,
+            { page: nextPage, pageSize: nextPageSize },
+            { skipErrorHandler: true },
+          );
+          const pageData = res?.data;
+          setSamples(pageData?.data ?? []);
+          setTotal(pageData?.total ?? 0);
+          setPage(pageData?.page ?? nextPage);
+          setPageSize(pageData?.pageSize ?? nextPageSize);
+        } catch (e: unknown) {
+          setSamples([]);
+          setTotal(0);
+          setListError(getApiErrorMessage(e));
+        }
       } finally {
         setListLoading(false);
       }
@@ -247,6 +303,11 @@ const MultimodalPreviewPanel: React.FC<MultimodalPreviewPanelProps> = ({
     setDrawerOpen(true);
     setDetail(null);
     setDetailError(null);
+    const cached = manifestCacheRef.current.get(sampleId);
+    if (cached) {
+      setDetail(cached);
+      return;
+    }
     setDetailLoading(true);
     try {
       const res = await fetchMultimodalSampleDetail(sampleId, {
@@ -440,10 +501,14 @@ const MultimodalPreviewPanel: React.FC<MultimodalPreviewPanelProps> = ({
                       icon={<DownloadOutlined />}
                       onClick={async () => {
                         try {
-                          const blob = await fetchMultimodalAnnotationDownload(
-                            ann.annotationId,
-                            { skipErrorHandler: true },
-                          );
+                          const blob = ann.downloadUrl
+                            ? await fetchBlobFromApiUrl(ann.downloadUrl, {
+                                skipErrorHandler: true,
+                              })
+                            : await fetchMultimodalAnnotationDownload(
+                                ann.annotationId,
+                                { skipErrorHandler: true },
+                              );
                           triggerBlobDownload(
                             blob,
                             ann.fileName || 'annotation',

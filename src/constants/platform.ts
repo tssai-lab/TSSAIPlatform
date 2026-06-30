@@ -18,6 +18,8 @@ export const API_CONFIG = {
     MODEL_DELETE: '/model/delete',
     MODEL_CODE_FILES: '/model/code-files',
     MODEL_PREVIEW_CODE: '/model/previewCode',
+    CODE_FILES: '/code/code-files',
+    CODE_PREVIEW_CODE: '/code/previewCode',
 
     DATASET_LIST: '/dataset/list',
     /** 数据集断点续传 */

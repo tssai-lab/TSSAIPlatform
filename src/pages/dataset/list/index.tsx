@@ -1,31 +1,129 @@
 import type { ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { Button, message, Popconfirm, Space, Tag, Tooltip } from 'antd';
+import { Button, message, Popconfirm, Space, Tag } from 'antd';
 import React from 'react';
-import { MOCK_DATASETS } from '@/constants/mockData';
 import {
   deleteDataset,
   fetchDatasetList as fetchDatasetListService,
   getDownloadUrl,
+  V2_DISPLAY_STATUS_LABEL,
+  type V2DatasetDisplayStatus,
 } from '@/services/platform';
+
+function resolveDetailHref(record: API.DatasetItem): string {
+  const assetId = record.assetId || record.id;
+  const versionId =
+    record.versionId && record.versionId !== assetId
+      ? record.versionId
+      : record.latestDraftVersionId &&
+          (record.importStatus === 'PENDING' ||
+            record.importStatus === 'RUNNING' ||
+            record.importStatus === 'FAILED' ||
+            record.displayStatus === 'IMPORTING' ||
+            record.displayStatus === 'IMPORT_FAILED')
+        ? record.latestDraftVersionId
+        : undefined;
+  const query = versionId ? `?versionId=${encodeURIComponent(versionId)}` : '';
+  return `/dataset/detail/${assetId}${query}`;
+}
+
+/** 仅在需要用户关注时返回状态角标（导入中、失败、编辑中等） */
+function resolveVersionAttention(record: API.DatasetItem): {
+  color: string;
+  label: string;
+  progress?: number | null;
+} | null {
+  const displayStatus = record.displayStatus as
+    | V2DatasetDisplayStatus
+    | undefined;
+
+  if (displayStatus && displayStatus !== 'READY' && displayStatus !== 'EMPTY') {
+    const colorMap: Record<string, string> = {
+      IMPORTING: 'processing',
+      EDITING: 'processing',
+      IMPORT_FAILED: 'error',
+    };
+    return {
+      color: colorMap[displayStatus] ?? 'default',
+      label: V2_DISPLAY_STATUS_LABEL[displayStatus] ?? displayStatus,
+      progress:
+        displayStatus === 'IMPORTING' ? record.importProgress : undefined,
+    };
+  }
+
+  if (record.type !== 'MULTIMODAL') {
+    return null;
+  }
+
+  const importStatus = record.importStatus;
+  if (importStatus === 'FAILED') {
+    return { color: 'error', label: '导入失败' };
+  }
+  if (importStatus === 'PENDING' || importStatus === 'RUNNING') {
+    return {
+      color: 'processing',
+      label: '导入中',
+      progress: record.importProgress,
+    };
+  }
+  if (record.latestDraftVersionId && !record.versionId) {
+    return {
+      color: 'processing',
+      label: '导入中',
+      progress: record.importProgress,
+    };
+  }
+
+  return null;
+}
+
+function renderVersionCell(record: API.DatasetItem) {
+  const attention = resolveVersionAttention(record);
+  const versionText = record.version;
+
+  if (versionText && !attention) {
+    return versionText;
+  }
+
+  if (versionText && attention) {
+    return (
+      <Space size={4} wrap>
+        <span>{versionText}</span>
+        <Tag color={attention.color}>{attention.label}</Tag>
+        {attention.progress != null && (
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {attention.progress}%
+          </span>
+        )}
+      </Space>
+    );
+  }
+
+  if (attention) {
+    return (
+      <Space size={4} wrap>
+        <Tag color={attention.color}>{attention.label}</Tag>
+        {attention.progress != null && (
+          <span style={{ fontSize: 12, color: '#999' }}>
+            {attention.progress}%
+          </span>
+        )}
+      </Space>
+    );
+  }
+
+  return '-';
+}
 
 const DatasetList: React.FC = () => {
   const fetchDatasetList = async (params: any) => {
-    try {
-      const res = await fetchDatasetListService(params);
-      return {
-        data: res?.data || [],
-        success: true,
-        total: res?.total ?? (res?.data?.length || 0),
-      };
-    } catch {
-      return {
-        data: MOCK_DATASETS,
-        success: true,
-        total: MOCK_DATASETS.length,
-      };
-    }
+    const res = await fetchDatasetListService(params);
+    return {
+      data: res?.data || [],
+      success: true,
+      total: res?.total ?? (res?.data?.length || 0),
+    };
   };
 
   const handleDelete = async (datasetId: string) => {
@@ -57,37 +155,7 @@ const DatasetList: React.FC = () => {
         NLP: { text: 'NLP' },
         POINT_CLOUD: { text: '点云' },
         MULTIMODAL: { text: '多模态' },
-      },
-    },
-    {
-      title: '导入状态',
-      dataIndex: 'importStatus',
-      key: 'importStatus',
-      hideInSearch: true,
-      width: 120,
-      render: (_, record) => {
-        if (record.type !== 'MULTIMODAL' || !record.importStatus) {
-          return '-';
-        }
-        const color =
-          record.importStatus === 'FAILED'
-            ? 'error'
-            : record.importStatus === 'SUCCESS'
-              ? 'success'
-              : 'processing';
-        const label =
-          record.importStatus === 'PENDING'
-            ? '等待导入'
-            : record.importStatus === 'RUNNING'
-              ? '导入中'
-              : record.importStatus === 'FAILED'
-                ? '导入失败'
-                : record.importStatus;
-        const tag = <Tag color={color}>{label}</Tag>;
-        if (record.importErrorMessage) {
-          return <Tooltip title={record.importErrorMessage}>{tag}</Tooltip>;
-        }
-        return tag;
+        ROBOT: { text: '机器人' },
       },
     },
     {
@@ -95,7 +163,8 @@ const DatasetList: React.FC = () => {
       dataIndex: 'version',
       key: 'version',
       hideInSearch: true,
-      width: 100,
+      width: 140,
+      render: (_, record) => renderVersionCell(record),
     },
     {
       title: '版本描述',
@@ -130,15 +199,7 @@ const DatasetList: React.FC = () => {
           <Button
             type="link"
             style={{ paddingLeft: 0 }}
-            onClick={() => {
-              const assetId = record.assetId || record.id;
-              const versionId = record.versionId;
-              const query =
-                versionId && versionId !== assetId
-                  ? `?versionId=${encodeURIComponent(versionId)}`
-                  : '';
-              history.push(`/dataset/detail/${assetId}${query}`);
-            }}
+            onClick={() => history.push(resolveDetailHref(record))}
           >
             详情
           </Button>

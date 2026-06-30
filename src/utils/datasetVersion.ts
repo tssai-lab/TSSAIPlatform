@@ -143,6 +143,34 @@ export function datasetVersionFormRules(
   ];
 }
 
+/** 编辑当前版本：版本号须大于资产内最大版本且不与其它版本重复 */
+export function datasetEditCurrentVersionFormRules(
+  existingVersions: string[] = [],
+  currentVersion?: string,
+) {
+  return [
+    { required: true, message: '请输入版本号' },
+    {
+      validator: (_: unknown, value: string) => {
+        const formatError = validateDatasetVersionFormat(value);
+        if (formatError) return Promise.reject(new Error(formatError));
+        const uniqueError = validateDatasetVersionUnique(
+          value,
+          existingVersions,
+          currentVersion,
+        );
+        if (uniqueError) return Promise.reject(new Error(uniqueError));
+        const greaterError = validateVersionGreaterThanLatest(
+          value,
+          existingVersions,
+        );
+        if (greaterError) return Promise.reject(new Error(greaterError));
+        return Promise.resolve();
+      },
+    },
+  ];
+}
+
 /** Ant Design Form 版本描述校验规则 */
 export function datasetVersionDescFormRules() {
   return [

@@ -85,6 +85,23 @@ export default [
       { path: '/task', redirect: '/task/list' },
       { path: '/task/list', name: '任务列表', component: './task/list' },
       {
+        path: '/task/code/list',
+        name: '训练代码',
+        component: './task/trainingCode/list',
+      },
+      {
+        path: '/task/code/upload',
+        name: '上传训练代码',
+        component: './task/trainingCode/upload',
+        hideInMenu: true,
+      },
+      {
+        path: '/task/code/detail/:codeVersionId',
+        name: '训练代码详情',
+        component: './task/trainingCode/detail/[codeVersionId]',
+        hideInMenu: true,
+      },
+      {
         path: '/task/resourceMonitor',
         name: '算力状态',
         component: './task/resourceMonitor',
