@@ -138,7 +138,7 @@ MinIO endpoint
 complete 时 uploadId、modelName、version、type、remark 都不能为空
 type 仅支持 CV、NLP、POINT_CLOUD 或 ROBOT
 zip 必须是合法且非空的压缩包
-zip 内路径不能包含绝对路径、盘符、.. 或空字节
+zip 内路径可以使用 / 或 \，后端统一规范化为 /；规范化后不能包含绝对路径、盘符、.. 或空字节
 zip 条目数不超过 100000，解压后总体积不超过 50GB
 ```
 
@@ -254,9 +254,11 @@ CV 标注文件白名单：
 zip 附加约束：
 
 ```text
-zip 内路径不能包含绝对路径、盘符、.. 或空字节
+zip 内路径可以使用 / 或 \，后端统一规范化为 /；规范化后不能包含绝对路径、盘符、.. 或空字节
 限制条目数量不超过 100000，解压后总体积不超过 50GB
 ```
+
+`MULTIMODAL + MANIFEST` 的 `manifestPath` 以及 manifest JSON 内的 `data[].path`、`annotations[].path`、`annotations[].ref_data_path` 使用同一套 ZIP 路径规则：接受 `/` 或 `\`，统一规范化为 `/`，继续拒绝空路径、绝对路径、Windows 盘符、空字节和 `..`。
 
 `MULTIMODAL` complete 不执行单模态 zip 白名单和全量解压校验；manifest、AUTO_DIRECTORY 目录结构和 ZIP 内容校验由异步 ImportJob 完成。导入成功后版本变为 `READY`，失败后版本保持 `DRAFT`。
 
@@ -321,7 +323,7 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 | --- | --- | --- |
 | `GET` | `/list` | 查询当前用户可见数据集列表 |
 
-`/list` 可选 query: `type`, `keyword`, `page`/`current`, `pageSize`。返回体包含 `data`, `total`, `page`, `pageSize`。
+`/list` 可选 query: `type`, `keyword`, `page`/`current`, `pageSize`。返回体包含 `data`, `total`, `page`, `pageSize`。未传 `pageSize` 时 legacy V1 返回全部；传入时最大 `200`。
 
 数据集列表稳定字段：
 
@@ -329,26 +331,53 @@ GET /api/v2/dataset-versions/{datasetVersionId}/consumer-manifest?page=1&pageSiz
 | --- | --- |
 | `id` | 数据集资产 ID |
 | `assetId` | 数据集资产 ID |
-| `versionId` | 最新数据集版本 ID |
+| `versionId` | 当前推荐 READY 数据集版本 ID；没有 READY 时为 `null` |
+| `currentVersionId` | 当前推荐 READY 数据集版本 ID；语义与 `versionId` 一致 |
 | `name` | 数据集名称 |
-| `version` | 最新版本号 |
+| `version` | 当前推荐 READY 版本展示标签 |
 | `type` | `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 或 `MULTIMODAL` |
 | `cvTaskType` | CV 子任务类型，NLP 为 `null` |
 | `annotationFormat` | CV 标注格式，NLP 为 `null` |
 | `remark` | 数据集备注 |
-| `fileName` | 最新版本文件名 |
-| `sizeBytes` | 最新版本文件大小 |
+| `fileName` | 当前推荐 READY 版本文件名 |
+| `sizeBytes` | 当前推荐 READY 版本文件大小 |
 | `ownerUserId` | 归属用户 |
-| `uploadTime` | 最新版本上传时间 |
+| `uploadTime` | 当前推荐 READY 版本上传时间；没有 READY 时回退资产创建时间 |
 | `createdAt` | 资产创建时间 |
 | `updatedAt` | 资产更新时间 |
 | `currentVersionNo` / `currentVersionLabel` | 当前推荐 `READY` 版本的序号和展示标签 |
 | `versionStatus` | 当前推荐版本状态；新建 `MULTIMODAL` 只有 DRAFT 时可为 `null` |
-| `currentVersionFileCount` / `fileCount` | 当前版本文件计数；元数据化版本按 Sample Data 与 Annotation 计数，传统 ZIP 按 ZIP 非目录 entry 计数，无法计算时为 `null` |
+| `currentVersionFileCount` / `fileCount` | 当前推荐 READY 版本文件计数；元数据化版本按 Sample Data 与 Annotation 计数，传统 ZIP 按 ZIP 非目录 entry 计数，无法计算时为 `null` |
 | `latestDraftVersionId` | 最新未删除 DRAFT 版本 ID |
 | `importJobId` / `importStatus` / `importProgress` | 最新 DRAFT 的导入任务展示字段 |
 
+`versionId` / `currentVersionId` 始终指向当前推荐 READY 版本；后端优先使用 `dataset_asset.current_version_id`，不可用时回退到 `versionNo` 最大的 READY 版本。`latestDraftVersionId` 和 `import*` 只用于展示工作区/导入状态，不改变当前 READY 语义。文件数优先读取 `dataset_version.file_count`；旧数据为空时懒计算并回写，计算失败返回 `null`，不阻断列表。
+
 其他模块如果要引用数据集参与训练，应优先使用 `versionId`。
+
+V2 数据集列表：
+
+```text
+GET /api/v2/datasets
+```
+
+V2 `pageSize` 默认 `20`、最大 `200`，`current` 优先于 `page`。稳定字段如下：
+
+| 字段 | 说明 |
+| --- | --- |
+| `datasetId` | 数据集资产 ID |
+| `name` / `type` | 数据集展示名称和类型 |
+| `currentVersion` | 当前 READY 摘要：`versionId`、`versionLabel`、`versionNo`、`status` |
+| `currentVersionFileCount` / `fileCount` | 当前 READY 文件数；无当前版本或计数不可用时为 `null` |
+| `displayStatus` | `EMPTY`、`READY`、`EDITING`、`IMPORTING` 或 `IMPORT_FAILED` |
+| `hasDraft` | 是否存在活动 DRAFT |
+| `editSessionId` | 活动 DRAFT ID |
+| `importProgress` | 最新导入进度 |
+| `canPublish` | 是否可发布当前 DRAFT |
+| `availableActions` | `VIEW`、`PREVIEW`、`EDIT`、`ADD_DATA`、`PUBLISH` 的可用子集 |
+| `userError` | 导入失败时的结构化用户错误 |
+
+V2 不返回 `storagePath`、`ownerUserId`、`currentVersionId`、`latestDraftVersionId`、`importJobId`、MinIO objectName 或 ZIP offset。
 
 ## 7. 训练实验边界
 

@@ -134,7 +134,7 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 5. 前端保存和传递业务 ID 时要区分资产 ID 与版本 ID。训练、模型代码预览、数据集内容预览和点云预览都使用版本 ID。
 6. `previewUrl` 是受鉴权保护的相对 URL。使用 `<img>`、Three.js Loader 等不会自动附加 Axios 拦截器请求头的组件时，应先用带令牌的 `fetch`/请求库取得 `Blob` 或 `ArrayBuffer`，再交给组件解析。
 7. 列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。
-8. zip entry 路径必须直接使用后端返回的 `path`，作为查询参数时使用 URL 编码，不要自行拼接或规范化。
+8. zip entry 路径入参可以使用 `/` 或 `\`，后端会统一规范化为 `/`；后端返回的 `path` 固定使用 `/`，作为查询参数时仍需 URL 编码，不要自行拼接。
 9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域状态编辑。
 
 登录示例：
@@ -774,7 +774,7 @@ POST /api/dataset/upload/init
 | `annotationFormat` | string | 否 | CV 标注格式；非 CV 会被置为 `null` |
 | `remark` | string | 否 | 备注 |
 | `sampleGrouping` | string | 否 | `MULTIMODAL` 默认 `AUTO_DIRECTORY`，可显式传 `MANIFEST`；其他类型禁止传 |
-| `manifestPath` | string | 否 | 仅 `MANIFEST` 允许；未传时默认为 `manifest.json`。`AUTO_DIRECTORY` 不允许传 |
+| `manifestPath` | string | 否 | 仅 `MANIFEST` 允许；未传时默认为 `manifest.json`。可使用 `/` 或 `\`，后端统一规范化为 `/`；`AUTO_DIRECTORY` 不允许传 |
 
 文件类型规则：
 
@@ -790,8 +790,11 @@ POST /api/dataset/upload/init
 
 - 长度不能超过 `255`。
 - 不能是 `/` 开头的绝对路径或 Windows 盘符路径。
-- 不能包含 `..` 路径段、反斜杠或空字节。
+- 可以使用 `/` 或 `\` 作为分隔符，后端统一规范化为 `/`。
+- 规范化后不能包含 `..` 路径段或空字节。
 - 只有 `sampleGrouping=MANIFEST` 时允许传入。
+
+manifest JSON 内的 `data[].path`、`annotations[].path` 和 `annotations[].ref_data_path` 使用同一套 ZIP 路径规则：接受 `/` 或 `\`，统一规范化为 `/`，继续拒绝空路径、绝对路径、Windows 盘符、空字节和 `..`。
 
 CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
 
@@ -855,7 +858,7 @@ scene_002/
 - AUTO 生成的 `sensor`、`channel` 为 `null`，tags/metadata 为空。需要自定义这些字段时使用 MANIFEST。
 - 生成结果只存在 ImportJob 内存中；后端不修改用户 ZIP，也不向 MinIO 写入 `manifest.json`。
 - MANIFEST 和 AUTO_DIRECTORY 每个导入计划最多包含 10000 个样本；每个样本最多 100 个 Data、100 个 Annotation；全部 Data 与 Annotation 引用合计最多 100000 个。
-- 数据集 ZIP 最多 100000 个 entry，声明的解压后总大小最多 50GB；超过限制会在导入前失败。
+- 数据集 ZIP 最多 100000 个 entry，声明的解压后总大小最多 50GB；ZIP entry 路径同样会把 `\` 规范化为 `/`，规范化后重复、绝对路径、盘符、空字节或 `..` 会失败。
 
 50GB 文件的典型响应会返回：
 
@@ -1270,7 +1273,7 @@ GET /api/dataset/list
 | `keyword` | string | 否 | 按数据集名称、版本、数据集备注、版本备注、版本说明、文件名模糊搜索 |
 | `page` | integer | 否 | 页码 |
 | `current` | integer | 否 | 页码；优先级高于 `page` |
-| `pageSize` | integer | 否 | 每页数量；不传则返回全部 |
+| `pageSize` | integer | 否 | 每页数量；不传则返回全部，传入时最大 `200` |
 
 前端查询对接说明：
 
@@ -1321,9 +1324,11 @@ GET /api/dataset/list
 - `versionDescription`：当前推荐版本说明。
 - `latestDraftVersionId` 和 `import*` 字段只描述最新 DRAFT，不改变 `versionId` / `currentVersionId` 的 READY 当前版本语义。
 - 列表优先使用 `dataset_asset.current_version_id`；如果为空或不可用，则回退到该资产下 `status=READY` 且 `versionNo` 最大的版本。
-- `fileCount` 与 `currentVersionFileCount` 当前都表示当前推荐版本文件数；没有当前推荐版本或计数不可用时为 `null`。
+- `fileCount` 与 `currentVersionFileCount` 当前都表示当前推荐 READY 版本文件数；没有当前推荐版本或计数不可用时为 `null`。
 - `versionCount` 表示当前资产下未删除版本数量。
-- 已物化为 Sample/Data/Annotation 元数据的版本按 Sample Data 与 Annotation 条目数相加；传统普通 ZIP 数据集按当前版本源 ZIP 的非目录条目数计数；非压缩单文件版本计为 1。
+- 文件数优先读取 `dataset_version.file_count`；旧数据为空时懒计算并回写，计算失败返回 `null`，不阻断列表。
+- 已物化为 Sample/Data/Annotation 元数据的版本按 Sample Data 与 Annotation 条目数相加；传统普通 ZIP 数据集按当前版本源 ZIP 的非目录 entry 计数；非压缩单文件版本计为 1。
+- 列表先在数据库按资产分页，再只补全当前页资产的版本、导入任务和文件数；V1 未传 `pageSize` 时仍按兼容逻辑返回全部。
 
 ## 8. 数据集资产 CRUD 接口
 
@@ -1493,7 +1498,7 @@ Content-Type: application/json
 | `fileSize` | number | 是 | ZIP 字节数，必须大于 0 |
 | `fileFingerprint` | string | 否 | 客户端文件指纹 |
 | `sampleGrouping` | string | 否 | 仅 `MULTIMODAL` 使用；未传默认 `AUTO_DIRECTORY`，可显式传 `MANIFEST`；单模态禁止传 |
-| `manifestPath` | string | 否 | 仅 `MULTIMODAL + MANIFEST` 允许，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 和单模态都禁止传 |
+| `manifestPath` | string | 否 | 仅 `MULTIMODAL + MANIFEST` 允许，未传时默认 `manifest.json`；可使用 `/` 或 `\`，后端统一规范化为 `/`；`AUTO_DIRECTORY` 和单模态都禁止传 |
 
 init 返回通用上传进度结构。后续分片继续调用：
 
@@ -2083,7 +2088,7 @@ GET /api/dataset/preview/content?id={datasetVersionId}&path={zipEntryPath}&page=
 规则：
 
 - `id` 必须是数据集版本 ID。
-- zip 数据集的 `path` 必须来自 `files[].path`。
+- zip 数据集的 `path` 建议直接使用 `files[].path`；兼容传入 `\`，后端会规范化为 `/` 后匹配 ZIP entry。
 - NLP 单文件数据集可省略 `path`。
 - `.json` 会优先按 JSON 格式化；解析失败时按原文本返回。
 - `.csv` 使用第一行作为 `columns`，后续数据行按 `page` / `pageSize` 分页返回，`rows` 只包含当前页。
@@ -2168,7 +2173,7 @@ Content-Disposition: inline; filename*=UTF-8''a.png
 
 - 前端必须先调用 `/api/dataset/preview/files`，再使用返回的 `previewUrl`。
 - 前端不要直接依赖 `storagePath` 或 MinIO 对象路径。
-- zip 内路径不能是绝对路径、盘符路径，不能包含 `..` 或空字节。
+- zip 内路径可以使用 `/` 或 `\`，后端统一规范化为 `/`；规范化后不能是绝对路径、盘符路径，不能包含 `..` 或空字节。
 - PDF、DOCX、XLS、XLSX 首版不做在线解析，展示下载提示即可。
 - `/image` 成功返回二进制流；参数错误通常返回 HTTP `400` JSON，权限错误按隐藏资源策略返回 HTTP `404` JSON。
 
@@ -2438,7 +2443,7 @@ curl.exe -H "Authorization: Bearer <token>" `
 | `changeLog` | 当前版本变更说明。 |
 | `parentVersionId` | 来源版本；不传时使用资产 `currentVersionId`。 |
 | `sampleGrouping` | 多模态上传传 `MANIFEST` 或 `AUTO_DIRECTORY`；其他类型不传。 |
-| `manifestPath` | 仅 MANIFEST 使用，默认 `manifest.json`；AUTO_DIRECTORY 不传。 |
+| `manifestPath` | 仅 MANIFEST 使用，默认 `manifest.json`；可使用 `/` 或 `\` 并统一规范化为 `/`；AUTO_DIRECTORY 不传。 |
 
 上传完成后：
 
@@ -2604,6 +2609,7 @@ GET /api/v2/datasets?type=MULTIMODAL&keyword=&page=1&pageSize=20
 | `name` / `type` | 页面展示名称和类型 |
 | `currentVersion` | 当前 READY 摘要：`versionId`、`versionLabel`、`versionNo`、`status` |
 | `currentVersionFileCount` | 当前 READY 文件数；无当前版本或计数不可用时为 `null` |
+| `fileCount` | 当前 READY 文件数；兼容前端旧列名，语义与 `currentVersionFileCount` 一致 |
 | `displayStatus` | `EMPTY`、`READY`、`EDITING`、`IMPORTING` 或 `IMPORT_FAILED` |
 | `hasDraft` | 是否存在活动 DRAFT |
 | `editSessionId` | 活动 DRAFT ID；前端不再将其解释为内部版本状态 |
@@ -2670,7 +2676,7 @@ publish 成功直接返回：
 }
 ```
 
-单模态 APPEND 必须省略 `sampleGrouping` 和 `manifestPath`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
+单模态 APPEND 必须省略 `sampleGrouping` 和 `manifestPath`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`manifestPath` 可使用 `/` 或 `\` 并统一规范化为 `/`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
 
 上传响应统一返回 `uploadId`、分片进度、`datasetId`、可选
 `editSessionId`、`versionLabel`、`displayStatus`、`importProgress` 和
