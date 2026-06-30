@@ -608,6 +608,34 @@ function normalizeV2ListPage(raw: unknown): V2DatasetListPage | null {
   return null;
 }
 
+/** V2 列表不含 versionRemark/uploadTime/size，用 V1 字段为主并叠加 V2 聚合状态 */
+function mergeV1ListWithV2Display(
+  v1List: DatasetListItem[],
+  v2Page: V2DatasetListPage,
+): DatasetListItem[] {
+  const v2ByAssetId = new Map(
+    v2Page.data.map((row) => [row.datasetId, row]),
+  );
+  return v1List.map((item) => {
+    const assetId = item.assetId || item.id;
+    const v2 = v2ByAssetId.get(assetId);
+    if (!v2) {
+      return item;
+    }
+    const overlay = mapV2DatasetToListItem(v2);
+    return {
+      ...item,
+      displayStatus: overlay.displayStatus ?? item.displayStatus,
+      editSessionId: overlay.editSessionId ?? item.editSessionId,
+      importProgress: overlay.importProgress ?? item.importProgress,
+      importErrorMessage: overlay.importErrorMessage ?? item.importErrorMessage,
+      versionId: item.versionId ?? overlay.versionId,
+      version: item.version ?? overlay.version,
+      fileCount: item.fileCount ?? overlay.fileCount,
+    };
+  });
+}
+
 /** 获取数据集列表（兼容：返回 `{ data, total }`；ProTable 的 name 映射为 keyword） */
 export async function fetchDatasetList(options?: {
   current?: number;
@@ -633,24 +661,44 @@ export async function fetchDatasetList(options?: {
     params.pageSize = options.pageSize;
   }
 
-  try {
-    const v2Res = await getV2DatasetList(params, options);
-    const v2Page = normalizeV2ListPage(v2Res);
-    if (v2Page) {
-      return {
-        data: v2Page.data.map(mapV2DatasetToListItem),
-        total: v2Page.total ?? v2Page.data.length,
-      };
-    }
-  } catch {
-    // V2 不可用时回退 v1
+  const [v1Result, v2Result] = await Promise.allSettled([
+    getDatasetList(params, options),
+    getV2DatasetList(params, options),
+  ]);
+
+  let list: DatasetListItem[] = [];
+  let total = 0;
+
+  if (v1Result.status === 'fulfilled') {
+    const inner = v1Result.value?.data;
+    list = inner?.data ?? [];
+    total = inner?.total ?? list.length;
   }
 
-  const res = await getDatasetList(params, options);
-  const inner = res?.data;
-  const list = inner?.data ?? [];
-  const total = inner?.total ?? list.length;
-  return { data: list, total };
+  if (v2Result.status === 'fulfilled') {
+    const v2Page = normalizeV2ListPage(v2Result.value);
+    if (v2Page?.data?.length) {
+      if (list.length) {
+        list = mergeV1ListWithV2Display(list, v2Page);
+      } else {
+        list = v2Page.data.map(mapV2DatasetToListItem);
+        total = v2Page.total ?? list.length;
+      }
+    }
+  }
+
+  if (list.length) {
+    return { data: list, total };
+  }
+
+  if (v1Result.status === 'rejected') {
+    throw v1Result.reason;
+  }
+  if (v2Result.status === 'rejected') {
+    throw v2Result.reason;
+  }
+
+  return { data: [], total: 0 };
 }
 
 /** 数据集资产详情（兼容旧 `fetchDatasetDetail`：无独立 `/detail` 时走资产接口） */
