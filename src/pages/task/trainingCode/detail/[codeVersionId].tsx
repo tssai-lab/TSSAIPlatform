@@ -9,6 +9,7 @@ import {
   Empty,
   List,
   message,
+  Popconfirm,
   Row,
   Space,
   Spin,
@@ -19,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodePreview from '@/components/CodePreview';
 import type { CodeVersionDetail, CodeVersionListItem } from '@/services/code';
 import {
+  deleteCodeVersion,
   fetchCodeVersionCodePreview,
   getCodeVersionDetail,
   getDownloadUrl,
@@ -161,6 +163,22 @@ const TrainingCodeDetail: React.FC = () => {
     loadPreview(path);
   };
 
+  const handleDelete = async () => {
+    try {
+      const res = await deleteCodeVersion(codeVersionId, {
+        skipErrorHandler: true,
+      });
+      if (res?.success === false) {
+        message.error(res?.errorMessage || '删除失败');
+        return;
+      }
+      message.success('训练代码版本已删除');
+      history.push('/task/code/list');
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '删除失败'));
+    }
+  };
+
   const title = useMemo(
     () => meta?.codeAssetName || codeVersionId || '训练代码详情',
     [codeVersionId, meta?.codeAssetName],
@@ -183,18 +201,27 @@ const TrainingCodeDetail: React.FC = () => {
       subTitle="查看训练代码 zip 包内的文件与源码预览"
       onBack={() => history.push('/task/code/list')}
       extra={
-        meta?.storagePath ? (
-          <Button
-            onClick={() => {
-              const path = meta?.storagePath;
-              if (path) {
-                window.open(getDownloadUrl(path), '_blank');
-              }
-            }}
+        <Space>
+          {meta?.storagePath ? (
+            <Button
+              onClick={() => {
+                const path = meta?.storagePath;
+                if (path) {
+                  window.open(getDownloadUrl(path), '_blank');
+                }
+              }}
+            >
+              下载 zip
+            </Button>
+          ) : null}
+          <Popconfirm
+            title="确认删除该训练代码版本？"
+            description="若已被训练任务引用将无法删除。"
+            onConfirm={handleDelete}
           >
-            下载 zip
-          </Button>
-        ) : undefined
+            <Button danger>删除</Button>
+          </Popconfirm>
+        </Space>
       }
     >
       {metaLoading && !meta ? (

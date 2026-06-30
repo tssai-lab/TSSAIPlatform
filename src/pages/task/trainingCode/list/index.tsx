@@ -1,13 +1,22 @@
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import { Button, Modal, message, Space, Tag, Typography } from 'antd';
+import {
+  Button,
+  Modal,
+  message,
+  Popconfirm,
+  Space,
+  Tag,
+  Typography,
+} from 'antd';
 import React, { useRef } from 'react';
 import type { CodeVersionListItem } from '@/services/code';
 import {
   approveCodeVersion,
   CONSISTENCY_TRAINING_PROFILE,
   checkCodeVersionForTraining,
+  deleteCodeVersion,
   fetchCodeVersionList,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
@@ -103,6 +112,22 @@ const TrainingCodeList: React.FC = () => {
     }
   };
 
+  const handleDelete = async (record: CodeVersionListItem) => {
+    try {
+      const res = await deleteCodeVersion(record.codeVersionId, {
+        skipErrorHandler: true,
+      });
+      if (res?.success === false) {
+        message.error(res?.errorMessage || '删除失败');
+        return;
+      }
+      message.success('训练代码版本已删除');
+      actionRef.current?.reload();
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '删除失败'));
+    }
+  };
+
   const handleApprove = async (codeVersionId: string) => {
     try {
       const res = await approveCodeVersion(codeVersionId, {
@@ -173,7 +198,7 @@ const TrainingCodeList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 260,
       hideInSearch: true,
       render: (_, record) => (
         <Space size={0} wrap>
@@ -200,6 +225,15 @@ const TrainingCodeList: React.FC = () => {
               审核通过
             </Button>
           )}
+          <Popconfirm
+            title="确认删除该训练代码版本？"
+            description="若已被训练任务引用将无法删除。"
+            onConfirm={() => handleDelete(record)}
+          >
+            <Button type="link" danger>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },

@@ -126,6 +126,13 @@ export type CodeVersionTrainingCheckResult = {
   checkedAt?: string;
 };
 
+export type CodeDeleteResult = {
+  id: string;
+  codeAssetId?: string;
+  deleted?: boolean;
+  minioDeleteQueued?: boolean;
+};
+
 export type CodeVersionDetail = CodeVersionListItem & {
   storagePath?: string;
   sizeBytes?: number;
@@ -226,6 +233,21 @@ export async function fetchCodeVersionCodePreview(
       codeFilePath,
     } as CodeVersionPreviewBundle,
   };
+}
+
+/** 删除训练代码版本（被训练任务引用时后端会拒绝） */
+export async function deleteCodeVersion(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success: boolean;
+    data: CodeDeleteResult;
+    errorMessage?: string;
+  }>(`/code/version/${encodeURIComponent(codeVersionId)}`, {
+    method: 'DELETE',
+    ...(options || {}),
+  });
 }
 
 /** 代码模型包准入校验（通过后后端自动 APPROVED） */
