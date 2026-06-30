@@ -187,6 +187,8 @@ const DatasetList: React.FC = () => {
       dataIndex: 'fileCount',
       key: 'fileCount',
       hideInSearch: true,
+      render: (_, record) =>
+        record.fileCount != null ? record.fileCount : '-',
     },
     {
       title: '操作',

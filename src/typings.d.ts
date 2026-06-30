@@ -101,7 +101,7 @@ declare namespace API {
     type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT';
     uploadTime?: string;
     size?: string;
-    fileCount: number;
+    fileCount?: number | null;
     version?: string;
     versionId?: string;
     versionStatus?: string;
