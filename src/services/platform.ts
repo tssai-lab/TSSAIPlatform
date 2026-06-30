@@ -160,6 +160,27 @@ export {
 export { fileHealth, uploadObject, getDownloadUrl, downloadObject, deleteObject } from './files';
 
 export {
+  uploadInferenceScript,
+  listInferenceScripts,
+  getInferenceScript,
+  createInferenceTask,
+  listInferenceTasks,
+  getInferenceTask,
+  stopInferenceTask,
+  getInferenceTaskResult,
+  objectNameFromMinioPath,
+  formatBytes as formatInferenceBytes,
+  type CreateInferenceTaskBody,
+  type InferenceInputMode,
+  type InferenceScriptUploadResult,
+  type InferenceScriptVersion,
+  type InferenceTask,
+  type InferenceTaskPage,
+  type InferenceTaskResult,
+  type InferenceTaskStatus,
+} from './inference';
+
+export {
   getPointCloudPreview,
   fetchPointCloudPreviewBlob,
   pointCloudBlobToArrayBuffer,

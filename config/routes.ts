@@ -147,6 +147,19 @@ export default [
     ],
   },
   {
+    path: '/inference',
+    name: '模型推理',
+    icon: 'experiment',
+    routes: [
+      { path: '/inference', redirect: '/inference/workbench' },
+      {
+        path: '/inference/workbench',
+        name: '推理工作台',
+        component: './inference/workbench',
+      },
+    ],
+  },
+  {
     path: '/system',
     name: '系统管理',
     icon: 'setting',
