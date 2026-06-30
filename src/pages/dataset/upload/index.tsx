@@ -17,11 +17,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import type {
   AnnotationFormat,
-  CvTaskType,
   DatasetType,
   MultimodalSampleGrouping,
 } from '@/services/dataset';
-import { fetchDatasetDetail, uploadDataset } from '@/services/platform';
+import {
+  calcUploadPercent,
+  datasetUploadProgress,
+  fetchDatasetDetail,
+  uploadDataset,
+} from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
   DATASET_VERSION_DESC_PLACEHOLDER,
@@ -43,6 +47,13 @@ function isPointCloudFileName(fileName: string) {
   return ext === 'ply' || ext === 'pcd' || ext === 'zip';
 }
 
+const ROBOT_ACCEPT = '.xml,.yaml,.yml,.zip';
+
+function isRobotFileName(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  return ext === 'xml' || ext === 'yaml' || ext === 'yml' || ext === 'zip';
+}
+
 /**
  * 数据集上传：CV/NLP/POINT_CLOUD、版本、版本描述、单文件分片与 CV 多文件文件夹（module2-api-doc）
  */
@@ -55,6 +66,7 @@ const DatasetUpload: React.FC = () => {
     | undefined;
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [merging, setMerging] = useState(false);
   const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [existingVersions, setExistingVersions] = useState<string[]>([]);
   const [prefillLoading, setPrefillLoading] = useState(false);
@@ -63,13 +75,62 @@ const DatasetUpload: React.FC = () => {
   const isNewVersionUpload = !!assetId;
 
   useEffect(() => {
-    const id = localStorage.getItem(LS_DATASET_UPLOAD_ID);
-    const fp = localStorage.getItem(LS_DATASET_UPLOAD_FP);
-    if (id && fp) {
-      setResumeHint(
-        '检测到未完成的数据集分片上传。请保持数据集名称、版本、类型与上次一致，并重新选择同一文件后提交，系统将跳过已上传分片。',
-      );
+    const uploadId = localStorage.getItem(LS_DATASET_UPLOAD_ID);
+    if (!uploadId) {
+      return;
     }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await datasetUploadProgress(uploadId, {
+          skipErrorHandler: true,
+        });
+        if (cancelled) return;
+        const progress = res?.data;
+        if (!progress) {
+          setResumeHint(
+            '检测到本地续传记录，但无法查询服务端进度。请重新选择同一文件后提交。',
+          );
+          return;
+        }
+
+        const percent = calcUploadPercent(progress);
+        const fileLabel = progress.fileName || '文件';
+
+        if (progress.status === 'COMPLETED') {
+          setResumeHint(
+            `检测到已完成的上传会话（${fileLabel}）。若需继续操作，可清除续传记录后重新上传。`,
+          );
+          setUploadPercent(100);
+          return;
+        }
+
+        if (progress.status === 'COMPLETING') {
+          setMerging(true);
+          setUploadPercent(100);
+          setResumeHint(
+            `服务端正在合并分片（${fileLabel}）。请勿重复提交，稍后可重新选择同一文件继续或等待合并完成。`,
+          );
+          return;
+        }
+
+        setUploadPercent(percent);
+        setResumeHint(
+          `检测到未完成上传：${fileLabel}，已传 ${progress.uploadedPartIndexes?.length ?? progress.uploadedChunks ?? 0}/${progress.totalChunks} 个分片（约 ${percent}%）。请保持数据集名称、版本、类型与上次一致，并重新选择同一文件后提交。`,
+        );
+      } catch {
+        if (!cancelled) {
+          setResumeHint(
+            '检测到本地续传记录，但无法查询服务端进度。请重新选择同一文件后提交。',
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -78,7 +139,10 @@ const DatasetUpload: React.FC = () => {
     if (datasetName) {
       form.setFieldValue('name', datasetName);
     }
-    if (type && ['CV', 'NLP', 'POINT_CLOUD', 'MULTIMODAL'].includes(type)) {
+    if (
+      type &&
+      ['CV', 'NLP', 'POINT_CLOUD', 'MULTIMODAL', 'ROBOT'].includes(type)
+    ) {
       form.setFieldValue('type', type);
     }
 
@@ -115,6 +179,8 @@ const DatasetUpload: React.FC = () => {
     localStorage.removeItem(LS_DATASET_UPLOAD_ID);
     localStorage.removeItem(LS_DATASET_UPLOAD_FP);
     setResumeHint(null);
+    setMerging(false);
+    setUploadPercent(0);
   };
 
   const handleSubmit = async (values: any) => {
@@ -138,7 +204,6 @@ const DatasetUpload: React.FC = () => {
       | MultimodalSampleGrouping
       | undefined;
     const manifestPath = values.manifestPath?.trim();
-    const cvTaskType = values.cvTaskType as CvTaskType | undefined;
     const annotationFormat = values.annotationFormat as
       | AnnotationFormat
       | undefined;
@@ -173,7 +238,19 @@ const DatasetUpload: React.FC = () => {
       }
     }
 
+    if (type === 'ROBOT') {
+      if (files.length !== 1) {
+        message.error('机器人数据集仅支持上传单个配置文件或 zip');
+        return;
+      }
+      if (!isRobotFileName(files[0].name)) {
+        message.error('机器人数据集仅支持 .xml、.yaml、.yml 或 .zip 格式');
+        return;
+      }
+    }
+
     setUploading(true);
+    setMerging(false);
     setUploadPercent(0);
     const requestOpts = { skipErrorHandler: true } as const;
 
@@ -189,7 +266,6 @@ const DatasetUpload: React.FC = () => {
             type,
             version,
             assetId,
-            cvTaskType,
             annotationFormat,
             remark,
             sampleGrouping:
@@ -203,6 +279,9 @@ const DatasetUpload: React.FC = () => {
                 : undefined,
             fileFingerprint: fp,
             onProgress: (p) => setUploadPercent(p),
+            onMergeStatus: (status) => {
+              setMerging(status === 'COMPLETING');
+            },
             onUploadSession: ({ uploadId, fileFingerprint: fgp }) => {
               localStorage.setItem(LS_DATASET_UPLOAD_ID, uploadId);
               localStorage.setItem(LS_DATASET_UPLOAD_FP, fgp);
@@ -234,7 +313,6 @@ const DatasetUpload: React.FC = () => {
             files,
             type: 'CV',
             version,
-            cvTaskType,
             annotationFormat,
             remark,
           },
@@ -258,6 +336,7 @@ const DatasetUpload: React.FC = () => {
       message.error(getApiErrorMessage(error));
     } finally {
       setUploading(false);
+      setMerging(false);
       setUploadPercent(0);
     }
   };
@@ -343,7 +422,6 @@ const DatasetUpload: React.FC = () => {
             disabled={isNewVersionUpload || prefillLoading}
             onChange={(value) => {
               form.setFieldValue('files', []);
-              form.setFieldValue('cvTaskType', undefined);
               form.setFieldValue('annotationFormat', undefined);
               if (value === 'MULTIMODAL') {
                 form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
@@ -359,6 +437,7 @@ const DatasetUpload: React.FC = () => {
             <Select.Option value="MULTIMODAL">
               多模态（MULTIMODAL）
             </Select.Option>
+            <Select.Option value="ROBOT">机器人（ROBOT，预留）</Select.Option>
           </Select>
         </Form.Item>
         {datasetType === 'MULTIMODAL' && (
@@ -406,43 +485,25 @@ const DatasetUpload: React.FC = () => {
           </>
         )}
         {datasetType === 'CV' && (
-          <>
-            <Form.Item name="cvTaskType" label="CV 子任务类型">
-              <Select allowClear placeholder="请选择 CV 子任务">
-                <Select.Option value="IMAGE_CLASSIFICATION">
-                  图像分类
-                </Select.Option>
-                <Select.Option value="OBJECT_DETECTION">目标检测</Select.Option>
-                <Select.Option value="SEMANTIC_SEGMENTATION">
-                  语义分割
-                </Select.Option>
-                <Select.Option value="INSTANCE_SEGMENTATION">
-                  实例分割
-                </Select.Option>
-                <Select.Option value="UNLABELED">未标注</Select.Option>
-                <Select.Option value="OTHER">其它</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="annotationFormat"
-              label="标注格式"
-              extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
-            >
-              <Select allowClear placeholder="请选择标注格式">
-                <Select.Option value="NONE">NONE（仅图片）</Select.Option>
-                <Select.Option value="FOLDER_CLASSIFICATION">
-                  FOLDER_CLASSIFICATION
-                </Select.Option>
-                <Select.Option value="YOLO">YOLO</Select.Option>
-                <Select.Option value="COCO">COCO</Select.Option>
-                <Select.Option value="VOC">VOC</Select.Option>
-                <Select.Option value="CSV">CSV</Select.Option>
-                <Select.Option value="MASK">MASK</Select.Option>
-                <Select.Option value="LABELME">LABELME</Select.Option>
-                <Select.Option value="OTHER">OTHER</Select.Option>
-              </Select>
-            </Form.Item>
-          </>
+          <Form.Item
+            name="annotationFormat"
+            label="标注格式"
+            extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
+          >
+            <Select allowClear placeholder="请选择标注格式">
+              <Select.Option value="NONE">NONE（仅图片）</Select.Option>
+              <Select.Option value="FOLDER_CLASSIFICATION">
+                FOLDER_CLASSIFICATION
+              </Select.Option>
+              <Select.Option value="YOLO">YOLO</Select.Option>
+              <Select.Option value="COCO">COCO</Select.Option>
+              <Select.Option value="VOC">VOC</Select.Option>
+              <Select.Option value="CSV">CSV</Select.Option>
+              <Select.Option value="MASK">MASK</Select.Option>
+              <Select.Option value="LABELME">LABELME</Select.Option>
+              <Select.Option value="OTHER">OTHER</Select.Option>
+            </Select>
+          </Form.Item>
         )}
         <Form.Item
           name="remark"
@@ -482,21 +543,25 @@ const DatasetUpload: React.FC = () => {
             multiple={
               datasetType !== 'POINT_CLOUD' &&
               datasetType !== 'NLP' &&
-              datasetType !== 'MULTIMODAL'
+              datasetType !== 'MULTIMODAL' &&
+              datasetType !== 'ROBOT'
             }
             accept={
               datasetType === 'POINT_CLOUD'
                 ? POINT_CLOUD_ACCEPT
                 : datasetType === 'MULTIMODAL'
                   ? '.zip'
-                  : undefined
+                  : datasetType === 'ROBOT'
+                    ? ROBOT_ACCEPT
+                    : undefined
             }
             beforeUpload={() => false}
             onChange={(e) => {
               let fileList = e.fileList ?? [];
               if (
                 (datasetType === 'POINT_CLOUD' ||
-                  datasetType === 'MULTIMODAL') &&
+                  datasetType === 'MULTIMODAL' ||
+                  datasetType === 'ROBOT') &&
                 fileList.length > 1
               ) {
                 fileList = fileList.slice(-1);
@@ -510,7 +575,9 @@ const DatasetUpload: React.FC = () => {
                 ? '选择点云文件（.ply / .pcd / .zip）'
                 : datasetType === 'MULTIMODAL'
                   ? '选择多模态 zip（单文件分片上传）'
-                  : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
+                  : datasetType === 'ROBOT'
+                    ? '选择机器人配置（.xml / .yaml / .yml / .zip）'
+                    : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
@@ -522,12 +589,24 @@ const DatasetUpload: React.FC = () => {
                 ? sampleGrouping === 'MANIFEST'
                   ? ' MANIFEST 模式：zip 须含 manifest.json（或指定路径）；上传后 DRAFT，后台异步导入。'
                   : ' AUTO_DIRECTORY：zip 根目录为样本子目录，无需 manifest；上传后 DRAFT，后台异步导入。'
-                : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
+                : datasetType === 'ROBOT'
+                  ? ' ROBOT：支持单文件 .xml/.yaml/.yml 或仅含配置类文件的 zip；上传完成后为 READY。'
+                  : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
           </div>
         </Form.Item>
         {uploading && (
-          <Form.Item label="上传进度">
-            <Progress percent={uploadPercent} status="active" />
+          <Form.Item
+            label={merging ? '合并进度' : '上传进度'}
+            extra={
+              merging
+                ? '分片已传完，服务端正在合并文件，请勿重复点击提交'
+                : undefined
+            }
+          >
+            <Progress
+              percent={uploadPercent}
+              status={merging ? 'active' : 'active'}
+            />
           </Form.Item>
         )}
         <Form.Item>

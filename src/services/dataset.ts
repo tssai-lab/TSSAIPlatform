@@ -1,4 +1,9 @@
 import { request } from '@umijs/max';
+import {
+  getV2DatasetList,
+  mapV2DatasetToListItem,
+  type V2DatasetListPage,
+} from './datasetV2';
 
 function formatBytes(sizeBytes?: number) {
   if (sizeBytes === undefined || sizeBytes === null || Number.isNaN(sizeBytes)) {
@@ -86,8 +91,8 @@ function mapDatasetVersion(
 /** 训练创建使用的任务类型（不含 MULTIMODAL） */
 export type TaskType = 'CV' | 'NLP' | 'POINT_CLOUD';
 
-/** 数据集模块类型（含多模态） */
-export type DatasetType = TaskType | 'MULTIMODAL';
+/** 数据集模块类型（含多模态、机器人预留） */
+export type DatasetType = TaskType | 'MULTIMODAL' | 'ROBOT';
 
 /** CV 子任务（module2-api-doc 1.3） */
 export type CvTaskType =
@@ -130,6 +135,7 @@ export type DatasetVersion = {
   sizeBytes?: number;
   remark?: string;
   status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
+  parentVersionId?: string | null;
   createdAt?: string;
 };
 
@@ -157,6 +163,9 @@ export type DatasetListItem = {
   importStatus?: 'PENDING' | 'RUNNING' | 'FAILED' | string | null;
   importProgress?: number | null;
   importErrorMessage?: string | null;
+  /** V2 聚合展示状态 */
+  displayStatus?: string;
+  editSessionId?: string | null;
 };
 
 /** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
@@ -320,18 +329,64 @@ export async function getDatasetVersion(id: string, options?: { [key: string]: a
   );
 }
 
-/** 更新数据集版本号与版本描述（remark）。 */
+/** 更新数据集版本元数据（versionLabel/remark/description 等）。 */
 export async function updateDatasetVersion(
   id: string,
-  body: Partial<Pick<DatasetVersion, 'version' | 'remark' | 'assetId'>>,
+  body: Partial<
+    Pick<DatasetVersion, 'version' | 'remark' | 'assetId'> & {
+      versionLabel?: string;
+      description?: string;
+      changeLog?: string;
+    }
+  >,
   options?: { [key: string]: any },
 ) {
+  const payload = { ...body };
+  if (payload.version && !payload.versionLabel) {
+    payload.versionLabel = payload.version;
+  }
   return request<{ data: DatasetVersion }>(
     '/dataset-versions/' + encodeURIComponent(id),
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      data: body,
+      data: payload,
+      ...(options || {}),
+    },
+  );
+}
+
+export type DatasetVersionLifecycleStatus = 'READY' | 'DEPRECATED' | 'ARCHIVED';
+
+/** PUT /api/dataset-assets/{assetId}/current-version */
+export async function switchDatasetCurrentVersion(
+  assetId: string,
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ success?: boolean; data?: unknown }>(
+    `/dataset-assets/${encodeURIComponent(assetId)}/current-version`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data: { versionId },
+      ...(options || {}),
+    },
+  );
+}
+
+/** PATCH /api/dataset-versions/{id}/status */
+export async function updateDatasetVersionStatus(
+  versionId: string,
+  status: DatasetVersionLifecycleStatus,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ success?: boolean; data?: DatasetVersion }>(
+    `/dataset-versions/${encodeURIComponent(versionId)}/status`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      data: { status },
       ...(options || {}),
     },
   );
@@ -419,6 +474,86 @@ export async function datasetUploadComplete(uploadId: string, options?: { [key: 
   });
 }
 
+const UPLOAD_PROGRESS_POLL_MS = 2000;
+const UPLOAD_PROGRESS_POLL_MAX_MS = 5 * 60 * 1000;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export function calcUploadPercent(progress: DatasetUploadProgress): number {
+  const total = progress.totalChunks > 0 ? progress.totalChunks : 1;
+  const done =
+    progress.uploadedPartIndexes?.length ??
+    progress.uploadedChunks ??
+    0;
+  return Math.min(100, Math.round((done / total) * 100));
+}
+
+/** 轮询 progress，直到离开 COMPLETING（或超时） */
+export async function waitDatasetUploadSettled(
+  uploadId: string,
+  options?: { [key: string]: unknown },
+  onPoll?: (progress: DatasetUploadProgress) => void,
+): Promise<DatasetUploadProgress> {
+  const started = Date.now();
+  while (Date.now() - started < UPLOAD_PROGRESS_POLL_MAX_MS) {
+    const res = await datasetUploadProgress(uploadId, options);
+    const data = res?.data;
+    if (!data) {
+      throw new Error('查询上传进度失败');
+    }
+    onPoll?.(data);
+    if (data.status === 'COMPLETED') {
+      return data;
+    }
+    if (data.status !== 'COMPLETING') {
+      return data;
+    }
+    await sleep(UPLOAD_PROGRESS_POLL_MS);
+  }
+  throw new Error('服务端合并分片超时，请稍后刷新页面或重新提交');
+}
+
+/**
+ * 完成上传并在 COMPLETING 时轮询 progress，避免并发重复 complete。
+ * complete 对已完成的 uploadId 可幂等重试。
+ */
+export async function datasetUploadCompleteWithPolling(
+  uploadId: string,
+  options?: { [key: string]: unknown },
+  callbacks?: {
+    onPoll?: (progress: DatasetUploadProgress) => void;
+  },
+) {
+  let completeRes: { data: DatasetUploadCompleteResult } | undefined;
+  try {
+    completeRes = await datasetUploadComplete(uploadId, options);
+    const uploadStatus =
+      completeRes?.data?.uploadStatus ?? completeRes?.data?.status;
+    if (uploadStatus === 'COMPLETED') {
+      return completeRes;
+    }
+  } catch {
+    // 可能处于 COMPLETING，继续轮询 progress
+  }
+
+  const progressRes = await datasetUploadProgress(uploadId, options);
+  const initial = progressRes?.data;
+  if (initial?.status === 'COMPLETED' && completeRes) {
+    return completeRes;
+  }
+
+  if (initial?.status === 'COMPLETING' || !completeRes) {
+    await waitDatasetUploadSettled(uploadId, options, callbacks?.onPoll);
+    return datasetUploadComplete(uploadId, options);
+  }
+
+  return completeRes ?? datasetUploadComplete(uploadId, options);
+}
+
 /**
  * 上传 CV 图片文件夹。
  *
@@ -457,6 +592,22 @@ export async function datasetUploadFolder(
 
 const DEFAULT_CHUNK = 5 * 1024 * 1024;
 
+function normalizeV2ListPage(raw: unknown): V2DatasetListPage | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const page = raw as V2DatasetListPage;
+  if (Array.isArray(page.data)) {
+    return page;
+  }
+  const wrapped = raw as { data?: V2DatasetListPage };
+  const inner = wrapped.data;
+  if (inner && Array.isArray(inner.data)) {
+    return inner;
+  }
+  return null;
+}
+
 /** 获取数据集列表（兼容：返回 `{ data, total }`；ProTable 的 name 映射为 keyword） */
 export async function fetchDatasetList(options?: {
   current?: number;
@@ -482,7 +633,20 @@ export async function fetchDatasetList(options?: {
     params.pageSize = options.pageSize;
   }
 
-  const res = await getDatasetList(params);
+  try {
+    const v2Res = await getV2DatasetList(params, options);
+    const v2Page = normalizeV2ListPage(v2Res);
+    if (v2Page) {
+      return {
+        data: v2Page.data.map(mapV2DatasetToListItem),
+        total: v2Page.total ?? v2Page.data.length,
+      };
+    }
+  } catch {
+    // V2 不可用时回退 v1
+  }
+
+  const res = await getDatasetList(params, options);
   const inner = res?.data;
   const list = inner?.data ?? [];
   const total = inner?.total ?? list.length;
@@ -500,6 +664,7 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     return { data: undefined };
   }
   let listLatestVersionId: string | undefined;
+  let currentVersionId: string | undefined;
   let importMeta: Pick<
     DatasetListItem,
     | 'latestDraftVersionId'
@@ -507,6 +672,8 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     | 'importStatus'
     | 'importProgress'
     | 'importErrorMessage'
+    | 'displayStatus'
+    | 'editSessionId'
   > = {};
   try {
     const listRes = await getDatasetList(
@@ -517,6 +684,7 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
       (item) => (item.assetId || item.id) === asset.id,
     );
     listLatestVersionId = row?.versionId;
+    currentVersionId = row?.versionId;
     if (row) {
       importMeta = {
         latestDraftVersionId: row.latestDraftVersionId,
@@ -524,6 +692,8 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
         importStatus: row.importStatus,
         importProgress: row.importProgress,
         importErrorMessage: row.importErrorMessage,
+        displayStatus: row.displayStatus,
+        editSessionId: row.editSessionId,
       };
     }
   } catch {
@@ -567,11 +737,13 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
       uploadTime: latestVersion?.createdAt ?? asset.createdAt,
       latestVersion,
       versions,
-      /** 列表接口返回的最新版本 ID，供预览兜底 */
+      /** 列表接口返回的当前推荐版本 ID */
       defaultVersionId,
+      currentVersionId,
       ...importMeta,
     } as API.DatasetDetail & {
       defaultVersionId?: string;
+      currentVersionId?: string;
       latestDraftVersionId?: string | null;
       importJobId?: string | null;
       importStatus?: string | null;
@@ -596,6 +768,8 @@ export type UploadDatasetCompatParams = {
   fileFingerprint?: string;
   /** 单文件分片上传时进度 0–100 */
   onProgress?: (percent: number) => void;
+  /** 服务端合并分片（COMPLETING）阶段回调 */
+  onMergeStatus?: (status: string) => void;
   /** init 成功后回调，便于页面写入 localStorage 做刷新续传提示 */
   onUploadSession?: (payload: { uploadId: string; fileFingerprint: string }) => void;
 };
@@ -618,6 +792,7 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
     manifestPath,
     fileFingerprint,
     onProgress,
+    onMergeStatus,
     onUploadSession,
   } = params;
   if (!files?.length) {
@@ -676,7 +851,17 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
       onProgress?.(Math.min(100, Math.round((uploadedCount / totalChunks) * 100)));
     }
     onProgress?.(100);
-    return datasetUploadComplete(uploadId, options);
+    onMergeStatus?.('COMPLETING');
+    return datasetUploadCompleteWithPolling(uploadId, options, {
+      onPoll: (progress) => {
+        if (progress.status === 'COMPLETING') {
+          onMergeStatus?.('COMPLETING');
+          onProgress?.(100);
+        } else {
+          onProgress?.(calcUploadPercent(progress));
+        }
+      },
+    });
   }
   if (type === 'CV') {
     return datasetUploadFolder(

@@ -98,7 +98,7 @@ declare namespace API {
     id: string;
     assetId?: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT';
     uploadTime?: string;
     size?: string;
     fileCount: number;
@@ -117,6 +117,8 @@ declare namespace API {
     importStatus?: string | null;
     importProgress?: number | null;
     importErrorMessage?: string | null;
+    displayStatus?: string;
+    editSessionId?: string | null;
   };
 
   // 任务相关
@@ -205,13 +207,14 @@ declare namespace API {
     size?: string;
     remark?: string;
     status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
+    parentVersionId?: string | null;
     createdAt?: string;
   };
 
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;

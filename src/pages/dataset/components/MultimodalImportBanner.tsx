@@ -1,11 +1,12 @@
-import { ReloadOutlined } from '@ant-design/icons';
-import { Alert, Button, Progress, Space, Typography } from 'antd';
+import { RedoOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Alert, Button, message, Progress, Space, Typography } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   fetchMultimodalImportStatus,
   MULTIMODAL_IMPORT_STATUS_LABEL,
   type MultimodalImportJob,
   type MultimodalImportStatus,
+  retryMultimodalImport,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 
@@ -28,6 +29,7 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
 }) => {
   const [job, setJob] = useState<MultimodalImportJob | null>(null);
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadStatus = useCallback(
@@ -66,6 +68,21 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
   const progress = job?.progress ?? initialProgress ?? 0;
   const errorMessage = job?.errorMessage ?? initialErrorMessage ?? undefined;
 
+  const handleRetry = async () => {
+    if (!importJobId) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      await retryMultimodalImport(importJobId, { skipErrorHandler: true });
+      message.success('已提交重新导入，请稍候');
+      await loadStatus(true);
+    } catch (e: unknown) {
+      setError(getApiErrorMessage(e));
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   useEffect(() => {
     if (!importJobId || !status) return;
     if (!ACTIVE_IMPORT_STATUSES.includes(status as MultimodalImportStatus)) {
@@ -102,7 +119,25 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
         type="error"
         showIcon
         message="多模态数据导入失败"
-        description={errorMessage || '请检查 manifest 与 zip 内容后重新上传。'}
+        description={
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <span>{errorMessage || '请检查 manifest 与 zip 内容后重试。'}</span>
+            <Space>
+              <Button
+                type="primary"
+                size="small"
+                icon={<RedoOutlined />}
+                loading={retrying}
+                onClick={() => void handleRetry()}
+              >
+                重试导入
+              </Button>
+              {error && (
+                <Typography.Text type="danger">{error}</Typography.Text>
+              )}
+            </Space>
+          </Space>
+        }
         style={{ marginBottom: 16 }}
       />
     );

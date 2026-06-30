@@ -52,7 +52,7 @@ export async function createTask(
     name?: string;
     baseModelVersionId?: string;
     modelVersionId?: string;
-    codeVersionId: string;
+    codeVersionId?: string;
     datasetVersionId: string;
     trainingProfile?: string;
     hyperParams?: Record<string, unknown> | string;

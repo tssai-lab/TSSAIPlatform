@@ -1,5 +1,5 @@
 /** 从 Umi request / 后端 ApiResponse 抛出的错误上取可读文案 */
-export function getApiErrorMessage(err: any): string {
+export function getApiErrorMessage(err: any, fallback = '请求失败'): string {
   const status = err?.response?.status;
   const data = err?.response?.data;
   const bizMessage =
@@ -42,5 +42,5 @@ export function getApiErrorMessage(err: any): string {
     return `后端服务不可用 (${status})，请稍后重试或检查代理目标地址。`;
   }
 
-  return err?.message || '请求失败';
+  return err?.message || fallback;
 }
