@@ -4,10 +4,16 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "training.kubernetes")
 public class TrainingKubernetesProperties {
+
+    public static final String PUBLIC_DEVELOPMENT_INTERNAL_CALLBACK_TOKEN =
+            "tss-internal-callback-dev";
 
     /** 是否启用 K8s 训练调度（false 时回退本地 Java 训练） */
     private boolean enabled = true;
@@ -57,11 +63,45 @@ public class TrainingKubernetesProperties {
     private int jobTtlSecondsAfterFinished = 3600;
 
     /** Worker 回调内部 token（通过环境变量 TRAINING_K8S_INTERNAL_CALLBACK_TOKEN 覆盖） */
-    private String internalCallbackToken = "tss-internal-callback-dev";
+    private String internalCallbackToken = "";
 
     /** Job 状态轮询间隔（毫秒） */
     private long monitorIntervalMs = 30000;
 
     /** 环境初始化超时（秒） */
     private int bootstrapTimeoutSeconds = 600;
+
+    public String requireInternalCallbackToken() {
+        String token = normalizedInternalCallbackToken();
+        if (token == null) {
+            throw new IllegalStateException(
+                    "training.kubernetes.internal-callback-token must be configured"
+            );
+        }
+        return token;
+    }
+
+    public boolean hasPublicDevelopmentInternalCallbackToken() {
+        return PUBLIC_DEVELOPMENT_INTERNAL_CALLBACK_TOKEN.equals(
+                normalizedInternalCallbackToken()
+        );
+    }
+
+    public boolean matchesInternalCallbackToken(String candidate) {
+        String configured = normalizedInternalCallbackToken();
+        if (configured == null || candidate == null || candidate.isBlank()) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                configured.getBytes(StandardCharsets.UTF_8),
+                candidate.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    private String normalizedInternalCallbackToken() {
+        if (internalCallbackToken == null || internalCallbackToken.isBlank()) {
+            return null;
+        }
+        return internalCallbackToken.trim();
+    }
 }

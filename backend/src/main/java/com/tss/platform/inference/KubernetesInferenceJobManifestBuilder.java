@@ -167,7 +167,7 @@ public class KubernetesInferenceJobManifestBuilder {
                 escapeYaml(minioSecretKey),
                 escapeYaml(minioBucket),
                 escapeYaml(callbackUrl),
-                escapeYaml(properties.getInternalCallbackToken()),
+                escapeYaml(properties.requireInternalCallbackToken()),
                 escapeYaml(outputObjectPrefix(task)),
                 cpuRequest,
                 memoryRequest,

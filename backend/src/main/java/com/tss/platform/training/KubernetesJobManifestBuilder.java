@@ -163,7 +163,7 @@ public class KubernetesJobManifestBuilder {
                 properties.getMlflowServiceUrl(),
                 mlflowExperimentName,
                 callbackUrl,
-                escapeYaml(properties.getInternalCallbackToken()),
+                escapeYaml(properties.requireInternalCallbackToken()),
                 properties.getCpuRequest(),
                 properties.getMemoryRequest(),
                 properties.getCpuLimit(),

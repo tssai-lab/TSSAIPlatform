@@ -32,9 +32,7 @@ public class InternalInferenceCallbackAuthFilter extends OncePerRequestFilter {
     ) throws ServletException, IOException {
         boolean internalInferenceCallback = request.getRequestURI().startsWith("/api/internal/inference/");
         String token = request.getHeader("X-Internal-Token");
-        boolean tokenValid = token != null
-                && !token.isBlank()
-                && token.equals(properties.getInternalCallbackToken());
+        boolean tokenValid = properties.matchesInternalCallbackToken(token);
         if (!internalInferenceCallback || !tokenValid) {
             filterChain.doFilter(request, response);
             return;

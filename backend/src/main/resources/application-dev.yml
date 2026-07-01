@@ -8,3 +8,8 @@ spring:
 minio:
   access-key: ${MINIO_ACCESS_KEY:admin}
   secret-key: ${MINIO_SECRET_KEY:password123}
+
+training:
+  kubernetes:
+    enabled: ${TRAINING_K8S_ENABLED:false}
+    internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}

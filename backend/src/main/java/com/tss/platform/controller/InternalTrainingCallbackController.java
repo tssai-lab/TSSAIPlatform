@@ -34,8 +34,7 @@ public class InternalTrainingCallbackController {
             HttpServletRequest request
     ) {
         String token = request.getHeader("X-Internal-Token");
-        if (token == null || token.isBlank()
-                || !token.equals(properties.getInternalCallbackToken())) {
+        if (!properties.matchesInternalCallbackToken(token)) {
             return ApiResponse.fail("无效的内部回调 token");
         }
         try {
