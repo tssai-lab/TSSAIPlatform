@@ -13,11 +13,13 @@ import com.tss.platform.service.ModelCodePreviewService;
 import com.tss.platform.service.MinioDeleteTaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,38 +71,37 @@ public class ModelController {
             }
         }
 
-        List<ModelAsset> visibleAssets = authContext.isAdmin()
-                ? modelAssetRepo.findByDeletedFalse()
-                : modelAssetRepo.findByOwnerUserIdAndDeletedFalse(authContext.currentUserId());
-        Set<String> visibleAssetIds = visibleAssets.stream()
-                .map(ModelAsset::getId)
+        int pageNo = resolvePage(page, current);
+        int size = resolvePageSize(pageSize, 0);
+        Pageable pageable = size > 0
+                ? PageRequest.of(pageNo - 1, size)
+                : Pageable.unpaged();
+        Integer ownerUserId = authContext.isAdmin() ? null : authContext.currentUserId();
+        Page<ModelVersion> versionPage = modelVersionRepo.searchVisibleCatalog(
+                ownerUserId,
+                normalizedType,
+                toLikeKeyword(keyword),
+                pageable
+        );
+        List<ModelVersion> versions = versionPage.getContent();
+        Set<String> visibleAssetIds = versions.stream()
+                .map(ModelVersion::getAssetId)
                 .filter(id -> id != null && !id.isBlank())
                 .collect(Collectors.toSet());
-        List<ModelVersion> versions = authContext.isAdmin()
-                ? modelVersionRepo.findByDeletedFalse()
-                : (visibleAssetIds.isEmpty() ? List.of() : modelVersionRepo.findByAssetIdInAndDeletedFalse(visibleAssetIds));
-        Map<String, ModelAsset> assetsById = visibleAssets.stream()
+        Map<String, ModelAsset> assetsById = visibleAssetIds.isEmpty()
+                ? Map.of()
+                : modelAssetRepo.findAllById(visibleAssetIds).stream()
                 .collect(Collectors.toMap(ModelAsset::getId, asset -> asset));
 
-        final String filterType = normalizedType;
-        final String normalizedKeyword = normalizeKeyword(keyword);
-        List<Map<String, Object>> allData = versions.stream()
+        List<Map<String, Object>> data = versions.stream()
                 .map(v -> toListItem(v, assetsById.get(v.getAssetId())))
-                .filter(item -> filterType == null || filterType.equals(item.get("type")))
-                .filter(item -> matchesKeyword(item, normalizedKeyword))
-                .sorted(Comparator.comparing(
-                        item -> String.valueOf(item.getOrDefault("createdAt", "")),
-                        Comparator.reverseOrder()
-                ))
                 .collect(Collectors.toList());
-
-        List<Map<String, Object>> data = paginate(allData, page, current, pageSize);
 
         Map<String, Object> result = new HashMap<>();
         result.put("data", data);
-        result.put("total", allData.size());
-        result.put("page", resolvePage(page, current));
-        result.put("pageSize", resolvePageSize(pageSize, allData.size()));
+        result.put("total", versionPage.getTotalElements());
+        result.put("page", pageNo);
+        result.put("pageSize", size > 0 ? size : data.size());
         return ApiResponse.ok(result);
     }
 
@@ -245,38 +246,11 @@ public class ModelController {
                 .orElse(null);
     }
 
-    private String normalizeKeyword(String keyword) {
-        return keyword == null || keyword.isBlank() ? null : keyword.trim().toLowerCase();
-    }
-
-    private boolean matchesKeyword(Map<String, Object> item, String keyword) {
-        if (keyword == null) {
-            return true;
+    private String toLikeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
         }
-        return containsIgnoreCase(item.get("name"), keyword)
-                || containsIgnoreCase(item.get("version"), keyword)
-                || containsIgnoreCase(item.get("remark"), keyword)
-                || containsIgnoreCase(item.get("fileName"), keyword);
-    }
-
-    private boolean containsIgnoreCase(Object value, String keyword) {
-        return value != null && value.toString().toLowerCase().contains(keyword);
-    }
-
-    private List<Map<String, Object>> paginate(
-            List<Map<String, Object>> source,
-            Integer page,
-            Integer current,
-            Integer pageSize
-    ) {
-        int size = resolvePageSize(pageSize, source.size());
-        if (size <= 0 || size >= source.size()) {
-            return source;
-        }
-        int pageNo = resolvePage(page, current);
-        int from = Math.min((pageNo - 1) * size, source.size());
-        int to = Math.min(from + size, source.size());
-        return source.subList(from, to);
+        return "%" + keyword.trim().toLowerCase() + "%";
     }
 
     private int resolvePage(Integer page, Integer current) {

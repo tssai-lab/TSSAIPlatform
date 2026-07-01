@@ -1,7 +1,11 @@
 package com.tss.platform.repository;
 
 import com.tss.platform.entity.ModelVersion;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -25,6 +29,29 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
     List<ModelVersion> findByAssetIdAndOwnerUserId(String assetId, Integer ownerUserId);
 
     List<ModelVersion> findByAssetIdAndOwnerUserIdAndDeletedFalse(String assetId, Integer ownerUserId);
+
+    @Query("""
+            select v from ModelVersion v
+            join ModelAsset a on a.id = v.assetId
+            where v.deleted = false
+              and a.deleted = false
+              and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+              and (:type is null or a.type = :type)
+              and (
+                    :keyword is null
+                    or lower(a.name) like :keyword
+                    or lower(v.version) like :keyword
+                    or lower(a.remark) like :keyword
+                    or lower(v.fileName) like :keyword
+              )
+            order by v.createdAt desc, v.id desc
+            """)
+    Page<ModelVersion> searchVisibleCatalog(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("type") String type,
+            @Param("keyword") String keyword,
+            Pageable pageable
+    );
 
     Optional<ModelVersion> findByIdAndDeletedFalse(String id);
 

@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
+import com.tss.platform.dto.ModelUploadProgressDto;
 import com.tss.platform.dto.v2.V2ModelUploadDto;
 import com.tss.platform.dto.v2.V2ModelUploadInitRequest;
 import com.tss.platform.entity.ModelAsset;
@@ -15,15 +16,21 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.GetObjectResponse;
 import io.minio.MinioClient;
+import io.minio.ObjectWriteResponse;
+import io.minio.StatObjectResponse;
 import okhttp3.Headers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -33,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -148,6 +156,129 @@ class ModelUploadServiceV2Test {
     }
 
     @Test
+    void saveChunkUploadsObjectOutsideDatabaseTransaction() throws Exception {
+        Fixture fixture = new Fixture();
+        ModelUploadSession session = fixture.session();
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(fixture.chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.empty());
+        when(fixture.chunkRepo.save(any())).thenAnswer(invocation -> {
+            assertTrue(
+                    fixture.activeTransactions.get() > 0,
+                    "chunk metadata must be persisted in a database transaction"
+            );
+            return invocation.getArgument(0);
+        });
+        when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> {
+            assertTrue(
+                    fixture.activeTransactions.get() > 0,
+                    "session metadata must be persisted in a database transaction"
+            );
+            return invocation.getArgument(0);
+        });
+        when(fixture.minioClient.putObject(any())).thenAnswer(invocation -> {
+            assertEquals(
+                    0,
+                    fixture.activeTransactions.get(),
+                    "chunk object upload must run outside database transactions"
+            );
+            return mock(ObjectWriteResponse.class);
+        });
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-1");
+        when(fixture.minioClient.statObject(any())).thenAnswer(invocation -> {
+            assertEquals(
+                    0,
+                    fixture.activeTransactions.get(),
+                    "chunk object stat must run outside database transactions"
+            );
+            return stat;
+        });
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "part-0",
+                "application/octet-stream",
+                new byte[128]
+        );
+
+        ModelUploadProgressDto result =
+                fixture.service.saveChunk(session.getId(), 0, file);
+
+        assertEquals(session.getId(), result.getUploadId());
+        verify(fixture.chunkRepo).save(any());
+        verify(fixture.sessionRepo).save(any());
+    }
+
+    @Test
+    void completeComposesAndValidatesModelObjectOutsideDatabaseTransaction() throws Exception {
+        Fixture fixture = new Fixture();
+        ModelUploadSession session = fixture.session();
+        ModelUploadChunk chunk = new ModelUploadChunk();
+        chunk.setUploadId(session.getId());
+        chunk.setPartIndex(0);
+        chunk.setObjectName("users/7/models/_uploads/upload-1/part-0");
+        chunk.setSizeBytes(session.getFileSize());
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    assertTrue(
+                            fixture.activeTransactions.get() > 0,
+                            "completion status claim must run in a database transaction"
+                    );
+                    return 1;
+                });
+        when(fixture.sessionRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            assertTrue(
+                    fixture.activeTransactions.get() > 0,
+                    "completed session must be persisted in a database transaction"
+            );
+            return invocation.getArgument(0);
+        });
+        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
+                .thenReturn(List.of(chunk));
+        when(fixture.assetRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            assertTrue(
+                    fixture.activeTransactions.get() > 0,
+                    "model asset must be persisted in a database transaction"
+            );
+            return invocation.getArgument(0);
+        });
+        when(fixture.versionRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            assertTrue(
+                    fixture.activeTransactions.get() > 0,
+                    "model version must be persisted in a database transaction"
+            );
+            return invocation.getArgument(0);
+        });
+        when(fixture.minioClient.composeObject(any())).thenAnswer(invocation -> {
+            assertEquals(
+                    0,
+                    fixture.activeTransactions.get(),
+                    "model object compose must run outside database transactions"
+            );
+            return mock(ObjectWriteResponse.class);
+        });
+        when(fixture.minioClient.getObject(any())).thenAnswer(invocation -> {
+            assertEquals(
+                    0,
+                    fixture.activeTransactions.get(),
+                    "model object validation must run outside database transactions"
+            );
+            return new GetObjectResponse(
+                    new Headers.Builder().build(),
+                    "models",
+                    null,
+                    "model.zip",
+                    new ByteArrayInputStream(zipBytes())
+            );
+        });
+
+        V2ModelUploadDto result = fixture.service.completeV2(session.getId());
+
+        assertEquals("COMPLETED", result.getStatus());
+    }
+
+    @Test
     void duplicateVersionReturnsConflictStatus() {
         Fixture fixture = new Fixture();
         ModelUploadSession session = fixture.session();
@@ -253,6 +384,9 @@ class ModelUploadServiceV2Test {
         private final AuthContext authContext = mock(AuthContext.class);
         private final MinioDeleteTaskService deleteTaskService =
                 mock(MinioDeleteTaskService.class);
+        private final PlatformTransactionManager transactionManager =
+                mock(PlatformTransactionManager.class);
+        private final AtomicInteger activeTransactions = new AtomicInteger();
         private final ModelUploadService service;
 
         private Fixture() {
@@ -260,6 +394,18 @@ class ModelUploadServiceV2Test {
             config.setBucket("models");
             when(authContext.currentUserId()).thenReturn(7);
             when(authContext.canAccessOwner(7)).thenReturn(true);
+            when(transactionManager.getTransaction(any())).thenAnswer(invocation -> {
+                activeTransactions.incrementAndGet();
+                return new SimpleTransactionStatus();
+            });
+            doAnswer(invocation -> {
+                activeTransactions.decrementAndGet();
+                return null;
+            }).when(transactionManager).commit(any());
+            doAnswer(invocation -> {
+                activeTransactions.decrementAndGet();
+                return null;
+            }).when(transactionManager).rollback(any());
             service = new ModelUploadService(
                     minioClient,
                     config,
@@ -268,7 +414,8 @@ class ModelUploadServiceV2Test {
                     assetRepo,
                     versionRepo,
                     authContext,
-                    deleteTaskService
+                    deleteTaskService,
+                    transactionManager
             );
         }
 

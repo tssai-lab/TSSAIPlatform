@@ -28,9 +28,11 @@ import io.minio.StatObjectResponse;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedInputStream;
@@ -65,6 +67,7 @@ public class ModelUploadService {
     private final ModelVersionRepository modelVersionRepo;
     private final AuthContext authContext;
     private final MinioDeleteTaskService minioDeleteTaskService;
+    private final TransactionTemplate transactionTemplate;
 
     public ModelUploadService(
             MinioClient minioClient,
@@ -74,7 +77,8 @@ public class ModelUploadService {
             ModelAssetRepository modelAssetRepo,
             ModelVersionRepository modelVersionRepo,
             AuthContext authContext,
-            MinioDeleteTaskService minioDeleteTaskService
+            MinioDeleteTaskService minioDeleteTaskService,
+            PlatformTransactionManager transactionManager
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -84,6 +88,7 @@ public class ModelUploadService {
         this.modelVersionRepo = modelVersionRepo;
         this.authContext = authContext;
         this.minioDeleteTaskService = minioDeleteTaskService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional
@@ -166,11 +171,13 @@ public class ModelUploadService {
         }
     }
 
-    @Transactional
     public ModelUploadProgressDto saveChunk(String uploadId, Integer partIndex, MultipartFile file) {
         ModelUploadSession session = getSession(uploadId);
         if (STATUS_COMPLETED.equals(session.getStatus())) {
             return progress(session);
+        }
+        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("上传状态不允许上传分片: " + session.getStatus());
         }
         if (partIndex == null || partIndex < 0 || partIndex >= session.getTotalChunks()) {
             throw new IllegalArgumentException("partIndex 超出范围");
@@ -183,6 +190,7 @@ public class ModelUploadService {
         }
 
         String objectName = "users/" + session.getOwnerUserId() + "/models/_uploads/" + uploadId + "/part-" + partIndex;
+        StatObjectResponse stat;
         try (InputStream is = file.getInputStream()) {
             minioClient.putObject(
                     PutObjectArgs.builder()
@@ -192,26 +200,23 @@ public class ModelUploadService {
                             .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
                             .build()
             );
-            StatObjectResponse stat = minioClient.statObject(
+            stat = minioClient.statObject(
                     StatObjectArgs.builder().bucket(bucket).object(objectName).build()
             );
-            ModelUploadChunk chunk = chunkRepo.findByUploadIdAndPartIndex(uploadId, partIndex)
-                    .orElseGet(() -> {
-                        ModelUploadChunk c = new ModelUploadChunk();
-                        c.setId("model-chunk-" + UUID.randomUUID().toString().replace("-", ""));
-                        c.setUploadId(uploadId);
-                        c.setPartIndex(partIndex);
-                        c.setCreatedAt(Instant.now());
-                        return c;
-                    });
-            chunk.setObjectName(objectName);
-            chunk.setSizeBytes(file.getSize());
-            chunk.setEtag(stat.etag());
-            chunkRepo.save(chunk);
-            session.setUpdatedAt(Instant.now());
-            return progress(sessionRepo.save(session));
         } catch (Exception e) {
             throw new IllegalArgumentException("分片上传失败: " + e.getMessage());
+        }
+        try {
+            ChunkPersistenceResult result = transactionTemplate.execute(status ->
+                    persistUploadedChunk(uploadId, partIndex, file.getSize(), objectName, stat.etag())
+            );
+            if (result != null && !result.persisted()) {
+                removeObjectQuietly(objectName);
+            }
+            return progress(result == null ? getSession(uploadId) : result.session());
+        } catch (RuntimeException e) {
+            removeObjectQuietly(objectName);
+            throw new IllegalArgumentException("分片上传失败: " + rootMessage(e));
         }
     }
 
@@ -229,7 +234,6 @@ public class ModelUploadService {
         }
     }
 
-    @Transactional
     public V2ModelUploadDto saveChunkV2(
             String uploadId,
             Integer partIndex,
@@ -243,24 +247,117 @@ public class ModelUploadService {
         }
     }
 
-    @Transactional
     public Map<String, Object> complete(UploadCompleteRequest req) {
         validateCompleteRequest(req);
+        CompletionPlan plan = transactionTemplate.execute(status -> prepareCompletionPlan(req));
+        if (plan == null) {
+            throw new IllegalArgumentException("上传状态无效");
+        }
+        if (plan.alreadyCompleted()) {
+            return completedPayload(plan.session());
+        }
+        boolean objectReady = false;
+        try {
+            composeAndValidateModelObject(plan.destName(), plan.chunks());
+            objectReady = true;
+            CompletionPersistenceResult persisted = transactionTemplate.execute(status ->
+                    persistCompletedModel(req, plan)
+            );
+            if (persisted == null) {
+                throw new IllegalArgumentException("保存模型上传记录失败");
+            }
+            registerChunkCleanup(persisted.session().getId(), plan.chunks());
+            return completedPayload(
+                    persisted.session(),
+                    persisted.asset().getName(),
+                    persisted.version().getVersion(),
+                    persisted.asset().getType(),
+                    persisted.asset().getRemark()
+            );
+        } catch (RuntimeException e) {
+            if (objectReady) {
+                removeObjectQuietly(plan.destName());
+            }
+            resetCompletingSessionQuietly(plan.session().getId());
+            if (isDuplicateVersionError(e)) {
+                throw duplicateVersion(plan.target().assetId(), plan.version());
+            }
+            if (e instanceof IllegalArgumentException illegalArgumentException) {
+                throw illegalArgumentException;
+            }
+            throw new IllegalArgumentException("保存模型上传记录失败: " + rootMessage(e));
+        }
+    }
+
+    public V2ModelUploadDto completeV2(String uploadId) {
+        try {
+            ModelUploadSession session = getSession(uploadId);
+            requireText(session.getModelVersion(), "modelVersion 不能为空");
+            requireText(session.getModelName(), "modelName 不能为空");
+            requireText(session.getTaskType(), "taskType 不能为空");
+            requireText(session.getRemark(), "remark 不能为空");
+
+            UploadCompleteRequest request = new UploadCompleteRequest();
+            request.setUploadId(uploadId);
+            request.setAssetId(session.getTargetAssetId());
+            request.setModelName(session.getModelName());
+            request.setVersion(session.getModelVersion());
+            request.setType(session.getTaskType());
+            request.setRemark(session.getRemark());
+            Map<String, Object> completed = complete(request);
+
+            ModelUploadSession refreshed = getSession(uploadId);
+            V2ModelUploadDto dto = toV2(refreshed);
+            dto.setStatus(stringValue(completed.get("status")));
+            dto.setModelId(stringValue(completed.get("id")));
+            dto.setAssetId(stringValue(completed.get("assetId")));
+            dto.setUpdatedAt(refreshed.getUpdatedAt());
+            return dto;
+        } catch (IllegalArgumentException exception) {
+            throw mapV2ModelUploadFailure(exception);
+        }
+    }
+
+    private ChunkPersistenceResult persistUploadedChunk(
+            String uploadId,
+            Integer partIndex,
+            long sizeBytes,
+            String objectName,
+            String etag
+    ) {
+        ModelUploadSession session = getSession(uploadId);
+        if (STATUS_COMPLETED.equals(session.getStatus())) {
+            return new ChunkPersistenceResult(session, false);
+        }
+        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+            throw new IllegalArgumentException("上传状态不允许上传分片: " + session.getStatus());
+        }
+        ModelUploadChunk chunk = chunkRepo.findByUploadIdAndPartIndex(uploadId, partIndex)
+                .orElseGet(() -> {
+                    ModelUploadChunk c = new ModelUploadChunk();
+                    c.setId("model-chunk-" + UUID.randomUUID().toString().replace("-", ""));
+                    c.setUploadId(uploadId);
+                    c.setPartIndex(partIndex);
+                    c.setCreatedAt(Instant.now());
+                    return c;
+                });
+        chunk.setObjectName(objectName);
+        chunk.setSizeBytes(sizeBytes);
+        chunk.setEtag(etag);
+        chunkRepo.save(chunk);
+        session.setUpdatedAt(Instant.now());
+        return new ChunkPersistenceResult(sessionRepo.save(session), true);
+    }
+
+    private CompletionPlan prepareCompletionPlan(UploadCompleteRequest req) {
         ModelUploadSession session = claimCompleting(req.getUploadId());
         if (STATUS_COMPLETED.equals(session.getStatus())) {
-            return completedPayload(session);
+            return CompletionPlan.completed(session);
         }
 
         CompletionTarget target = resolveCompletionTarget(req, session);
         List<ModelUploadChunk> chunks = chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId());
-        if (chunks.size() != session.getTotalChunks()) {
-            throw new IllegalArgumentException("分片未上传完成");
-        }
-        for (int i = 0; i < session.getTotalChunks(); i += 1) {
-            if (!Integer.valueOf(i).equals(chunks.get(i).getPartIndex())) {
-                throw new IllegalArgumentException("缺少分片: " + i);
-            }
-        }
+        validateUploadedChunks(session, chunks);
 
         String assetId = target.assetId();
         String version = req.getVersion().trim();
@@ -272,6 +369,35 @@ public class ModelUploadService {
                 + "/models/" + assetId
                 + "/" + sanitizeSegment(version)
                 + "/" + sanitizeSegment(session.getFileName());
+        return new CompletionPlan(
+                session,
+                target,
+                List.copyOf(chunks),
+                versionId,
+                destName,
+                version,
+                false
+        );
+    }
+
+    private void validateUploadedChunks(
+            ModelUploadSession session,
+            List<ModelUploadChunk> chunks
+    ) {
+        if (chunks.size() != session.getTotalChunks()) {
+            throw new IllegalArgumentException("分片未上传完成");
+        }
+        for (int i = 0; i < session.getTotalChunks(); i += 1) {
+            if (!Integer.valueOf(i).equals(chunks.get(i).getPartIndex())) {
+                throw new IllegalArgumentException("缺少分片: " + i);
+            }
+        }
+    }
+
+    private void composeAndValidateModelObject(
+            String destName,
+            List<ModelUploadChunk> chunks
+    ) {
         try {
             List<ComposeSource> sources = chunks.stream()
                     .map(chunk -> ComposeSource.builder()
@@ -291,83 +417,57 @@ public class ModelUploadService {
             removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
         }
-
-        ModelAsset asset;
-        ModelVersion ver;
-        try {
-            Instant now = Instant.now();
-            asset = target.asset();
-            if (target.createAsset()) {
-                asset.setId(assetId);
-                asset.setName(req.getModelName().trim());
-                asset.setType(target.taskType());
-                asset.setRemark(req.getRemark().trim());
-                asset.setOwnerUserId(target.ownerUserId());
-                asset.setCreatedAt(now);
-                asset.setUpdatedAt(now);
-                modelAssetRepo.saveAndFlush(asset);
-            }
-
-            ver = new ModelVersion();
-            ver.setId(versionId);
-            ver.setAssetId(assetId);
-            ver.setVersion(version);
-            ver.setFileName(session.getFileName());
-            ver.setStoragePath(destName);
-            ver.setSizeBytes(session.getFileSize());
-            ver.setOwnerUserId(target.ownerUserId());
-            ver.setCreatedAt(now);
-            ver.setStatus("READY");
-            ver.setChangeLog(normalizeText(req.getRemark()));
-            ver.setPublishedAt(now);
-            ver.setCreatedBy(authContext.currentUserId());
-            modelVersionRepo.saveAndFlush(ver);
-
-            session.setStatus(STATUS_COMPLETED);
-            session.setStoragePath(destName);
-            session.setAssetId(assetId);
-            session.setVersionId(versionId);
-            session.setUpdatedAt(now);
-            sessionRepo.saveAndFlush(session);
-        } catch (RuntimeException e) {
-            removeObjectQuietly(destName);
-            if (isDuplicateVersionError(e)) {
-                throw duplicateVersion(assetId, version);
-            }
-            throw new IllegalArgumentException("保存模型上传记录失败: " + rootMessage(e));
-        }
-        registerChunkCleanup(session.getId(), chunks);
-
-        return completedPayload(session, asset.getName(), ver.getVersion(), asset.getType(), asset.getRemark());
     }
 
-    @Transactional
-    public V2ModelUploadDto completeV2(String uploadId) {
-        try {
-            ModelUploadSession session = getSession(uploadId);
-            requireText(session.getModelVersion(), "modelVersion 不能为空");
-            requireText(session.getModelName(), "modelName 不能为空");
-            requireText(session.getTaskType(), "taskType 不能为空");
-            requireText(session.getRemark(), "remark 不能为空");
-
-            UploadCompleteRequest request = new UploadCompleteRequest();
-            request.setUploadId(uploadId);
-            request.setAssetId(session.getTargetAssetId());
-            request.setModelName(session.getModelName());
-            request.setVersion(session.getModelVersion());
-            request.setType(session.getTaskType());
-            request.setRemark(session.getRemark());
-            Map<String, Object> completed = complete(request);
-
-            V2ModelUploadDto dto = toV2(session);
-            dto.setStatus(stringValue(completed.get("status")));
-            dto.setModelId(stringValue(completed.get("id")));
-            dto.setAssetId(stringValue(completed.get("assetId")));
-            dto.setUpdatedAt(session.getUpdatedAt());
-            return dto;
-        } catch (IllegalArgumentException exception) {
-            throw mapV2ModelUploadFailure(exception);
+    private CompletionPersistenceResult persistCompletedModel(
+            UploadCompleteRequest req,
+            CompletionPlan plan
+    ) {
+        CompletionTarget target = plan.target();
+        if (!target.createAsset()) {
+            target = resolveCompletionTarget(req, plan.session());
         }
+        String assetId = target.assetId();
+        if (modelVersionRepo.existsByAssetIdAndVersion(assetId, plan.version())) {
+            throw duplicateVersion(assetId, plan.version());
+        }
+
+        Instant now = Instant.now();
+        ModelAsset asset = target.asset();
+        if (target.createAsset()) {
+            asset.setId(assetId);
+            asset.setName(req.getModelName().trim());
+            asset.setType(target.taskType());
+            asset.setRemark(req.getRemark().trim());
+            asset.setOwnerUserId(target.ownerUserId());
+            asset.setCreatedAt(now);
+            asset.setUpdatedAt(now);
+            modelAssetRepo.saveAndFlush(asset);
+        }
+
+        ModelVersion ver = new ModelVersion();
+        ver.setId(plan.versionId());
+        ver.setAssetId(assetId);
+        ver.setVersion(plan.version());
+        ver.setFileName(plan.session().getFileName());
+        ver.setStoragePath(plan.destName());
+        ver.setSizeBytes(plan.session().getFileSize());
+        ver.setOwnerUserId(target.ownerUserId());
+        ver.setCreatedAt(now);
+        ver.setStatus("READY");
+        ver.setChangeLog(normalizeText(req.getRemark()));
+        ver.setPublishedAt(now);
+        ver.setCreatedBy(authContext.currentUserId());
+        modelVersionRepo.saveAndFlush(ver);
+
+        ModelUploadSession session = plan.session();
+        session.setStatus(STATUS_COMPLETED);
+        session.setStoragePath(plan.destName());
+        session.setAssetId(assetId);
+        session.setVersionId(plan.versionId());
+        session.setUpdatedAt(now);
+        sessionRepo.saveAndFlush(session);
+        return new CompletionPersistenceResult(session, asset, ver);
     }
 
     private void validateCompleteRequest(UploadCompleteRequest req) {
@@ -681,6 +781,34 @@ public class ModelUploadService {
         }
     }
 
+    private void resetCompletingSessionQuietly(String uploadId) {
+        if (uploadId == null || uploadId.isBlank()) {
+            return;
+        }
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                ModelUploadSession session = sessionRepo.findById(uploadId).orElse(null);
+                if (session == null || !STATUS_COMPLETING.equals(session.getStatus())) {
+                    return;
+                }
+                Instant now = Instant.now();
+                int updated = sessionRepo.updateStatusIfCurrent(
+                        session.getId(),
+                        session.getOwnerUserId(),
+                        STATUS_COMPLETING,
+                        STATUS_UPLOADING,
+                        now
+                );
+                if (updated > 0) {
+                    session.setStatus(STATUS_UPLOADING);
+                    session.setUpdatedAt(now);
+                }
+            });
+        } catch (Exception ignored) {
+            // 回退失败不覆盖原始上传错误。
+        }
+    }
+
     private boolean sameUpload(ModelUploadSession session, UploadInitRequest req) {
         return session.getFileName().equals(req.getFileName().trim())
                 && session.getFileSize().equals(req.getFileSize());
@@ -865,6 +993,41 @@ public class ModelUploadService {
             Integer ownerUserId,
             String taskType,
             boolean createAsset
+    ) {
+    }
+
+    private record ChunkPersistenceResult(
+            ModelUploadSession session,
+            boolean persisted
+    ) {
+    }
+
+    private record CompletionPlan(
+            ModelUploadSession session,
+            CompletionTarget target,
+            List<ModelUploadChunk> chunks,
+            String versionId,
+            String destName,
+            String version,
+            boolean alreadyCompleted
+    ) {
+        private static CompletionPlan completed(ModelUploadSession session) {
+            return new CompletionPlan(
+                    session,
+                    null,
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    true
+            );
+        }
+    }
+
+    private record CompletionPersistenceResult(
+            ModelUploadSession session,
+            ModelAsset asset,
+            ModelVersion version
     ) {
     }
 

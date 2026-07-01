@@ -106,7 +106,7 @@ public class V2DatasetCatalogService {
         if (ready != null || draft != null) {
             actions.add("EDIT");
         }
-        if (draft != null && "MULTIMODAL".equals(catalogItem.asset().getType())) {
+        if (draft != null) {
             actions.add("ADD_DATA");
         }
         if (canPublish) {

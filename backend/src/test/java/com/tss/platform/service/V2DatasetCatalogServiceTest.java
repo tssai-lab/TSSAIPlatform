@@ -133,6 +133,24 @@ class V2DatasetCatalogServiceTest {
     }
 
     @Test
+    void singleModalDraftListExposesSameAddDataActionAsEditSession() {
+        Fixture fixture = new Fixture();
+        DatasetAsset asset = fixture.asset();
+        asset.setType("POINT_CLOUD");
+        DatasetVersion draft = fixture.version("draft-1", "DRAFT", 1);
+        fixture.stub(List.of(asset), List.of(draft), List.of());
+
+        V2DatasetListItem item = fixture.service
+                .list(null, null, null, null, null)
+                .getData()
+                .get(0);
+
+        assertTrue(item.getHasDraft());
+        assertEquals(draft.getId(), item.getEditSessionId());
+        assertTrue(item.getAvailableActions().contains("ADD_DATA"));
+    }
+
+    @Test
     void olderFailedImportKeepsDraftNotPublishableWhenLatestImportSucceeds() {
         Fixture fixture = new Fixture();
         DatasetAsset asset = fixture.asset();
