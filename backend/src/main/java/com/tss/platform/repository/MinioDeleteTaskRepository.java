@@ -34,4 +34,18 @@ public interface MinioDeleteTaskRepository extends JpaRepository<MinioDeleteTask
             @Param("processingStatus") String processingStatus,
             @Param("updatedAt") Instant updatedAt
     );
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update MinioDeleteTask t
+            set t.status = :pendingStatus, t.updatedAt = :updatedAt
+            where t.status = :processingStatus
+              and (t.updatedAt is null or t.updatedAt < :staleBefore)
+            """)
+    int resetStaleProcessing(
+            @Param("processingStatus") String processingStatus,
+            @Param("pendingStatus") String pendingStatus,
+            @Param("staleBefore") Instant staleBefore,
+            @Param("updatedAt") Instant updatedAt
+    );
 }

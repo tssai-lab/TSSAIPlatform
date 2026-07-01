@@ -120,18 +120,61 @@ class DatasetUploadRecoveryServiceTest {
     }
 
     @Test
-    void ignoresAppendPackageSessionInInitialUploadRecovery() throws Exception {
+    void recoversAppendPackageSessionAndLaunchesImportWhenObjectExists() throws Exception {
         Fixture fixture = new Fixture();
         fixture.session.setUploadPurpose("APPEND_PACKAGE");
-        when(fixture.sessionRepo.findByIdForUpdate(fixture.session.getId()))
-                .thenReturn(Optional.of(fixture.session));
+        fixture.session.setAssetCreatedByUpload(false);
+        fixture.stubLockedState();
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(fixture.session.getFileSize());
+        when(fixture.minioService.stat(fixture.appendObjectName())).thenReturn(stat);
+        when(fixture.versionPackageRepo.findMaxPackageOrderByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(2);
+        when(fixture.packageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetPackage value = invocation.getArgument(0);
+            fixture.savedPackage.set(value);
+            return value;
+        });
+        when(fixture.versionPackageRepo.saveAndFlush(any())).thenAnswer(invocation -> {
+            DatasetVersionPackage value = invocation.getArgument(0);
+            fixture.savedVersionPackage.set(value);
+            return value;
+        });
 
         fixture.service.recover(fixture.session.getId());
 
-        verify(fixture.minioService, never()).stat(any());
-        verify(fixture.packageRepo, never()).saveAndFlush(any());
+        assertEquals("COMPLETED", fixture.session.getStatus());
+        assertEquals(fixture.appendObjectName(), fixture.session.getStoragePath());
+        assertNotNull(fixture.session.getImportJobId());
+        assertEquals("PENDING", fixture.savedPackage.get().getStatus());
+        assertEquals(fixture.appendObjectName(), fixture.savedPackage.get().getStoragePath());
+        assertEquals(fixture.asset.getId(), fixture.savedPackage.get().getDatasetAssetId());
+        assertEquals(fixture.version.getId(), fixture.savedVersionPackage.get().getDatasetVersionId());
+        assertEquals(fixture.savedPackage.get().getId(), fixture.savedVersionPackage.get().getPackageId());
+        assertEquals("APPEND", fixture.savedVersionPackage.get().getPackageRole());
+        assertEquals(3, fixture.savedVersionPackage.get().getPackageOrder());
+        assertEquals(fixture.savedPackage.get().getId(), fixture.savedJob.get().getPackageId());
+        verify(fixture.launcher).launch(fixture.session.getImportJobId());
+    }
+
+    @Test
+    void rollsBackAppendPackageSessionWithoutDeletingDraftWhenObjectStatFails() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.session.setUploadPurpose("APPEND_PACKAGE");
+        fixture.session.setAssetCreatedByUpload(false);
+        fixture.stubLockedState();
+        when(fixture.minioService.stat(fixture.appendObjectName()))
+                .thenThrow(new RuntimeException("not found"));
+
+        fixture.service.recover(fixture.session.getId());
+
+        assertEquals("UPLOADING", fixture.session.getStatus());
+        assertEquals(fixture.version.getId(), fixture.session.getVersionId());
+        assertEquals(fixture.asset.getId(), fixture.session.getAssetId());
+        assertNull(fixture.session.getStoragePath());
+        assertNull(fixture.session.getImportJobId());
         verify(fixture.versionRepo, never()).delete(any());
-        assertEquals("COMPLETING", fixture.session.getStatus());
+        verify(fixture.assetRepo, never()).delete(any());
     }
 
     private static final class Fixture {
@@ -170,6 +213,7 @@ class DatasetUploadRecoveryServiceTest {
             when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
             when(sessionRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
+            when(versionRepo.findByIdAndDeletedFalseForUpdate(version.getId())).thenReturn(Optional.of(version));
             when(versionRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(assetRepo.findById(asset.getId())).thenReturn(Optional.of(asset));
             when(jobRepo.saveAndFlush(any())).thenAnswer(invocation -> {
@@ -181,6 +225,10 @@ class DatasetUploadRecoveryServiceTest {
 
         private String objectName() {
             return "users/7/datasets/asset-1/v2/dataset.zip";
+        }
+
+        private String appendObjectName() {
+            return "users/7/datasets/asset-1/v2/packages/upload-1/dataset.zip";
         }
 
         private DatasetUploadSession session() {
@@ -215,6 +263,7 @@ class DatasetUploadRecoveryServiceTest {
             DatasetAsset value = new DatasetAsset();
             value.setId("asset-1");
             value.setName("multimodal");
+            value.setOwnerUserId(7);
             value.setCurrentVersionId(null);
             value.setDeleted(false);
             return value;

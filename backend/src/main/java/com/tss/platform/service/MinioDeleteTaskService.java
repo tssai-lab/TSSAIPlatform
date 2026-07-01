@@ -11,6 +11,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -36,6 +37,7 @@ public class MinioDeleteTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(MinioDeleteTaskService.class);
     private static final int DEFAULT_MAX_RETRY_COUNT = 5;
+    private static final Duration PROCESSING_STALE_AFTER = Duration.ofMinutes(30);
     private static final Set<String> ACTIVE_STATUSES = Set.of(STATUS_PENDING, STATUS_PROCESSING);
 
     private final MinioDeleteTaskRepository repo;
@@ -145,10 +147,26 @@ public class MinioDeleteTaskService {
     }
 
     public List<String> findPendingTaskIds() {
+        resetStaleProcessingTasks();
         return repo.findTop50ByStatusOrderByCreatedAtAsc(STATUS_PENDING)
                 .stream()
                 .map(MinioDeleteTask::getId)
                 .toList();
+    }
+
+    public int resetStaleProcessingTasks() {
+        Instant now = Instant.now();
+        Integer resetCount = transactionTemplate.execute(status -> repo.resetStaleProcessing(
+                STATUS_PROCESSING,
+                STATUS_PENDING,
+                now.minus(PROCESSING_STALE_AFTER),
+                now
+        ));
+        int value = resetCount == null ? 0 : resetCount;
+        if (value > 0) {
+            log.warn("MinIO delete stale PROCESSING tasks reset to PENDING: count={}", value);
+        }
+        return value;
     }
 
     public void processPendingTask(String taskId) {

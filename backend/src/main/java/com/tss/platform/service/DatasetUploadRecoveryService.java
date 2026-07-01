@@ -30,6 +30,12 @@ public class DatasetUploadRecoveryService {
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String VERSION_STATUS_DRAFT = "DRAFT";
+    private static final String UPLOAD_PURPOSE_APPEND = "APPEND_PACKAGE";
+    private static final String PACKAGE_ROLE_PRIMARY = "PRIMARY";
+    private static final String PACKAGE_ROLE_APPEND = "APPEND";
+    private static final String PACKAGE_STATUS_READY = "READY";
+    private static final String IMPORT_STATUS_PENDING = "PENDING";
     private static final Duration STALE_AFTER = Duration.ofMinutes(30);
 
     private final DatasetUploadSessionRepository sessionRepo;
@@ -87,7 +93,6 @@ public class DatasetUploadRecoveryService {
         RecoverySnapshot snapshot = transactionTemplate.execute(status ->
                 sessionRepo.findByIdForUpdate(uploadId)
                         .filter(session -> STATUS_COMPLETING.equals(session.getStatus()))
-                        .filter(session -> !"APPEND_PACKAGE".equals(session.getUploadPurpose()))
                         .map(this::snapshot)
                         .orElse(null)
         );
@@ -130,6 +135,7 @@ public class DatasetUploadRecoveryService {
     }
 
     private RecoverySnapshot snapshot(DatasetUploadSession session) {
+        boolean appendPackage = UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose());
         return new RecoverySnapshot(
                 session.getId(),
                 session.getVersionId(),
@@ -137,11 +143,21 @@ public class DatasetUploadRecoveryService {
                 Boolean.TRUE.equals(session.getAssetCreatedByUpload()),
                 session.getOwnerUserId(),
                 session.getFileSize(),
-                DatasetUploadService.manifestDestinationObject(session)
+                appendPackage
+                        ? DatasetUploadService.appendPackageDestinationObject(session)
+                        : DatasetUploadService.manifestDestinationObject(session),
+                appendPackage
         );
     }
 
     private String finalizeRecoveredUpload(RecoverySnapshot snapshot, long objectSize) {
+        if (snapshot.appendPackage()) {
+            return finalizeRecoveredAppendPackage(snapshot, objectSize);
+        }
+        return finalizeRecoveredInitialUpload(snapshot, objectSize);
+    }
+
+    private String finalizeRecoveredInitialUpload(RecoverySnapshot snapshot, long objectSize) {
         DatasetUploadSession session = sessionRepo.findByIdForUpdate(snapshot.uploadId())
                 .orElse(null);
         if (session == null || !STATUS_COMPLETING.equals(session.getStatus())) {
@@ -156,7 +172,7 @@ public class DatasetUploadRecoveryService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "dataset version not found: " + snapshot.versionId()
                 ));
-        if (!"DRAFT".equals(version.getStatus())) {
+        if (!VERSION_STATUS_DRAFT.equals(version.getStatus())) {
             throw new IllegalArgumentException(
                     "dataset version must be DRAFT: " + version.getId()
             );
@@ -175,7 +191,7 @@ public class DatasetUploadRecoveryService {
         datasetPackage.setFileName(session.getFileName());
         datasetPackage.setSizeBytes(objectSize);
         datasetPackage.setManifestPath(session.getManifestPath());
-        datasetPackage.setStatus("READY");
+        datasetPackage.setStatus(PACKAGE_STATUS_READY);
         datasetPackage.setCreatedAt(now);
         datasetPackage.setDeleted(false);
         datasetPackage = packageRepo.saveAndFlush(datasetPackage);
@@ -183,7 +199,7 @@ public class DatasetUploadRecoveryService {
         DatasetVersionPackage versionPackage = new DatasetVersionPackage();
         versionPackage.setDatasetVersionId(version.getId());
         versionPackage.setPackageId(datasetPackage.getId());
-        versionPackage.setPackageRole("PRIMARY");
+        versionPackage.setPackageRole(PACKAGE_ROLE_PRIMARY);
         versionPackage.setPackageOrder(0);
         versionPackage.setCreatedAt(now);
         versionPackageRepo.saveAndFlush(versionPackage);
@@ -196,7 +212,7 @@ public class DatasetUploadRecoveryService {
                     value.setId("ijob-" + UUID.randomUUID().toString().replace("-", ""));
                     value.setDatasetVersionId(version.getId());
                     value.setPackageId(primaryPackage.getId());
-                    value.setStatus("PENDING");
+                    value.setStatus(IMPORT_STATUS_PENDING);
                     value.setProgress(0);
                     value.setImportedSamples(0);
                     value.setOwnerUserId(session.getOwnerUserId());
@@ -210,10 +226,90 @@ public class DatasetUploadRecoveryService {
         session.setStatus(STATUS_COMPLETED);
         session.setUpdatedAt(now);
         sessionRepo.saveAndFlush(session);
-        return "PENDING".equals(job.getStatus()) ? job.getId() : null;
+        return IMPORT_STATUS_PENDING.equals(job.getStatus()) ? job.getId() : null;
+    }
+
+    private String finalizeRecoveredAppendPackage(RecoverySnapshot snapshot, long objectSize) {
+        DatasetUploadSession session = sessionRepo.findByIdForUpdate(snapshot.uploadId())
+                .orElse(null);
+        if (session == null || !STATUS_COMPLETING.equals(session.getStatus())) {
+            return null;
+        }
+        if (!snapshot.versionId().equals(session.getVersionId())
+                || !snapshot.assetId().equals(session.getAssetId())) {
+            return null;
+        }
+
+        DatasetVersion draft = versionRepo.findByIdAndDeletedFalseForUpdate(snapshot.versionId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset workspace version not found: " + snapshot.versionId()
+                ));
+        if (!snapshot.assetId().equals(draft.getAssetId())) {
+            return null;
+        }
+        if (!VERSION_STATUS_DRAFT.equals(draft.getStatus())) {
+            throw new IllegalArgumentException(
+                    "dataset version must be DRAFT: " + draft.getId()
+            );
+        }
+        DatasetAsset asset = assetRepo.findById(draft.getAssetId())
+                .filter(value -> !Boolean.TRUE.equals(value.getDeleted()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset asset not found: " + draft.getAssetId()
+                ));
+
+        Instant now = Instant.now();
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId("dataset-pkg-" + UUID.randomUUID().toString().replace("-", ""));
+        datasetPackage.setDatasetAssetId(asset.getId());
+        datasetPackage.setStoragePath(snapshot.objectName());
+        datasetPackage.setFileName(session.getFileName());
+        datasetPackage.setSizeBytes(objectSize);
+        datasetPackage.setManifestPath(session.getManifestPath());
+        datasetPackage.setStatus(IMPORT_STATUS_PENDING);
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        datasetPackage = packageRepo.saveAndFlush(datasetPackage);
+
+        Integer maxOrder = versionPackageRepo
+                .findMaxPackageOrderByDatasetVersionId(draft.getId());
+        DatasetVersionPackage relation = new DatasetVersionPackage();
+        relation.setDatasetVersionId(draft.getId());
+        relation.setPackageId(datasetPackage.getId());
+        relation.setPackageRole(PACKAGE_ROLE_APPEND);
+        relation.setPackageOrder((maxOrder == null ? -1 : maxOrder) + 1);
+        relation.setCreatedAt(now);
+        versionPackageRepo.saveAndFlush(relation);
+
+        ImportJob job = new ImportJob();
+        job.setId("ijob-" + UUID.randomUUID().toString().replace("-", ""));
+        job.setDatasetVersionId(draft.getId());
+        job.setPackageId(datasetPackage.getId());
+        job.setStatus(IMPORT_STATUS_PENDING);
+        job.setProgress(0);
+        job.setImportedSamples(0);
+        job.setOwnerUserId(asset.getOwnerUserId());
+        job.setCreatedAt(now);
+        job.setUpdatedAt(now);
+        job = jobRepo.saveAndFlush(job);
+
+        session.setStoragePath(snapshot.objectName());
+        session.setImportJobId(job.getId());
+        session.setStatus(STATUS_COMPLETED);
+        session.setUpdatedAt(now);
+        sessionRepo.saveAndFlush(session);
+        return job.getId();
     }
 
     private void rollbackReservation(RecoverySnapshot snapshot) {
+        if (snapshot.appendPackage()) {
+            rollbackAppendReservation(snapshot);
+            return;
+        }
+        rollbackInitialReservation(snapshot);
+    }
+
+    private void rollbackInitialReservation(RecoverySnapshot snapshot) {
         transactionTemplate.executeWithoutResult(status -> {
             DatasetUploadSession session = sessionRepo.findByIdForUpdate(snapshot.uploadId())
                     .orElse(null);
@@ -252,6 +348,27 @@ public class DatasetUploadRecoveryService {
         });
     }
 
+    private void rollbackAppendReservation(RecoverySnapshot snapshot) {
+        transactionTemplate.executeWithoutResult(status -> {
+            DatasetUploadSession session = sessionRepo.findByIdForUpdate(snapshot.uploadId())
+                    .orElse(null);
+            if (session == null || !STATUS_COMPLETING.equals(session.getStatus())) {
+                return;
+            }
+            if (!snapshot.versionId().equals(session.getVersionId())
+                    || !snapshot.assetId().equals(session.getAssetId())) {
+                return;
+            }
+
+            session.setStatus(STATUS_UPLOADING);
+            session.setStoragePath(null);
+            session.setImportJobId(null);
+            session.setAssetCreatedByUpload(false);
+            session.setUpdatedAt(Instant.now());
+            sessionRepo.saveAndFlush(session);
+        });
+    }
+
     private record RecoverySnapshot(
             String uploadId,
             String versionId,
@@ -259,7 +376,8 @@ public class DatasetUploadRecoveryService {
             boolean assetCreatedByUpload,
             Integer ownerUserId,
             long expectedSize,
-            String objectName
+            String objectName,
+            boolean appendPackage
     ) {
     }
 }

@@ -2108,7 +2108,7 @@ public class DatasetUploadService {
         );
     }
 
-    private static String appendPackageDestinationObject(DatasetUploadSession session) {
+    static String appendPackageDestinationObject(DatasetUploadSession session) {
         if (session.getOwnerUserId() == null
                 || session.getAssetId() == null || session.getAssetId().isBlank()
                 || session.getVersionNo() == null

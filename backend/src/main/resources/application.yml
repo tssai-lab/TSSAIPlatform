@@ -4,6 +4,10 @@ server:
     uri-encoding: UTF-8
     use-relative-redirects: true
 
+app:
+  cors:
+    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
+
 # MinIO（与 Docker 容器 minio-tss 一致，数据持久化到仓库根目录 tss_minio_data）
 minio:
   endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9010}
