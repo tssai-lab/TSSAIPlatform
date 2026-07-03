@@ -47,7 +47,7 @@ public class V2ImportJobService {
         }
     }
 
-    private Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+    private Map<String, Object> reasonDetails(RuntimeException exception) {
         String message = exception.getMessage() == null ? "" : exception.getMessage();
         if (message.isBlank()) {
             return Map.of();

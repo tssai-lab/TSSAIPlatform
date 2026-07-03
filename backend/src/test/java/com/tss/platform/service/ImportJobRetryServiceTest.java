@@ -65,8 +65,8 @@ class ImportJobRetryServiceTest {
         Fixture fixture = new Fixture();
         fixture.job.setStatus("RUNNING");
 
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
+        ImportJobQueryService.ImportJobRetryRejectedException error = assertThrows(
+                ImportJobQueryService.ImportJobRetryRejectedException.class,
                 () -> fixture.service.retry("ijob-1", "FULL")
         );
 
@@ -79,8 +79,8 @@ class ImportJobRetryServiceTest {
         Fixture fixture = new Fixture();
         fixture.job.setStatus("FAILED");
 
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
+        ImportJobQueryService.ImportJobRetryRejectedException error = assertThrows(
+                ImportJobQueryService.ImportJobRetryRejectedException.class,
                 () -> fixture.service.retry("ijob-1", "PARTIAL")
         );
 
@@ -97,8 +97,8 @@ class ImportJobRetryServiceTest {
                 fixture.version.getId()
         )).thenReturn(1L);
 
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
+        ImportJobQueryService.ImportJobRetryRejectedException error = assertThrows(
+                ImportJobQueryService.ImportJobRetryRejectedException.class,
                 () -> fixture.service.retry("ijob-1", "FULL")
         );
 
@@ -119,8 +119,8 @@ class ImportJobRetryServiceTest {
         when(fixture.importJobRepo.findByDatasetVersionId(fixture.version.getId()))
                 .thenReturn(List.of(fixture.job, running));
 
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
+        ImportJobQueryService.ImportJobRetryRejectedException error = assertThrows(
+                ImportJobQueryService.ImportJobRetryRejectedException.class,
                 () -> fixture.service.retry("ijob-1", "FULL")
         );
 

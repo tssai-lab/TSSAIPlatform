@@ -175,7 +175,7 @@ public class V2ExceptionHandler {
                 : "请求参数格式不正确";
     }
 
-    private static Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+    private static Map<String, Object> reasonDetails(RuntimeException exception) {
         String message = exception.getMessage();
         if (message == null || message.isBlank()) {
             return Map.of();

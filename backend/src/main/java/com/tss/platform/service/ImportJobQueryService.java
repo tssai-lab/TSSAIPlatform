@@ -179,13 +179,13 @@ public class ImportJobQueryService {
         return dto;
     }
 
-    public static class ImportJobAccessException extends IllegalArgumentException {
+    public static class ImportJobAccessException extends RuntimeException {
         public ImportJobAccessException(String message) {
             super(message);
         }
     }
 
-    public static class ImportJobRetryRejectedException extends IllegalArgumentException {
+    public static class ImportJobRetryRejectedException extends RuntimeException {
         public ImportJobRetryRejectedException(String message) {
             super(message);
         }

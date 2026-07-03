@@ -24,6 +24,9 @@ public class ImportJobController {
     public ApiResponse<ImportJobStatusDto> status(@PathVariable String importJobId) {
         try {
             return ApiResponse.ok(service.getStatus(importJobId));
+        } catch (ImportJobQueryService.ImportJobAccessException
+                 | ImportJobQueryService.ImportJobRetryRejectedException e) {
+            return ApiResponse.fail(e.getMessage());
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
@@ -36,6 +39,9 @@ public class ImportJobController {
     ) {
         try {
             return ApiResponse.ok(service.retry(importJobId, mode));
+        } catch (ImportJobQueryService.ImportJobAccessException
+                 | ImportJobQueryService.ImportJobRetryRejectedException e) {
+            return ApiResponse.fail(e.getMessage());
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

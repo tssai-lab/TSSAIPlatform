@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -51,7 +52,25 @@ class ImportJobQueryServiceTest {
         when(fixture.assetRepo.findByIdAndDeletedFalse(asset.getId())).thenReturn(Optional.of(asset));
         when(fixture.authContext.canAccessOwner(asset.getOwnerUserId())).thenReturn(false);
 
-        assertThrows(IllegalArgumentException.class, () -> fixture.service.getStatus(job.getId()));
+        assertThrows(
+                ImportJobQueryService.ImportJobAccessException.class,
+                () -> fixture.service.getStatus(job.getId())
+        );
+    }
+
+    @Test
+    void importJobBusinessExceptionsDoNotExtendIllegalArgumentException() {
+        RuntimeException access =
+                new ImportJobQueryService.ImportJobAccessException(
+                        "importJob not found or no permission"
+                );
+        RuntimeException rejected =
+                new ImportJobQueryService.ImportJobRetryRejectedException(
+                        "only FAILED ImportJob can be retried"
+                );
+
+        assertFalse(access instanceof IllegalArgumentException);
+        assertFalse(rejected instanceof IllegalArgumentException);
     }
 
     private static final class Fixture {
