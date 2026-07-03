@@ -25,7 +25,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +36,8 @@ public class V2DatasetEditService {
 
     private static final String DRAFT = "DRAFT";
     private static final String APPEND_PACKAGE = "APPEND_PACKAGE";
+    private static final String IMPORT_SUCCESS = "SUCCESS";
+    private static final String IMPORT_SUPERSEDED = "SUPERSEDED";
     private static final Set<String> IMPORTING = Set.of("PENDING", "RUNNING");
 
     private final DatasetAssetRepository assetRepo;
@@ -131,12 +132,12 @@ public class V2DatasetEditService {
                 .orElse(null);
         List<ImportJob> importJobs =
                 importJobRepo.findByDatasetVersionId(draft.getId());
-        ImportJob latestJob = latestImportJob(importJobs);
+        ImportJob statusJob = V2ImportJobStatusSelector.statusJobOf(importJobs);
         long sampleCount =
                 sampleRepo.countByDatasetVersionIdAndDeletedFalse(draft.getId());
         boolean canPublish = sampleCount > 0
                 && importJobs.stream()
-                        .allMatch(job -> "SUCCESS".equals(job.getStatus()));
+                        .allMatch(job -> isPublishTerminalJobStatus(job.getStatus()));
 
         List<String> actions = new ArrayList<>();
         actions.add("VIEW");
@@ -148,14 +149,15 @@ public class V2DatasetEditService {
         V2DatasetEditSessionDto dto = new V2DatasetEditSessionDto();
         dto.setEditSessionId(draft.getId());
         dto.setDatasetId(asset.getId());
+        dto.setImportJobId(statusJob == null ? null : statusJob.getId());
         dto.setVersionLabel(displayVersion(draft));
-        dto.setDisplayStatus(editDisplayStatus(latestJob));
+        dto.setDisplayStatus(editDisplayStatus(statusJob));
         dto.setLatestUpload(latestUpload == null ? null : toUpload(latestUpload));
-        dto.setImportProgress(latestJob == null ? null : latestJob.getProgress());
+        dto.setImportProgress(statusJob == null ? null : statusJob.getProgress());
         dto.setSampleCount(sampleCount);
         dto.setCanPublish(canPublish);
         dto.setAvailableActions(List.copyOf(actions));
-        dto.setUserError(userError(latestJob));
+        dto.setUserError(userError(statusJob));
         return dto;
     }
 
@@ -176,7 +178,8 @@ public class V2DatasetEditService {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
                     "DATASET_NOT_PUBLISHABLE",
-                    "数据集尚不满足发布条件"
+                    "数据集尚不满足发布条件",
+                    reasonDetails(exception)
             );
         }
         V2DatasetPublishResult result = new V2DatasetPublishResult();
@@ -214,23 +217,10 @@ public class V2DatasetEditService {
         return draft;
     }
 
-    private ImportJob latestImportJob(List<ImportJob> importJobs) {
-        return importJobs.stream()
-                .max(Comparator
-                        .comparing(
-                                ImportJob::getCreatedAt,
-                                Comparator.nullsFirst(Comparator.naturalOrder())
-                        )
-                        .thenComparing(
-                                ImportJob::getId,
-                                Comparator.nullsFirst(Comparator.naturalOrder())
-                        ))
-                .orElse(null);
-    }
-
     private V2DatasetUploadDto toUpload(DatasetUploadSession source) {
         V2DatasetUploadDto dto = new V2DatasetUploadDto();
         dto.setUploadId(source.getId());
+        dto.setImportJobId(source.getImportJobId());
         dto.setStatus(source.getStatus());
         dto.setFileName(source.getFileName());
         dto.setFileSize(source.getFileSize());
@@ -277,6 +267,18 @@ public class V2DatasetEditService {
         } catch (Exception exception) {
             return Map.of();
         }
+    }
+
+    private Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            return Map.of();
+        }
+        return Map.of("reason", message);
+    }
+
+    private static boolean isPublishTerminalJobStatus(String status) {
+        return IMPORT_SUCCESS.equals(status) || IMPORT_SUPERSEDED.equals(status);
     }
 
     private String displayVersion(DatasetVersion version) {

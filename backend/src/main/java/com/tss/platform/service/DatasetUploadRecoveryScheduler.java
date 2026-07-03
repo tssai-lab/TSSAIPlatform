@@ -5,22 +5,35 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+
 @Component
 public class DatasetUploadRecoveryScheduler {
 
-    private final DatasetUploadRecoveryService recoveryService;
+    private static final Duration LOCK_AT_MOST_FOR = Duration.ofSeconds(55);
 
-    public DatasetUploadRecoveryScheduler(DatasetUploadRecoveryService recoveryService) {
+    private final DatasetUploadRecoveryService recoveryService;
+    private final SchedulerLockService lockService;
+
+    public DatasetUploadRecoveryScheduler(
+            DatasetUploadRecoveryService recoveryService,
+            SchedulerLockService lockService
+    ) {
         this.recoveryService = recoveryService;
+        this.lockService = lockService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void recoverOnStartup() {
-        recoveryService.recoverStaleSessions();
+        recoverCompletingUploads();
     }
 
     @Scheduled(fixedDelay = 60_000)
     public void recoverCompletingUploads() {
-        recoveryService.recoverStaleSessions();
+        lockService.runWithLock(
+                "dataset-upload-recovery",
+                LOCK_AT_MOST_FOR,
+                recoveryService::recoverStaleSessions
+        );
     }
 }

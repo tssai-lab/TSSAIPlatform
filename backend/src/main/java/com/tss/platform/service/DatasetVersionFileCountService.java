@@ -31,14 +31,6 @@ public class DatasetVersionFileCountService {
         this.versionRepo = versionRepo;
     }
 
-    DatasetVersionFileCountService(
-            DatasetSampleDataRepository dataRepo,
-            DatasetAnnotationRepository annotationRepo,
-            ZipCentralDirectoryReader zipReader
-    ) {
-        this(dataRepo, annotationRepo, zipReader, null);
-    }
-
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Long countCurrentVersionFiles(DatasetAsset asset, DatasetVersion version) {
         if (version == null) {
@@ -48,11 +40,8 @@ public class DatasetVersionFileCountService {
             return version.getFileCount();
         }
         Long computed = computeCurrentVersionFiles(asset, version);
-        if (computed != null) {
-            version.setFileCount(computed);
-            if (versionRepo != null) {
-                versionRepo.saveAndFlush(version);
-            }
+        if (computed != null && version.getId() != null) {
+            versionRepo.updateFileCountIfAbsent(version.getId(), computed);
         }
         return computed;
     }

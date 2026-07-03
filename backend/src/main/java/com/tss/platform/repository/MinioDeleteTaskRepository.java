@@ -48,4 +48,21 @@ public interface MinioDeleteTaskRepository extends JpaRepository<MinioDeleteTask
             @Param("staleBefore") Instant staleBefore,
             @Param("updatedAt") Instant updatedAt
     );
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update MinioDeleteTask t
+            set t.status = :pendingStatus,
+                t.retryCount = 0,
+                t.failedResetCount = coalesce(t.failedResetCount, 0) + 1,
+                t.updatedAt = :updatedAt
+            where t.status = :failedStatus
+              and coalesce(t.failedResetCount, 0) < :failedResetLimit
+            """)
+    int resetFailedForRetry(
+            @Param("failedStatus") String failedStatus,
+            @Param("pendingStatus") String pendingStatus,
+            @Param("failedResetLimit") int failedResetLimit,
+            @Param("updatedAt") Instant updatedAt
+    );
 }

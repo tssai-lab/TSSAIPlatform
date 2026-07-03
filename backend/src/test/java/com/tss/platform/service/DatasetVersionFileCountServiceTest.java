@@ -12,6 +12,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -52,8 +55,8 @@ class DatasetVersionFileCountServiceTest {
         Long count = service.countCurrentVersionFiles(asset, version);
 
         assertEquals(5L, count);
-        assertEquals(5L, version.getFileCount());
-        verify(versionRepo).saveAndFlush(version);
+        verify(versionRepo).updateFileCountIfAbsent(version.getId(), 5L);
+        verify(versionRepo, never()).saveAndFlush(any(DatasetVersion.class));
     }
 
     @Test
@@ -93,8 +96,8 @@ class DatasetVersionFileCountServiceTest {
         Long count = service.countCurrentVersionFiles(asset, version);
 
         assertEquals(2L, count);
-        assertEquals(2L, version.getFileCount());
-        verify(versionRepo).saveAndFlush(version);
+        verify(versionRepo).updateFileCountIfAbsent(version.getId(), 2L);
+        verify(versionRepo, never()).saveAndFlush(any(DatasetVersion.class));
     }
 
     @Test
@@ -109,7 +112,8 @@ class DatasetVersionFileCountServiceTest {
 
         assertNull(count);
         assertNull(version.getFileCount());
-        verify(versionRepo, never()).saveAndFlush(version);
+        verify(versionRepo, never()).saveAndFlush(any(DatasetVersion.class));
+        verify(versionRepo, never()).updateFileCountIfAbsent(anyString(), anyLong());
     }
 
     @Test

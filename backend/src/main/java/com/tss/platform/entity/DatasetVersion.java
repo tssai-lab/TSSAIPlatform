@@ -1,11 +1,15 @@
 package com.tss.platform.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
@@ -73,6 +77,11 @@ public class DatasetVersion {
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    @Column(name = "active_draft_asset_id", length = 64)
+    private String activeDraftAssetId;
+
     @Column(name = "file_fingerprint", length = 512)
     private String fileFingerprint;
 
@@ -93,5 +102,13 @@ public class DatasetVersion {
 
     @Column(name = "deleted_at")
     private Instant deletedAt;
+
+    @PrePersist
+    @PreUpdate
+    void updateActiveDraftAssetId() {
+        activeDraftAssetId = "DRAFT".equals(status) && Boolean.FALSE.equals(deleted)
+                ? assetId
+                : null;
+    }
 }
 

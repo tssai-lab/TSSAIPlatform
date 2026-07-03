@@ -118,6 +118,49 @@ class DatasetWorkspacePublishServiceTest {
     }
 
     @Test
+    void publishesWhenOldFailedAppendPackageWasSuperseded() {
+        Fixture fixture = new Fixture();
+        fixture.stubValidDraft();
+
+        DatasetPackage supersededPackage = new DatasetPackage();
+        supersededPackage.setId("package-old-failed");
+        supersededPackage.setDatasetAssetId(fixture.asset.getId());
+        supersededPackage.setStoragePath("users/7/datasets/asset-1/v2/old-failed.zip");
+        supersededPackage.setFileName("old-failed.zip");
+        supersededPackage.setSizeBytes(100L);
+        supersededPackage.setStatus("SUPERSEDED");
+        supersededPackage.setCreatedAt(Instant.parse("2026-06-01T00:01:00Z"));
+        supersededPackage.setDeleted(false);
+
+        DatasetVersionPackage supersededRelation = new DatasetVersionPackage();
+        supersededRelation.setDatasetVersionId(fixture.draft.getId());
+        supersededRelation.setPackageId(supersededPackage.getId());
+        supersededRelation.setPackageRole("APPEND");
+        supersededRelation.setPackageOrder(1);
+        supersededRelation.setCreatedAt(supersededPackage.getCreatedAt());
+
+        ImportJob supersededJob = new ImportJob();
+        supersededJob.setId("job-old-failed");
+        supersededJob.setDatasetVersionId(fixture.draft.getId());
+        supersededJob.setPackageId(supersededPackage.getId());
+        supersededJob.setStatus("SUPERSEDED");
+
+        when(fixture.importJobRepo.findByDatasetVersionId(fixture.draft.getId()))
+                .thenReturn(List.of(supersededJob));
+        when(fixture.versionPackageRepo.findByDatasetVersionIdOrderByPackageOrderAsc(
+                fixture.draft.getId()
+        )).thenReturn(List.of(fixture.relation, supersededRelation));
+        when(fixture.packageRepo.findAllById(any()))
+                .thenReturn(List.of(fixture.datasetPackage, supersededPackage));
+
+        DatasetWorkspacePublishDto result =
+                fixture.service.publish(fixture.draft.getId());
+
+        assertEquals("READY", result.getStatus());
+        assertEquals(fixture.draft.getId(), fixture.asset.getCurrentVersionId());
+    }
+
+    @Test
     void rejectsNonReadyPackagesIncludingFailedPackages() {
         for (String status : List.of("PENDING", "IMPORTING", "FAILED")) {
             Fixture fixture = new Fixture();

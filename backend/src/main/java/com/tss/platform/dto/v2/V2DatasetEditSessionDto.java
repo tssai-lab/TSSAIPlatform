@@ -8,6 +8,7 @@ import java.util.List;
 public class V2DatasetEditSessionDto {
     private String editSessionId;
     private String datasetId;
+    private String importJobId;
     private String versionLabel;
     private String displayStatus;
     private V2DatasetUploadDto latestUpload;

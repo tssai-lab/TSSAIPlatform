@@ -198,6 +198,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                 videoRange.inputStream().readAllBytes()
         );
 
+        v2.setFileCount(null);
+        assertNull(v2.getFileCount());
         ApiResponse<Map<String, Object>> listResponse =
                 fixture.datasetController.list(null, null, 1, null, 20);
         List<Map<String, Object>> listData =
@@ -207,6 +209,10 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         assertEquals("READY", listData.get(0).get("versionStatus"));
         assertNull(listData.get(0).get("latestDraftVersionId"));
         assertNull(listData.get(0).get("importJobId"));
+        long expectedFileCount = fixture.metadataFileCount(v2Id);
+        assertTrue(expectedFileCount > 0);
+        assertEquals(expectedFileCount, listData.get(0).get("currentVersionFileCount"));
+        assertEquals(expectedFileCount, listData.get(0).get("fileCount"));
 
         DatasetWorkspaceDraftDto conflictDraft =
                 fixture.workspaceService.createDraft(v2Id);
@@ -437,7 +443,12 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     versionRepo,
                     jobRepo,
                     authContext,
-                    new DatasetVersionFileCountService(dataRepo, annotationRepo, zipReader)
+                    new DatasetVersionFileCountService(
+                            dataRepo,
+                            annotationRepo,
+                            zipReader,
+                            versionRepo
+                    )
             );
         }
 
@@ -624,6 +635,16 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     .thenAnswer(invocation -> saveVersion(invocation.getArgument(0)));
             when(versionRepo.saveAndFlush(any(DatasetVersion.class)))
                     .thenAnswer(invocation -> saveVersion(invocation.getArgument(0)));
+            when(versionRepo.updateFileCountIfAbsent(anyString(), anyLong()))
+                    .thenAnswer(invocation -> {
+                        DatasetVersion version = versions.get(invocation.getArgument(0));
+                        if (version == null
+                                || version.getFileCount() != null
+                                || Boolean.TRUE.equals(version.getDeleted())) {
+                            return 0;
+                        }
+                        return 1;
+                    });
         }
 
         private void stubPackageRepositories() {
@@ -977,6 +998,11 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                                     .equals(data.getDatasetVersionId()))
                             .filter(data -> data.getPackageId() == null)
                             .count());
+            when(dataRepo.countByDatasetVersionId(anyString()))
+                    .thenAnswer(invocation -> dataItems.values().stream()
+                            .filter(data -> invocation.getArgument(0)
+                                    .equals(data.getDatasetVersionId()))
+                            .count());
             when(dataRepo.findDistinctPackageIdsByDatasetVersionId(anyString()))
                     .thenAnswer(invocation -> dataItems.values().stream()
                             .filter(data -> invocation.getArgument(0)
@@ -1030,6 +1056,11 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                             .equals(annotation.getDatasetVersionId()))
                     .filter(annotation -> annotation.getPackageId() == null)
                     .count());
+            when(annotationRepo.countByDatasetVersionId(anyString()))
+                    .thenAnswer(invocation -> annotations.values().stream()
+                            .filter(annotation -> invocation.getArgument(0)
+                                    .equals(annotation.getDatasetVersionId()))
+                            .count());
             when(annotationRepo.findDistinctPackageIdsByDatasetVersionId(
                     anyString()
             )).thenAnswer(invocation -> annotations.values().stream()
@@ -1142,6 +1173,16 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     .sorted(Comparator.comparing(DatasetSample::getSampleIndex)
                             .thenComparing(DatasetSample::getId))
                     .toList();
+        }
+
+        private long metadataFileCount(String versionId) {
+            long dataCount = dataItems.values().stream()
+                    .filter(data -> versionId.equals(data.getDatasetVersionId()))
+                    .count();
+            long annotationCount = annotations.values().stream()
+                    .filter(annotation -> versionId.equals(annotation.getDatasetVersionId()))
+                    .count();
+            return dataCount + annotationCount;
         }
 
         private Optional<DatasetAsset> activeAsset(String id) {

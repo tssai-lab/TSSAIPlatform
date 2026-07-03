@@ -82,6 +82,7 @@ owner_user_id
 | `experimentId` | 训练实验 ID，包含多个实验版本 | 稳定 |
 | `trainingVersionId` | 训练实验版本 ID | 稳定 |
 | `uploadId` | 上传会话 ID，只在上传流程中有效 | 临时 |
+| `importJobId` | 初始导入或 APPEND ImportJob ID；V2 中用于查询和 FULL 重试失败导入 | 业务句柄 |
 
 不建议其他模块持久依赖：
 
@@ -90,9 +91,12 @@ storagePath
 objectName
 MinIO bucket
 MinIO endpoint
+packageId
+minio_delete_task id
+scheduler_lock row
 ```
 
-这些属于存储实现细节，后续可调整。
+这些属于存储或后台调度实现细节，后续可调整。
 
 ## 5. 模型边界
 
@@ -268,6 +272,7 @@ MULTIMODAL 导入失败后，允许对失败任务做受控 FULL 重试：
 
 ```http
 POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
+POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL
 ```
 
 边界：
@@ -275,7 +280,26 @@ POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
 - 只支持 `FULL`，不支持 `PARTIAL` 或增量 retry。
 - 只允许 `FAILED -> PENDING`，随后由现有 ImportJob launcher 重新调度。
 - 重试会清空错误字段并重置进度，但不会清理已落库的半导入样本；若检测到已有样本，会拒绝重试。
-- DatasetVersion 在导入成功前仍保持 `DRAFT`。
+- DatasetVersion 在导入成功前仍保持 `DRAFT`；重试要求对应 DatasetVersion 仍为 `DRAFT`，且同版本不存在其他 `PENDING` 或 `RUNNING` ImportJob。
+- V2 `importJobId` 是用户侧重试句柄，不是存储路径、owner 标识或 MinIO objectName；无权限或不存在时重试端点返回 404 语义。
+
+V2 重试返回稳定字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `importJobId` | 被重试的导入任务句柄 |
+| `status` | ImportJob 原始状态 |
+| `displayStatus` | V2 展示状态：`IMPORTING`、`IMPORT_FAILED` 或 `READY` |
+| `importProgress` | 当前导入进度 |
+| `userError` | 重试后仍失败时的结构化用户错误；非失败状态为 `null` |
+
+V2 重试错误语义：
+
+| HTTP | `errorCode` | 场景 |
+| --- | --- | --- |
+| `404` | `IMPORT_JOB_NOT_FOUND` | `importJobId` 不存在或调用方无权访问 |
+| `422` | `IMPORT_JOB_NOT_RETRYABLE` | mode 不是 `FULL`、任务不是 `FAILED`、版本不是 `DRAFT`、已存在导入样本、或同版本仍有活动 ImportJob |
+| `400` | `INVALID_IMPORT_JOB_RETRY` | `importJobId` 为空或请求格式不合法 |
 
 ### 6.1.2 已有数据集维护工作区
 
@@ -377,7 +401,17 @@ V2 `pageSize` 默认 `20`、最大 `200`，`current` 优先于 `page`。稳定�
 | `availableActions` | `VIEW`、`PREVIEW`、`EDIT`、`ADD_DATA`、`PUBLISH` 的可用子集 |
 | `userError` | 导入失败时的结构化用户错误 |
 
-V2 不返回 `storagePath`、`ownerUserId`、`currentVersionId`、`latestDraftVersionId`、`importJobId`、MinIO objectName 或 ZIP offset。
+V2 数据集列表不返回 `storagePath`、`ownerUserId`、`currentVersionId`、`latestDraftVersionId`、MinIO objectName 或 ZIP offset。
+
+V2 上传和编辑会话 DTO 会返回 `importJobId`，用于导入失败后的 V2 重试：
+
+| DTO / 接口 | 字段 | 说明 |
+| --- | --- | --- |
+| `V2DatasetUploadDto`：`POST /api/v2/dataset-uploads/{uploadId}/complete`、`GET /api/v2/dataset-uploads/{uploadId}` | `importJobId` | 当前上传触发的 ImportJob 重试句柄；普通非导入上传或尚未创建任务时为 `null` |
+| `V2DatasetEditSessionDto`：`GET /api/v2/dataset-edit-sessions/{editSessionId}` | `importJobId` | 当前编辑会话的导入任务句柄；若最新任务仍为 `PENDING`/`RUNNING` 则返回最新活动任务，否则优先返回最新 `FAILED` 任务作为发布阻塞和重试句柄；没有导入任务时为 `null` |
+| `V2ImportJobStatusDto`：`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL` | `importJobId` | 被重试的 ImportJob 句柄，供调用方继续轮询上传或编辑会话状态 |
+
+调用方只能使用自己有权限访问的 `importJobId` 调用 V2 重试端点；无权限或不存在按 404 处理。`importJobId` 不允许被当作数据库外键、存储路径或跨资源枚举入口。
 
 ## 7. 训练实验边界
 
@@ -516,6 +550,18 @@ users/{当前用户ID}/...
 
 管理员可访问全部对象。
 
+### 8.1 MinIO 启动初始化与删除清理
+
+启动阶段会通过 `ApplicationRunner` 确保配置 bucket 存在。该流程默认最多尝试 30 次，初始退避 1000 ms，指数退避上限 30 秒。网络超时、MinIO 暂未就绪等运行期异常会重试；`InvalidBucketName`、`InvalidAccessKeyId`、`SignatureDoesNotMatch`、`AccessDenied` 会快速失败。bucket 参数构造在重试循环前完成，因此非法 bucket 名称会在循环前失败，不会进入退避重试。
+
+删除接口、模型版本删除、数据集版本删除和失败 DRAFT 清理只把对象加入异步 MinIO 删除任务；业务接口返回成功不等于物理对象已删除。删除任务当前语义：
+
+- 目标对象已不存在时按成功处理。
+- `PROCESSING` 超过 30 分钟会重置为 `PENDING`。
+- 默认单轮最多 5 次尝试；FAILED 后最多 2 次失败重置，每次重置清空单轮 `retryCount` 并递增跨轮 `failedResetCount`，因此默认最多 15 次删除尝试。
+- 超过有界重试后任务保持 `FAILED`，需要运维介入或重新创建删除任务。
+- 删除任务表、任务 ID、调度锁和具体执行线程池不作为外部集成契约。
+
 ## 9. 对其他模块的集成规则
 
 ### 9.1 模块一
@@ -607,9 +653,15 @@ MinIO objectName
 
 ### 11.1 Legacy 与 V2 调用边界
 
-Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`importJobId`、`latestDraftVersionId`。这些字段只服务现有页面兼容，不作为新模块的稳定集成契约。
+Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`latestDraftVersionId`。这些字段只服务现有页面兼容，不作为新模块的稳定集成契约。`importJobId` 已在 V2 中重分类为导入失败重试句柄，稳定暴露于 V2 上传、编辑会话和重试结果；新模块应优先使用 `POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL`，而不是 Legacy retry 路径。
 
 新模块必须优先使用 V2 数据集列表、V2 预览 descriptor 和 consumer manifest。需要文件内容时，通过 consumer manifest 返回的固定 preview/download 链接访问。
+
+### 11.2 后台调度与分布式锁
+
+ImportJob 恢复、上传会话恢复、MinIO 删除任务和数据集生命周期维护均使用数据库分布式锁，锁由同一 owner 在任务结束时条件释放；如果执行实例崩溃，则依赖 `lockedUntil` 过期兜底。启动恢复路径也走对应的加锁方法，避免多实例启动时绕过调度锁。
+
+当前锁的最大持有窗口是内部实现参数：ImportJob 恢复、上传恢复和 MinIO 删除任务为 55 秒，数据集生命周期维护为 55 分钟。外部模块只应观察公开状态字段或消费清单，不应读取或修改 `scheduler_lock`、`minio_delete_task` 等内部表。
 
 以下内容属于内部实现细节：
 
@@ -632,6 +684,8 @@ Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`importJobI
 数据集版本 ID
 READY 数据集消费清单
 FAILED ImportJob FULL retry
+V2 importJobId 查询和重试句柄
+有界异步 MinIO 删除清理
 训练实验 ID
 训练实验版本 ID
 owner_user_id 资源隔离

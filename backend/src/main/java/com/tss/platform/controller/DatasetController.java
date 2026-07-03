@@ -103,7 +103,6 @@ public class DatasetController {
         item.put("versionStatus", version != null ? version.getStatus() : null);
         item.put("versionDescription", version != null ? version.getDescription() : null);
         item.put("fileName", version != null ? version.getFileName() : null);
-        item.put("storagePath", version != null ? version.getStoragePath() : null);
         item.put("sizeBytes", version != null ? version.getSizeBytes() : null);
         item.put("size", formatBytes(version != null ? version.getSizeBytes() : null));
         item.put("versionRemark", version != null ? version.getRemark() : null);

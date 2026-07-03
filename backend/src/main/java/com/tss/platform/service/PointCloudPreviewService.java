@@ -207,6 +207,9 @@ public class PointCloudPreviewService {
         int len;
         while ((len = zip.read(buffer)) != -1) {
             total += len;
+            if (total > maxPreviewSize) {
+                throw new IllegalArgumentException(tooLargeMessage());
+            }
         }
         return total;
     }

@@ -61,4 +61,50 @@ class ModelVersionCrudLifecycleTest {
         assertEquals("DEPRECATED", response.getData().getStatus());
         verify(versionRepo).save(version);
     }
+
+    @Test
+    void adminUpdatePreservesExistingStorageMetadataWhenBodyOmitsIt() {
+        ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
+        ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
+        TrainingExperimentVersionRepository trainingRepo =
+                mock(TrainingExperimentVersionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        ModelVersionCrudController controller = new ModelVersionCrudController(
+                versionRepo,
+                assetRepo,
+                trainingRepo,
+                mock(MinioDeleteTaskService.class),
+                authContext
+        );
+        ModelVersion version = new ModelVersion();
+        version.setId("model-ver-1");
+        version.setAssetId("model-asset-1");
+        version.setVersion("v1");
+        version.setStatus("READY");
+        version.setFileName("weights.pt");
+        version.setStoragePath("users/7/models/model-asset-1/v1/weights.pt");
+        version.setSizeBytes(1024L);
+        version.setOwnerUserId(7);
+        ModelAsset asset = new ModelAsset();
+        asset.setId("model-asset-1");
+        asset.setOwnerUserId(7);
+        ModelVersion body = new ModelVersion();
+        body.setVersion("v1");
+        body.setDescription("updated description");
+        when(versionRepo.findByIdAndDeletedFalse(version.getId()))
+                .thenReturn(Optional.of(version));
+        when(assetRepo.findByIdAndDeletedFalse(asset.getId()))
+                .thenReturn(Optional.of(asset));
+        when(authContext.isAdmin()).thenReturn(true);
+        when(authContext.canAccessOwner(7)).thenReturn(true);
+        when(versionRepo.save(version)).thenReturn(version);
+
+        ApiResponse<ModelVersion> response = controller.update(version.getId(), body);
+
+        assertTrue(response.isSuccess());
+        assertEquals("weights.pt", response.getData().getFileName());
+        assertEquals("users/7/models/model-asset-1/v1/weights.pt", response.getData().getStoragePath());
+        assertEquals(1024L, response.getData().getSizeBytes());
+        assertEquals("updated description", response.getData().getDescription());
+    }
 }

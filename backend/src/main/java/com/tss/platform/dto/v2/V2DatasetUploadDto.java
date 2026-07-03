@@ -16,6 +16,7 @@ public class V2DatasetUploadDto {
     private Integer uploadedChunks;
     private Long uploadedBytes;
     private List<Integer> uploadedPartIndexes;
+    private String importJobId;
     private String datasetId;
     private String editSessionId;
     private String versionLabel;

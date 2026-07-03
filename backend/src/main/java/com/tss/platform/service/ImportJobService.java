@@ -51,6 +51,7 @@ public class ImportJobService {
     private static final String JOB_RUNNING = "RUNNING";
     private static final String JOB_SUCCESS = "SUCCESS";
     private static final String JOB_FAILED = "FAILED";
+    private static final String JOB_SUPERSEDED = "SUPERSEDED";
     private static final String VERSION_DRAFT = "DRAFT";
     private static final String VERSION_READY = "READY";
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
@@ -416,6 +417,7 @@ public class ImportJobService {
             datasetPackage.setStatus(VERSION_READY);
             packageRepo.saveAndFlush(datasetPackage);
             versionRepo.saveAndFlush(version);
+            supersedeOlderFailedAppendImports(context, now);
         } else {
             version.setStatus(VERSION_READY);
             version.setPublishedAt(now);
@@ -427,6 +429,58 @@ public class ImportJobService {
                 assetRepo.saveAndFlush(asset);
             }
         }
+    }
+
+    private void supersedeOlderFailedAppendImports(ImportContext context, Instant now) {
+        List<ImportJob> jobs = jobRepo.findByDatasetVersionId(context.versionId());
+        if (jobs == null || jobs.isEmpty()) {
+            return;
+        }
+        for (ImportJob job : jobs) {
+            if (job == null
+                    || context.importJobId().equals(job.getId())
+                    || !JOB_FAILED.equals(job.getStatus())
+                    || job.getPackageId() == null
+                    || job.getPackageId().isBlank()) {
+                continue;
+            }
+            DatasetVersionPackage relation = versionPackageRepo
+                    .findByDatasetVersionIdAndPackageId(
+                            context.versionId(),
+                            job.getPackageId()
+                    )
+                    .orElse(null);
+            if (relation == null
+                    || !PACKAGE_ROLE_APPEND.equals(relation.getPackageRole())
+                    || hasPersistedSamples(context.versionId(), job.getPackageId())) {
+                continue;
+            }
+            DatasetPackage datasetPackage = packageRepo
+                    .findByIdAndDeletedFalse(job.getPackageId())
+                    .orElse(null);
+            if (datasetPackage == null || !JOB_FAILED.equals(datasetPackage.getStatus())) {
+                continue;
+            }
+            job.setStatus(JOB_SUPERSEDED);
+            job.setErrorCode(null);
+            job.setErrorMessage(null);
+            job.setErrorDetailsJson(null);
+            job.setUpdatedAt(now);
+            if (job.getFinishedAt() == null) {
+                job.setFinishedAt(now);
+            }
+            jobRepo.saveAndFlush(job);
+
+            datasetPackage.setStatus(JOB_SUPERSEDED);
+            packageRepo.saveAndFlush(datasetPackage);
+        }
+    }
+
+    private boolean hasPersistedSamples(String versionId, String packageId) {
+        return sampleRepo.countByDatasetVersionIdAndCreatedByPackageIdAndDeletedFalse(
+                versionId,
+                packageId
+        ) > 0;
     }
 
     private long countPersistedFiles(String versionId) {

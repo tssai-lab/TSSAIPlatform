@@ -216,6 +216,66 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void successfulAppendSupersedesOlderFailedAppendWithoutPersistedRows() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.asset.setCurrentVersionId("ready-1");
+
+        ImportJob oldFailedJob = new ImportJob();
+        oldFailedJob.setId("ijob-old-failed");
+        oldFailedJob.setDatasetVersionId(fixture.version.getId());
+        oldFailedJob.setPackageId("package-old-failed");
+        oldFailedJob.setStatus("FAILED");
+        oldFailedJob.setErrorCode("DUPLICATE_SAMPLE");
+        oldFailedJob.setErrorMessage("上传内容包含已存在的样本");
+
+        DatasetPackage oldFailedPackage = new DatasetPackage();
+        oldFailedPackage.setId(oldFailedJob.getPackageId());
+        oldFailedPackage.setDatasetAssetId(fixture.asset.getId());
+        oldFailedPackage.setStoragePath("users/7/datasets/asset-1/v2/old-failed.zip");
+        oldFailedPackage.setFileName("old-failed.zip");
+        oldFailedPackage.setSizeBytes(100L);
+        oldFailedPackage.setStatus("FAILED");
+        oldFailedPackage.setCreatedAt(Instant.parse("2026-06-01T00:01:00Z"));
+        oldFailedPackage.setDeleted(false);
+
+        DatasetVersionPackage oldFailedRelation = new DatasetVersionPackage();
+        oldFailedRelation.setDatasetVersionId(fixture.version.getId());
+        oldFailedRelation.setPackageId(oldFailedPackage.getId());
+        oldFailedRelation.setPackageRole("APPEND");
+        oldFailedRelation.setPackageOrder(1);
+
+        when(fixture.jobRepo.findByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(List.of(oldFailedJob, fixture.job));
+        when(fixture.versionPackageRepo.findByDatasetVersionIdAndPackageId(
+                fixture.version.getId(),
+                oldFailedPackage.getId()
+        )).thenReturn(Optional.of(oldFailedRelation));
+        when(fixture.packageRepo.findByIdAndDeletedFalse(oldFailedPackage.getId()))
+                .thenReturn(Optional.of(oldFailedPackage));
+        when(fixture.sampleRepo.countByDatasetVersionIdAndCreatedByPackageIdAndDeletedFalse(
+                fixture.version.getId(),
+                oldFailedPackage.getId()
+        )).thenReturn(0L);
+        when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                fixture.version.getId()
+        )).thenReturn(4);
+        when(fixture.dataRepo.countByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(1L);
+        when(fixture.annotationRepo.countByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(1L);
+        fixture.stubSuccessfulImport();
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("SUCCESS", fixture.job.getStatus());
+        assertEquals("SUPERSEDED", oldFailedJob.getStatus());
+        assertNull(oldFailedJob.getErrorCode());
+        assertNull(oldFailedJob.getErrorMessage());
+        assertEquals("SUPERSEDED", oldFailedPackage.getStatus());
+    }
+
+    @Test
     void appendsSingleModalPackageFromZipEntriesWithoutSampleGrouping() throws Exception {
         Fixture fixture = new Fixture();
         fixture.asAppendPackage();

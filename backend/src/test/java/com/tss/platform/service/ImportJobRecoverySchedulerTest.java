@@ -4,11 +4,13 @@ import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.ImportJobRepository;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -20,6 +22,15 @@ class ImportJobRecoverySchedulerTest {
         ImportJobRepository jobRepo = mock(ImportJobRepository.class);
         ImportJobLauncher launcher = mock(ImportJobLauncher.class);
         ImportJobService jobService = mock(ImportJobService.class);
+        SchedulerLockService lockService = mock(SchedulerLockService.class);
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(2).run();
+            return null;
+        }).when(lockService).runWithLock(
+                eq("import-job-recovery"),
+                eq(Duration.ofSeconds(55)),
+                any(Runnable.class)
+        );
         ImportJob pending = new ImportJob();
         pending.setId("ijob-pending");
         when(jobRepo.resetStaleRunning(
@@ -30,10 +41,15 @@ class ImportJobRecoverySchedulerTest {
         )).thenReturn(1);
         when(jobRepo.findTop100ByStatusOrderByCreatedAtAsc("PENDING")).thenReturn(List.of(pending));
         ImportJobRecoveryScheduler scheduler =
-                new ImportJobRecoveryScheduler(jobRepo, launcher, jobService);
+                new ImportJobRecoveryScheduler(jobRepo, launcher, jobService, lockService);
 
         scheduler.recoverJobs();
 
+        verify(lockService).runWithLock(
+                eq("import-job-recovery"),
+                eq(Duration.ofSeconds(55)),
+                any(Runnable.class)
+        );
         verify(jobRepo).resetStaleRunning(
                 eq("RUNNING"),
                 eq("PENDING"),
@@ -48,8 +64,9 @@ class ImportJobRecoverySchedulerTest {
         ImportJobRepository jobRepo = mock(ImportJobRepository.class);
         ImportJobLauncher launcher = mock(ImportJobLauncher.class);
         ImportJobService jobService = mock(ImportJobService.class);
+        SchedulerLockService lockService = mock(SchedulerLockService.class);
         ImportJobRecoveryScheduler scheduler =
-                new ImportJobRecoveryScheduler(jobRepo, launcher, jobService);
+                new ImportJobRecoveryScheduler(jobRepo, launcher, jobService, lockService);
 
         scheduler.heartbeat();
 

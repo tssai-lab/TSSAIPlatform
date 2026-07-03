@@ -12,6 +12,7 @@ import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -102,6 +103,28 @@ class ImportJobRetryServiceTest {
         );
 
         assertTrue(error.getMessage().contains("already has imported samples"));
+        verify(fixture.importJobLauncher, never()).launch(anyString());
+    }
+
+    @Test
+    void retryRejectsFailedJobWhenSameVersionHasActiveImport() {
+        Fixture fixture = new Fixture();
+        fixture.job.setStatus("FAILED");
+        ImportJob running = Fixture.job();
+        running.setId("ijob-running");
+        running.setStatus("RUNNING");
+        when(fixture.sampleRepo.countByDatasetVersionIdAndCreatedByPackageIdIsNull(
+                fixture.version.getId()
+        )).thenReturn(0L);
+        when(fixture.importJobRepo.findByDatasetVersionId(fixture.version.getId()))
+                .thenReturn(List.of(fixture.job, running));
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.retry("ijob-1", "FULL")
+        );
+
+        assertTrue(error.getMessage().contains("dataset version already has an active ImportJob"));
         verify(fixture.importJobLauncher, never()).launch(anyString());
     }
 

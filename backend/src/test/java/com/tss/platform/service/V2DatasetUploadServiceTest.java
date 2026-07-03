@@ -19,6 +19,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -99,7 +100,7 @@ class V2DatasetUploadServiceTest {
     }
 
     @Test
-    void failedImportReturnsUserErrorWithoutInternalIdentifiers() throws Exception {
+    void failedImportReturnsUserErrorAndRetryHandleWithoutStorageIdentifiers() throws Exception {
         Fixture fixture = new Fixture();
         DatasetUploadProgressDto progress = fixture.progress();
         progress.setStatus("COMPLETED");
@@ -120,6 +121,7 @@ class V2DatasetUploadServiceTest {
         V2DatasetUploadDto result = fixture.service.get("upload-1");
 
         assertEquals("IMPORT_FAILED", result.getDisplayStatus());
+        assertEquals("job-secret", result.getImportJobId());
         assertEquals("DUPLICATE_SAMPLE", result.getUserError().getErrorCode());
         assertEquals("scene-1", result.getUserError().getDetails().get("sampleName"));
         String json = new ObjectMapper()
@@ -127,9 +129,8 @@ class V2DatasetUploadServiceTest {
                 .writeValueAsString(result);
         assertFalse(json.contains("storagePath"));
         assertFalse(json.contains("ownerUserId"));
-        assertFalse(json.contains("importJobId"));
         assertFalse(json.contains("version-secret"));
-        assertFalse(json.contains("job-secret"));
+        assertTrue(json.contains("\"importJobId\":\"job-secret\""));
     }
 
     @Test
@@ -156,7 +157,6 @@ class V2DatasetUploadServiceTest {
     void uploadDtoSerializationDoesNotExposeStoragePath() throws Exception {
         Fixture fixture = new Fixture();
         DatasetUploadProgressDto progress = fixture.progress();
-        progress.setStoragePath("users/7/datasets/asset-1/v1/data.zip");
         when(fixture.uploadService.getProgress("upload-1")).thenReturn(progress);
         DatasetUploadSession session = fixture.initialSession();
         session.setStoragePath("users/7/datasets/asset-1/v1/data.zip");

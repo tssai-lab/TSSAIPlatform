@@ -31,6 +31,7 @@ public class DatasetWorkspacePublishService {
     private static final String DRAFT = "DRAFT";
     private static final String READY = "READY";
     private static final String SUCCESS = "SUCCESS";
+    private static final String SUPERSEDED = "SUPERSEDED";
     private static final String PRIMARY = "PRIMARY";
     private static final String APPEND = "APPEND";
     private static final String NOT_FOUND =
@@ -160,7 +161,7 @@ public class DatasetWorkspacePublishService {
         List<ImportJob> importJobs =
                 importJobRepo.findByDatasetVersionId(draftVersionId);
         for (ImportJob job : importJobs) {
-            if (!SUCCESS.equals(job.getStatus())) {
+            if (!isPublishTerminalJobStatus(job.getStatus())) {
                 throw new IllegalArgumentException(
                         "dataset workspace has non-success ImportJob: " + job.getStatus()
                 );
@@ -174,6 +175,9 @@ public class DatasetWorkspacePublishService {
             Set<String> linkedPackageIds
     ) {
         for (ImportJob job : importJobs) {
+            if (SUPERSEDED.equals(job.getStatus())) {
+                continue;
+            }
             if (job.getPackageId() == null
                     || job.getPackageId().isBlank()
                     || !linkedPackageIds.contains(job.getPackageId())) {
@@ -194,8 +198,7 @@ public class DatasetWorkspacePublishService {
             throw new IllegalArgumentException("dataset workspace has no package relation");
         }
 
-        Set<String> packageIds = new LinkedHashSet<>();
-        int primaryCount = 0;
+        Set<String> allPackageIds = new LinkedHashSet<>();
         for (int index = 0; index < relations.size(); index++) {
             DatasetVersionPackage relation = relations.get(index);
             if (!draft.getId().equals(relation.getDatasetVersionId())
@@ -205,14 +208,8 @@ public class DatasetWorkspacePublishService {
                         "dataset workspace package order is incomplete"
                 );
             }
-            if (PRIMARY.equals(relation.getPackageRole())) {
-                primaryCount += 1;
-                if (index != 0) {
-                    throw new IllegalArgumentException(
-                            "dataset workspace PRIMARY package must be first"
-                    );
-                }
-            } else if (!APPEND.equals(relation.getPackageRole())) {
+            if (!PRIMARY.equals(relation.getPackageRole())
+                    && !APPEND.equals(relation.getPackageRole())) {
                 throw new IllegalArgumentException(
                         "dataset workspace package role is invalid: "
                                 + relation.getPackageRole()
@@ -220,24 +217,22 @@ public class DatasetWorkspacePublishService {
             }
             if (relation.getPackageId() == null
                     || relation.getPackageId().isBlank()
-                    || !packageIds.add(relation.getPackageId())) {
+                    || !allPackageIds.add(relation.getPackageId())) {
                 throw new IllegalArgumentException(
                         "dataset workspace package relation is invalid"
                 );
             }
         }
-        if (primaryCount != 1) {
-            throw new IllegalArgumentException(
-                    "dataset workspace must have exactly one PRIMARY package"
-            );
-        }
 
         Map<String, DatasetPackage> packagesById = new HashMap<>();
         for (DatasetPackage datasetPackage :
-                packageRepo.findAllById(List.copyOf(packageIds))) {
+                packageRepo.findAllById(List.copyOf(allPackageIds))) {
             packagesById.put(datasetPackage.getId(), datasetPackage);
         }
-        for (String packageId : packageIds) {
+        Set<String> activePackageIds = new LinkedHashSet<>();
+        int primaryCount = 0;
+        for (DatasetVersionPackage relation : relations) {
+            String packageId = relation.getPackageId();
             DatasetPackage datasetPackage = packagesById.get(packageId);
             if (datasetPackage == null
                     || Boolean.TRUE.equals(datasetPackage.getDeleted())
@@ -245,6 +240,18 @@ public class DatasetWorkspacePublishService {
                 throw new IllegalArgumentException(
                         "dataset workspace package is missing: " + packageId
                 );
+            }
+            if (SUPERSEDED.equals(datasetPackage.getStatus())) {
+                continue;
+            }
+            if (PRIMARY.equals(relation.getPackageRole())) {
+                primaryCount += 1;
+                if (relation.getPackageOrder() == null
+                        || relation.getPackageOrder() != 0) {
+                    throw new IllegalArgumentException(
+                            "dataset workspace PRIMARY package must be first"
+                    );
+                }
             }
             if (!READY.equals(datasetPackage.getStatus())) {
                 throw new IllegalArgumentException(
@@ -258,8 +265,18 @@ public class DatasetWorkspacePublishService {
                         "dataset workspace package storage is missing: " + packageId
                 );
             }
+            activePackageIds.add(packageId);
         }
-        return packageIds;
+        if (primaryCount != 1) {
+            throw new IllegalArgumentException(
+                    "dataset workspace must have exactly one PRIMARY package"
+            );
+        }
+        return activePackageIds;
+    }
+
+    private static boolean isPublishTerminalJobStatus(String status) {
+        return SUCCESS.equals(status) || SUPERSEDED.equals(status);
     }
 
     private void validateSamples(String draftVersionId) {

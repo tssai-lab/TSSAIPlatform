@@ -16,7 +16,6 @@ public class DatasetUploadProgressDto {
     private Integer uploadedChunks;
     private Long uploadedBytes;
     private List<Integer> uploadedPartIndexes;
-    private String storagePath;
     private String assetId;
     private String versionId;
     private Integer versionNo;

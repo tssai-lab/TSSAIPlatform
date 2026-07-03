@@ -21,12 +21,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Service
 public class V2DatasetCatalogService {
 
-    private static final Set<String> IMPORTING_STATUSES = Set.of("PENDING", "RUNNING");
+    private static final String IMPORT_SUCCESS = "SUCCESS";
+    private static final String IMPORT_SUPERSEDED = "SUPERSEDED";
 
     private final DatasetCatalogQueryService catalogQueryService;
     private final DatasetSampleRepository sampleRepo;
@@ -91,12 +91,13 @@ public class V2DatasetCatalogService {
     ) {
         DatasetVersion ready = catalogItem.currentVersion();
         DatasetVersion draft = catalogItem.latestDraft();
-        ImportJob importJob = catalogItem.latestDraftImportJob();
-        String displayStatus = displayStatus(ready, draft, importJob);
+        ImportJob statusJob =
+                V2ImportJobStatusSelector.statusJobOf(catalogItem.latestDraftImportJobs());
+        String displayStatus = displayStatus(ready, draft, statusJob);
         boolean canPublish = draft != null
                 && sampleRepo.countByDatasetVersionIdAndDeletedFalse(draft.getId()) > 0
                 && catalogItem.latestDraftImportJobs().stream()
-                        .allMatch(job -> "SUCCESS".equals(job.getStatus()));
+                        .allMatch(job -> isPublishTerminalJobStatus(job.getStatus()));
 
         List<String> actions = new ArrayList<>();
         actions.add("VIEW");
@@ -128,10 +129,10 @@ public class V2DatasetCatalogService {
         item.setDisplayStatus(displayStatus);
         item.setHasDraft(draft != null);
         item.setEditSessionId(draft == null ? null : draft.getId());
-        item.setImportProgress(importJob == null ? null : importJob.getProgress());
+        item.setImportProgress(statusJob == null ? null : statusJob.getProgress());
         item.setCanPublish(canPublish);
         item.setAvailableActions(List.copyOf(actions));
-        item.setUserError(userError(importJob));
+        item.setUserError(userError(statusJob));
         return item;
     }
 
@@ -143,7 +144,8 @@ public class V2DatasetCatalogService {
         if (importJob != null && "FAILED".equals(importJob.getStatus())) {
             return "IMPORT_FAILED";
         }
-        if (importJob != null && IMPORTING_STATUSES.contains(importJob.getStatus())) {
+        if (importJob != null
+                && V2ImportJobStatusSelector.IMPORTING_STATUSES.contains(importJob.getStatus())) {
             return "IMPORTING";
         }
         if (draft != null) {
@@ -161,6 +163,10 @@ public class V2DatasetCatalogService {
                 ? "数据导入失败，请检查上传内容后重试"
                 : job.getErrorMessage();
         return new V2UserError(code, message, parseDetails(job.getErrorDetailsJson()));
+    }
+
+    private static boolean isPublishTerminalJobStatus(String status) {
+        return IMPORT_SUCCESS.equals(status) || IMPORT_SUPERSEDED.equals(status);
     }
 
     private Map<String, Object> parseDetails(String json) {

@@ -29,6 +29,10 @@ dataset:
 spring:
   application:
     name: tss-backend
+  task:
+    scheduling:
+      pool:
+        size: ${SPRING_TASK_SCHEDULING_POOL_SIZE:4}
   profiles:
     # 默认走 PostgreSQL；本地若想用 H2 可启动时加：--spring.profiles.active=dev
     active: ${SPRING_PROFILES_ACTIVE:default}

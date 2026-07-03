@@ -142,6 +142,7 @@ public class V2DatasetUploadService {
         dto.setUploadedChunks(source.getUploadedChunks());
         dto.setUploadedBytes(source.getUploadedBytes());
         dto.setUploadedPartIndexes(source.getUploadedPartIndexes());
+        dto.setImportJobId(session.getImportJobId());
         dto.setDatasetId(source.getAssetId());
         dto.setEditSessionId(
                 APPEND_PACKAGE.equals(session.getUploadPurpose())

@@ -17,19 +17,23 @@ public class ImportJobRecoveryScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(ImportJobRecoveryScheduler.class);
     private static final Duration STALE_AFTER = Duration.ofMinutes(30);
+    private static final Duration LOCK_AT_MOST_FOR = Duration.ofSeconds(55);
 
     private final ImportJobRepository jobRepo;
     private final ImportJobLauncher launcher;
     private final ImportJobService jobService;
+    private final SchedulerLockService lockService;
 
     public ImportJobRecoveryScheduler(
             ImportJobRepository jobRepo,
             ImportJobLauncher launcher,
-            ImportJobService jobService
+            ImportJobService jobService,
+            SchedulerLockService lockService
     ) {
         this.jobRepo = jobRepo;
         this.launcher = launcher;
         this.jobService = jobService;
+        this.lockService = lockService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -39,6 +43,10 @@ public class ImportJobRecoveryScheduler {
 
     @Scheduled(fixedDelay = 60_000)
     public void recoverJobs() {
+        lockService.runWithLock("import-job-recovery", LOCK_AT_MOST_FOR, this::recoverJobsInternal);
+    }
+
+    private void recoverJobsInternal() {
         Instant now = Instant.now();
         jobRepo.resetStaleRunning("RUNNING", "PENDING", now.minus(STALE_AFTER), now);
         for (ImportJob job : jobRepo.findTop100ByStatusOrderByCreatedAtAsc("PENDING")) {

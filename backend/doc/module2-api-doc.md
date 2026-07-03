@@ -121,7 +121,7 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 | `experimentId` | 训练实验 ID |
 | `trainingVersionId` / `id` | 训练实验版本 ID |
 | `uploadId` | 上传会话 ID |
-| `importJobId` | 多模态数据导入任务 ID |
+| `importJobId` | 初始导入或 APPEND 导入任务 ID；在 V2 中也是失败导入的重试句柄，不是存储路径、owner 标识或可枚举外键 |
 
 业务集成时优先引用稳定 ID，不建议长期依赖 `storagePath` 或 MinIO 对象路径。
 
@@ -136,6 +136,7 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 7. 列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。
 8. zip entry 路径入参可以使用 `/` 或 `\`，后端会统一规范化为 `/`；后端返回的 `path` 固定使用 `/`，作为查询参数时仍需 URL 编码，不要自行拼接。
 9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域状态编辑。
+10. ImportJob 恢复、上传会话恢复、数据集生命周期维护和 MinIO 删除任务均为后台异步流程；前端应以状态查询、编辑会话和列表聚合结果为准，不假设物理文件清理或失败恢复已经在业务接口返回时完成。
 
 登录示例：
 
@@ -201,7 +202,7 @@ if (!response.ok || !result.success) {
 - CV 本地文件夹可使用 `/api/dataset/upload/folder` 一次提交，后端会打包为 zip；大文件仍建议使用分片流程。
 - CV/NLP/POINT_CLOUD/ROBOT 旧上传流程完成后，新版本为 `READY`，并自动成为资产的 `currentVersionId`。
 - `MULTIMODAL` 必须上传 zip。init 未传 `sampleGrouping` 时默认 `AUTO_DIRECTORY`；高级调用方可显式传 `MANIFEST`。complete 后先返回 `DRAFT` 版本和 `PENDING` ImportJob，后台随后解析 manifest 或按根级样本目录生成内存导入计划。
-- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`。
+- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`，V2 前端也可从上传和编辑会话 DTO 中读取 `importJobId` 作为失败重试句柄。
 - 上传到已有数据集时，`type`、`cvTaskType`、`annotationFormat` 必须和资产一致。
 
 #### 数据集预览
@@ -1081,6 +1082,7 @@ GET /api/dataset-samples/import/{importJobId}/status
 
 ```http
 POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
+POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL
 ```
 
 约束：
@@ -1089,7 +1091,10 @@ POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
 - 只允许重试 `status=FAILED` 的 ImportJob。
 - 对应 DatasetVersion 必须仍为 `DRAFT`。
 - 若该 ImportJob 对应的版本或 package 已经存在导入样本，后端拒绝重试；当前不做半导入样本清理。
+- 同一 DatasetVersion 存在其他 `PENDING` 或 `RUNNING` ImportJob 时，后端拒绝重试，调用方应等待活动导入结束后再重试。
 - 重试会清空 `errorCode`、`errorMessage`、`errorDetailsJson`，重置 `progress=0`、`importedSamples=0`，把状态置为 `PENDING`，并通过现有 ImportJob launcher 重新调度。
+
+Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，字段为 `importJobId`、`status`、`displayStatus`、`importProgress` 和 `userError`；V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对非 `FULL` mode 或不可重试状态返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID 或非法请求格式返回 400 / `INVALID_IMPORT_JOB_RETRY`。
 
 当前实现：
 
@@ -1098,6 +1103,7 @@ POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
 - 失败 ImportJob 支持受控 `FULL` 重试，不引入 `PARTIAL` 状态。
 - MANIFEST 会解析用户提供的 manifest；AUTO_DIRECTORY 会根据根级样本目录生成内存导入计划。两种模式最终都写入 DatasetSample、DatasetSampleData 和 DatasetAnnotation。
 - 运行中的任务每 30 秒更新 heartbeat；超过 30 分钟无 heartbeat 的任务会重置为 `PENDING` 并重新调度。
+- ImportJob 恢复调度带数据库分布式锁；启动恢复和每 60 秒恢复共用同一加锁路径，避免多实例重复调度同一批 `PENDING` 任务。
 
 ### 6.7 查询多模态样本
 
@@ -1962,6 +1968,18 @@ DELETE /api/files/delete?objectName={objectName}
 | `objectName` | 对象名 |
 | `minioDeleteQueued` | 是否已加入删除任务 |
 
+### 12.5 MinIO 初始化与异步删除任务
+
+服务启动时 `MinioInitializer` 会在 `ApplicationRunner.run()` 内确保配置的 bucket 存在。默认最多尝试 30 次，初始退避 1000 ms，指数增长且最大 30 秒；网络抖动或 MinIO 暂未就绪会进入该退避重试。以下错误快速失败，不做退避重试：`InvalidBucketName`、`InvalidAccessKeyId`、`SignatureDoesNotMatch`、`AccessDenied`。bucket 参数构造发生在重试循环前，因此非法 bucket 名称会在循环前失败，不会按运行时异常退避重试。
+
+MinIO 删除是异步 best-effort 清理，不是业务删除接口的同步成功条件。删除任务行为：
+
+- `PENDING` 任务每 60 秒批量调度一次，调度本身带数据库分布式锁。
+- `PROCESSING` 超过 30 分钟未更新会重置为 `PENDING`。
+- 目标对象已不存在时按删除成功处理。
+- 单轮默认最多尝试 5 次；进入 `FAILED` 后最多允许 2 次失败重置，每次重置会把 `retryCount` 清 0 并递增 `failedResetCount`。因此同一任务默认最多 15 次删除尝试，超过后保持 `FAILED`，需要人工处理或重新创建删除任务。
+- `minio_delete_task` 表和任务 ID 属于内部运维实现，不作为前端或其他模块的稳定契约。
+
 ## 13. 普通数据集预览接口
 
 基础路径：`/api/dataset/preview`
@@ -2532,11 +2550,12 @@ Content-Type: application/json
 - AUTO_DIRECTORY 根据 ZIP 根级样本目录生成内存 `ManifestImportPlan`，支持初始导入与 DRAFT APPEND，不改写 ZIP、不落地生成 manifest。
 - 已建立 DatasetSample、DatasetSampleData、DatasetAnnotation 和 ImportJob 持久化模型。
 - ImportJob 状态接口已经可用，并按数据集资产归属校验权限。
-- ImportJob 支持 `FAILED -> PENDING` 的 `FULL` 重试；不支持 `PARTIAL` 重试。
+- ImportJob 支持受控 `FAILED -> PENDING` 的 `FULL` 重试；非 `FAILED`、非 `DRAFT`、已有持久样本或同版本存在活动 ImportJob 时会被拒绝，不支持 `PARTIAL` 重试。
 - 支持 ZIP central directory range 读取、manifest 解析校验及 Sample/Data/Annotation 全量事务导入。
-- 支持 executorId fencing、heartbeat、PENDING/RUNNING 恢复和卡在 COMPLETING 的上传会话恢复。
+- 支持 executorId fencing、heartbeat、PENDING/RUNNING 恢复和卡在 COMPLETING 的上传会话恢复；ImportJob 恢复、上传恢复、MinIO 删除任务和数据集生命周期维护均使用数据库分布式锁，启动恢复路径也走同一加锁入口。
 - 导入成功后版本推进为 READY，并按版本号更新 `currentVersionId`；失败后版本保持 DRAFT。
 - 定时维护每小时处理失败超过 7 天的 DRAFT；仅当没有其他未删除版本共享其 `storagePath` 时，才排队清理 MinIO 对象。软删除超过 30 天、不是当前版本且无父版本/训练引用的版本会物理删除。
+- MinIO 删除任务是有界异步重试：默认单轮 5 次，FAILED 后最多 2 次重置，总计最多 15 次尝试；对象已不存在视为成功。
 - 支持 READY 版本的样本分页、样本详情和样本 Data 列表查询，响应不暴露 MinIO/ZIP 定位字段。
 - 支持通过 ZIP Entry Index 和 MinIO range 读取样本 Data preview/download 及 Annotation download。
 - 支持 STORED VIDEO 的单段 HTTP Range preview，DEFLATED VIDEO 仅支持 download。
@@ -2679,15 +2698,22 @@ publish 成功直接返回：
 单模态 APPEND 必须省略 `sampleGrouping` 和 `manifestPath`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`manifestPath` 可使用 `/` 或 `\` 并统一规范化为 `/`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
 
 上传响应统一返回 `uploadId`、分片进度、`datasetId`、可选
-`editSessionId`、`versionLabel`、`displayStatus`、`importProgress` 和
-`userError`。不返回 `storagePath`、owner ID、dataset version ID、package
-ID 或 ImportJob ID。
+`editSessionId`、`versionLabel`、`displayStatus`、`importProgress`、
+`importJobId` 和 `userError`。`importJobId` 只用于导入状态查询和失败重试；
+不返回 `storagePath`、owner ID、内部 package ID、MinIO objectName 或 ZIP
+offset。
 
 上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
 
 `canPublish` 要求 DRAFT 至少有一个未删除样本，并且该 DRAFT 历史上的所有
 ImportJob 均为 `SUCCESS`。最新 ImportJob 只用于展示进度和错误，不能覆盖
 更早的失败任务。
+
+编辑会话的 `importJobId` 由当前 DRAFT 的 ImportJob 聚合得出：若最新任务为
+`PENDING` 或 `RUNNING`，返回该活动任务；否则优先返回最新 `FAILED` 任务，作为
+发布阻塞原因和 V2 重试句柄；没有失败任务时才返回最新任务。V2 重试接口为
+`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL`，成功后返回
+`V2ImportJobStatusDto`，前端继续轮询上传或编辑会话状态。
 
 草稿修改实时持久化，不提供没有实际保存行为的“保存草稿”接口。
 

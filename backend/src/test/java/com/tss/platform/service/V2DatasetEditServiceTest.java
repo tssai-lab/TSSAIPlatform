@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetWorkspaceDraftDto;
 import com.tss.platform.dto.DatasetWorkspacePublishDto;
@@ -122,6 +123,7 @@ class V2DatasetEditServiceTest {
 
         assertEquals(12, result.getSampleCount());
         assertEquals(35, result.getImportProgress());
+        assertEquals("job-1", result.getImportJobId());
         assertEquals("IMPORTING", result.getDisplayStatus());
         assertFalse(result.getCanPublish());
         assertEquals(upload.getId(), result.getLatestUpload().getUploadId());
@@ -180,7 +182,48 @@ class V2DatasetEditServiceTest {
                 fixture.service.getEditSession(fixture.draft.getId());
 
         assertFalse(result.getCanPublish());
+        assertEquals("job-failed", result.getImportJobId());
+        assertEquals("IMPORT_FAILED", result.getDisplayStatus());
         assertFalse(result.getAvailableActions().contains("PUBLISH"));
+    }
+
+    @Test
+    void newerRunningImportTakesPriorityOverOlderFailedImport() {
+        Fixture fixture = new Fixture();
+        fixture.stubEditSessionState();
+        ImportJob failed = fixture.importJob("FAILED", 0);
+        failed.setId("job-failed");
+        failed.setCreatedAt(Instant.parse("2026-01-10T00:00:00Z"));
+        ImportJob running = fixture.importJob("RUNNING", 45);
+        running.setId("job-running");
+        running.setCreatedAt(Instant.parse("2026-01-11T00:00:00Z"));
+        when(fixture.importJobRepo.findByDatasetVersionId(fixture.draft.getId()))
+                .thenReturn(List.of(failed, running));
+
+        V2DatasetEditSessionDto result =
+                fixture.service.getEditSession(fixture.draft.getId());
+
+        assertEquals("job-running", result.getImportJobId());
+        assertEquals("IMPORTING", result.getDisplayStatus());
+        assertEquals(45, result.getImportProgress());
+        assertNull(result.getUserError());
+        assertFalse(result.getCanPublish());
+    }
+
+    @Test
+    void publishFailureExposesConcreteReasonInDetails() {
+        Fixture fixture = new Fixture();
+        fixture.stubEditSessionState();
+        when(fixture.publishService.publish(fixture.draft.getId()))
+                .thenThrow(new IllegalArgumentException("ImportJob retry requires DRAFT dataset version"));
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.publish(fixture.draft.getId())
+        );
+
+        assertEquals("DATASET_NOT_PUBLISHABLE", error.getErrorCode());
+        assertEquals("ImportJob retry requires DRAFT dataset version", error.getDetails().get("reason"));
     }
 
     private static final class Fixture {

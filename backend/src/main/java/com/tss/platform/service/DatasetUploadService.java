@@ -1252,11 +1252,6 @@ public class DatasetUploadService {
                 ? session.getFileSize()
                 : uploadedBytes(summary));
         dto.setUploadedPartIndexes(uploadedPartIndexes);
-        dto.setStoragePath(
-                UPLOAD_PURPOSE_APPEND.equals(session.getUploadPurpose())
-                        ? null
-                        : session.getStoragePath()
-        );
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
         dto.setVersionNo(session.getVersionNo());
@@ -1306,7 +1301,6 @@ public class DatasetUploadService {
         data.put("annotationFormat", session.getAnnotationFormat());
         data.put("remark", session.getRemark());
         data.put("fileName", session.getFileName());
-        data.put("storagePath", session.getStoragePath());
         data.put("sizeBytes", session.getFileSize());
         data.put("status", session.getStatus());
         data.put("uploadStatus", session.getStatus());
@@ -1404,7 +1398,6 @@ public class DatasetUploadService {
         data.put("annotationFormat", annotationFormat);
         data.put("remark", remark);
         data.put("fileName", fileName);
-        data.put("storagePath", storagePath);
         data.put("sizeBytes", sizeBytes);
         data.put("status", STATUS_COMPLETED);
         data.put("ownerUserId", ownerUserId);

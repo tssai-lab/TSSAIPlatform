@@ -1,5 +1,6 @@
 package com.tss.platform.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -318,7 +320,10 @@ class DatasetAppendPackageUploadTest {
         var progress = fixture.service.getProgress(session.getId());
 
         assertEquals("package-1", result.get("packageId"));
-        assertNull(progress.getStoragePath());
+        assertFalse(new ObjectMapper()
+                .findAndRegisterModules()
+                .writeValueAsString(progress)
+                .contains("storagePath"));
         verify(fixture.minioClient, never()).composeObject(any());
         verify(fixture.importJobLauncher).launch(job.getId());
     }

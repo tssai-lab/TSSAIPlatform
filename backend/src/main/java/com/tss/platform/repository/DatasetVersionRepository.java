@@ -3,6 +3,7 @@ package com.tss.platform.repository;
 import com.tss.platform.entity.DatasetVersion;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -35,6 +36,16 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from DatasetVersion v where v.id = :id and v.deleted = false")
     Optional<DatasetVersion> findByIdAndDeletedFalseForUpdate(@Param("id") String id);
+
+    @Modifying
+    @Query("""
+            update DatasetVersion v
+            set v.fileCount = :count
+            where v.id = :id
+              and v.fileCount is null
+              and v.deleted = false
+            """)
+    int updateFileCountIfAbsent(@Param("id") String id, @Param("count") Long count);
 
     Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseOrderByCreatedAtDesc(String assetId);
 

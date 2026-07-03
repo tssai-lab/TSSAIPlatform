@@ -161,9 +161,15 @@ public class ModelVersionCrudController {
         e.setAssetId(targetAssetId);
         e.setVersion(targetVersion);
         if (authContext.isAdmin()) {
-            e.setFileName(body.getFileName());
-            e.setStoragePath(body.getStoragePath());
-            e.setSizeBytes(body.getSizeBytes());
+            if (body.getFileName() != null) {
+                e.setFileName(body.getFileName());
+            }
+            if (body.getStoragePath() != null) {
+                e.setStoragePath(body.getStoragePath());
+            }
+            if (body.getSizeBytes() != null) {
+                e.setSizeBytes(body.getSizeBytes());
+            }
         }
         e.setDescription(body.getDescription());
         e.setChangeLog(body.getChangeLog());

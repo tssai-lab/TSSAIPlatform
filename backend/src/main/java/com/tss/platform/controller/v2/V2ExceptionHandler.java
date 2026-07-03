@@ -1,6 +1,8 @@
 package com.tss.platform.controller.v2;
 
 import com.tss.platform.service.ManifestValidationException;
+import com.tss.platform.service.ImportJobQueryService;
+import com.tss.platform.service.SampleFileException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -46,6 +48,51 @@ public class V2ExceptionHandler {
                 exception.getErrorCode(),
                 exception.getMessage(),
                 exception.getDetails(),
+                request
+        );
+    }
+
+    @ExceptionHandler(SampleFileException.class)
+    public ResponseEntity<V2ErrorResponse> handleSampleFile(
+            SampleFileException exception,
+            HttpServletRequest request
+    ) {
+        Map<String, Object> details = exception.getRangeTotal() == null
+                ? Map.of()
+                : Map.of("rangeTotal", exception.getRangeTotal());
+        return response(
+                exception.getStatus(),
+                "SAMPLE_FILE_ERROR",
+                exception.getMessage(),
+                details,
+                request
+        );
+    }
+
+    @ExceptionHandler(ImportJobQueryService.ImportJobAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleImportJobAccess(
+            ImportJobQueryService.ImportJobAccessException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "IMPORT_JOB_NOT_FOUND",
+                "导入任务不存在或无权访问",
+                Map.of(),
+                request
+        );
+    }
+
+    @ExceptionHandler(ImportJobQueryService.ImportJobRetryRejectedException.class)
+    public ResponseEntity<V2ErrorResponse> handleImportJobRetryRejected(
+            ImportJobQueryService.ImportJobRetryRejectedException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "IMPORT_JOB_NOT_RETRYABLE",
+                "当前导入任务不可重试",
+                reasonDetails(exception),
                 request
         );
     }
@@ -126,5 +173,13 @@ public class V2ExceptionHandler {
         return exception instanceof IllegalArgumentException
                 ? "请求参数不正确，请检查后重试"
                 : "请求参数格式不正确";
+    }
+
+    private static Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            return Map.of();
+        }
+        return Map.of("reason", message);
     }
 }

@@ -51,6 +51,9 @@ public class MinioDeleteTask {
     @Column(name = "max_retry_count", nullable = false)
     private Integer maxRetryCount = 5;
 
+    @Column(name = "failed_reset_count", nullable = false)
+    private Integer failedResetCount = 0;
+
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 

@@ -15,12 +15,15 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 
 @Service
 public class ImportJobQueryService {
 
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_PENDING = "PENDING";
+    private static final Set<String> ACTIVE_RETRY_BLOCKING_STATUSES = Set.of("PENDING", "RUNNING");
     private static final String VERSION_DRAFT = "DRAFT";
     private static final String RETRY_MODE_FULL = "FULL";
 
@@ -53,13 +56,13 @@ public class ImportJobQueryService {
             throw new IllegalArgumentException("importJobId 不能为空");
         }
         ImportJob job = importJobRepo.findById(importJobId)
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         DatasetVersion version = versionRepo.findByIdAndDeletedFalse(job.getDatasetVersionId())
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
-            throw new IllegalArgumentException("importJob not found or no permission");
+            throw new ImportJobAccessException("importJob not found or no permission");
         }
 
         return toDto(job);
@@ -74,27 +77,30 @@ public class ImportJobQueryService {
                 ? RETRY_MODE_FULL
                 : mode.trim().toUpperCase(java.util.Locale.ROOT);
         if (!RETRY_MODE_FULL.equals(normalizedMode)) {
-            throw new IllegalArgumentException("only FULL retry is supported");
+            throw new ImportJobRetryRejectedException("only FULL retry is supported");
         }
 
         ImportJob job = importJobRepo.findByIdForUpdate(importJobId)
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         DatasetVersion version = versionRepo.findByIdAndDeletedFalse(job.getDatasetVersionId())
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException("importJob not found or no permission"));
+                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
-            throw new IllegalArgumentException("importJob not found or no permission");
+            throw new ImportJobAccessException("importJob not found or no permission");
         }
         if (!STATUS_FAILED.equals(job.getStatus())) {
-            throw new IllegalArgumentException("only FAILED ImportJob can be retried");
+            throw new ImportJobRetryRejectedException("only FAILED ImportJob can be retried");
         }
         if (!VERSION_DRAFT.equals(version.getStatus())) {
-            throw new IllegalArgumentException("ImportJob retry requires DRAFT dataset version");
+            throw new ImportJobRetryRejectedException("ImportJob retry requires DRAFT dataset version");
         }
         if (hasPersistedSamples(job)) {
-            throw new IllegalArgumentException("ImportJob already has imported samples; upload a new package instead");
+            throw new ImportJobRetryRejectedException(
+                    "ImportJob already has imported samples; upload a new package instead"
+            );
         }
+        requireNoActiveSiblingJob(job);
 
         Instant now = Instant.now();
         job.setStatus(STATUS_PENDING);
@@ -124,6 +130,21 @@ public class ImportJobQueryService {
                 job.getDatasetVersionId(),
                 packageId
         ) > 0;
+    }
+
+    private void requireNoActiveSiblingJob(ImportJob job) {
+        List<ImportJob> jobs = importJobRepo.findByDatasetVersionId(job.getDatasetVersionId());
+        if (jobs == null) {
+            return;
+        }
+        boolean hasActiveSibling = jobs.stream()
+                .anyMatch(candidate -> !job.getId().equals(candidate.getId())
+                        && ACTIVE_RETRY_BLOCKING_STATUSES.contains(candidate.getStatus()));
+        if (hasActiveSibling) {
+            throw new ImportJobRetryRejectedException(
+                    "dataset version already has an active ImportJob; wait for it to finish before retry"
+            );
+        }
     }
 
     private void launchAfterCommit(String importJobId) {
@@ -156,5 +177,17 @@ public class ImportJobQueryService {
         dto.setStartedAt(job.getStartedAt());
         dto.setFinishedAt(job.getFinishedAt());
         return dto;
+    }
+
+    public static class ImportJobAccessException extends IllegalArgumentException {
+        public ImportJobAccessException(String message) {
+            super(message);
+        }
+    }
+
+    public static class ImportJobRetryRejectedException extends IllegalArgumentException {
+        public ImportJobRetryRejectedException(String message) {
+            super(message);
+        }
     }
 }

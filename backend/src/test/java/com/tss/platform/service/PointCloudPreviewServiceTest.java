@@ -20,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -93,12 +92,12 @@ class PointCloudPreviewServiceTest {
         byte[] zip = zip(entry("clouds/large.pcd", "x".repeat(101)));
         TestFixture fixture = fixture("pointcloud.zip", "POINT_CLOUD", 7, (long) zip.length, 100, zip);
 
-        PointCloudPreviewDto preview = fixture.service.preview("dataset-ver-1");
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.preview("dataset-ver-1")
+        );
 
-        assertFalse(preview.isPreviewSupported());
-        assertEquals(101L, preview.getPointCloudFiles().get(0).getSizeBytes());
-        assertFalse(preview.getPointCloudFiles().get(0).isPreviewAllowed());
-        assertNull(preview.getPointCloudFiles().get(0).getPreviewUrl());
+        assertEquals("文件过大，请下载后本地查看", error.getMessage());
     }
 
     @Test

@@ -158,6 +158,9 @@ class V2DatasetCatalogServiceTest {
         ImportJob failed = fixture.job(draft.getId(), "FAILED", 0);
         failed.setId("job-failed");
         failed.setCreatedAt(Instant.parse("2026-01-10T00:00:00Z"));
+        failed.setErrorCode("DUPLICATE_SAMPLE");
+        failed.setErrorMessage("上传内容包含已存在的样本");
+        failed.setErrorDetailsJson("{\"sampleName\":\"scene-1\"}");
         ImportJob succeeded = fixture.job(draft.getId(), "SUCCESS", 100);
         succeeded.setId("job-success");
         succeeded.setCreatedAt(Instant.parse("2026-01-11T00:00:00Z"));
@@ -169,7 +172,36 @@ class V2DatasetCatalogServiceTest {
                 .get(0);
 
         assertFalse(item.getCanPublish());
+        assertEquals("IMPORT_FAILED", item.getDisplayStatus());
+        assertEquals(0, item.getImportProgress());
+        assertEquals("DUPLICATE_SAMPLE", item.getUserError().getErrorCode());
+        assertEquals("scene-1", item.getUserError().getDetails().get("sampleName"));
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
+    }
+
+    @Test
+    void newerRunningImportTakesPriorityOverOlderFailedImport() {
+        Fixture fixture = new Fixture();
+        DatasetAsset asset = fixture.asset();
+        DatasetVersion draft = fixture.version("draft-1", "DRAFT", 1);
+        ImportJob failed = fixture.job(draft.getId(), "FAILED", 0);
+        failed.setId("job-failed");
+        failed.setCreatedAt(Instant.parse("2026-01-10T00:00:00Z"));
+        failed.setErrorCode("DUPLICATE_SAMPLE");
+        ImportJob running = fixture.job(draft.getId(), "RUNNING", 45);
+        running.setId("job-running");
+        running.setCreatedAt(Instant.parse("2026-01-11T00:00:00Z"));
+        fixture.stub(List.of(asset), List.of(draft), List.of(failed, running));
+
+        V2DatasetListItem item = fixture.service
+                .list(null, null, null, null, null)
+                .getData()
+                .get(0);
+
+        assertEquals("IMPORTING", item.getDisplayStatus());
+        assertEquals(45, item.getImportProgress());
+        assertNull(item.getUserError());
+        assertFalse(item.getCanPublish());
     }
 
     @Test

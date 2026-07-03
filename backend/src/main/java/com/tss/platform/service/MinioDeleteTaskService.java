@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -37,6 +38,8 @@ public class MinioDeleteTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(MinioDeleteTaskService.class);
     private static final int DEFAULT_MAX_RETRY_COUNT = 5;
+    // Initial 5 attempts plus 2 reset cycles gives at most 15 delete attempts.
+    private static final int FAILED_RESET_LIMIT = 2;
     private static final Duration PROCESSING_STALE_AFTER = Duration.ofMinutes(30);
     private static final Set<String> ACTIVE_STATUSES = Set.of(STATUS_PENDING, STATUS_PROCESSING);
 
@@ -148,6 +151,7 @@ public class MinioDeleteTaskService {
 
     public List<String> findPendingTaskIds() {
         resetStaleProcessingTasks();
+        resetFailedTasksForRetry();
         return repo.findTop50ByStatusOrderByCreatedAtAsc(STATUS_PENDING)
                 .stream()
                 .map(MinioDeleteTask::getId)
@@ -165,6 +169,21 @@ public class MinioDeleteTaskService {
         int value = resetCount == null ? 0 : resetCount;
         if (value > 0) {
             log.warn("MinIO delete stale PROCESSING tasks reset to PENDING: count={}", value);
+        }
+        return value;
+    }
+
+    public int resetFailedTasksForRetry() {
+        Instant now = Instant.now();
+        Integer resetCount = transactionTemplate.execute(status -> repo.resetFailedForRetry(
+                STATUS_FAILED,
+                STATUS_PENDING,
+                FAILED_RESET_LIMIT,
+                now
+        ));
+        int value = resetCount == null ? 0 : resetCount;
+        if (value > 0) {
+            log.warn("MinIO delete FAILED tasks reset to PENDING for retry: count={}", value);
         }
         return value;
     }
@@ -194,7 +213,17 @@ public class MinioDeleteTaskService {
             minioService.deleteObject(task.getBucket(), task.getObjectName());
             markSuccess(task.getId());
         } catch (Exception e) {
-            markFailure(task.getId(), e);
+            if (isObjectMissing(e)) {
+                log.info(
+                        "MinIO delete task target already missing, marking success: taskId={}, bucket={}, objectName={}",
+                        task.getId(),
+                        task.getBucket(),
+                        task.getObjectName()
+                );
+                markSuccess(task.getId());
+            } else {
+                markFailure(task.getId(), e);
+            }
         }
     }
 
@@ -273,5 +302,23 @@ public class MinioDeleteTaskService {
             message = e.getClass().getSimpleName();
         }
         return message.length() > 4000 ? message.substring(0, 4000) : message;
+    }
+
+    private boolean isObjectMissing(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.ROOT);
+                if (lower.contains("object does not exist")
+                        || lower.contains("object not found")
+                        || lower.contains("no such key")
+                        || lower.contains("notfound")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

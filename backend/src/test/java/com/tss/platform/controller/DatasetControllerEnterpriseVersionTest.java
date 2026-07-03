@@ -82,6 +82,7 @@ class DatasetControllerEnterpriseVersionTest {
         assertEquals("v1", item.get("currentVersionLabel"));
         assertEquals("READY", item.get("versionStatus"));
         assertEquals("baseline", item.get("versionDescription"));
+        assertFalse(item.containsKey("storagePath"));
         assertEquals(12L, item.get("fileCount"));
         assertEquals(12L, item.get("currentVersionFileCount"));
         assertEquals(2, item.get("versionCount"));
