@@ -65,6 +65,7 @@ class DatasetWorkspaceServiceTest {
         assertFalse(Boolean.TRUE.equals(draft.getDeleted()));
         verify(fixture.assetRepo, never()).save(any(DatasetAsset.class));
         verify(fixture.materializer).materialize(fixture.asset, fixture.parent, draft);
+        verify(fixture.auditService).recordDraftCreated(fixture.asset, draft);
     }
 
     @Test
@@ -92,6 +93,8 @@ class DatasetWorkspaceServiceTest {
 
         assertEquals("copy failed", error.getMessage());
         verify(fixture.assetRepo, never()).save(any(DatasetAsset.class));
+        verify(fixture.auditService, never())
+                .recordDraftCreated(eq(fixture.asset), any(DatasetVersion.class));
     }
 
     @Test
@@ -210,13 +213,16 @@ class DatasetWorkspaceServiceTest {
                 new DatasetVersionLifecycleService(versionRepo);
         private final DatasetWorkspaceMaterializer materializer =
                 mock(DatasetWorkspaceMaterializer.class);
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final DatasetWorkspaceService service =
                 new DatasetWorkspaceService(
                         versionRepo,
                         assetRepo,
                         authContext,
                         lifecycle,
-                        materializer
+                        materializer,
+                        auditService
                 );
         private final DatasetAsset asset = asset();
         private final DatasetVersion parent = parent();

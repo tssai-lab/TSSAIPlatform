@@ -8,6 +8,7 @@ import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,45 +24,74 @@ public class DatasetWorkspaceSampleMutationService {
     private final DatasetVersionRepository versionRepo;
     private final DatasetAssetRepository assetRepo;
     private final AuthContext authContext;
+    private final DatasetWorkspaceAuditService auditService;
 
+    @Autowired
     public DatasetWorkspaceSampleMutationService(
             DatasetSampleRepository sampleRepo,
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
-            AuthContext authContext
+            AuthContext authContext,
+            DatasetWorkspaceAuditService auditService
     ) {
         this.sampleRepo = sampleRepo;
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
         this.authContext = authContext;
+        this.auditService = auditService;
+    }
+
+    DatasetWorkspaceSampleMutationService(
+            DatasetSampleRepository sampleRepo,
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            AuthContext authContext
+    ) {
+        this(sampleRepo, versionRepo, assetRepo, authContext, null);
     }
 
     @Transactional
     public DatasetWorkspaceSampleMutationDto deleteSample(String sampleId) {
-        DatasetSample sample = requireMutableDraftSample(sampleId);
+        WorkspaceSampleContext context = requireMutableDraftSample(sampleId);
+        DatasetSample sample = context.sample();
         if (!Boolean.TRUE.equals(sample.getDeleted())) {
             Instant now = Instant.now();
             sample.setDeleted(true);
             sample.setDeletedAt(now);
             sample.setUpdatedAt(now);
             sample = sampleRepo.saveAndFlush(sample);
+            if (auditService != null) {
+                auditService.recordSampleDeleted(
+                        context.asset(),
+                        context.version(),
+                        sample
+                );
+            }
         }
         return toDto(sample);
     }
 
     @Transactional
     public DatasetWorkspaceSampleMutationDto restoreSample(String sampleId) {
-        DatasetSample sample = requireMutableDraftSample(sampleId);
+        WorkspaceSampleContext context = requireMutableDraftSample(sampleId);
+        DatasetSample sample = context.sample();
         if (Boolean.TRUE.equals(sample.getDeleted())) {
             sample.setDeleted(false);
             sample.setDeletedAt(null);
             sample.setUpdatedAt(Instant.now());
             sample = sampleRepo.saveAndFlush(sample);
+            if (auditService != null) {
+                auditService.recordSampleRestored(
+                        context.asset(),
+                        context.version(),
+                        sample
+                );
+            }
         }
         return toDto(sample);
     }
 
-    private DatasetSample requireMutableDraftSample(String sampleId) {
+    private WorkspaceSampleContext requireMutableDraftSample(String sampleId) {
         if (sampleId == null || sampleId.isBlank()) {
             throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }
@@ -78,7 +108,7 @@ public class DatasetWorkspaceSampleMutationService {
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }
-        return sample;
+        return new WorkspaceSampleContext(sample, version, asset);
     }
 
     private static DatasetWorkspaceSampleMutationDto toDto(DatasetSample sample) {
@@ -89,5 +119,12 @@ public class DatasetWorkspaceSampleMutationService {
         dto.setDeleted(Boolean.TRUE.equals(sample.getDeleted()));
         dto.setDeletedAt(sample.getDeletedAt());
         return dto;
+    }
+
+    private record WorkspaceSampleContext(
+            DatasetSample sample,
+            DatasetVersion version,
+            DatasetAsset asset
+    ) {
     }
 }

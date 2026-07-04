@@ -8,17 +8,22 @@ import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetUploadChunk;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.ImportJob;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
+import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.GetObjectResponse;
 import io.minio.MinioClient;
 import okhttp3.Headers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
@@ -61,6 +66,45 @@ class DatasetUploadServiceEnterpriseVersionTest {
 
         assertEquals(0, progress.getUploadedChunks());
         verify(chunkRepo, never()).findByUploadIdOrderByPartIndexAsc(session.getId());
+    }
+
+    @Test
+    void progressIncludesExplicitStatusContractFields() {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        ImportJobRepository importJobRepo = mock(ImportJobRepository.class);
+        DatasetUploadService service = new DatasetUploadService(
+                mock(MinioClient.class),
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                mock(DatasetPackageRepository.class),
+                mock(DatasetVersionPackageRepository.class),
+                importJobRepo,
+                mock(AuthContext.class),
+                mock(MinioDeleteTaskService.class),
+                mock(PlatformTransactionManager.class)
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "MULTIMODAL", null, null);
+        session.setStatus("COMPLETED");
+        session.setSampleGrouping("MANIFEST");
+        session.setVersionId("dataset-ver-draft");
+        session.setImportJobId("ijob-1");
+        ImportJob job = new ImportJob();
+        job.setId("ijob-1");
+        job.setStatus("FAILED");
+        when(sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(importJobRepo.findById("ijob-1")).thenReturn(Optional.of(job));
+
+        DatasetUploadProgressDto progress = service.getProgress(session.getId());
+
+        assertEquals("COMPLETED", progress.getUploadStatus());
+        assertEquals("DRAFT", progress.getVersionStatus());
+        assertEquals("ijob-1", progress.getImportJobId());
+        assertEquals("FAILED", progress.getImportStatus());
+        verify(chunkRepo, never()).summarizeProgressByUploadId(session.getId());
     }
 
     @Test
@@ -291,6 +335,47 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
+    void initForMultimodalManifestPersistsStrictManifestFlag() {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        DatasetUploadService service = new DatasetUploadService(
+                mock(MinioClient.class),
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                authContext,
+                mock(MinioDeleteTaskService.class)
+        );
+
+        DatasetUploadInitRequest req = new DatasetUploadInitRequest();
+        req.setFileName("dataset.zip");
+        req.setFileSize(1024L);
+        req.setDatasetName("multimodal");
+        req.setType("MULTIMODAL");
+        req.setSampleGrouping("MANIFEST");
+        req.setManifestPath("metadata/manifest.json");
+        req.setStrictManifest(true);
+
+        when(authContext.currentUserId()).thenReturn(7);
+        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
+
+        service.init(req);
+
+        ArgumentCaptor<DatasetUploadSession> sessionCaptor =
+                ArgumentCaptor.forClass(DatasetUploadSession.class);
+        verify(sessionRepo).save(sessionCaptor.capture());
+        assertEquals("MANIFEST", sessionCaptor.getValue().getSampleGrouping());
+        assertEquals("metadata/manifest.json", sessionCaptor.getValue().getManifestPath());
+        assertTrue(sessionCaptor.getValue().getStrictManifest());
+    }
+
+    @Test
     void initRetryWithImplicitCurrentParentReusesExistingSession() {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
@@ -365,6 +450,68 @@ class DatasetUploadServiceEnterpriseVersionTest {
 
         assertEquals("dataset-upload-existing", progress.getUploadId());
         verify(sessionRepo).save(existing);
+    }
+
+    @Test
+    void initRetryDoesNotReuseExistingSessionWhenStrictManifestDiffers() {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        DatasetUploadService service = new DatasetUploadService(
+                mock(MinioClient.class),
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                authContext,
+                mock(MinioDeleteTaskService.class)
+        );
+
+        DatasetUploadSession existing = new DatasetUploadSession();
+        existing.setId("dataset-upload-existing");
+        existing.setFileName("dataset.zip");
+        existing.setFileSize(1024L);
+        existing.setDatasetName("multimodal");
+        existing.setVersion("v1");
+        existing.setVersionLabel("v1");
+        existing.setVersionNo(1);
+        existing.setVersionLabelGenerated(true);
+        existing.setType("MULTIMODAL");
+        existing.setSampleGrouping("MANIFEST");
+        existing.setManifestPath("manifest.json");
+        existing.setStrictManifest(false);
+        existing.setOwnerUserId(7);
+        existing.setStatus("UPLOADING");
+        existing.setTotalChunks(1);
+        existing.setChunkSize(5 * 1024 * 1024);
+
+        DatasetUploadInitRequest req = new DatasetUploadInitRequest();
+        req.setFileName("dataset.zip");
+        req.setFileSize(1024L);
+        req.setFileFingerprint("sha256:abc");
+        req.setDatasetName("multimodal");
+        req.setType("MULTIMODAL");
+        req.setSampleGrouping("MANIFEST");
+        req.setStrictManifest(true);
+
+        when(authContext.currentUserId()).thenReturn(7);
+        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+                "sha256:abc", "UPLOADING", 7
+        )).thenReturn(Optional.of(existing));
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
+
+        DatasetUploadProgressDto progress = service.init(req);
+
+        assertTrue(progress.getUploadId().startsWith("dataset-upload-"));
+        assertTrue(progress.getStrictManifest());
+        ArgumentCaptor<DatasetUploadSession> sessionCaptor = ArgumentCaptor.forClass(DatasetUploadSession.class);
+        verify(sessionRepo).save(sessionCaptor.capture());
+        DatasetUploadSession saved = sessionCaptor.getValue();
+        assertTrue(saved.getStrictManifest());
+        assertTrue(saved.getId().startsWith("dataset-upload-"));
+        assertTrue(!"dataset-upload-existing".equals(saved.getId()));
     }
 
     @Test

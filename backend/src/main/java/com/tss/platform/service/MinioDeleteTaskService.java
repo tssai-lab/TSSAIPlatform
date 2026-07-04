@@ -30,6 +30,7 @@ public class MinioDeleteTaskService {
     public static final String SOURCE_DATASET_VERSION = "DATASET_VERSION";
     public static final String SOURCE_MODEL_ASSET = "MODEL_ASSET";
     public static final String SOURCE_DATASET_ASSET = "DATASET_ASSET";
+    public static final String SOURCE_DATASET_PACKAGE = "DATASET_PACKAGE";
     public static final String SOURCE_FILE_OBJECT = "FILE_OBJECT";
     public static final String SOURCE_MODEL_UPLOAD_CHUNK = "MODEL_UPLOAD_CHUNK";
     public static final String SOURCE_DATASET_UPLOAD_CHUNK = "DATASET_UPLOAD_CHUNK";

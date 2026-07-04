@@ -73,6 +73,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -1091,9 +1092,13 @@ class MultimodalDatasetLifecycleAcceptanceTest {
             when(zipReader.read(anyString(), anyLong())).thenReturn(List.of());
             when(manifestReader.readManifest(anyString(), anyLong(), anyString()))
                     .thenReturn("{}");
-            when(manifestParser.parse(anyString(), any(), anyString()))
-                    .thenReturn(initialPlan());
-            when(manifestParser.parse(anyString(), any(), anyString(), anyInt()))
+            when(manifestParser.parse(
+                    anyString(),
+                    any(),
+                    anyString(),
+                    anyInt(),
+                    anyBoolean()
+            ))
                     .thenAnswer(invocation -> {
                         int sampleIndex = invocation.getArgument(3);
                         return sampleIndex == 0
@@ -1127,7 +1132,8 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                     anyString(),
                     any(),
                     anyString(),
-                    anyInt()
+                    anyInt(),
+                    anyBoolean()
             )).thenAnswer(invocation ->
                     conflictPlan(invocation.getArgument(3))
             );

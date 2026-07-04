@@ -1,8 +1,10 @@
 package com.tss.platform.controller.v2;
 
 import com.tss.platform.service.ManifestValidationException;
+import com.tss.platform.service.DatasetWorkspaceAuditService;
 import com.tss.platform.service.ImportJobQueryService;
 import com.tss.platform.service.SampleFileException;
+import com.tss.platform.service.SampleService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -93,6 +95,34 @@ public class V2ExceptionHandler {
                 "IMPORT_JOB_NOT_RETRYABLE",
                 "当前导入任务不可重试",
                 reasonDetails(exception),
+                request
+        );
+    }
+
+    @ExceptionHandler(SampleService.DatasetVersionAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleDatasetVersionAccess(
+            SampleService.DatasetVersionAccessException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "DATASET_NOT_FOUND",
+                "数据集版本不存在或无权访问",
+                Map.of(),
+                request
+        );
+    }
+
+    @ExceptionHandler(DatasetWorkspaceAuditService.DatasetWorkspaceAuditAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleWorkspaceAuditAccess(
+            DatasetWorkspaceAuditService.DatasetWorkspaceAuditAccessException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "DATASET_AUDIT_NOT_FOUND",
+                "数据集审计日志不存在或无权访问",
+                Map.of(),
                 request
         );
     }

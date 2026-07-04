@@ -270,6 +270,7 @@ profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、training
 | `POST /api/dataset/upload/complete` | 合并文件并创建版本 | 普通类型创建 READY；MULTIMODAL 创建 DRAFT、PRIMARY package 和 PENDING ImportJob，并异步启动导入 |
 | `GET /api/dataset-samples/import/{importJobId}/status` | 查询多模态导入任务状态 | 通过任务关联的数据集资产校验权限；不返回 MinIO 路径 |
 | `GET /api/dataset-versions/{versionId}/samples` | 分页查询多模态样本 | 仅允许查询未删除的 READY 版本；默认每页 20 条，最多 100 条 |
+| `GET /api/dataset-samples/multimodal` | 按 `externalId` 跨版本查询样本 | 仅接受未删除、调用方有权限访问、状态为 READY 的 `datasetVersionIds`；返回 data/annotation 稳定字段和固定 preview/download 链接 |
 | `GET /api/dataset-samples/{sampleId}` | 查询多模态样本详情 | 返回 sample、data 和 annotations，不返回 MinIO/ZIP 定位字段 |
 | `GET /api/dataset-samples/{sampleId}/data` | 查询样本数据项 | 返回安全元数据；链接由调用方按 dataId 组装 |
 | `GET /api/dataset-sample-data/{dataId}/preview` | 预览 ZIP 内数据项 | IMAGE/TEXT/POINT_CLOUD/安全文本类 OTHER 使用 D2 全量流；STORED VIDEO 支持单段 HTTP Range |
@@ -284,6 +285,7 @@ profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、training
 | `DELETE /api/dataset-samples/{sampleId}/workspace` | 软删除 DRAFT 样本 | 只修改 DRAFT 样本删除标记，不修改父 READY，不物理删除 ZIP |
 | `POST /api/dataset-samples/{sampleId}/workspace/restore` | 恢复 DRAFT 样本 | 清除 DRAFT 样本删除标记 |
 | `POST /api/dataset-versions/{draftVersionId}/publish` | 发布 DRAFT 为新 READY | 校验导入、package、样本唯一性和版本顺序后更新 `currentVersionId` |
+| `GET /api/dataset-versions/{datasetVersionId}/workspace/audit-logs` | 查询工作区审计日志 | owner 权限校验；返回内部回溯字段，不返回存储定位字段 |
 | `POST /api/dataset/upload/folder` | 上传 CV 文件夹 | `files` 与 `paths` 必须一一对应；后端同步打包上传，不适合超大文件夹 |
 | `GET /api/dataset/list` | 数据集资产主列表 | 每条记录代表资产并携带当前 READY 版本及最新 DRAFT 的导入状态；预览/训练仍使用 `versionId` |
 | `POST /api/dataset-assets` | 预创建空数据集资产 | 只创建资产元数据；没有版本时列表中的版本字段为空 |
@@ -776,6 +778,7 @@ POST /api/dataset/upload/init
 | `remark` | string | 否 | 备注 |
 | `sampleGrouping` | string | 否 | `MULTIMODAL` 默认 `AUTO_DIRECTORY`，可显式传 `MANIFEST`；其他类型禁止传 |
 | `manifestPath` | string | 否 | 仅 `MANIFEST` 允许；未传时默认为 `manifest.json`。可使用 `/` 或 `\`，后端统一规范化为 `/`；`AUTO_DIRECTORY` 不允许传 |
+| `strictManifest` | boolean | 否 | 仅 `MULTIMODAL + MANIFEST` 支持，默认 `false`；为 `true` 时 ZIP 内普通文件必须全部被 manifest 声明 |
 
 文件类型规则：
 
@@ -785,7 +788,7 @@ POST /api/dataset/upload/init
 | `NLP` | 支持 `.txt`、`.json`、`.jsonl`、`.csv`、`.xlsx`、`.xls`、`.pdf`、`.docx`、`.xml`，或只包含这些文件的 `.zip` |
 | `POINT_CLOUD` | 支持单文件 `.ply`、`.pcd`，或 `.zip`；zip 内至少包含一个 `.ply` 或 `.pcd`，且仅允许 `.ply`、`.pcd`、`.txt`、`.json`、`.yaml`、`.yml` |
 | `ROBOT` | 支持单文件 `.xml`、`.yaml`、`.yml`，或 `.zip`；zip 内仅允许 `.xml`、`.yaml`、`.yml`、`.json`、`.txt` |
-| `MULTIMODAL` | 只支持 `.zip`；未传 `sampleGrouping` 时默认 `AUTO_DIRECTORY`，显式 `MANIFEST` 时可传 `manifestPath`；complete 后由异步 ImportJob 解析 ZIP 索引并生成导入计划 |
+| `MULTIMODAL` | 只支持 `.zip`；未传 `sampleGrouping` 时默认 `AUTO_DIRECTORY`，显式 `MANIFEST` 时可传 `manifestPath` 和可选 `strictManifest`；complete 后由异步 ImportJob 解析 ZIP 索引并生成导入计划 |
 
 `manifestPath` 规则：
 
@@ -796,6 +799,12 @@ POST /api/dataset/upload/init
 - 只有 `sampleGrouping=MANIFEST` 时允许传入。
 
 manifest JSON 内的 `data[].path`、`annotations[].path` 和 `annotations[].ref_data_path` 使用同一套 ZIP 路径规则：接受 `/` 或 `\`，统一规范化为 `/`，继续拒绝空路径、绝对路径、Windows 盘符、空字节和 `..`。
+
+`strictManifest` 规则：
+
+- 未传或传 `false` 时保持宽松模式：manifest 声明的文件必须存在，未声明的普通 ZIP entry 只作为 warning 记录，不中断导入。
+- 传 `true` 仅允许 `MULTIMODAL + MANIFEST`；`AUTO_DIRECTORY` 或单模态请求会在 init 阶段拒绝。
+- 严格模式下，ZIP 内任一未被 manifest 声明的普通文件都会使 ImportJob 进入 `FAILED`，错误码为 `INVALID_MANIFEST_UNDECLARED_ENTRY`，`errorDetailsJson` 包含首个未声明路径及未声明路径列表。
 
 CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
 
@@ -808,7 +817,7 @@ CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
 | `VOC` | `.xml` | 是 |
 | `OTHER` | `.txt`、`.json`、`.xml`、`.csv`、`.yaml`、`.yml` | 否 |
 
-响应 `data` 字段与模型上传进度类似，额外包含 `cvTaskType`、`annotationFormat`。其中 `chunkSize` 是本次会话实际使用的动态分片大小。
+响应 `data` 字段与模型上传进度类似，额外包含 `cvTaskType`、`annotationFormat` 和 `strictManifest`。其中 `chunkSize` 是本次会话实际使用的动态分片大小。
 
 多模态初始化示例：
 
@@ -821,6 +830,7 @@ CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
   "type": "MULTIMODAL",
   "sampleGrouping": "MANIFEST",
   "manifestPath": "metadata/manifest.json",
+  "strictManifest": true,
   "versionLabel": "v1"
 }
 ```
@@ -1038,7 +1048,7 @@ GET /api/dataset-samples/import/{importJobId}/status
 | --- | --- |
 | `importJobId` | 导入任务 ID |
 | `datasetVersionId` | 对应的 DRAFT 数据集版本 ID |
-| `status` | `PENDING`、`RUNNING`、`SUCCESS` 或 `FAILED` |
+| `status` | `PENDING`、`RUNNING`、`SUCCESS`、`FAILED` 或 `PARTIAL`；`PARTIAL` 表示部分样本已导入、部分失败，不能直接 publish，可走 `INCREMENTAL` retry |
 | `progress` | 进度，当前新任务初始化为 `0` |
 | `totalSamples` | 导入计划样本总数；任务成功后写入 |
 | `importedSamples` | 已导入样本数；成功时等于 `totalSamples` |
@@ -1078,29 +1088,33 @@ GET /api/dataset-samples/import/{importJobId}/status
 - 普通用户只能查询自己数据集资产的任务；管理员可查询全部。
 - 接口不返回 `storagePath`、bucket 或其他 MinIO 对象路径。
 
-#### FULL 重试失败导入
+#### ImportJob 重试
 
 ```http
 POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
 POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL
+POST /api/dataset-samples/import/{importJobId}/retry?mode=INCREMENTAL
+POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL
 ```
 
 约束：
 
-- 只支持 `mode=FULL`，未传时按 `FULL` 处理；`PARTIAL`、`INCREMENTAL` 和未知值会被拒绝。
-- 只允许重试 `status=FAILED` 的 ImportJob。
-- 对应 DatasetVersion 必须仍为 `DRAFT`。
-- 若该 ImportJob 对应的版本或 package 已经存在导入样本，后端拒绝重试；当前不做半导入样本清理。
+- 只支持 `mode=FULL` 或 `mode=INCREMENTAL`，未传时按 `FULL` 处理；`PARTIAL` 和未知 mode 会被拒绝。
+- `FULL` 只允许 `FAILED -> PENDING`，不扩展到 `PARTIAL`。
+- `FULL` 要求对应 DatasetVersion 必须仍为 `DRAFT`；若该 ImportJob 对应的版本或 package 已经存在导入样本，后端拒绝重试，当前不做半导入样本清理。
+- `INCREMENTAL` 只允许 `PARTIAL -> PENDING`，要求存在未解决的失败样本记录；它只重跑 `import_job_sample_failure` 中的失败样本，并复用 failure row 保存的 `externalId` 和原始 `sampleIndex`，避免重新计算导致 sampleIndex 漂移。
+- 0 个样本成功的导入仍为 `FAILED`，不能走 `INCREMENTAL`。
 - 同一 DatasetVersion 存在其他 `PENDING` 或 `RUNNING` ImportJob 时，后端拒绝重试，调用方应等待活动导入结束后再重试。
-- 重试会清空 `errorCode`、`errorMessage`、`errorDetailsJson`，重置 `progress=0`、`importedSamples=0`，把状态置为 `PENDING`，并通过现有 ImportJob launcher 重新调度。
+- FULL 重试会清空 `errorCode`、`errorMessage`、`errorDetailsJson`，重置 `progress=0`、`importedSamples=0`，把状态置为 `PENDING`，并通过现有 ImportJob launcher 重新调度。
+- INCREMENTAL 重试会把未解决 failure row 标记为 `RETRYING`，任务置为 `PENDING`，保留已成功导入样本。
 
-Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，字段为 `importJobId`、`status`、`displayStatus`、`importProgress` 和 `userError`；V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对非 `FULL` mode 或不可重试状态返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID 或非法请求格式返回 400 / `INVALID_IMPORT_JOB_RETRY`。
+Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，字段为 `importJobId`、`status`、`displayStatus`、`importProgress`、`totalSamples`、`importedSamples`、`failedSamples`、`retryable`、`retryModes` 和 `userError`；V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对不可重试状态或 mode 与状态不匹配返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID 或非法请求格式返回 400 / `INVALID_IMPORT_JOB_RETRY`。
 
 当前实现：
 
 - complete 创建 `PENDING` ImportJob，并通过 Spring 管理的任务线程池异步执行。
-- ImportJob 状态会进入 `RUNNING`，成功后为 `SUCCESS`，异常时为 `FAILED`。
-- 失败 ImportJob 支持受控 `FULL` 重试，不引入 `PARTIAL` 状态。
+- ImportJob 状态会进入 `RUNNING`，全部成功后为 `SUCCESS`，0 个样本成功或任务级异常时为 `FAILED`，部分成功时为 `PARTIAL`。
+- 失败 ImportJob 支持受控 `FULL` 重试；`PARTIAL` ImportJob 仅支持受控 `INCREMENTAL` 重试。
 - MANIFEST 会解析用户提供的 manifest；AUTO_DIRECTORY 会根据根级样本目录生成内存导入计划。两种模式最终都写入 DatasetSample、DatasetSampleData 和 DatasetAnnotation。
 - 运行中的任务每 30 秒更新 heartbeat；超过 30 分钟无 heartbeat 的任务会重置为 `PENDING` 并重新调度。
 - ImportJob 恢复调度带数据库分布式锁；启动恢复和每 60 秒恢复共用同一加锁路径，避免多实例重复调度同一批 `PENDING` 任务。
@@ -1192,6 +1206,67 @@ GET /api/dataset-samples/{sampleId}/data
 ```
 
 返回字段与样本详情中的 `data` 一致。
+
+#### 跨版本 externalId 查询
+
+```http
+GET /api/dataset-samples/multimodal?externalId=scene-001&datasetVersionIds=version-1&datasetVersionIds=version-2&page=1&pageSize=20
+GET /api/v2/dataset-samples/multimodal?externalId=scene-001&datasetVersionIds=version-1,version-2&page=1&pageSize=20
+```
+
+该查询用于按同一个 `externalId` 在多个 DatasetVersion 中查找样本、Data 和 Annotation。`datasetVersionIds` 支持重复 query 参数或逗号分隔值；后端会去重并按 `datasetVersionId ASC, sampleIndex ASC, createdAt ASC, id ASC` 稳定分页。`page` 默认 `1`，`pageSize` 默认 `20`、最大 `100`。
+
+所有传入的 `datasetVersionIds` 都必须满足：未删除、`status=READY`，并且调用方可通过 `DatasetVersion -> DatasetAsset.ownerUserId` 访问。任一版本不存在、无权限、已删除或不是 READY 时，整个查询失败；legacy 返回 `ApiResponse.success=false` 和 `dataset version not found or no permission`，V2 返回 `404 / DATASET_NOT_FOUND`，不会暴露是哪一个 versionId 失败。
+
+legacy 成功响应为 `ApiResponse<PageResponse<DatasetMultimodalExternalIdSampleDto>>`；V2 成功响应直接返回同一分页对象：
+
+```json
+{
+  "data": [
+    {
+      "datasetVersionId": "version-1",
+      "sampleId": "sample-1",
+      "externalId": "scene-001",
+      "sampleIndex": 0,
+      "data": [
+        {
+          "sampleDataId": "data-1",
+          "dataType": "IMAGE",
+          "sensor": "front",
+          "channel": "rgb",
+          "seq": 0,
+          "format": "jpg",
+          "fileName": "front.jpg",
+          "sizeBytes": 12345,
+          "checksum": "sha256:abc",
+          "contentType": "image/jpeg",
+          "previewUrl": "/api/dataset-sample-data/data-1/preview",
+          "downloadUrl": "/api/dataset-sample-data/data-1/download"
+        }
+      ],
+      "annotations": [
+        {
+          "annotationId": "ann-1",
+          "sampleDataId": "data-1",
+          "annotationType": "bbox",
+          "format": "json",
+          "fileName": "front.json",
+          "sizeBytes": 456,
+          "checksum": "sha256:def",
+          "contentType": "application/json",
+          "downloadUrl": "/api/dataset-annotations/ann-1/download"
+        }
+      ]
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 1
+}
+```
+
+该接口只返回稳定字段：`datasetVersionId`、`sampleId`、`externalId`、`sampleIndex`、`data`、`annotations` 以及固定 preview/download 链接；不返回 `storagePath`、bucket、objectName、`originalPath`、packageId、ZIP offset、压缩定位字段或 CRC。
 
 权限和安全规则：
 
@@ -1315,7 +1390,7 @@ GET /api/dataset/list
 | `updatedAt` | 资产更新时间 |
 | `latestDraftVersionId` | 该资产下 `versionNo` 最大的 DRAFT 版本 ID；没有时为 `null` |
 | `importJobId` | 最新 DRAFT 对应的导入任务 ID；没有时为 `null` |
-| `importStatus` | 最新 DRAFT 的 `PENDING`、`RUNNING` 或 `FAILED` 状态；成功后版本转为 READY，不再属于最新 DRAFT |
+| `importStatus` | 最新 DRAFT 的导入状态；active `PENDING`/`RUNNING` 优先，未解决 `PARTIAL` 表示 V2 `IMPORT_PARTIAL`、不可 publish，重试模式包含 `INCREMENTAL`；成功后版本转为 READY，不再属于最新 DRAFT |
 | `importProgress` | 最新 DRAFT 导入进度 |
 | `importErrorMessage` | 最新 DRAFT 导入失败原因；非失败状态通常为 `null` |
 
@@ -1505,6 +1580,7 @@ Content-Type: application/json
 | `fileFingerprint` | string | 否 | 客户端文件指纹 |
 | `sampleGrouping` | string | 否 | 仅 `MULTIMODAL` 使用；未传默认 `AUTO_DIRECTORY`，可显式传 `MANIFEST`；单模态禁止传 |
 | `manifestPath` | string | 否 | 仅 `MULTIMODAL + MANIFEST` 允许，未传时默认 `manifest.json`；可使用 `/` 或 `\`，后端统一规范化为 `/`；`AUTO_DIRECTORY` 和单模态都禁止传 |
+| `strictManifest` | boolean | 否 | 仅 `MULTIMODAL + MANIFEST` 支持，默认 `false`；为 `true` 时未声明普通 ZIP entry 会导致 ImportJob `FAILED` |
 
 init 返回通用上传进度结构。后续分片继续调用：
 
@@ -1527,7 +1603,7 @@ Content-Type: application/json
 - 版本必须是调用方有权限访问的、未删除的 DRAFT；支持 `MULTIMODAL` 以及 ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`。
 - complete 创建新的 `dataset_package`、`APPEND` 版本关系和独立 ImportJob。
 - `MULTIMODAL` APPEND 继续按 `MANIFEST` 或 `AUTO_DIRECTORY` 生成导入计划。
-- 单模态 APPEND 只接受 ZIP，禁止 `sampleGrouping` 和 `manifestPath`；complete 会执行对应任务类型的 ZIP 安全与文件白名单校验，ImportJob 再按 ZIP entry 生成一文件一样本的 Sample/Data。
+- 单模态 APPEND 只接受 ZIP，禁止 `sampleGrouping`、`manifestPath` 和 `strictManifest`；complete 会执行对应任务类型的 ZIP 安全与文件白名单校验，ImportJob 再按 ZIP entry 生成一文件一样本的 Sample/Data。
 - APPEND 导入只新增 Sample/Data/Annotation，来源字段指向新 package；不会修改继承样本。
 - APPEND 导入计划的未删除 `externalId` 或 `sampleIndex` 与当前 DRAFT 冲突时导入失败，不做跨包合并；AUTO_DIRECTORY 同样适用。
 - 导入成功后 package 状态变为 READY，但 DatasetVersion 仍保持 DRAFT，`currentVersionId` 不变。
@@ -1560,7 +1636,22 @@ POST /api/dataset-samples/{sampleId}/workspace/restore
 - 恢复会清除删除标记。
 - 操作只影响 DRAFT 的物化样本，不影响父 READY。
 
-### 9.6 发布 DRAFT 为新 READY
+### 9.6 查询 workspace 审计日志
+
+```http
+GET /api/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&pageSize=20
+GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&pageSize=20
+```
+
+- 只允许访问调用方有权限的数据集版本；无权限或版本不存在时，legacy 返回失败 envelope，V2 返回 404 语义。
+- `page` 默认 1，`pageSize` 默认 20、最大 100，按 `createdAt DESC, id DESC` 返回。
+- 当前记录 `DRAFT_CREATED`、`APPEND_PACKAGE_INIT`、`APPEND_PACKAGE_COMPLETED`、`IMPORT_JOB_SUCCEEDED`、`IMPORT_JOB_FAILED`、`IMPORT_JOB_PARTIAL`、`SAMPLE_DELETED`、`SAMPLE_RESTORED`、`VERSION_PUBLISHED`、`IMPORT_JOB_RETRIED`；`IMPORT_JOB_RETRIED` 通过 `details.retryMode` 区分 `FULL` 和 `INCREMENTAL`。
+- 响应字段包括 `id`、`datasetAssetId`、`datasetVersionId`、`parentVersionId`、`operation`、`actorType`、`actorUserId`、`targetType`、`targetId`、`importJobId`、`packageId`、`sampleId`、`details`、`createdAt`。
+- 审计日志只追加，不参与 publish、retry、清理或 READY/DRAFT 状态判断。
+- 审计响应用于模块二内部回溯，`targetId`、`packageId`、`sampleId`、`details` 等不作为训练、推理或其他模块的稳定集成契约。
+- 审计日志不记录也不返回 `storagePath`、bucket、MinIO objectName 或 ZIP offset。
+
+### 9.7 发布 DRAFT 为新 READY
 
 ```http
 POST /api/dataset-versions/{draftVersionId}/publish
@@ -1570,15 +1661,15 @@ POST /api/dataset-versions/{draftVersionId}/publish
 
 - DRAFT 必须未删除、属于调用方可访问的数据集资产，且 `versionNo` 高于当前 READY。
 - 父版本和当前版本必须是同资产的有效 READY。
-- DRAFT 下所有 ImportJob 必须为 SUCCESS。
+- DRAFT 下所有 ImportJob 必须为 `SUCCESS` 或 `SUPERSEDED`；`PARTIAL`、`FAILED`、`PENDING`、`RUNNING` 均会阻止 publish。
 - 必须存在且仅存在一个顺序为 0 的 PRIMARY package；后续关系必须为连续有序的 APPEND package。
-- 所有关联 package 必须未删除、状态为 READY、有存储路径并属于同一资产。
+- 所有关联 package 必须未删除、状态为 `READY` 或 `SUPERSEDED`、有存储路径并属于同一资产；`PARTIAL` package 不可 publish，PRIMARY 和 APPEND 都按同一规则校验。
 - Sample/Data/Annotation 的 package 引用必须完整且属于该版本关联的 package。
 - 至少存在一个未删除样本，未删除样本的 `externalId` 和 `sampleIndex` 不得重复。
 
 发布在同一事务内把 DRAFT 状态改为 READY、设置 `publishedAt` 并更新 `DatasetAsset.currentVersionId`。父 READY、package、MinIO ZIP 和 ImportJob 均不会被复制或修改；软删除样本保留在数据库中，但普通 READY 查询和文件访问不会返回它。发布后 workspace 查询拒绝该版本，普通 READY 查询及 preview/download/VIDEO Range 开始生效。
 
-### 9.7 package 模型
+### 9.8 package 模型
 
 - `dataset_package` 表示一个物理 ZIP，包括归属资产、对象路径、文件信息、manifest 路径、状态和软删除信息。
 - `dataset_version_package` 表示某个版本使用哪些物理包，`PRIMARY` 是初始包，`APPEND` 是后续追加包，`packageOrder` 定义稳定顺序。
@@ -1586,13 +1677,13 @@ POST /api/dataset-versions/{draftVersionId}/publish
 - Sample 记录 `createdByPackageId`，Data/Annotation 记录 `packageId`，文件服务据此解析实际 ZIP。
 - 旧数据没有 packageId 时继续使用 `DatasetVersion.storagePath`，因此原有已导入版本仍可读取。
 
-### 9.8 查询数据集版本详情
+### 9.9 查询数据集版本详情
 
 ```http
 GET /api/dataset-versions/{id}
 ```
 
-### 9.9 查询数据集版本列表
+### 9.10 查询数据集版本列表
 
 ```http
 GET /api/dataset-versions?assetId={assetId}
@@ -1602,7 +1693,7 @@ GET /api/dataset-versions?assetId={assetId}
 
 传 `assetId` 时按 `versionNo` 倒序返回完整版本历史。返回项包含 `versionNo`、`versionLabel`、`status`、`description`、`changeLog`、`parentVersionId`、`fileFingerprint`、`publishedAt` 等字段。
 
-### 9.10 更新数据集版本
+### 9.11 更新数据集版本
 
 ```http
 PUT /api/dataset-versions/{id}
@@ -1626,7 +1717,7 @@ PUT /api/dataset-versions/{id}
 
 `remark`、`description`、`changeLog` 会直接使用请求值覆盖，省略时会被更新为 `null`；编辑页应先读取详情并提交完整可编辑字段。
 
-### 9.11 更新数据集版本状态
+### 9.12 更新数据集版本状态
 
 ```http
 PATCH /api/dataset-versions/{id}/status
@@ -1648,7 +1739,7 @@ Content-Type: application/json
 - 工作区不能通过该通用状态接口发布；必须调用 `POST /api/dataset-versions/{draftVersionId}/publish`，由专用服务执行完整性校验和 `currentVersionId` 更新。
 - 跨域部署需要注意当前 CORS 未允许 `PATCH`，建议经同源 Nginx 代理调用。
 
-### 9.12 删除数据集版本
+### 9.13 删除数据集版本
 
 ```http
 DELETE /api/dataset-versions/{id}
@@ -2208,6 +2299,8 @@ Content-Disposition: inline; filename*=UTF-8''a.png
 | 多模态分组缺失 | `MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST 或 AUTO_DIRECTORY` |
 | 非多模态使用 grouping | `仅 MULTIMODAL 数据集支持 sampleGrouping` |
 | AUTO_DIRECTORY 传 manifestPath | `AUTO_DIRECTORY 不允许传 manifestPath` |
+| strictManifest 使用范围非法 | `strictManifest 仅 MULTIMODAL + MANIFEST 支持` / `strictManifest 仅在 sampleGrouping=MANIFEST 时可用` |
+| strictManifest 发现未声明 ZIP 文件 | `manifest 未声明 ZIP 文件: ...`，ImportJob `errorCode=INVALID_MANIFEST_UNDECLARED_ENTRY` |
 | manifest 路径非法 | `manifestPath 非法` |
 | 上传会话不存在或越权 | `uploadId invalid or not accessible` |
 | 分片缺失 | `分片未上传完成` / `缺少分片: ...` |
@@ -2462,6 +2555,7 @@ curl.exe -H "Authorization: Bearer <token>" `
 | `parentVersionId` | 来源版本；不传时使用资产 `currentVersionId`。 |
 | `sampleGrouping` | 多模态上传传 `MANIFEST` 或 `AUTO_DIRECTORY`；其他类型不传。 |
 | `manifestPath` | 仅 MANIFEST 使用，默认 `manifest.json`；可使用 `/` 或 `\` 并统一规范化为 `/`；AUTO_DIRECTORY 不传。 |
+| `strictManifest` | 仅 `MULTIMODAL + MANIFEST` 可传 `true`；默认 `false`。 |
 
 上传完成后：
 
@@ -2538,8 +2632,8 @@ Content-Type: application/json
 - 同一资产只允许一个未删除 DRAFT。已有上传导入 DRAFT 或工作区 DRAFT 时，新建工作区都会被拒绝，避免混淆两种用途。
 - 工作区 DRAFT 不能通过通用版本状态 PATCH 直接变为 READY，必须使用独立 publish 接口。
 - workspace 样本删除、恢复和 publish 不直接物理删除 package ZIP。
-- 当前定时维护每小时扫描失败超过 7 天的 ImportJob，并软删除其 DRAFT。只有不存在其他未删除 DatasetVersion 使用相同 `storagePath` 时，才会把该 MinIO 对象加入删除队列；工作区 DRAFT 与父 READY 共享的 PRIMARY ZIP 不会因此被删除。
-- 上述保护是活动 DatasetVersion 的共享路径检查，不等同于完整的 package 引用感知物理清理；package 级清理仍属于后续增强。
+- 当前定时维护每小时扫描失败超过 7 天的 ImportJob，并软删除其 DRAFT。package-backed ImportJob 会先通过 package cleanup planner 做 dry-run 级引用检查，确认没有未删除 DatasetVersion、current READY、父 READY/子 DRAFT 共享 PRIMARY、训练实验、活动 ImportJob 或活动 Sample/Data/Annotation 引用后，才显式写入 `MinioDeleteTask`；legacy 无 package 数据才回退到 `DatasetVersion.storagePath` 的共享路径保护。
+- workspace 样本删除、恢复和 publish 不直接物理删除 package ZIP；普通版本删除和失败 DRAFT 清理只负责安全入队，不直接调用 MinIO delete。
 
 ## 17. 多模态与工作区数据管理当前范围
 
@@ -2548,35 +2642,36 @@ Content-Type: application/json
 - 数据集类型新增 `MULTIMODAL`，但共享模型/训练任务类型没有新增该值。
 - 支持 `MULTIMODAL + MANIFEST/AUTO_DIRECTORY` 分片上传、动态 chunkSize、DRAFT 版本和异步 ImportJob。
 - AUTO_DIRECTORY 根据 ZIP 根级样本目录生成内存 `ManifestImportPlan`，支持初始导入与 DRAFT APPEND，不改写 ZIP、不落地生成 manifest。
+- 支持可选 `strictManifest` 严格模式；默认 `false`，仅 `MULTIMODAL + MANIFEST` 可启用，未声明普通 ZIP entry 会使 ImportJob 失败并写入结构化错误。
 - 已建立 DatasetSample、DatasetSampleData、DatasetAnnotation 和 ImportJob 持久化模型。
 - ImportJob 状态接口已经可用，并按数据集资产归属校验权限。
-- ImportJob 支持受控 `FAILED -> PENDING` 的 `FULL` 重试；非 `FAILED`、非 `DRAFT`、已有持久样本或同版本存在活动 ImportJob 时会被拒绝，不支持 `PARTIAL` 重试。
-- 支持 ZIP central directory range 读取、manifest 解析校验及 Sample/Data/Annotation 全量事务导入。
+- ImportJob 支持受控 `FAILED -> PENDING` 的 `FULL` 重试；非 `FAILED`、非 `DRAFT`、已有持久样本或同版本存在活动 ImportJob 时会被拒绝，且 FULL 不扩展到 `PARTIAL`。
+- 支持 `PARTIAL -> PENDING` 的 `INCREMENTAL` 重试；只重跑 failure row 中未解决样本，复用记录的 `externalId` 和原始 `sampleIndex`。
+- 支持 ZIP central directory range 读取、manifest 解析校验及 Sample/Data/Annotation 样本级事务导入；单样本事务失败时样本、Data 和 Annotation 全部回滚，failure row 可靠保留。
 - 支持 executorId fencing、heartbeat、PENDING/RUNNING 恢复和卡在 COMPLETING 的上传会话恢复；ImportJob 恢复、上传恢复、MinIO 删除任务和数据集生命周期维护均使用数据库分布式锁，启动恢复路径也走同一加锁入口。
 - 导入成功后版本推进为 READY，并按版本号更新 `currentVersionId`；失败后版本保持 DRAFT。
 - 定时维护每小时处理失败超过 7 天的 DRAFT；仅当没有其他未删除版本共享其 `storagePath` 时，才排队清理 MinIO 对象。软删除超过 30 天、不是当前版本且无父版本/训练引用的版本会物理删除。
 - MinIO 删除任务是有界异步重试：默认单轮 5 次，FAILED 后最多 2 次重置，总计最多 15 次尝试；对象已不存在视为成功。
 - 支持 READY 版本的样本分页、样本详情和样本 Data 列表查询，响应不暴露 MinIO/ZIP 定位字段。
+- 支持按单个 `externalId` 跨多个 READY DatasetVersion 查询样本、Data 和 Annotation；legacy 和 V2 路径均已提供，响应只包含稳定字段和固定 preview/download 链接。
 - 支持通过 ZIP Entry Index 和 MinIO range 读取样本 Data preview/download 及 Annotation download。
 - 支持 STORED VIDEO 的单段 HTTP Range preview，DEFLATED VIDEO 仅支持 download。
-- 支持 `dataset_package` / `dataset_version_package`，一个版本可按 PRIMARY + APPEND 顺序使用多个物理 ZIP。
+- 支持 `dataset_package` / `dataset_version_package`，一个版本可按 PRIMARY + APPEND 顺序使用多个物理 ZIP；PRIMARY 和 APPEND package 都支持随 ImportJob 进入 `PARTIAL`，但 `PARTIAL` package 不可 publish。
 - 支持基于 READY 创建 DRAFT，并物化继承 Sample/Data/Annotation；复用 package，不复制 ZIP，不改变当前 READY。
 - ZIP-backed 单模态旧版本创建 DRAFT 时可从父 ZIP 建立 PRIMARY package 和一文件一样本的 Sample/Data 元数据；非 ZIP 单模态旧版本不支持维护工作区。
-- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照；多模态 APPEND 使用 `MANIFEST/AUTO_DIRECTORY`，单模态 APPEND 禁止 `sampleGrouping/manifestPath`。
+- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照；多模态 APPEND 使用 `MANIFEST/AUTO_DIRECTORY`，单模态 APPEND 禁止 `sampleGrouping/manifestPath/strictManifest`。
+- 支持 workspace append-only 审计日志：记录创建 DRAFT、APPEND init/complete、ImportJob 成功/失败/PARTIAL、样本删除/恢复、publish、FULL retry 和 INCREMENTAL retry；查询接口做 owner 权限校验，不返回存储定位字段。
 - 发布后 `currentVersionId` 指向新 READY，父 READY 保持不变，软删除样本不进入正式查询和文件访问。
 - 已提供 READY/DRAFT 生命周期断言，统一拒绝对 READY 的直接样本修改。
 - MULTIMODAL complete 不执行现有 CV/NLP/POINT_CLOUD/ROBOT zip 白名单和全量解压校验；单模态 APPEND complete 继续执行对应任务类型的 ZIP 安全与文件白名单校验。
 
 ### 17.1 后续增强（E0-G 不实现）
 
-- PARTIAL 导入状态。
-- ImportJob `PARTIAL` 或增量 retry。
-- 跨版本 `external_id` 查询与对齐。
-- 工作区 package 的引用感知物理 ZIP 清理。
-- 工作区审计日志。
+- package 清理的前端入口、独立对外 API 和自动批量清理策略。
 - 前端对接。
 
-因此，初始导入或 APPEND ImportJob 必须为 `SUCCESS`，且工作区通过 publish 成为 `READY` 后，才进入正式样本查询和文件访问语义。
+因此，只有 `SUCCESS` 或 `SUPERSEDED` 的 ImportJob/package 才能通过 workspace publish 进入 READY；`PARTIAL` 只保留在 DRAFT 工作区和导入状态语义中，不能进入正式样本查询、文件访问或训练消费语义。
+训练直接接入、多模态 batch 组装、训练输入选择、模型/数据集适配策略以及修改共享 `TaskType` 都不属于数据管理后续；模块二只向训练侧稳定交付 READY `datasetVersionId` 和 consumer manifest。
 
 ## 18. V2 用户型门面
 
@@ -2629,7 +2724,7 @@ GET /api/v2/datasets?type=MULTIMODAL&keyword=&page=1&pageSize=20
 | `currentVersion` | 当前 READY 摘要：`versionId`、`versionLabel`、`versionNo`、`status` |
 | `currentVersionFileCount` | 当前 READY 文件数；无当前版本或计数不可用时为 `null` |
 | `fileCount` | 当前 READY 文件数；兼容前端旧列名，语义与 `currentVersionFileCount` 一致 |
-| `displayStatus` | `EMPTY`、`READY`、`EDITING`、`IMPORTING` 或 `IMPORT_FAILED` |
+| `displayStatus` | `EMPTY`、`READY`、`EDITING`、`IMPORTING`、`IMPORT_FAILED` 或 `IMPORT_PARTIAL` |
 | `hasDraft` | 是否存在活动 DRAFT |
 | `editSessionId` | 活动 DRAFT ID；前端不再将其解释为内部版本状态 |
 | `importProgress` | 最新导入进度 |
@@ -2640,7 +2735,7 @@ GET /api/v2/datasets?type=MULTIMODAL&keyword=&page=1&pageSize=20
 状态优先级：
 
 ```text
-IMPORT_FAILED > IMPORTING > EDITING > READY > EMPTY
+IMPORTING > IMPORT_PARTIAL / IMPORT_FAILED > EDITING > READY > EMPTY
 ```
 
 该接口不返回 `storagePath`、`ownerUserId`、`currentVersionId`、`latestDraftVersionId`、`importJobId` 或原始技术错误。
@@ -2659,6 +2754,7 @@ V2 直接使用现有 DRAFT version ID 作为 `editSessionId`，不新增编辑�
 | `GET /api/v2/dataset-edit-sessions/{editSessionId}` | 聚合草稿、最新上传、ImportJob、样本数和可发布状态 |
 | `POST /api/v2/dataset-edit-sessions/{editSessionId}/uploads/init` | 初始化 DRAFT APPEND ZIP 上传 |
 | `POST /api/v2/dataset-edit-sessions/{editSessionId}/publish` | 校验并发布为新 READY |
+| `GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs` | 查询 workspace 审计日志；内部回溯用途，不作为训练侧消费契约 |
 
 publish 成功直接返回：
 
@@ -2683,7 +2779,9 @@ publish 成功直接返回：
 
 `MULTIMODAL` 仍只接受 ZIP 压缩包，不增加文件夹直传。未传
 `sampleGrouping` 时后端默认使用 `AUTO_DIRECTORY`，普通用户不需要提供
-`manifest.json`；高级兼容场景可以显式使用 `MANIFEST`。
+`manifest.json`；高级兼容场景可以显式使用 `MANIFEST`。`strictManifest`
+默认 `false`，只有 `MANIFEST` 场景可设为 `true`；启用后未声明的普通
+ZIP entry 会以结构化 `userError` 暴露给 V2 调用方。
 
 单模态 APPEND init 请求：
 
@@ -2695,7 +2793,7 @@ publish 成功直接返回：
 }
 ```
 
-单模态 APPEND 必须省略 `sampleGrouping` 和 `manifestPath`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`manifestPath` 可使用 `/` 或 `\` 并统一规范化为 `/`；`AUTO_DIRECTORY` 禁止传 `manifestPath`。
+单模态 APPEND 必须省略 `sampleGrouping`、`manifestPath` 和 `strictManifest`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`manifestPath` 可使用 `/` 或 `\` 并统一规范化为 `/`；`AUTO_DIRECTORY` 禁止传 `manifestPath`，也不支持 `strictManifest=true`。
 
 上传响应统一返回 `uploadId`、分片进度、`datasetId`、可选
 `editSessionId`、`versionLabel`、`displayStatus`、`importProgress`、
@@ -2703,17 +2801,18 @@ publish 成功直接返回：
 不返回 `storagePath`、owner ID、内部 package ID、MinIO objectName 或 ZIP
 offset。
 
-上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
+上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
 
 `canPublish` 要求 DRAFT 至少有一个未删除样本，并且该 DRAFT 历史上的所有
-ImportJob 均为 `SUCCESS`。最新 ImportJob 只用于展示进度和错误，不能覆盖
-更早的失败任务。
+ImportJob 均为 `SUCCESS` 或 `SUPERSEDED`，且所有关联 package 均为 `READY` 或 `SUPERSEDED`。`PARTIAL` 不满足 publish，也不会出现在 V2 `canPublish=true` 的状态下。最新 ImportJob 只用于展示进度和错误，不能覆盖
+更早的失败或 PARTIAL 任务。
 
 编辑会话的 `importJobId` 由当前 DRAFT 的 ImportJob 聚合得出：若最新任务为
-`PENDING` 或 `RUNNING`，返回该活动任务；否则优先返回最新 `FAILED` 任务，作为
-发布阻塞原因和 V2 重试句柄；没有失败任务时才返回最新任务。V2 重试接口为
-`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL`，成功后返回
-`V2ImportJobStatusDto`，前端继续轮询上传或编辑会话状态。
+`PENDING` 或 `RUNNING`，返回该活动任务；否则优先返回最新未解决 `PARTIAL` 或
+`FAILED` 任务，作为发布阻塞原因和 V2 重试句柄；没有未解决任务时才返回最新终态任务。V2 selector 忽略 `SUPERSEDED` 作为 latest terminal，优先级为 `PENDING/RUNNING` > 未解决 `PARTIAL/FAILED` > latest terminal。V2 重试接口为
+`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL` 或
+`POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL`，成功后返回
+`V2ImportJobStatusDto`，其中 `PARTIAL` 状态返回 `displayStatus=IMPORT_PARTIAL`、`retryable=true`、`retryModes=["INCREMENTAL"]`；前端继续轮询上传或编辑会话状态。
 
 草稿修改实时持久化，不提供没有实际保存行为的“保存草稿”接口。
 
@@ -2810,6 +2909,16 @@ GET /api/v2/dataset-versions/{versionId}/consumer-manifest?page=1&pageSize=100
 ```
 
 本接口不返回 `storagePath`、bucket、MinIO objectName、`ownerUserId`、packageId、ZIP offset、CRC 或数据库表结构字段。其他模块不得把 legacy 列表接口中的 `storagePath`、`importJobId`、`latestDraftVersionId` 作为长期契约。
+
+#### 跨版本 externalId 查询
+
+```http
+GET /api/v2/dataset-samples/multimodal?externalId=scene-001&datasetVersionIds=version-1&datasetVersionIds=version-2&page=1&pageSize=20
+```
+
+该 V2 接口与 legacy `/api/dataset-samples/multimodal` 使用同一查询语义和分页响应，但不包裹 legacy `ApiResponse`。它只接受调用方有权限访问的 `READY`、`deleted=false` DatasetVersion；任一传入 versionId 不存在、无权限、已删除或不是 READY 时，返回 `404 / DATASET_NOT_FOUND`。参数错误返回 `400 / INVALID_REQUEST`。
+
+该接口用于按场景 ID 在多个 READY 版本中查找样本及其数据、标注，不做训练 batch 组装、不做模型匹配，也不改变 TaskType。训练、推理、评估等消费方如需跨版本场景查询，应只依赖返回的 `datasetVersionId`、`sampleId`、`externalId`、`sampleIndex`、`data`、`annotations` 和固定 preview/download 链接，不得依赖存储路径、packageId、ZIP offset 或模块二数据库结构。
 
 ### 18.5 模型上传 V2
 

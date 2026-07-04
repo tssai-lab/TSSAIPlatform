@@ -226,12 +226,16 @@ public class V2DatasetEditService {
         dto.setFileSize(source.getFileSize());
         dto.setChunkSize(source.getChunkSize());
         dto.setTotalChunks(source.getTotalChunks());
+        dto.setStrictManifest(Boolean.TRUE.equals(source.getStrictManifest()));
         dto.setCreatedAt(source.getCreatedAt());
         dto.setUpdatedAt(source.getUpdatedAt());
         return dto;
     }
 
     private String editDisplayStatus(ImportJob job) {
+        if (job != null && "PARTIAL".equals(job.getStatus())) {
+            return "IMPORT_PARTIAL";
+        }
         if (job != null && "FAILED".equals(job.getStatus())) {
             return "IMPORT_FAILED";
         }
@@ -242,13 +246,21 @@ public class V2DatasetEditService {
     }
 
     private V2UserError userError(ImportJob job) {
-        if (job == null || !"FAILED".equals(job.getStatus())) {
+        if (job == null
+                || (!"FAILED".equals(job.getStatus())
+                && !"PARTIAL".equals(job.getStatus()))) {
             return null;
         }
         return new V2UserError(
-                job.getErrorCode() == null ? "IMPORT_FAILED" : job.getErrorCode(),
+                job.getErrorCode() == null
+                        ? ("PARTIAL".equals(job.getStatus())
+                                ? "PARTIAL_IMPORT_FAILED"
+                                : "IMPORT_FAILED")
+                        : job.getErrorCode(),
                 job.getErrorMessage() == null
-                        ? "数据导入失败，请检查上传内容后重试"
+                        ? ("PARTIAL".equals(job.getStatus())
+                                ? "部分样本导入失败，可增量重试"
+                                : "数据导入失败，请检查上传内容后重试")
                         : job.getErrorMessage(),
                 parseDetails(job.getErrorDetailsJson())
         );

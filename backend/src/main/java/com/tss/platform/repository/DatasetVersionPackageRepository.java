@@ -21,6 +21,8 @@ public interface DatasetVersionPackageRepository
             String datasetVersionId
     );
 
+    List<DatasetVersionPackage> findByPackageId(String packageId);
+
     boolean existsByDatasetVersionIdAndPackageId(String datasetVersionId, String packageId);
 
     @Query("""

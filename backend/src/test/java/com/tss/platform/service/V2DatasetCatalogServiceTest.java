@@ -97,6 +97,33 @@ class V2DatasetCatalogServiceTest {
     }
 
     @Test
+    void partialImportTakesPriorityAndKeepsDraftNotPublishable() {
+        Fixture fixture = new Fixture();
+        DatasetAsset asset = fixture.asset();
+        DatasetVersion ready = fixture.version("ready-1", "READY", 1);
+        DatasetVersion draft = fixture.version("draft-2", "DRAFT", 2);
+        asset.setCurrentVersionId(ready.getId());
+        ImportJob job = fixture.job(draft.getId(), "PARTIAL", 50);
+        job.setImportedSamples(1);
+        job.setTotalSamples(2);
+        job.setErrorCode("PARTIAL_IMPORT_FAILED");
+        job.setErrorMessage("部分样本导入失败，可增量重试");
+        job.setErrorDetailsJson("{\"failedSamples\":1,\"totalSamples\":2}");
+        fixture.stub(List.of(asset), List.of(ready, draft), List.of(job));
+
+        V2DatasetListItem item = fixture.service
+                .list(null, null, 1, null, 20)
+                .getData()
+                .get(0);
+
+        assertEquals("IMPORT_PARTIAL", item.getDisplayStatus());
+        assertFalse(item.getCanPublish());
+        assertFalse(item.getAvailableActions().contains("PUBLISH"));
+        assertEquals("PARTIAL_IMPORT_FAILED", item.getUserError().getErrorCode());
+        assertEquals(1, item.getUserError().getDetails().get("failedSamples"));
+    }
+
+    @Test
     void runningImportTakesPriorityOverEditing() {
         Fixture fixture = new Fixture();
         DatasetAsset asset = fixture.asset();
@@ -202,6 +229,41 @@ class V2DatasetCatalogServiceTest {
         assertEquals(45, item.getImportProgress());
         assertNull(item.getUserError());
         assertFalse(item.getCanPublish());
+    }
+
+    @Test
+    void selectorIgnoresSupersededAndPrioritizesActiveOrUnresolvedJobs() {
+        ImportJob superseded = new ImportJob();
+        superseded.setId("job-superseded");
+        superseded.setStatus("SUPERSEDED");
+        superseded.setCreatedAt(Instant.parse("2026-01-12T00:00:00Z"));
+        ImportJob success = new ImportJob();
+        success.setId("job-success");
+        success.setStatus("SUCCESS");
+        success.setCreatedAt(Instant.parse("2026-01-10T00:00:00Z"));
+        ImportJob partial = new ImportJob();
+        partial.setId("job-partial");
+        partial.setStatus("PARTIAL");
+        partial.setCreatedAt(Instant.parse("2026-01-11T00:00:00Z"));
+        ImportJob running = new ImportJob();
+        running.setId("job-running");
+        running.setStatus("RUNNING");
+        running.setCreatedAt(Instant.parse("2026-01-09T00:00:00Z"));
+
+        assertEquals(
+                "job-success",
+                V2ImportJobStatusSelector.statusJobOf(List.of(superseded, success)).getId()
+        );
+        assertEquals(
+                "job-partial",
+                V2ImportJobStatusSelector.statusJobOf(List.of(superseded, success, partial)).getId()
+        );
+        assertEquals(
+                "job-running",
+                V2ImportJobStatusSelector.statusJobOf(
+                        List.of(superseded, success, partial, running)
+                ).getId()
+        );
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.ImportJobSampleFailureRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
@@ -58,6 +59,11 @@ class ImportJobRetryServiceTest {
         assertNull(fixture.job.getHeartbeatAt());
         assertNull(fixture.job.getFinishedAt());
         verify(fixture.importJobLauncher).launch("ijob-1");
+        verify(fixture.auditService).recordFullRetry(
+                fixture.asset,
+                fixture.version,
+                fixture.job
+        );
     }
 
     @Test
@@ -84,8 +90,63 @@ class ImportJobRetryServiceTest {
                 () -> fixture.service.retry("ijob-1", "PARTIAL")
         );
 
-        assertTrue(error.getMessage().contains("only FULL retry is supported"));
+        assertTrue(error.getMessage().contains("retry mode must be FULL or INCREMENTAL"));
         verify(fixture.importJobLauncher, never()).launch(anyString());
+    }
+
+    @Test
+    void fullRetryDoesNotAcceptPartialJobs() {
+        Fixture fixture = new Fixture();
+        fixture.job.setStatus("PARTIAL");
+
+        ImportJobQueryService.ImportJobRetryRejectedException error = assertThrows(
+                ImportJobQueryService.ImportJobRetryRejectedException.class,
+                () -> fixture.service.retry("ijob-1", "FULL")
+        );
+
+        assertTrue(error.getMessage().contains("PARTIAL ImportJob must use INCREMENTAL retry"));
+        verify(fixture.importJobLauncher, never()).launch(anyString());
+    }
+
+    @Test
+    void incrementalRetryPartialJobMarksFailedRowsRetryingAndLaunchesImport() {
+        Fixture fixture = new Fixture();
+        fixture.job.setStatus("PARTIAL");
+        fixture.job.setProgress(50);
+        fixture.job.setTotalSamples(2);
+        fixture.job.setImportedSamples(1);
+        fixture.job.setErrorCode("PARTIAL_IMPORT_FAILED");
+        fixture.job.setErrorMessage("部分样本导入失败");
+        fixture.version.setStatus("DRAFT");
+        when(fixture.failureRepo.countByImportJobIdAndStatus("ijob-1", "FAILED"))
+                .thenReturn(1L);
+        when(fixture.failureRepo.markStatusByImportJobId(
+                anyString(),
+                anyString(),
+                anyString(),
+                org.mockito.ArgumentMatchers.any(Instant.class)
+        )).thenReturn(1);
+
+        ImportJobStatusDto dto = fixture.service.retry("ijob-1", "INCREMENTAL");
+
+        assertEquals("PENDING", dto.getStatus());
+        assertEquals(50, dto.getProgress());
+        assertEquals(1, dto.getImportedSamples());
+        assertNull(dto.getErrorCode());
+        assertNull(dto.getErrorMessage());
+        verify(fixture.failureRepo).markStatusByImportJobId(
+                "ijob-1",
+                "FAILED",
+                "RETRYING",
+                fixture.job.getUpdatedAt()
+        );
+        verify(fixture.importJobLauncher).launch("ijob-1");
+        verify(fixture.auditService).recordIncrementalRetry(
+                fixture.asset,
+                fixture.version,
+                fixture.job,
+                1
+        );
     }
 
     @Test
@@ -135,6 +196,10 @@ class ImportJobRetryServiceTest {
         private final AuthContext authContext = mock(AuthContext.class);
         private final ImportJobLauncher importJobLauncher = mock(ImportJobLauncher.class);
         private final DatasetSampleRepository sampleRepo = mock(DatasetSampleRepository.class);
+        private final ImportJobSampleFailureRepository failureRepo =
+                mock(ImportJobSampleFailureRepository.class);
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final ImportJob job = job();
         private final DatasetVersion version = version();
         private final DatasetAsset asset = asset();
@@ -144,7 +209,9 @@ class ImportJobRetryServiceTest {
                 assetRepo,
                 authContext,
                 importJobLauncher,
-                sampleRepo
+                sampleRepo,
+                failureRepo,
+                auditService
         );
 
         private Fixture() {

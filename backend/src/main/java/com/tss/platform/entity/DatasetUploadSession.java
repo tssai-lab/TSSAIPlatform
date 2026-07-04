@@ -86,6 +86,9 @@ public class DatasetUploadSession {
     @Column(name = "manifest_path", length = 255)
     private String manifestPath;
 
+    @Column(name = "strict_manifest", nullable = false)
+    private Boolean strictManifest = false;
+
     @Column(name = "import_job_id", length = 64)
     private String importJobId;
 

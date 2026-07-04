@@ -188,6 +188,32 @@ class V2DatasetEditServiceTest {
     }
 
     @Test
+    void partialImportKeepsEditSessionNotPublishableWithPartialDisplay() {
+        Fixture fixture = new Fixture();
+        fixture.stubEditSessionState();
+        ImportJob partial = fixture.importJob("PARTIAL", 50);
+        partial.setId("job-partial");
+        partial.setTotalSamples(2);
+        partial.setImportedSamples(1);
+        partial.setErrorCode("PARTIAL_IMPORT_FAILED");
+        partial.setErrorMessage("部分样本导入失败，可增量重试");
+        partial.setErrorDetailsJson("{\"failedSamples\":1,\"totalSamples\":2}");
+        when(fixture.importJobRepo.findByDatasetVersionId(fixture.draft.getId()))
+                .thenReturn(List.of(partial));
+
+        V2DatasetEditSessionDto result =
+                fixture.service.getEditSession(fixture.draft.getId());
+
+        assertFalse(result.getCanPublish());
+        assertEquals("job-partial", result.getImportJobId());
+        assertEquals("IMPORT_PARTIAL", result.getDisplayStatus());
+        assertEquals(50, result.getImportProgress());
+        assertEquals("PARTIAL_IMPORT_FAILED", result.getUserError().getErrorCode());
+        assertEquals(1, result.getUserError().getDetails().get("failedSamples"));
+        assertFalse(result.getAvailableActions().contains("PUBLISH"));
+    }
+
+    @Test
     void newerRunningImportTakesPriorityOverOlderFailedImport() {
         Fixture fixture = new Fixture();
         fixture.stubEditSessionState();

@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.dto.DatasetMultimodalExternalIdSampleDto;
 import com.tss.platform.dto.DatasetSampleDataDto;
 import com.tss.platform.dto.DatasetSampleDetailDto;
 import com.tss.platform.dto.DatasetSampleListItemDto;
@@ -196,6 +197,146 @@ class SampleServiceTest {
         assertTrue(json.contains("\"sampleDataId\":\"data-1\""));
     }
 
+    @Test
+    void findsExternalIdAcrossReadyVersionsWithStableLinksAndFields() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetVersion secondVersion = Fixture.version("version-2", "asset-2", "READY");
+        DatasetAsset secondAsset = Fixture.asset("asset-2", 9);
+        DatasetSample firstSample = fixture.sample(
+                "sample-1",
+                fixture.version.getId(),
+                "scene-1",
+                1
+        );
+        DatasetSample secondSample = fixture.sample(
+                "sample-2",
+                secondVersion.getId(),
+                "scene-1",
+                2
+        );
+        DatasetSampleData firstData = fixture.data("data-1", firstSample);
+        DatasetSampleData secondData = fixture.data("data-2", secondSample);
+        DatasetAnnotation firstAnnotation =
+                fixture.annotation("annotation-1", firstSample, firstData);
+        DatasetAnnotation secondAnnotation =
+                fixture.annotation("annotation-2", secondSample, secondData);
+
+        when(fixture.versionRepo.findByIdInAndDeletedFalse(List.of("version-1", "version-2")))
+                .thenReturn(List.of(fixture.version, secondVersion));
+        when(fixture.assetRepo.findByIdAndDeletedFalse(fixture.asset.getId()))
+                .thenReturn(Optional.of(fixture.asset));
+        when(fixture.assetRepo.findByIdAndDeletedFalse(secondAsset.getId()))
+                .thenReturn(Optional.of(secondAsset));
+        when(fixture.authContext.canAccessOwner(fixture.asset.getOwnerUserId()))
+                .thenReturn(true);
+        when(fixture.authContext.canAccessOwner(secondAsset.getOwnerUserId()))
+                .thenReturn(true);
+        when(fixture.sampleRepo.findByDatasetVersionIdInAndExternalIdAndDeletedFalse(
+                eq(List.of("version-1", "version-2")),
+                eq("scene-1"),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(firstSample, secondSample)));
+        when(fixture.dataRepo.findBySampleIdInOrderBySampleIdAscSeqAscIdAsc(
+                List.of(firstSample.getId(), secondSample.getId())
+        )).thenReturn(List.of(firstData, secondData));
+        when(fixture.annotationRepo.findBySampleIdInOrderBySampleIdAscCreatedAtAscIdAsc(
+                List.of(firstSample.getId(), secondSample.getId())
+        )).thenReturn(List.of(firstAnnotation, secondAnnotation));
+
+        PageResponse<DatasetMultimodalExternalIdSampleDto> result =
+                fixture.service.findMultimodalByExternalId(
+                        " scene-1 ",
+                        List.of("version-1, version-2"),
+                        1,
+                        20
+                );
+
+        assertEquals(2, result.getTotal());
+        assertEquals("version-1", result.getData().get(0).getDatasetVersionId());
+        assertEquals("sample-1", result.getData().get(0).getSampleId());
+        assertEquals("/api/dataset-sample-data/data-1/preview",
+                result.getData().get(0).getData().get(0).getPreviewUrl());
+        assertEquals("/api/dataset-sample-data/data-1/download",
+                result.getData().get(0).getData().get(0).getDownloadUrl());
+        assertEquals("/api/dataset-annotations/annotation-1/download",
+                result.getData().get(0).getAnnotations().get(0).getDownloadUrl());
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(fixture.sampleRepo).findByDatasetVersionIdInAndExternalIdAndDeletedFalse(
+                eq(List.of("version-1", "version-2")),
+                eq("scene-1"),
+                pageable.capture()
+        );
+        assertEquals(
+                "datasetVersionId: ASC,sampleIndex: ASC,createdAt: ASC,id: ASC",
+                pageable.getValue().getSort().toString()
+        );
+
+        String json = new ObjectMapper()
+                .findAndRegisterModules()
+                .writeValueAsString(result);
+        for (String forbidden : List.of(
+                "storagePath",
+                "bucket",
+                "objectName",
+                "originalPath",
+                "zipEntryOffset",
+                "zipDataOffset",
+                "compressedSize",
+                "packageId"
+        )) {
+            assertFalse(json.contains(forbidden), "response contains forbidden field: " + forbidden);
+        }
+        assertTrue(json.contains("\"datasetVersionId\":\"version-1\""));
+        assertTrue(json.contains("\"previewUrl\":\"/api/dataset-sample-data/data-1/preview\""));
+    }
+
+    @Test
+    void rejectsUnavailableExternalIdVersionWithoutLeakingWhichVersion() {
+        Fixture fixture = new Fixture();
+        when(fixture.versionRepo.findByIdInAndDeletedFalse(List.of("version-1", "version-2")))
+                .thenReturn(List.of(fixture.version));
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.findMultimodalByExternalId(
+                        "scene-1",
+                        List.of("version-1", "version-2"),
+                        1,
+                        20
+                )
+        );
+
+        assertEquals("dataset version not found or no permission", error.getMessage());
+        verify(fixture.sampleRepo, never())
+                .findByDatasetVersionIdInAndExternalIdAndDeletedFalse(any(), any(), any());
+    }
+
+    @Test
+    void rejectsUnauthorizedExternalIdVersionBeforeQueryingSamples() {
+        Fixture fixture = new Fixture();
+        when(fixture.versionRepo.findByIdInAndDeletedFalse(List.of("version-1")))
+                .thenReturn(List.of(fixture.version));
+        when(fixture.assetRepo.findByIdAndDeletedFalse(fixture.asset.getId()))
+                .thenReturn(Optional.of(fixture.asset));
+        when(fixture.authContext.canAccessOwner(fixture.asset.getOwnerUserId()))
+                .thenReturn(false);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.findMultimodalByExternalId(
+                        "scene-1",
+                        List.of("version-1"),
+                        1,
+                        20
+                )
+        );
+
+        assertEquals("dataset version not found or no permission", error.getMessage());
+        verify(fixture.sampleRepo, never())
+                .findByDatasetVersionIdInAndExternalIdAndDeletedFalse(any(), any(), any());
+    }
+
     private static final class Fixture {
         private final DatasetSampleRepository sampleRepo = mock(DatasetSampleRepository.class);
         private final DatasetSampleDataRepository dataRepo = mock(DatasetSampleDataRepository.class);
@@ -232,11 +373,20 @@ class SampleServiceTest {
         }
 
         private DatasetSample sample() {
+            return sample("sample-1", version.getId(), "scene-1", 3);
+        }
+
+        private DatasetSample sample(
+                String sampleId,
+                String datasetVersionId,
+                String externalId,
+                Integer sampleIndex
+        ) {
             DatasetSample sample = new DatasetSample();
-            sample.setId("sample-1");
-            sample.setDatasetVersionId(version.getId());
-            sample.setExternalId("scene-1");
-            sample.setSampleIndex(3);
+            sample.setId(sampleId);
+            sample.setDatasetVersionId(datasetVersionId);
+            sample.setExternalId(externalId);
+            sample.setSampleIndex(sampleIndex);
             sample.setTags(Map.of("weather", "sunny"));
             sample.setMetadata(Map.of("split", "train"));
             sample.setCreatedAt(Instant.parse("2026-06-01T00:00:00Z"));
@@ -245,10 +395,14 @@ class SampleServiceTest {
         }
 
         private DatasetSampleData data(DatasetSample sample) {
+            return data("data-1", sample);
+        }
+
+        private DatasetSampleData data(String dataId, DatasetSample sample) {
             DatasetSampleData data = new DatasetSampleData();
-            data.setId("data-1");
+            data.setId(dataId);
             data.setSampleId(sample.getId());
-            data.setDatasetVersionId(version.getId());
+            data.setDatasetVersionId(sample.getDatasetVersionId());
             data.setDataType("VIDEO");
             data.setSensor("front");
             data.setChannel("rgb");
@@ -269,11 +423,19 @@ class SampleServiceTest {
         }
 
         private DatasetAnnotation annotation(DatasetSample sample, DatasetSampleData data) {
+            return annotation("annotation-1", sample, data);
+        }
+
+        private DatasetAnnotation annotation(
+                String annotationId,
+                DatasetSample sample,
+                DatasetSampleData data
+        ) {
             DatasetAnnotation annotation = new DatasetAnnotation();
-            annotation.setId("annotation-1");
+            annotation.setId(annotationId);
             annotation.setSampleId(sample.getId());
             annotation.setSampleDataId(data.getId());
-            annotation.setDatasetVersionId(version.getId());
+            annotation.setDatasetVersionId(sample.getDatasetVersionId());
             annotation.setAnnotationType("TRACK");
             annotation.setFormat("json");
             annotation.setOriginalPath("private/annotation.json");
@@ -291,18 +453,26 @@ class SampleServiceTest {
         }
 
         private static DatasetVersion version() {
+            return version("version-1", "asset-1", "READY");
+        }
+
+        private static DatasetVersion version(String versionId, String assetId, String status) {
             DatasetVersion version = new DatasetVersion();
-            version.setId("version-1");
-            version.setAssetId("asset-1");
-            version.setStatus("READY");
+            version.setId(versionId);
+            version.setAssetId(assetId);
+            version.setStatus(status);
             version.setDeleted(false);
             return version;
         }
 
         private static DatasetAsset asset() {
+            return asset("asset-1", 7);
+        }
+
+        private static DatasetAsset asset(String assetId, Integer ownerUserId) {
             DatasetAsset asset = new DatasetAsset();
-            asset.setId("asset-1");
-            asset.setOwnerUserId(7);
+            asset.setId(assetId);
+            asset.setOwnerUserId(ownerUserId);
             asset.setDeleted(false);
             return asset;
         }

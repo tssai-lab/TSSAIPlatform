@@ -10,6 +10,7 @@ import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
+import com.tss.platform.entity.ImportJobSampleFailure;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.model.manifest.ManifestAnnotation;
 import com.tss.platform.model.manifest.ManifestData;
@@ -24,6 +25,7 @@ import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
+import com.tss.platform.repository.ImportJobSampleFailureRepository;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +38,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -69,6 +72,15 @@ class ImportJobServiceTest {
         assertEquals("READY", fixture.version.getStatus());
         assertNotNull(fixture.version.getPublishedAt());
         assertEquals(fixture.version.getId(), fixture.asset.getCurrentVersionId());
+        verify(fixture.auditService).recordImportSucceeded(
+                fixture.asset,
+                fixture.version,
+                fixture.job,
+                false,
+                1,
+                1,
+                1
+        );
 
         DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
         DatasetSampleData data = captureSaved(fixture.dataRepo, DatasetSampleData.class);
@@ -176,6 +188,31 @@ class ImportJobServiceTest {
                 fixture.version.getSizeBytes(),
                 fixture.session.getManifestPath()
         );
+    }
+
+    @Test
+    void manifestImportPassesStrictManifestFlagToParser() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.session.setStrictManifest(true);
+        fixture.stubContext();
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(true)
+        )).thenReturn(fixture.plan(0));
+
+        fixture.service.execute(fixture.job.getId());
+
+        verify(fixture.parser).parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(true)
+        );
+        assertEquals("SUCCESS", fixture.job.getStatus());
     }
 
     @Test
@@ -341,6 +378,13 @@ class ImportJobServiceTest {
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
         verify(fixture.dataRepo, never()).saveAllAndFlush(any());
         verify(fixture.annotationRepo, never()).saveAllAndFlush(any());
+        verify(fixture.auditService).recordImportFailed(
+                fixture.asset,
+                fixture.version,
+                fixture.job,
+                "APPEND",
+                "DUPLICATE_SAMPLE"
+        );
     }
 
     @Test
@@ -368,6 +412,173 @@ class ImportJobServiceTest {
         assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void primaryPackageImportBecomesPartialWhenOneSampleTransactionFails() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.job.setPackageId(fixture.datasetPackage.getId());
+        fixture.versionPackage.setPackageRole("PRIMARY");
+        fixture.datasetPackage.setStatus("READY");
+        fixture.stubContext();
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(false)
+        )).thenReturn(fixture.twoSamplePlan(0));
+        AtomicInteger dataWrites = new AtomicInteger();
+        when(fixture.dataRepo.saveAllAndFlush(any())).thenAnswer(invocation -> {
+            if (dataWrites.incrementAndGet() == 2) {
+                throw new IllegalArgumentException("sample data is invalid");
+            }
+            return invocation.getArgument(0);
+        });
+        when(fixture.jobRepo.markPartialIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenAnswer(invocation -> {
+            fixture.job.setStatus("PARTIAL");
+            fixture.job.setProgress(invocation.getArgument(3));
+            fixture.job.setTotalSamples(invocation.getArgument(4));
+            fixture.job.setImportedSamples(invocation.getArgument(5));
+            fixture.job.setErrorCode(invocation.getArgument(7));
+            fixture.job.setErrorMessage(invocation.getArgument(6));
+            fixture.job.setFinishedAt(invocation.getArgument(9));
+            return 1;
+        });
+        when(fixture.failureRepo.saveAndFlush(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("PARTIAL", fixture.job.getStatus());
+        assertEquals(50, fixture.job.getProgress());
+        assertEquals(2, fixture.job.getTotalSamples());
+        assertEquals(1, fixture.job.getImportedSamples());
+        assertEquals("PARTIAL", fixture.datasetPackage.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        ArgumentCaptor<ImportJobSampleFailure> failureCaptor =
+                ArgumentCaptor.forClass(ImportJobSampleFailure.class);
+        verify(fixture.failureRepo).saveAndFlush(failureCaptor.capture());
+        assertEquals(fixture.job.getId(), failureCaptor.getValue().getImportJobId());
+        assertEquals(fixture.version.getId(), failureCaptor.getValue().getDatasetVersionId());
+        assertEquals(fixture.datasetPackage.getId(), failureCaptor.getValue().getPackageId());
+        assertEquals("scene-2", failureCaptor.getValue().getExternalId());
+        assertEquals(1, failureCaptor.getValue().getSampleIndex());
+        assertEquals("FAILED", failureCaptor.getValue().getStatus());
+        verify(fixture.auditService).recordImportPartial(
+                fixture.asset,
+                fixture.version,
+                fixture.job,
+                "PRIMARY",
+                1,
+                1
+        );
+    }
+
+    @Test
+    void appendPackageImportBecomesPartialWhenOneSampleTransactionFails() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.stubContext();
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                any(Integer.class),
+                eq(false)
+        )).thenReturn(fixture.twoSamplePlan(0));
+        AtomicInteger dataWrites = new AtomicInteger();
+        when(fixture.dataRepo.saveAllAndFlush(any())).thenAnswer(invocation -> {
+            if (dataWrites.incrementAndGet() == 2) {
+                throw new IllegalArgumentException("sample data is invalid");
+            }
+            return invocation.getArgument(0);
+        });
+        when(fixture.jobRepo.markPartialIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenAnswer(invocation -> {
+            fixture.job.setStatus("PARTIAL");
+            fixture.job.setProgress(invocation.getArgument(3));
+            fixture.job.setTotalSamples(invocation.getArgument(4));
+            fixture.job.setImportedSamples(invocation.getArgument(5));
+            return 1;
+        });
+        when(fixture.failureRepo.saveAndFlush(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("PARTIAL", fixture.job.getStatus());
+        assertEquals("PARTIAL", fixture.datasetPackage.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        verify(fixture.auditService).recordImportPartial(
+                fixture.asset,
+                fixture.version,
+                fixture.job,
+                "APPEND",
+                1,
+                1
+        );
+    }
+
+    @Test
+    void incrementalRetryUsesFailureExternalIdAndOriginalSampleIndex() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.asAppendPackage();
+        fixture.job.setImportedSamples(1);
+        fixture.job.setTotalSamples(2);
+        ImportJobSampleFailure failure = new ImportJobSampleFailure();
+        failure.setId("failure-1");
+        failure.setImportJobId(fixture.job.getId());
+        failure.setDatasetVersionId(fixture.version.getId());
+        failure.setPackageId(fixture.datasetPackage.getId());
+        failure.setExternalId("scene-1");
+        failure.setSampleIndex(2);
+        failure.setStatus("RETRYING");
+        when(fixture.failureRepo.findByImportJobIdAndStatusOrderBySampleIndexAsc(
+                fixture.job.getId(),
+                "RETRYING"
+        )).thenReturn(List.of(failure));
+        when(fixture.failureRepo.markResolved(any(), any())).thenReturn(1);
+        when(fixture.sampleRepo.findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
+                fixture.version.getId()
+        )).thenReturn(9);
+        fixture.stubContext();
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(10),
+                eq(false)
+        )).thenReturn(fixture.plan(10));
+
+        fixture.service.execute(fixture.job.getId());
+
+        DatasetSample sample = captureSaved(fixture.sampleRepo, DatasetSample.class);
+        assertEquals("scene-1", sample.getExternalId());
+        assertEquals(2, sample.getSampleIndex());
+        assertEquals("SUCCESS", fixture.job.getStatus());
+        verify(fixture.failureRepo).markResolved(eq("failure-1"), any(Instant.class));
     }
 
     @Test
@@ -491,6 +702,32 @@ class ImportJobServiceTest {
     }
 
     @Test
+    void strictManifestUndeclaredEntryFailsImportJobWithStructuredError() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.session.setStrictManifest(true);
+        fixture.stubContext();
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(true)
+        )).thenThrow(new ManifestValidationException(
+                "INVALID_MANIFEST_UNDECLARED_ENTRY",
+                "manifest 未声明 ZIP 文件: README.txt",
+                Map.of("path", "README.txt", "undeclaredEntries", List.of("README.txt"))
+        ));
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertEquals("INVALID_MANIFEST_UNDECLARED_ENTRY", fixture.job.getErrorCode());
+        assertEquals("manifest 未声明 ZIP 文件: README.txt", fixture.job.getErrorMessage());
+        assertTrue(fixture.job.getErrorDetailsJson().contains("\"path\":\"README.txt\""));
+        verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
+    }
+
+    @Test
     void rejectsStartingNonPendingJob() throws Exception {
         Fixture fixture = new Fixture();
         fixture.job.setStatus("RUNNING");
@@ -555,6 +792,8 @@ class ImportJobServiceTest {
         private final DatasetSampleRepository sampleRepo = mock(DatasetSampleRepository.class);
         private final DatasetSampleDataRepository dataRepo = mock(DatasetSampleDataRepository.class);
         private final DatasetAnnotationRepository annotationRepo = mock(DatasetAnnotationRepository.class);
+        private final ImportJobSampleFailureRepository failureRepo =
+                mock(ImportJobSampleFailureRepository.class);
         private final MinioService minioService = mock(MinioService.class);
         private final ZipCentralDirectoryReader zipReader = mock(ZipCentralDirectoryReader.class);
         private final ManifestZipReader manifestReader = mock(ManifestZipReader.class);
@@ -563,6 +802,8 @@ class ImportJobServiceTest {
                 mock(AutoDirectoryManifestBuilder.class);
         private final SingleModalImportPlanBuilder singleModalBuilder =
                 new SingleModalImportPlanBuilder();
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
         private final ImportJob job = job();
         private final DatasetVersion version = version();
@@ -580,13 +821,15 @@ class ImportJobServiceTest {
                 sampleRepo,
                 dataRepo,
                 annotationRepo,
+                failureRepo,
                 minioService,
                 zipReader,
                 manifestReader,
                 parser,
                 autoBuilder,
                 singleModalBuilder,
-                transactionManager
+                transactionManager,
+                auditService
         );
 
         private void stubContext() throws Exception {
@@ -680,7 +923,8 @@ class ImportJobServiceTest {
                         any(),
                         any(),
                         eq(session.getManifestPath()),
-                        any(Integer.class)
+                        any(Integer.class),
+                        eq(false)
                 )).thenAnswer(invocation -> {
                     assertEquals("RUNNING", job.getStatus());
                     assertNotNull(job.getStartedAt());
@@ -692,7 +936,8 @@ class ImportJobServiceTest {
                         any(),
                         any(),
                         eq(session.getManifestPath()),
-                        eq(0)
+                        eq(0),
+                        eq(false)
                 ))
                         .thenAnswer(invocation -> {
                             assertEquals("RUNNING", job.getStatus());
@@ -717,16 +962,18 @@ class ImportJobServiceTest {
                     packageRepo,
                     versionPackageRepo,
                     sessionRepo,
-                    sampleRepo,
-                    dataRepo,
-                    annotationRepo,
-                    minioService,
-                    zipReader,
-                    manifestReader,
+                sampleRepo,
+                dataRepo,
+                annotationRepo,
+                failureRepo,
+                minioService,
+                zipReader,
+                manifestReader,
                     selectedParser,
                     autoBuilder,
                     singleModalBuilder,
-                    transactionManager
+                    transactionManager,
+                    auditService
             );
         }
 
@@ -764,6 +1011,27 @@ class ImportJobServiceTest {
                     List.of(annotation)
             );
             return new ManifestImportPlan("1.0", List.of(sample), 1, 1, 1, List.of());
+        }
+
+        private ManifestImportPlan twoSamplePlan(int sampleIndex) {
+            ManifestImportPlan first = plan(sampleIndex);
+            ManifestSample source = first.samples().get(0);
+            ManifestSample second = new ManifestSample(
+                    "scene-2",
+                    sampleIndex + 1,
+                    source.tags(),
+                    source.metadata(),
+                    source.data(),
+                    source.annotations()
+            );
+            return new ManifestImportPlan(
+                    "1.0",
+                    List.of(source, second),
+                    2,
+                    2,
+                    2,
+                    List.of()
+            );
         }
 
         private List<ZipEntryInfo> zipEntries() {

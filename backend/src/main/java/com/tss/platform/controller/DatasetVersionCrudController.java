@@ -1,17 +1,20 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.DatasetPackageCleanupPlanDto;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.DatasetPackageCleanupPlannerService;
 import com.tss.platform.service.MinioDeleteTaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -38,6 +41,7 @@ public class DatasetVersionCrudController {
     private final DatasetVersionRepository repo;
     private final DatasetAssetRepository assetRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
+    private final DatasetPackageCleanupPlannerService cleanupPlanner;
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
 
@@ -45,12 +49,14 @@ public class DatasetVersionCrudController {
             DatasetVersionRepository repo,
             DatasetAssetRepository assetRepo,
             TrainingExperimentVersionRepository trainingRepo,
+            DatasetPackageCleanupPlannerService cleanupPlanner,
             MinioDeleteTaskService minioDeleteTaskService,
             AuthContext authContext
     ) {
         this.repo = repo;
         this.assetRepo = assetRepo;
         this.trainingRepo = trainingRepo;
+        this.cleanupPlanner = cleanupPlanner;
         this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
     }
@@ -261,11 +267,12 @@ public class DatasetVersionCrudController {
             return ApiResponse.fail("dataset version is referenced by training experiments");
         }
         boolean minioDeleteQueued = false;
+        boolean packageBacked = cleanupPlanner.hasPackageRelations(id);
         String objectName = version.getStoragePath();
         boolean storageShared = objectName != null
                 && !objectName.isBlank()
                 && repo.existsByStoragePathAndDeletedFalseAndIdNot(objectName, id);
-        if (objectName != null && !objectName.isBlank() && !storageShared) {
+        if (!packageBacked && objectName != null && !objectName.isBlank() && !storageShared) {
             try {
                 authContext.requireObjectAccess(objectName, ownerUserId, "object not found or no permission");
                 minioDeleteTaskService.enqueueDefaultBucketDelete(
@@ -284,7 +291,23 @@ public class DatasetVersionCrudController {
         Instant now = Instant.now();
         version.setDeleted(true);
         version.setDeletedAt(now);
-        repo.save(version);
+        repo.saveAndFlush(version);
+        if (packageBacked) {
+            try {
+                List<DatasetPackageCleanupPlanDto> plans =
+                        cleanupPlanner.enqueueVersionPackagesIfSafe(id);
+                minioDeleteQueued = plans.stream()
+                        .anyMatch(DatasetPackageCleanupPlanDto::isEnqueued);
+            } catch (Exception e) {
+                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+                log.warn(
+                        "Reject dataset version delete because package cleanup cannot be queued: id={}, error={}",
+                        id,
+                        e.getMessage()
+                );
+                return ApiResponse.fail("创建数据集版本 package 删除任务失败: " + e.getMessage());
+            }
+        }
         log.info(
                 "Dataset version soft deleted: id={}, assetId={}, minioDeleteQueued={}, ownerUserId={}",
                 id,

@@ -33,6 +33,8 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
 
     Optional<DatasetVersion> findByIdAndDeletedFalse(String id);
 
+    List<DatasetVersion> findByIdInAndDeletedFalse(Collection<String> ids);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from DatasetVersion v where v.id = :id and v.deleted = false")
     Optional<DatasetVersion> findByIdAndDeletedFalseForUpdate(@Param("id") String id);
@@ -56,6 +58,8 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
     Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(String assetId, String status);
 
     List<DatasetVersion> findByDeletedTrueAndDeletedAtBefore(java.time.Instant deletedBefore);
+
+    List<DatasetVersion> findByParentVersionIdAndDeletedFalse(String parentVersionId);
 
     long countByAssetIdAndDeletedFalse(String assetId);
 

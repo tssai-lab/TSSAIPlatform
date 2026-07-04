@@ -141,6 +141,9 @@ public class V2DatasetCatalogService {
             DatasetVersion draft,
             ImportJob importJob
     ) {
+        if (importJob != null && "PARTIAL".equals(importJob.getStatus())) {
+            return "IMPORT_PARTIAL";
+        }
         if (importJob != null && "FAILED".equals(importJob.getStatus())) {
             return "IMPORT_FAILED";
         }
@@ -155,12 +158,20 @@ public class V2DatasetCatalogService {
     }
 
     private V2UserError userError(ImportJob job) {
-        if (job == null || !"FAILED".equals(job.getStatus())) {
+        if (job == null
+                || (!"FAILED".equals(job.getStatus())
+                && !"PARTIAL".equals(job.getStatus()))) {
             return null;
         }
-        String code = job.getErrorCode() == null ? "IMPORT_FAILED" : job.getErrorCode();
+        String code = job.getErrorCode() == null
+                ? ("PARTIAL".equals(job.getStatus())
+                        ? "PARTIAL_IMPORT_FAILED"
+                        : "IMPORT_FAILED")
+                : job.getErrorCode();
         String message = job.getErrorMessage() == null
-                ? "数据导入失败，请检查上传内容后重试"
+                ? ("PARTIAL".equals(job.getStatus())
+                        ? "部分样本导入失败，可增量重试"
+                        : "数据导入失败，请检查上传内容后重试")
                 : job.getErrorMessage();
         return new V2UserError(code, message, parseDetails(job.getErrorDetailsJson()));
     }

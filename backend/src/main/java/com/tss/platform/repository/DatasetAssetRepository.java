@@ -25,6 +25,8 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
 
     List<DatasetAsset> findByOwnerUserIdAndDeletedFalse(Integer ownerUserId);
 
+    long countByCurrentVersionIdAndDeletedFalse(String currentVersionId);
+
     @Query(
             value = """
                     select a

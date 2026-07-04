@@ -12,6 +12,7 @@ public class ImportJobStatusDto {
     private Integer progress;
     private Integer totalSamples;
     private Integer importedSamples;
+    private Integer failedSamples;
     private String errorCode;
     private String errorMessage;
     private String errorDetailsJson;

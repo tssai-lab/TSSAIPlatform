@@ -31,6 +31,7 @@ public class DatasetLifecycleMaintenanceService {
     private final DatasetAssetRepository assetRepo;
     private final DatasetUploadSessionRepository sessionRepo;
     private final TrainingExperimentVersionRepository trainingVersionRepo;
+    private final DatasetPackageCleanupPlannerService cleanupPlanner;
     private final MinioDeleteTaskService deleteTaskService;
     private final TransactionTemplate transactionTemplate;
 
@@ -40,6 +41,7 @@ public class DatasetLifecycleMaintenanceService {
             DatasetAssetRepository assetRepo,
             DatasetUploadSessionRepository sessionRepo,
             TrainingExperimentVersionRepository trainingVersionRepo,
+            DatasetPackageCleanupPlannerService cleanupPlanner,
             MinioDeleteTaskService deleteTaskService,
             PlatformTransactionManager transactionManager
     ) {
@@ -48,6 +50,7 @@ public class DatasetLifecycleMaintenanceService {
         this.assetRepo = assetRepo;
         this.sessionRepo = sessionRepo;
         this.trainingVersionRepo = trainingVersionRepo;
+        this.cleanupPlanner = cleanupPlanner;
         this.deleteTaskService = deleteTaskService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -103,7 +106,9 @@ public class DatasetLifecycleMaintenanceService {
         version.setDeleted(true);
         version.setDeletedAt(now);
         versionRepo.saveAndFlush(version);
-        if (version.getStoragePath() != null
+        if (job.getPackageId() != null && !job.getPackageId().isBlank()) {
+            cleanupPlanner.enqueueIfSafe(job.getPackageId());
+        } else if (version.getStoragePath() != null
                 && !version.getStoragePath().isBlank()
                 && !versionRepo.existsByStoragePathAndDeletedFalseAndIdNot(
                         version.getStoragePath(),

@@ -67,6 +67,11 @@ class DatasetAppendPackageUploadTest {
         assertEquals("manifest.json", saved.get().getManifestPath());
         assertEquals(6 * 1024 * 1024, result.getChunkSize());
         assertEquals(8534, result.getTotalChunks());
+        verify(fixture.auditService).recordAppendInit(
+                fixture.asset,
+                fixture.version,
+                saved.get()
+        );
     }
 
     @Test
@@ -282,6 +287,13 @@ class DatasetAppendPackageUploadTest {
         assertEquals(savedPackage.get().getId(), result.get("packageId"));
         assertEquals(savedJob.get().getId(), result.get("importJobId"));
         verify(fixture.importJobLauncher).launch(savedJob.get().getId());
+        verify(fixture.auditService).recordAppendCompleted(
+                fixture.asset,
+                fixture.version,
+                session,
+                savedPackage.get(),
+                savedJob.get()
+        );
     }
 
     @Test
@@ -356,6 +368,8 @@ class DatasetAppendPackageUploadTest {
         private final AuthContext authContext = mock(AuthContext.class);
         private final MinioDeleteTaskService deleteTaskService =
                 mock(MinioDeleteTaskService.class);
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final ImportJobLauncher importJobLauncher = mock(ImportJobLauncher.class);
         private final PlatformTransactionManager transactionManager =
                 mock(PlatformTransactionManager.class);
@@ -393,7 +407,8 @@ class DatasetAppendPackageUploadTest {
                     importJobRepo,
                     authContext,
                     deleteTaskService,
-                    transactionManager
+                    transactionManager,
+                    auditService
             );
             service.setImportJobLauncher(importJobLauncher);
         }

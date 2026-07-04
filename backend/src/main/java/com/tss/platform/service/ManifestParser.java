@@ -54,6 +54,16 @@ public class ManifestParser {
             String manifestPath,
             int generatedSampleIndexStart
     ) {
+        return parse(manifestJson, zipEntries, manifestPath, generatedSampleIndexStart, false);
+    }
+
+    public ManifestImportPlan parse(
+            String manifestJson,
+            List<ZipEntryInfo> zipEntries,
+            String manifestPath,
+            int generatedSampleIndexStart,
+            boolean strictManifest
+    ) {
         if (generatedSampleIndexStart < 0) {
             throw new IllegalArgumentException("generatedSampleIndexStart must be non-negative");
         }
@@ -146,11 +156,24 @@ public class ManifestParser {
         }
 
         String normalizedManifestPath = normalizeManifestPath(manifestPath);
-        List<String> warnings = buildWarnings(
+        List<String> undeclaredEntries = undeclaredZipEntries(
                 zipEntries,
                 declaredPaths,
                 normalizedManifestPath
         );
+        if (strictManifest && !undeclaredEntries.isEmpty()) {
+            throw new ManifestValidationException(
+                    "INVALID_MANIFEST_UNDECLARED_ENTRY",
+                    "manifest 未声明 ZIP 文件: " + undeclaredEntries.get(0),
+                    Map.of(
+                            "path", undeclaredEntries.get(0),
+                            "undeclaredEntries", undeclaredEntries
+                    )
+            );
+        }
+        List<String> warnings = undeclaredEntries.stream()
+                .map(path -> "undeclared zip entry: " + path)
+                .toList();
         return new ManifestImportPlan(
                 version,
                 samples,
@@ -399,20 +422,20 @@ public class ManifestParser {
         return new ReferenceCounts(dataCount, annotationCount);
     }
 
-    private static List<String> buildWarnings(
+    private static List<String> undeclaredZipEntries(
             List<ZipEntryInfo> zipEntries,
             Set<String> declaredPaths,
             String manifestPath
     ) {
-        List<String> warnings = new ArrayList<>();
+        List<String> undeclared = new ArrayList<>();
         for (ZipEntryInfo entry : zipEntries) {
             if (!entry.directory()
                     && !entry.normalizedPath().equals(manifestPath)
                     && !declaredPaths.contains(entry.normalizedPath())) {
-                warnings.add("undeclared zip entry: " + entry.normalizedPath());
+                undeclared.add(entry.normalizedPath());
             }
         }
-        return warnings;
+        return undeclared;
     }
 
     private static String normalizeManifestPath(String manifestPath) {

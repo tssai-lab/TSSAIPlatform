@@ -14,6 +14,19 @@ public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnota
     long countByDatasetVersionIdAndPackageIdIsNull(String datasetVersionId);
 
     @Query("""
+            select count(a.id)
+            from DatasetAnnotation a
+            where a.packageId = :packageId
+              and exists (
+                  select v.id
+                  from DatasetVersion v
+                  where v.id = a.datasetVersionId
+                    and v.deleted = false
+              )
+            """)
+    long countActiveByPackageId(@Param("packageId") String packageId);
+
+    @Query("""
             select distinct a.packageId
             from DatasetAnnotation a
             where a.datasetVersionId = :datasetVersionId
@@ -33,4 +46,8 @@ public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnota
                     String datasetVersionId,
                     Collection<String> sampleIds
             );
+
+    List<DatasetAnnotation> findBySampleIdInOrderBySampleIdAscCreatedAtAscIdAsc(
+            Collection<String> sampleIds
+    );
 }

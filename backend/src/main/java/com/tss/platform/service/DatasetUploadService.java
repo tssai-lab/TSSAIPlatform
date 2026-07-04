@@ -117,6 +117,7 @@ public class DatasetUploadService {
     private final AuthContext authContext;
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final TransactionTemplate transactionTemplate;
+    private final DatasetWorkspaceAuditService auditService;
     private ImportJobLauncher importJobLauncher;
     private ZipCentralDirectoryReader zipCentralDirectoryReader;
 
@@ -133,7 +134,8 @@ public class DatasetUploadService {
             ImportJobRepository importJobRepo,
             AuthContext authContext,
             MinioDeleteTaskService minioDeleteTaskService,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            DatasetWorkspaceAuditService auditService
     ) {
         this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
@@ -147,6 +149,38 @@ public class DatasetUploadService {
         this.authContext = authContext;
         this.minioDeleteTaskService = minioDeleteTaskService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.auditService = auditService;
+    }
+
+    public DatasetUploadService(
+            MinioClient minioClient,
+            MinioConfig minioConfig,
+            DatasetUploadSessionRepository sessionRepo,
+            DatasetUploadChunkRepository chunkRepo,
+            DatasetAssetRepository assetRepo,
+            DatasetVersionRepository versionRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
+            ImportJobRepository importJobRepo,
+            AuthContext authContext,
+            MinioDeleteTaskService minioDeleteTaskService,
+            PlatformTransactionManager transactionManager
+    ) {
+        this(
+                minioClient,
+                minioConfig,
+                sessionRepo,
+                chunkRepo,
+                assetRepo,
+                versionRepo,
+                packageRepo,
+                versionPackageRepo,
+                importJobRepo,
+                authContext,
+                minioDeleteTaskService,
+                transactionManager,
+                null
+        );
     }
 
     @Autowired
@@ -194,7 +228,8 @@ public class DatasetUploadService {
                     @Override
                     public void rollback(TransactionStatus status) {
                     }
-                }
+                },
+                null
         );
     }
 
@@ -208,6 +243,11 @@ public class DatasetUploadService {
                 req.getSampleGrouping()
         );
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
+        boolean strictManifest = normalizeStrictManifestForTask(
+                taskType,
+                sampleGrouping,
+                req.getStrictManifest()
+        );
         validateGroupingForTask(taskType, sampleGrouping);
         String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
@@ -260,6 +300,7 @@ public class DatasetUploadService {
         session.setParentVersionId(parentVersionId);
         session.setSampleGrouping(sampleGrouping);
         session.setManifestPath(manifestPath);
+        session.setStrictManifest(strictManifest);
         session.setAssetCreatedByUpload(false);
         session.setAssetId(targetAssetId);
         session.setStatus(STATUS_UPLOADING);
@@ -290,6 +331,11 @@ public class DatasetUploadService {
                 req.getSampleGrouping()
         );
         String manifestPath = normalizeManifestPath(sampleGrouping, req.getManifestPath());
+        boolean strictManifest = normalizeStrictManifestForTask(
+                taskType,
+                sampleGrouping,
+                req.getStrictManifest()
+        );
         validateGroupingForTask(taskType, sampleGrouping);
         validateAppendPackageFileNameForTask(taskType, req.getFileName());
 
@@ -314,6 +360,7 @@ public class DatasetUploadService {
         session.setParentVersionId(draft.getParentVersionId());
         session.setSampleGrouping(sampleGrouping);
         session.setManifestPath(manifestPath);
+        session.setStrictManifest(strictManifest);
         session.setAssetCreatedByUpload(false);
         session.setAssetId(asset.getId());
         session.setVersionId(draft.getId());
@@ -322,7 +369,11 @@ public class DatasetUploadService {
         Instant now = Instant.now();
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
-        return progress(sessionRepo.save(session));
+        DatasetUploadSession saved = sessionRepo.save(session);
+        if (auditService != null) {
+            auditService.recordAppendInit(asset, draft, saved);
+        }
+        return progress(saved);
     }
 
     @Transactional
@@ -891,7 +942,11 @@ public class DatasetUploadService {
         session.setImportJobId(job.getId());
         session.setStatus(STATUS_COMPLETED);
         session.setUpdatedAt(now);
-        return sessionRepo.saveAndFlush(session);
+        DatasetUploadSession saved = sessionRepo.saveAndFlush(session);
+        if (auditService != null) {
+            auditService.recordAppendCompleted(asset, draft, saved, datasetPackage, job);
+        }
+        return saved;
     }
 
     private void resetAppendSession(String uploadId, String draftVersionId) {
@@ -1127,6 +1182,7 @@ public class DatasetUploadService {
                 req.getSampleGrouping()
         );
         normalizeManifestPath(sampleGrouping, req.getManifestPath());
+        normalizeStrictManifestForTask(taskType, sampleGrouping, req.getStrictManifest());
         validateGroupingForTask(taskType, sampleGrouping);
         CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
@@ -1193,11 +1249,13 @@ public class DatasetUploadService {
         }
         if (!"MULTIMODAL".equals(taskType)
                 && (session.getSampleGrouping() != null
-                || session.getManifestPath() != null)) {
+                || session.getManifestPath() != null
+                || Boolean.TRUE.equals(session.getStrictManifest()))) {
             throw new IllegalArgumentException(
-                    "single-modal append upload cannot use sampleGrouping or manifestPath"
+                    "single-modal append upload cannot use sampleGrouping, manifestPath, or strictManifest"
             );
         }
+        normalizeStrictManifestForTask(taskType, session.getSampleGrouping(), session.getStrictManifest());
     }
 
     private DatasetUploadSession claimCompleting(String uploadId) {
@@ -1243,6 +1301,10 @@ public class DatasetUploadService {
         DatasetUploadProgressDto dto = new DatasetUploadProgressDto();
         dto.setUploadId(session.getId());
         dto.setStatus(session.getStatus());
+        dto.setUploadStatus(session.getStatus());
+        dto.setVersionStatus(progressVersionStatus(session));
+        dto.setImportJobId(session.getImportJobId());
+        dto.setImportStatus(importStatus(session.getImportJobId()));
         dto.setFileName(session.getFileName());
         dto.setFileSize(session.getFileSize());
         dto.setChunkSize(session.getChunkSize());
@@ -1261,9 +1323,28 @@ public class DatasetUploadService {
         dto.setParentVersionId(session.getParentVersionId());
         dto.setCvTaskType(session.getCvTaskType());
         dto.setAnnotationFormat(session.getAnnotationFormat());
+        dto.setStrictManifest(Boolean.TRUE.equals(session.getStrictManifest()));
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
+    }
+
+    private String progressVersionStatus(DatasetUploadSession session) {
+        if (session.getVersionId() == null || session.getVersionId().isBlank()) {
+            return null;
+        }
+        return isMultimodalImportUpload(session)
+                ? VERSION_STATUS_DRAFT
+                : VERSION_STATUS_READY;
+    }
+
+    private String importStatus(String importJobId) {
+        if (importJobId == null || importJobId.isBlank() || importJobRepo == null) {
+            return null;
+        }
+        return importJobRepo.findById(importJobId)
+                .map(ImportJob::getStatus)
+                .orElse(null);
     }
 
     private List<Integer> completedPartIndexes(Integer totalChunks) {
@@ -1312,14 +1393,8 @@ public class DatasetUploadService {
                         : VERSION_STATUS_READY
         );
         data.put("importJobId", session.getImportJobId());
-        data.put(
-                "importStatus",
-                session.getImportJobId() == null
-                        ? null
-                        : importJobRepo.findById(session.getImportJobId())
-                                .map(ImportJob::getStatus)
-                                .orElse(null)
-        );
+        data.put("strictManifest", Boolean.TRUE.equals(session.getStrictManifest()));
+        data.put("importStatus", importStatus(session.getImportJobId()));
         data.put("ownerUserId", session.getOwnerUserId());
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
@@ -1354,6 +1429,7 @@ public class DatasetUploadService {
         data.put("packageRole", relation.getPackageRole());
         data.put("packageOrder", relation.getPackageOrder());
         data.put("importJobId", job.getId());
+        data.put("strictManifest", Boolean.TRUE.equals(session.getStrictManifest()));
         data.put("uploadStatus", session.getStatus());
         data.put("versionStatus", VERSION_STATUS_DRAFT);
         data.put("importStatus", job.getStatus());
@@ -1546,6 +1622,16 @@ public class DatasetUploadService {
         String requestLabel = defaultVersionLabel(req.getVersionLabel(), req.getVersion(),
                 requestAssetId == null ? 1 : session.getVersionNo());
         boolean requestLabelGenerated = isVersionLabelGenerated(req.getVersionLabel(), req.getVersion());
+        String requestSampleGrouping = normalizeSampleGroupingForTask(taskType, req.getSampleGrouping());
+        String requestManifestPath = normalizeManifestPath(
+                requestSampleGrouping,
+                req.getManifestPath()
+        );
+        boolean requestStrictManifest = normalizeStrictManifestForTask(
+                taskType,
+                requestSampleGrouping,
+                req.getStrictManifest()
+        );
         return session.getFileName().equals(req.getFileName().trim())
                 && session.getFileSize().equals(req.getFileSize())
                 && Objects.equals(session.getAssetId(), requestAssetId)
@@ -1558,11 +1644,9 @@ public class DatasetUploadService {
                 && equalsNullable(session.getDescription(), req.getDescription())
                 && equalsNullable(session.getChangeLog(), req.getChangeLog())
                 && equalsNullable(session.getParentVersionId(), resolvedParentVersionId)
-                && equalsNullable(session.getSampleGrouping(), normalizeSampleGrouping(req.getSampleGrouping()))
-                && equalsNullable(
-                        session.getManifestPath(),
-                        normalizeManifestPath(normalizeSampleGrouping(req.getSampleGrouping()), req.getManifestPath())
-                );
+                && equalsNullable(session.getSampleGrouping(), requestSampleGrouping)
+                && equalsNullable(session.getManifestPath(), requestManifestPath)
+                && Boolean.TRUE.equals(session.getStrictManifest()) == requestStrictManifest;
     }
 
     private boolean equalsNullable(String left, String right) {
@@ -1878,6 +1962,28 @@ public class DatasetUploadService {
             }
         }
         return normalized;
+    }
+
+    static boolean normalizeStrictManifestForTask(
+            String taskType,
+            String sampleGrouping,
+            Boolean value
+    ) {
+        boolean strict = Boolean.TRUE.equals(value);
+        if (!strict) {
+            return false;
+        }
+        if (!"MULTIMODAL".equals(taskType)) {
+            throw new IllegalArgumentException(
+                    "strictManifest 仅 MULTIMODAL + MANIFEST 支持"
+            );
+        }
+        if (!GROUPING_MANIFEST.equals(sampleGrouping)) {
+            throw new IllegalArgumentException(
+                    "strictManifest 仅在 sampleGrouping=MANIFEST 时可用"
+            );
+        }
+        return true;
     }
 
     static int calculateChunkSize(long fileSize) {

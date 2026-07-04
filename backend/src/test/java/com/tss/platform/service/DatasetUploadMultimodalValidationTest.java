@@ -75,6 +75,34 @@ class DatasetUploadMultimodalValidationTest {
     }
 
     @Test
+    void strictManifestDefaultsFalseAndRequiresManifestGrouping() {
+        assertEquals(
+                false,
+                DatasetUploadService.normalizeStrictManifestForTask("MULTIMODAL", "MANIFEST", null)
+        );
+        assertEquals(
+                true,
+                DatasetUploadService.normalizeStrictManifestForTask("MULTIMODAL", "MANIFEST", true)
+        );
+        assertEquals(
+                false,
+                DatasetUploadService.normalizeStrictManifestForTask("MULTIMODAL", "AUTO_DIRECTORY", null)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeStrictManifestForTask(
+                        "MULTIMODAL",
+                        "AUTO_DIRECTORY",
+                        true
+                )
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatasetUploadService.normalizeStrictManifestForTask("CV", null, true)
+        );
+    }
+
+    @Test
     void calculatesDynamicChunkSizeWithAtMostTenThousandParts() {
         long fileSize = 50L * 1024 * 1024 * 1024;
 

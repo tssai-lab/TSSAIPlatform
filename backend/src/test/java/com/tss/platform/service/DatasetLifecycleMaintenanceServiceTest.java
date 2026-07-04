@@ -88,6 +88,31 @@ class DatasetLifecycleMaintenanceServiceTest {
     }
 
     @Test
+    void failedDraftCleanupUsesPackagePlannerWhenImportJobHasPackage() {
+        Fixture fixture = new Fixture();
+        ImportJob job = fixture.failedJob();
+        job.setPackageId("package-1");
+        DatasetVersion version = fixture.version();
+        DatasetAsset asset = fixture.asset();
+        when(fixture.jobRepo.findByStatusAndFinishedAtBefore(eq("FAILED"), any()))
+                .thenReturn(List.of(job));
+        when(fixture.jobRepo.findById(job.getId())).thenReturn(Optional.of(job));
+        when(fixture.versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
+        when(fixture.assetRepo.findById(version.getAssetId())).thenReturn(Optional.of(asset));
+
+        fixture.service.cleanupFailedDrafts();
+
+        assertTrue(version.getDeleted());
+        verify(fixture.cleanupPlanner).enqueueIfSafe(job.getPackageId());
+        verify(fixture.deleteTaskService, never()).enqueueDefaultBucketDelete(
+                version.getStoragePath(),
+                MinioDeleteTaskService.SOURCE_DATASET_VERSION,
+                version.getId(),
+                version.getOwnerUserId()
+        );
+    }
+
+    @Test
     void physicallyDeletesOldSoftDeletedUnreferencedVersion() {
         Fixture fixture = new Fixture();
         DatasetVersion version = fixture.version();
@@ -130,6 +155,8 @@ class DatasetLifecycleMaintenanceServiceTest {
         private final DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         private final TrainingExperimentVersionRepository trainingRepo =
                 mock(TrainingExperimentVersionRepository.class);
+        private final DatasetPackageCleanupPlannerService cleanupPlanner =
+                mock(DatasetPackageCleanupPlannerService.class);
         private final MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
         private final DatasetLifecycleMaintenanceService service = new DatasetLifecycleMaintenanceService(
                 jobRepo,
@@ -137,6 +164,7 @@ class DatasetLifecycleMaintenanceServiceTest {
                 assetRepo,
                 sessionRepo,
                 trainingRepo,
+                cleanupPlanner,
                 deleteTaskService,
                 new NoOpTransactionManager()
         );

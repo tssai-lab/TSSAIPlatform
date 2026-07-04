@@ -11,6 +11,7 @@ import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
+import com.tss.platform.entity.ImportJobSampleFailure;
 import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.model.manifest.ManifestAnnotation;
@@ -26,8 +27,10 @@ import com.tss.platform.repository.DatasetUploadSessionRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
+import com.tss.platform.repository.ImportJobSampleFailureRepository;
 import io.minio.StatObjectResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -51,9 +54,13 @@ public class ImportJobService {
     private static final String JOB_RUNNING = "RUNNING";
     private static final String JOB_SUCCESS = "SUCCESS";
     private static final String JOB_FAILED = "FAILED";
+    private static final String JOB_PARTIAL = "PARTIAL";
     private static final String JOB_SUPERSEDED = "SUPERSEDED";
+    private static final String FAILURE_FAILED = "FAILED";
+    private static final String FAILURE_RETRYING = "RETRYING";
     private static final String VERSION_DRAFT = "DRAFT";
     private static final String VERSION_READY = "READY";
+    private static final String PACKAGE_PARTIAL = "PARTIAL";
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
     private static final String GROUPING_MANIFEST = "MANIFEST";
     private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
@@ -68,17 +75,106 @@ public class ImportJobService {
     private final DatasetSampleRepository sampleRepo;
     private final DatasetSampleDataRepository dataRepo;
     private final DatasetAnnotationRepository annotationRepo;
+    private final ImportJobSampleFailureRepository failureRepo;
     private final MinioService minioService;
     private final ZipCentralDirectoryReader zipReader;
     private final ManifestZipReader manifestReader;
     private final ManifestParser manifestParser;
     private final AutoDirectoryManifestBuilder autoDirectoryManifestBuilder;
     private final SingleModalImportPlanBuilder singleModalImportPlanBuilder;
+    private final DatasetWorkspaceAuditService auditService;
     private final TransactionTemplate writeTransaction;
     private final TransactionTemplate statusTransaction;
+    private final TransactionTemplate sampleTransaction;
     private final Map<String, String> activeExecutors = new ConcurrentHashMap<>();
 
+    @Autowired
     public ImportJobService(
+            ImportJobRepository jobRepo,
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
+            DatasetUploadSessionRepository sessionRepo,
+            DatasetSampleRepository sampleRepo,
+            DatasetSampleDataRepository dataRepo,
+            DatasetAnnotationRepository annotationRepo,
+            ImportJobSampleFailureRepository failureRepo,
+            MinioService minioService,
+            ZipCentralDirectoryReader zipReader,
+            ManifestZipReader manifestReader,
+            ManifestParser manifestParser,
+            AutoDirectoryManifestBuilder autoDirectoryManifestBuilder,
+            SingleModalImportPlanBuilder singleModalImportPlanBuilder,
+            PlatformTransactionManager transactionManager,
+            DatasetWorkspaceAuditService auditService
+    ) {
+        this.jobRepo = jobRepo;
+        this.versionRepo = versionRepo;
+        this.assetRepo = assetRepo;
+        this.packageRepo = packageRepo;
+        this.versionPackageRepo = versionPackageRepo;
+        this.sessionRepo = sessionRepo;
+        this.sampleRepo = sampleRepo;
+        this.dataRepo = dataRepo;
+        this.annotationRepo = annotationRepo;
+        this.failureRepo = failureRepo;
+        this.minioService = minioService;
+        this.zipReader = zipReader;
+        this.manifestReader = manifestReader;
+        this.manifestParser = manifestParser;
+        this.autoDirectoryManifestBuilder = autoDirectoryManifestBuilder;
+        this.singleModalImportPlanBuilder = singleModalImportPlanBuilder;
+        this.auditService = auditService;
+        this.writeTransaction = new TransactionTemplate(transactionManager);
+        this.statusTransaction = new TransactionTemplate(transactionManager);
+        this.statusTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.sampleTransaction = new TransactionTemplate(transactionManager);
+        this.sampleTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    ImportJobService(
+            ImportJobRepository jobRepo,
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
+            DatasetUploadSessionRepository sessionRepo,
+            DatasetSampleRepository sampleRepo,
+            DatasetSampleDataRepository dataRepo,
+            DatasetAnnotationRepository annotationRepo,
+            ImportJobSampleFailureRepository failureRepo,
+            MinioService minioService,
+            ZipCentralDirectoryReader zipReader,
+            ManifestZipReader manifestReader,
+            ManifestParser manifestParser,
+            AutoDirectoryManifestBuilder autoDirectoryManifestBuilder,
+            SingleModalImportPlanBuilder singleModalImportPlanBuilder,
+            PlatformTransactionManager transactionManager
+    ) {
+        this(
+                jobRepo,
+                versionRepo,
+                assetRepo,
+                packageRepo,
+                versionPackageRepo,
+                sessionRepo,
+                sampleRepo,
+                dataRepo,
+                annotationRepo,
+                failureRepo,
+                minioService,
+                zipReader,
+                manifestReader,
+                manifestParser,
+                autoDirectoryManifestBuilder,
+                singleModalImportPlanBuilder,
+                transactionManager,
+                null
+        );
+    }
+
+    ImportJobService(
             ImportJobRepository jobRepo,
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
@@ -96,24 +192,26 @@ public class ImportJobService {
             SingleModalImportPlanBuilder singleModalImportPlanBuilder,
             PlatformTransactionManager transactionManager
     ) {
-        this.jobRepo = jobRepo;
-        this.versionRepo = versionRepo;
-        this.assetRepo = assetRepo;
-        this.packageRepo = packageRepo;
-        this.versionPackageRepo = versionPackageRepo;
-        this.sessionRepo = sessionRepo;
-        this.sampleRepo = sampleRepo;
-        this.dataRepo = dataRepo;
-        this.annotationRepo = annotationRepo;
-        this.minioService = minioService;
-        this.zipReader = zipReader;
-        this.manifestReader = manifestReader;
-        this.manifestParser = manifestParser;
-        this.autoDirectoryManifestBuilder = autoDirectoryManifestBuilder;
-        this.singleModalImportPlanBuilder = singleModalImportPlanBuilder;
-        this.writeTransaction = new TransactionTemplate(transactionManager);
-        this.statusTransaction = new TransactionTemplate(transactionManager);
-        this.statusTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this(
+                jobRepo,
+                versionRepo,
+                assetRepo,
+                packageRepo,
+                versionPackageRepo,
+                sessionRepo,
+                sampleRepo,
+                dataRepo,
+                annotationRepo,
+                null,
+                minioService,
+                zipReader,
+                manifestReader,
+                manifestParser,
+                autoDirectoryManifestBuilder,
+                singleModalImportPlanBuilder,
+                transactionManager,
+                null
+        );
     }
 
     public void execute(String importJobId) {
@@ -129,13 +227,27 @@ public class ImportJobService {
         }
         activeExecutors.put(importJobId, executorId);
 
+        List<ImportJobSampleFailure> retryFailures = List.of();
         try {
+            retryFailures = retryFailures(importJobId);
             ImportContext context = loadContext(importJobId, executorId);
             StatObjectResponse stat = minioService.stat(context.objectName());
             long objectSize = stat.size();
             List<ZipEntryInfo> entries = zipReader.read(context.objectName(), objectSize);
             ManifestImportPlan plan = buildPlan(context, entries, objectSize);
-            writeTransaction.executeWithoutResult(status -> persistPlan(context, plan, executorId));
+            if (!retryFailures.isEmpty()) {
+                plan = selectRetrySamples(plan, retryFailures);
+            }
+            List<ImportJobSampleFailure> effectiveRetryFailures = retryFailures;
+            ManifestImportPlan effectivePlan = plan;
+            writeTransaction.executeWithoutResult(
+                    status -> persistPlan(
+                            context,
+                            effectivePlan,
+                            executorId,
+                            effectiveRetryFailures
+                    )
+            );
         } catch (Exception exception) {
             log.error(
                     "Import job failed: importJobId={}, executorId={}",
@@ -144,8 +256,15 @@ public class ImportJobService {
                     exception
             );
             ImportFailure failure = importFailure(exception);
+            List<ImportJobSampleFailure> failedRetryRows = retryFailures;
             statusTransaction.executeWithoutResult(
-                    status -> markFailed(importJobId, executorId, failure)
+                    status -> {
+                        if (!failedRetryRows.isEmpty()) {
+                            markPartialAfterRetryFailure(importJobId, executorId, failure);
+                        } else {
+                            markFailed(importJobId, executorId, failure);
+                        }
+                    }
             );
         } finally {
             activeExecutors.remove(importJobId, executorId);
@@ -195,6 +314,7 @@ public class ImportJobService {
         }
         String taskType = DatasetTaskType.normalize(session.getType());
         String sampleGrouping = session.getSampleGrouping();
+        boolean strictManifest = Boolean.TRUE.equals(session.getStrictManifest());
         boolean multimodal = "MULTIMODAL".equals(taskType);
         if (multimodal
                 && !GROUPING_MANIFEST.equals(sampleGrouping)
@@ -206,6 +326,11 @@ public class ImportJobService {
         if (!multimodal && sampleGrouping != null) {
             throw new IllegalArgumentException(
                     "single-modal import cannot use sampleGrouping"
+            );
+        }
+        if (strictManifest && (!multimodal || !GROUPING_MANIFEST.equals(sampleGrouping))) {
+            throw new IllegalArgumentException(
+                    "strictManifest requires MULTIMODAL MANIFEST import"
             );
         }
 
@@ -285,7 +410,8 @@ public class ImportJobService {
                 packageRole,
                 objectName,
                 sampleGrouping,
-                manifestPath
+                manifestPath,
+                strictManifest
         );
     }
 
@@ -314,7 +440,8 @@ public class ImportJobService {
                 manifestJson,
                 entries,
                 context.manifestPath(),
-                generatedStart
+                generatedStart,
+                context.strictManifest()
         );
     }
 
@@ -329,7 +456,12 @@ public class ImportJobService {
         return (maxSampleIndex == null ? -1 : maxSampleIndex) + 1;
     }
 
-    private void persistPlan(ImportContext context, ManifestImportPlan plan, String executorId) {
+    private void persistPlan(
+            ImportContext context,
+            ManifestImportPlan plan,
+            String executorId,
+            List<ImportJobSampleFailure> retryFailures
+    ) {
         DatasetVersion version = versionRepo.findByIdAndDeletedFalse(context.versionId())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "dataset version not found: " + context.versionId()
@@ -344,20 +476,196 @@ public class ImportJobService {
                         "dataset asset not found: " + context.assetId()
                 ));
 
-        if (context.appendPackage()) {
+        boolean incrementalRetry = retryFailures != null && !retryFailures.isEmpty();
+        if (context.appendPackage() && !incrementalRetry) {
             validateAppendConflicts(context.versionId(), plan);
         }
 
-        Instant now = Instant.now();
-        List<DatasetSample> samples = new ArrayList<>(plan.totalSamples());
-        List<DatasetSampleData> dataItems = new ArrayList<>(plan.totalDataCount());
-        List<DatasetAnnotation> annotations = new ArrayList<>(plan.totalAnnotationCount());
+        Map<String, ImportJobSampleFailure> retryByExternalId =
+                failuresByExternalId(retryFailures);
+        int importedBefore = importedSamplesBeforeRetry(context.importJobId(), incrementalRetry);
+        int totalSamples = totalSamplesForSettlement(
+                context.importJobId(),
+                incrementalRetry,
+                plan.totalSamples()
+        );
+        int importedNow = 0;
+        int failedNow = 0;
+        int dataCount = 0;
+        int annotationCount = 0;
+        LinkedHashSet<String> retriedExternalIds = new LinkedHashSet<>();
 
         for (ManifestSample manifestSample : plan.samples()) {
-            DatasetSample sample = toSample(version, context.packageId(), manifestSample, now);
-            samples.add(sample);
+            ImportJobSampleFailure retryFailure =
+                    retryByExternalId.get(manifestSample.externalId());
+            retriedExternalIds.add(manifestSample.externalId());
+            try {
+                if (incrementalRetry) {
+                    validateRetrySampleConflicts(context.versionId(), manifestSample);
+                }
+                SamplePersistResult result = persistSample(context, version, manifestSample);
+                importedNow += result.samples();
+                dataCount += result.dataItems();
+                annotationCount += result.annotations();
+                if (retryFailure != null && failureRepo != null) {
+                    failureRepo.markResolved(retryFailure.getId(), Instant.now());
+                }
+            } catch (Exception exception) {
+                failedNow += 1;
+                ImportFailure failure = importFailure(exception);
+                recordSampleFailure(context, manifestSample, retryFailure, failure);
+            }
+        }
 
+        for (ImportJobSampleFailure retryFailure : retryByExternalId.values()) {
+            if (!retriedExternalIds.contains(retryFailure.getExternalId())) {
+                failedNow += 1;
+                recordSampleFailure(
+                        context,
+                        retryFailure,
+                        new ImportFailure(
+                                "RETRY_SAMPLE_NOT_FOUND",
+                                "失败样本在原始上传内容中不存在",
+                                null
+                        )
+                );
+            }
+        }
+
+        int importedTotal = importedBefore + importedNow;
+        if (failedNow == 0) {
+            completeSuccessfulImport(
+                    context,
+                    version,
+                    asset,
+                    executorId,
+                    totalSamples,
+                    dataCount,
+                    annotationCount
+            );
+            return;
+        }
+        if (importedTotal > 0) {
+            completePartialImport(
+                    context,
+                    version,
+                    asset,
+                    executorId,
+                    totalSamples,
+                    importedTotal,
+                    failedNow
+            );
+            return;
+        }
+        markFailed(
+                context.importJobId(),
+                executorId,
+                new ImportFailure(
+                        "IMPORT_FAILED",
+                        "数据导入失败，请检查上传内容后重试",
+                        partialDetailsJson(totalSamples, importedTotal, failedNow)
+                )
+        );
+    }
+
+    private List<ImportJobSampleFailure> retryFailures(String importJobId) {
+        if (failureRepo == null) {
+            return List.of();
+        }
+        return failureRepo.findByImportJobIdAndStatusOrderBySampleIndexAsc(
+                importJobId,
+                FAILURE_RETRYING
+        );
+    }
+
+    private ManifestImportPlan selectRetrySamples(
+            ManifestImportPlan plan,
+            List<ImportJobSampleFailure> retryFailures
+    ) {
+        Map<String, ManifestSample> samplesByExternalId = new LinkedHashMap<>();
+        for (ManifestSample sample : plan.samples()) {
+            samplesByExternalId.put(sample.externalId(), sample);
+        }
+        List<ManifestSample> selected = new ArrayList<>();
+        int dataCount = 0;
+        int annotationCount = 0;
+        for (ImportJobSampleFailure failure : retryFailures) {
+            ManifestSample source = samplesByExternalId.get(failure.getExternalId());
+            if (source == null) {
+                continue;
+            }
+            ManifestSample retrySample = new ManifestSample(
+                    source.externalId(),
+                    failure.getSampleIndex(),
+                    source.tags(),
+                    source.metadata(),
+                    source.data(),
+                    source.annotations()
+            );
+            selected.add(retrySample);
+            dataCount += retrySample.data().size();
+            annotationCount += retrySample.annotations().size();
+        }
+        return new ManifestImportPlan(
+                plan.version(),
+                selected,
+                selected.size(),
+                dataCount,
+                annotationCount,
+                plan.warnings()
+        );
+    }
+
+    private Map<String, ImportJobSampleFailure> failuresByExternalId(
+            List<ImportJobSampleFailure> retryFailures
+    ) {
+        Map<String, ImportJobSampleFailure> failures = new LinkedHashMap<>();
+        if (retryFailures == null) {
+            return failures;
+        }
+        for (ImportJobSampleFailure failure : retryFailures) {
+            failures.put(failure.getExternalId(), failure);
+        }
+        return failures;
+    }
+
+    private int importedSamplesBeforeRetry(String importJobId, boolean incrementalRetry) {
+        if (!incrementalRetry) {
+            return 0;
+        }
+        return jobRepo.findById(importJobId)
+                .map(ImportJob::getImportedSamples)
+                .orElse(0);
+    }
+
+    private int totalSamplesForSettlement(
+            String importJobId,
+            boolean incrementalRetry,
+            int planTotalSamples
+    ) {
+        if (!incrementalRetry) {
+            return planTotalSamples;
+        }
+        return jobRepo.findById(importJobId)
+                .map(ImportJob::getTotalSamples)
+                .orElse(planTotalSamples);
+    }
+
+    private SamplePersistResult persistSample(
+            ImportContext context,
+            DatasetVersion version,
+            ManifestSample manifestSample
+    ) {
+        return sampleTransaction.execute(status -> {
+            Instant now = Instant.now();
+            DatasetSample sample =
+                    toSample(version, context.packageId(), manifestSample, now);
             Map<String, DatasetSampleData> dataByPath = new LinkedHashMap<>();
+            List<DatasetSampleData> dataItems =
+                    new ArrayList<>(manifestSample.data().size());
+            List<DatasetAnnotation> annotations =
+                    new ArrayList<>(manifestSample.annotations().size());
+
             for (ManifestData manifestData : manifestSample.data()) {
                 DatasetSampleData data = toSampleData(
                         version,
@@ -389,18 +697,30 @@ public class ImportJobService {
                         now
                 ));
             }
-        }
 
-        sampleRepo.saveAllAndFlush(samples);
-        dataRepo.saveAllAndFlush(dataItems);
-        annotationRepo.saveAllAndFlush(annotations);
+            sampleRepo.saveAllAndFlush(List.of(sample));
+            dataRepo.saveAllAndFlush(dataItems);
+            annotationRepo.saveAllAndFlush(annotations);
+            return new SamplePersistResult(1, dataItems.size(), annotations.size());
+        });
+    }
+
+    private void completeSuccessfulImport(
+            ImportContext context,
+            DatasetVersion version,
+            DatasetAsset asset,
+            String executorId,
+            int totalSamples,
+            int totalDataCount,
+            int totalAnnotationCount
+    ) {
+        Instant now = Instant.now();
         version.setFileCount(countPersistedFiles(version.getId()));
-
         int completed = jobRepo.completeSuccessIfOwned(
                 context.importJobId(),
                 executorId,
                 JOB_RUNNING,
-                plan.totalSamples(),
+                totalSamples,
                 now,
                 now
         );
@@ -408,14 +728,10 @@ public class ImportJobService {
             throw new IllegalStateException("import job lease was lost before SUCCESS");
         }
 
+        if (context.packageId() != null) {
+            setPackageStatus(context.packageId(), VERSION_READY);
+        }
         if (context.appendPackage()) {
-            DatasetPackage datasetPackage = packageRepo
-                    .findByIdAndDeletedFalse(context.packageId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "dataset package not found: " + context.packageId()
-            ));
-            datasetPackage.setStatus(VERSION_READY);
-            packageRepo.saveAndFlush(datasetPackage);
             versionRepo.saveAndFlush(version);
             supersedeOlderFailedAppendImports(context, now);
         } else {
@@ -429,6 +745,223 @@ public class ImportJobService {
                 assetRepo.saveAndFlush(asset);
             }
         }
+        if (auditService != null) {
+            auditService.recordImportSucceeded(
+                    asset,
+                    version,
+                    jobRepo.findById(context.importJobId())
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "import job not found: " + context.importJobId()
+                            )),
+                    context.appendPackage(),
+                    totalSamples,
+                    totalDataCount,
+                    totalAnnotationCount
+            );
+        }
+    }
+
+    private void completePartialImport(
+            ImportContext context,
+            DatasetVersion version,
+            DatasetAsset asset,
+            String executorId,
+            int totalSamples,
+            int importedSamples,
+            int failedSamples
+    ) {
+        Instant now = Instant.now();
+        version.setStatus(VERSION_DRAFT);
+        version.setPublishedAt(null);
+        version.setFileCount(countPersistedFiles(version.getId()));
+        versionRepo.saveAndFlush(version);
+        int progress = progress(importedSamples, totalSamples);
+        int updated = jobRepo.markPartialIfOwned(
+                context.importJobId(),
+                executorId,
+                JOB_RUNNING,
+                progress,
+                totalSamples,
+                importedSamples,
+                "部分样本导入失败，可增量重试",
+                "PARTIAL_IMPORT_FAILED",
+                partialDetailsJson(totalSamples, importedSamples, failedSamples),
+                now
+        );
+        if (updated != 1) {
+            throw new IllegalStateException("import job lease was lost before PARTIAL");
+        }
+        if (context.packageId() != null) {
+            setPackageStatus(context.packageId(), PACKAGE_PARTIAL);
+        }
+        if (auditService != null) {
+            auditService.recordImportPartial(
+                    asset,
+                    version,
+                    jobRepo.findById(context.importJobId())
+                            .orElseThrow(() -> new IllegalArgumentException(
+                                    "import job not found: " + context.importJobId()
+                            )),
+                    context.packageRole(),
+                    importedSamples,
+                    failedSamples
+            );
+        }
+    }
+
+    private void recordSampleFailure(
+            ImportContext context,
+            ManifestSample sample,
+            ImportJobSampleFailure existing,
+            ImportFailure failure
+    ) {
+        if (failureRepo == null) {
+            return;
+        }
+        ImportJobSampleFailure row = existing == null
+                ? new ImportJobSampleFailure()
+                : existing;
+        Instant now = Instant.now();
+        if (row.getId() == null) {
+            row.setId(id("ijsf"));
+            row.setImportJobId(context.importJobId());
+            row.setDatasetVersionId(context.versionId());
+            row.setPackageId(context.packageId());
+            row.setExternalId(sample.externalId());
+            row.setSampleIndex(sample.sampleIndex());
+            row.setAttemptCount(1);
+            row.setFirstFailedAt(now);
+            row.setCreatedAt(now);
+        }
+        row.setStatus(FAILURE_FAILED);
+        row.setErrorCode(failure.code());
+        row.setErrorMessage(truncateError(failure.message()));
+        row.setErrorDetailsJson(failure.detailsJson());
+        row.setLastFailedAt(now);
+        row.setResolvedAt(null);
+        row.setUpdatedAt(now);
+        failureRepo.saveAndFlush(row);
+    }
+
+    private void recordSampleFailure(
+            ImportContext context,
+            ImportJobSampleFailure row,
+            ImportFailure failure
+    ) {
+        if (failureRepo == null) {
+            return;
+        }
+        Instant now = Instant.now();
+        row.setStatus(FAILURE_FAILED);
+        row.setErrorCode(failure.code());
+        row.setErrorMessage(truncateError(failure.message()));
+        row.setErrorDetailsJson(failure.detailsJson());
+        row.setLastFailedAt(now);
+        row.setResolvedAt(null);
+        row.setUpdatedAt(now);
+        failureRepo.saveAndFlush(row);
+    }
+
+    private void validateRetrySampleConflicts(
+            String versionId,
+            ManifestSample sample
+    ) {
+        List<DatasetSample> externalConflicts =
+                sampleRepo.findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(
+                        versionId,
+                        List.of(sample.externalId())
+                );
+        if (!externalConflicts.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "external_id already exists in DRAFT: " + sample.externalId()
+            );
+        }
+        List<DatasetSample> indexConflicts =
+                sampleRepo.findByDatasetVersionIdAndDeletedFalseAndSampleIndexIn(
+                        versionId,
+                        List.of(sample.sampleIndex())
+                );
+        if (!indexConflicts.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "sample_index already exists in DRAFT: " + sample.sampleIndex()
+            );
+        }
+    }
+
+    private void markPartialAfterRetryFailure(
+            String importJobId,
+            String executorId,
+            ImportFailure failure
+    ) {
+        if (failureRepo != null) {
+            failureRepo.markStatusByImportJobId(
+                    importJobId,
+                    FAILURE_RETRYING,
+                    FAILURE_FAILED,
+                    Instant.now()
+            );
+        }
+        ImportJob job = jobRepo.findById(importJobId).orElse(null);
+        if (job == null || job.getImportedSamples() == null || job.getImportedSamples() <= 0) {
+            markFailed(importJobId, executorId, failure);
+            return;
+        }
+        int failedSamples = failureRepo == null
+                ? 0
+                : Math.toIntExact(failureRepo.countByImportJobIdAndStatus(
+                        importJobId,
+                        FAILURE_FAILED
+                ));
+        int totalSamples = job.getTotalSamples() == null
+                ? job.getImportedSamples() + failedSamples
+                : job.getTotalSamples();
+        jobRepo.markPartialIfOwned(
+                importJobId,
+                executorId,
+                JOB_RUNNING,
+                progress(job.getImportedSamples(), totalSamples),
+                totalSamples,
+                job.getImportedSamples(),
+                truncateError(failure.message()),
+                failure.code(),
+                failure.detailsJson(),
+                Instant.now()
+        );
+    }
+
+    private void setPackageStatus(String packageId, String status) {
+        packageRepo.findByIdAndDeletedFalse(packageId)
+                .ifPresent(datasetPackage -> {
+                    datasetPackage.setStatus(status);
+                    packageRepo.saveAndFlush(datasetPackage);
+                });
+    }
+
+    private static int progress(int importedSamples, int totalSamples) {
+        if (totalSamples <= 0) {
+            return 0;
+        }
+        return Math.max(0, Math.min(99, (int) Math.floor(importedSamples * 100.0 / totalSamples)));
+    }
+
+    private static String partialDetailsJson(
+            int totalSamples,
+            int importedSamples,
+            int failedSamples
+    ) {
+        return toJson(Map.of(
+                "totalSamples", totalSamples,
+                "importedSamples", importedSamples,
+                "failedSamples", failedSamples,
+                "retryMode", "INCREMENTAL"
+        ));
+    }
+
+    private record SamplePersistResult(
+            int samples,
+            int dataItems,
+            int annotations
+    ) {
     }
 
     private void supersedeOlderFailedAppendImports(ImportContext context, Instant now) {
@@ -553,27 +1086,45 @@ public class ImportJobService {
         if (failed != 1) {
             return;
         }
-        jobRepo.findById(importJobId).ifPresent(job ->
-                versionRepo.findByIdAndDeletedFalse(job.getDatasetVersionId()).ifPresent(version -> {
+        ImportJob job = jobRepo.findById(importJobId).orElse(null);
+        if (job == null) {
+            return;
+        }
+        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(
+                job.getDatasetVersionId()
+        ).orElse(null);
+        DatasetAsset asset = null;
+        if (version != null) {
             version.setStatus(VERSION_DRAFT);
             version.setPublishedAt(null);
             versionRepo.saveAndFlush(version);
-                })
-        );
-        jobRepo.findById(importJobId)
-                .filter(job -> job.getPackageId() != null)
-                .flatMap(job -> versionPackageRepo.findByDatasetVersionIdAndPackageId(
-                        job.getDatasetVersionId(),
-                        job.getPackageId()
-                ).map(relation -> Map.entry(job, relation)))
-                .filter(entry -> PACKAGE_ROLE_APPEND.equals(entry.getValue().getPackageRole()))
-                .flatMap(entry -> packageRepo.findByIdAndDeletedFalse(
-                        entry.getKey().getPackageId()
-                ))
-                .ifPresent(datasetPackage -> {
-                    datasetPackage.setStatus(JOB_FAILED);
-                    packageRepo.saveAndFlush(datasetPackage);
-                });
+            asset = assetRepo.findByIdAndDeletedFalseForUpdate(version.getAssetId())
+                    .orElse(null);
+        }
+        String packageRole = null;
+        if (job.getPackageId() != null) {
+            DatasetVersionPackage relation = versionPackageRepo
+                    .findByDatasetVersionIdAndPackageId(
+                            job.getDatasetVersionId(),
+                            job.getPackageId()
+                    )
+                    .orElse(null);
+            packageRole = relation == null ? null : relation.getPackageRole();
+            packageRepo.findByIdAndDeletedFalse(job.getPackageId())
+                    .ifPresent(datasetPackage -> {
+                        datasetPackage.setStatus(JOB_FAILED);
+                        packageRepo.saveAndFlush(datasetPackage);
+                    });
+        }
+        if (auditService != null && asset != null && version != null) {
+            auditService.recordImportFailed(
+                    asset,
+                    version,
+                    job,
+                    packageRole,
+                    failure.code()
+            );
+        }
     }
 
     private static DatasetSample toSample(
@@ -806,7 +1357,8 @@ public class ImportJobService {
             String packageRole,
             String objectName,
             String sampleGrouping,
-            String manifestPath
+            String manifestPath,
+            boolean strictManifest
     ) {
         private boolean appendPackage() {
             return PACKAGE_ROLE_APPEND.equals(packageRole);

@@ -32,6 +32,20 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
 
     List<ImportJob> findByDatasetVersionIdIn(Collection<String> datasetVersionIds);
 
+    @Query("""
+            select count(j.id)
+            from ImportJob j
+            where j.packageId = :packageId
+              and j.status <> 'SUPERSEDED'
+              and exists (
+                  select v.id
+                  from DatasetVersion v
+                  where v.id = j.datasetVersionId
+                    and v.deleted = false
+              )
+            """)
+    long countActiveByPackageId(@Param("packageId") String packageId);
+
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
@@ -118,6 +132,36 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
             @Param("id") String id,
             @Param("executorId") String executorId,
             @Param("runningStatus") String runningStatus,
+            @Param("errorMessage") String errorMessage,
+            @Param("errorCode") String errorCode,
+            @Param("errorDetailsJson") String errorDetailsJson,
+            @Param("finishedAt") Instant finishedAt
+    );
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update ImportJob j
+            set j.status = 'PARTIAL',
+                j.progress = :progress,
+                j.totalSamples = :totalSamples,
+                j.importedSamples = :importedSamples,
+                j.errorMessage = :errorMessage,
+                j.errorCode = :errorCode,
+                j.errorDetailsJson = :errorDetailsJson,
+                j.finishedAt = :finishedAt,
+                j.updatedAt = :finishedAt,
+                j.heartbeatAt = :finishedAt
+            where j.id = :id
+              and j.status = :runningStatus
+              and j.executorId = :executorId
+            """)
+    int markPartialIfOwned(
+            @Param("id") String id,
+            @Param("executorId") String executorId,
+            @Param("runningStatus") String runningStatus,
+            @Param("progress") Integer progress,
+            @Param("totalSamples") Integer totalSamples,
+            @Param("importedSamples") Integer importedSamples,
             @Param("errorMessage") String errorMessage,
             @Param("errorCode") String errorCode,
             @Param("errorDetailsJson") String errorDetailsJson,

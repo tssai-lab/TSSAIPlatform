@@ -15,6 +15,7 @@ import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +47,9 @@ public class DatasetWorkspacePublishService {
     private final DatasetSampleDataRepository dataRepo;
     private final DatasetAnnotationRepository annotationRepo;
     private final AuthContext authContext;
+    private final DatasetWorkspaceAuditService auditService;
 
+    @Autowired
     public DatasetWorkspacePublishService(
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
@@ -56,7 +59,8 @@ public class DatasetWorkspacePublishService {
             DatasetSampleRepository sampleRepo,
             DatasetSampleDataRepository dataRepo,
             DatasetAnnotationRepository annotationRepo,
-            AuthContext authContext
+            AuthContext authContext,
+            DatasetWorkspaceAuditService auditService
     ) {
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
@@ -67,6 +71,32 @@ public class DatasetWorkspacePublishService {
         this.dataRepo = dataRepo;
         this.annotationRepo = annotationRepo;
         this.authContext = authContext;
+        this.auditService = auditService;
+    }
+
+    DatasetWorkspacePublishService(
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            ImportJobRepository importJobRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetSampleRepository sampleRepo,
+            DatasetSampleDataRepository dataRepo,
+            DatasetAnnotationRepository annotationRepo,
+            AuthContext authContext
+    ) {
+        this(
+                versionRepo,
+                assetRepo,
+                importJobRepo,
+                versionPackageRepo,
+                packageRepo,
+                sampleRepo,
+                dataRepo,
+                annotationRepo,
+                authContext,
+                null
+        );
     }
 
     @Transactional
@@ -107,6 +137,9 @@ public class DatasetWorkspacePublishService {
         asset.setCurrentVersionId(draft.getId());
         asset.setUpdatedAt(now);
         assetRepo.saveAndFlush(asset);
+        if (auditService != null) {
+            auditService.recordVersionPublished(asset, draft);
+        }
 
         DatasetWorkspacePublishDto dto = new DatasetWorkspacePublishDto();
         dto.setDatasetVersionId(draft.getId());

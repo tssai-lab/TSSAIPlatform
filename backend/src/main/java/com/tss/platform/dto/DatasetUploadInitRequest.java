@@ -20,4 +20,5 @@ public class DatasetUploadInitRequest {
     private String remark;
     private String sampleGrouping;
     private String manifestPath;
+    private Boolean strictManifest;
 }

@@ -7,6 +7,7 @@ import com.tss.platform.dto.v2.V2UserError;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -47,6 +48,25 @@ public class V2ImportJobService {
         }
     }
 
+    public V2ImportJobStatusDto getStatus(String importJobId) {
+        try {
+            return toV2(importJobQueryService.getStatus(importJobId));
+        } catch (ImportJobQueryService.ImportJobAccessException exception) {
+            throw new V2BusinessException(
+                    HttpStatus.NOT_FOUND,
+                    "IMPORT_JOB_NOT_FOUND",
+                    "导入任务不存在或无权访问"
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new V2BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_IMPORT_JOB_STATUS_REQUEST",
+                    "导入任务查询请求无效",
+                    reasonDetails(exception)
+            );
+        }
+    }
+
     private Map<String, Object> reasonDetails(RuntimeException exception) {
         String message = exception.getMessage() == null ? "" : exception.getMessage();
         if (message.isBlank()) {
@@ -61,11 +81,31 @@ public class V2ImportJobService {
         dto.setStatus(source.getStatus());
         dto.setDisplayStatus(displayStatus(source.getStatus()));
         dto.setImportProgress(source.getProgress());
+        dto.setTotalSamples(source.getTotalSamples());
+        dto.setImportedSamples(source.getImportedSamples());
+        dto.setFailedSamples(source.getFailedSamples());
+        dto.setRetryModes(retryModes(source));
+        dto.setRetryable(!dto.getRetryModes().isEmpty());
         dto.setUserError(userError(source));
         return dto;
     }
 
+    private List<String> retryModes(ImportJobStatusDto source) {
+        if ("FAILED".equals(source.getStatus())) {
+            return List.of("FULL");
+        }
+        if ("PARTIAL".equals(source.getStatus())
+                && source.getFailedSamples() != null
+                && source.getFailedSamples() > 0) {
+            return List.of("INCREMENTAL");
+        }
+        return List.of();
+    }
+
     private String displayStatus(String status) {
+        if ("PARTIAL".equals(status)) {
+            return "IMPORT_PARTIAL";
+        }
         if ("FAILED".equals(status)) {
             return "IMPORT_FAILED";
         }
@@ -79,6 +119,22 @@ public class V2ImportJobService {
     }
 
     private V2UserError userError(ImportJobStatusDto source) {
+        if ("PARTIAL".equals(source.getStatus())) {
+            return new V2UserError(
+                    source.getErrorCode() == null
+                            ? "PARTIAL_IMPORT_FAILED"
+                            : source.getErrorCode(),
+                    source.getErrorMessage() == null
+                            ? "部分样本导入失败，可增量重试"
+                            : source.getErrorMessage(),
+                    Map.of(
+                            "failedSamples", safeInt(source.getFailedSamples()),
+                            "importedSamples", safeInt(source.getImportedSamples()),
+                            "totalSamples", safeInt(source.getTotalSamples()),
+                            "retryMode", "INCREMENTAL"
+                    )
+            );
+        }
         if (!"FAILED".equals(source.getStatus())) {
             return null;
         }
@@ -89,5 +145,9 @@ public class V2ImportJobService {
                         : source.getErrorMessage(),
                 Map.of()
         );
+    }
+
+    private int safeInt(Integer value) {
+        return value == null ? 0 : value;
     }
 }

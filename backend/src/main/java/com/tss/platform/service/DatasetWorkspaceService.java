@@ -6,6 +6,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,19 +25,40 @@ public class DatasetWorkspaceService {
     private final AuthContext authContext;
     private final DatasetVersionLifecycleService lifecycleService;
     private final DatasetWorkspaceMaterializer materializer;
+    private final DatasetWorkspaceAuditService auditService;
 
+    @Autowired
     public DatasetWorkspaceService(
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
             AuthContext authContext,
             DatasetVersionLifecycleService lifecycleService,
-            DatasetWorkspaceMaterializer materializer
+            DatasetWorkspaceMaterializer materializer,
+            DatasetWorkspaceAuditService auditService
     ) {
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
         this.authContext = authContext;
         this.lifecycleService = lifecycleService;
         this.materializer = materializer;
+        this.auditService = auditService;
+    }
+
+    DatasetWorkspaceService(
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            AuthContext authContext,
+            DatasetVersionLifecycleService lifecycleService,
+            DatasetWorkspaceMaterializer materializer
+    ) {
+        this(
+                versionRepo,
+                assetRepo,
+                authContext,
+                lifecycleService,
+                materializer,
+                null
+        );
     }
 
     @Transactional
@@ -96,6 +118,9 @@ public class DatasetWorkspaceService {
         draft.setDeletedAt(null);
         DatasetVersion saved = versionRepo.save(draft);
         materializer.materialize(asset, parent, saved);
+        if (auditService != null) {
+            auditService.recordDraftCreated(asset, saved);
+        }
 
         DatasetWorkspaceDraftDto dto = new DatasetWorkspaceDraftDto();
         dto.setDraftVersionId(saved.getId());

@@ -6,6 +6,8 @@ import com.tss.platform.dto.v2.V2ImportJobStatusDto;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,6 +33,56 @@ class V2ImportJobServiceTest {
         assertEquals("IMPORTING", result.getDisplayStatus());
         assertEquals(0, result.getImportProgress());
         assertNull(result.getUserError());
+    }
+
+    @Test
+    void getStatusMapsPartialImportToExplicitV2StatusAndUserError() {
+        ImportJobQueryService delegate = mock(ImportJobQueryService.class);
+        ImportJobStatusDto status = new ImportJobStatusDto();
+        status.setImportJobId("ijob-1");
+        status.setStatus("PARTIAL");
+        status.setProgress(50);
+        status.setTotalSamples(2);
+        status.setImportedSamples(1);
+        status.setFailedSamples(1);
+        status.setErrorCode("PARTIAL_IMPORT_FAILED");
+        status.setErrorMessage("部分样本导入失败，可增量重试");
+        when(delegate.getStatus("ijob-1")).thenReturn(status);
+        V2ImportJobService service = new V2ImportJobService(delegate);
+
+        V2ImportJobStatusDto result = service.getStatus("ijob-1");
+
+        assertEquals("ijob-1", result.getImportJobId());
+        assertEquals("PARTIAL", result.getStatus());
+        assertEquals("IMPORT_PARTIAL", result.getDisplayStatus());
+        assertEquals(50, result.getImportProgress());
+        assertEquals(1, result.getFailedSamples());
+        assertEquals("INCREMENTAL", result.getRetryModes().get(0));
+        assertEquals("PARTIAL_IMPORT_FAILED", result.getUserError().getErrorCode());
+        assertEquals(1, result.getUserError().getDetails().get("failedSamples"));
+        assertEquals(2, result.getUserError().getDetails().get("totalSamples"));
+    }
+
+    @Test
+    void getStatusMarksFailedImportJobRetryableWithFullMode() {
+        ImportJobQueryService delegate = mock(ImportJobQueryService.class);
+        ImportJobStatusDto status = new ImportJobStatusDto();
+        status.setImportJobId("ijob-2");
+        status.setStatus("FAILED");
+        status.setProgress(20);
+        status.setErrorCode("IMPORT_FAILED");
+        status.setErrorMessage("manifest validation failed");
+        when(delegate.getStatus("ijob-2")).thenReturn(status);
+        V2ImportJobService service = new V2ImportJobService(delegate);
+
+        V2ImportJobStatusDto result = service.getStatus("ijob-2");
+
+        assertEquals("ijob-2", result.getImportJobId());
+        assertEquals("FAILED", result.getStatus());
+        assertEquals("IMPORT_FAILED", result.getDisplayStatus());
+        assertEquals(Boolean.TRUE, result.getRetryable());
+        assertEquals(List.of("FULL"), result.getRetryModes());
+        assertEquals("IMPORT_FAILED", result.getUserError().getErrorCode());
     }
 
     @Test

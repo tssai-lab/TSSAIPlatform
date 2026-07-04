@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.DatasetMultimodalExternalIdSampleDto;
 import com.tss.platform.dto.DatasetSampleDataDto;
 import com.tss.platform.dto.DatasetSampleDetailDto;
 import com.tss.platform.dto.DatasetSampleListItemDto;
@@ -30,6 +31,26 @@ public class SampleController {
     ) {
         try {
             return ApiResponse.ok(service.listSamples(versionId, page, pageSize));
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.fail(exception.getMessage());
+        }
+    }
+
+    @GetMapping("/api/dataset-samples/multimodal")
+    public ApiResponse<PageResponse<DatasetMultimodalExternalIdSampleDto>>
+            findMultimodalByExternalId(
+                    @RequestParam String externalId,
+                    @RequestParam List<String> datasetVersionIds,
+                    @RequestParam(value = "page", required = false) Integer page,
+                    @RequestParam(value = "pageSize", required = false) Integer pageSize
+            ) {
+        try {
+            return ApiResponse.ok(service.findMultimodalByExternalId(
+                    externalId,
+                    datasetVersionIds,
+                    page,
+                    pageSize
+            ));
         } catch (IllegalArgumentException exception) {
             return ApiResponse.fail(exception.getMessage());
         }

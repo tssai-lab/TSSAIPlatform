@@ -9,6 +9,10 @@ import java.util.List;
 public class DatasetUploadProgressDto {
     private String uploadId;
     private String status;
+    private String uploadStatus;
+    private String versionStatus;
+    private String importJobId;
+    private String importStatus;
     private String fileName;
     private Long fileSize;
     private Integer chunkSize;
@@ -25,6 +29,7 @@ public class DatasetUploadProgressDto {
     private String parentVersionId;
     private String cvTaskType;
     private String annotationFormat;
+    private Boolean strictManifest;
     private Instant createdAt;
     private Instant updatedAt;
 }

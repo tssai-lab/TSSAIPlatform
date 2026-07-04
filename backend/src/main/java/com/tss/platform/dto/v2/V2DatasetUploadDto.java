@@ -20,6 +20,7 @@ public class V2DatasetUploadDto {
     private String datasetId;
     private String editSessionId;
     private String versionLabel;
+    private Boolean strictManifest;
     private String displayStatus;
     private Integer importProgress;
     private V2UserError userError;

@@ -15,11 +15,9 @@ final class V2ImportJobStatusSelector {
     }
 
     static ImportJob statusJobOf(List<ImportJob> importJobs) {
-        ImportJob latestJob = latestImportJob(importJobs);
-        if (latestJob != null && IMPORTING_STATUSES.contains(latestJob.getStatus())) {
-            return latestJob;
-        }
-        return failedImportJob(importJobs).orElse(latestJob);
+        return activeImportJob(importJobs)
+                .or(() -> unresolvedImportJob(importJobs))
+                .orElse(latestImportJob(importJobs));
     }
 
     static ImportJob latestImportJob(List<ImportJob> importJobs) {
@@ -27,6 +25,7 @@ final class V2ImportJobStatusSelector {
             return null;
         }
         return importJobs.stream()
+                .filter(job -> !"SUPERSEDED".equals(job.getStatus()))
                 .max(Comparator
                         .comparing(
                                 ImportJob::getCreatedAt,
@@ -39,12 +38,30 @@ final class V2ImportJobStatusSelector {
                 .orElse(null);
     }
 
-    private static Optional<ImportJob> failedImportJob(List<ImportJob> importJobs) {
+    private static Optional<ImportJob> unresolvedImportJob(List<ImportJob> importJobs) {
         if (importJobs == null) {
             return Optional.empty();
         }
         return importJobs.stream()
-                .filter(job -> "FAILED".equals(job.getStatus()))
+                .filter(job -> "FAILED".equals(job.getStatus())
+                        || "PARTIAL".equals(job.getStatus()))
+                .max(Comparator
+                        .comparing(
+                                ImportJob::getCreatedAt,
+                                Comparator.nullsFirst(Comparator.naturalOrder())
+                        )
+                        .thenComparing(
+                                ImportJob::getId,
+                                Comparator.nullsFirst(Comparator.naturalOrder())
+                        ));
+    }
+
+    private static Optional<ImportJob> activeImportJob(List<ImportJob> importJobs) {
+        if (importJobs == null) {
+            return Optional.empty();
+        }
+        return importJobs.stream()
+                .filter(job -> IMPORTING_STATUSES.contains(job.getStatus()))
                 .max(Comparator
                         .comparing(
                                 ImportJob::getCreatedAt,

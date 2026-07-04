@@ -58,6 +58,10 @@ class DatasetWorkspacePublishServiceTest {
         verify(fixture.packageRepo, never()).save(any());
         verify(fixture.versionPackageRepo, never()).save(any());
         verify(fixture.sampleRepo, never()).save(any());
+        verify(fixture.auditService).recordVersionPublished(
+                fixture.asset,
+                fixture.draft
+        );
     }
 
     @Test
@@ -93,8 +97,8 @@ class DatasetWorkspacePublishServiceTest {
     }
 
     @Test
-    void rejectsPendingRunningAndFailedImportJobs() {
-        for (String status : List.of("PENDING", "RUNNING", "FAILED")) {
+    void rejectsPendingRunningFailedAndPartialImportJobs() {
+        for (String status : List.of("PENDING", "RUNNING", "FAILED", "PARTIAL")) {
             Fixture fixture = new Fixture();
             fixture.stubValidDraft();
             ImportJob job = new ImportJob();
@@ -161,8 +165,8 @@ class DatasetWorkspacePublishServiceTest {
     }
 
     @Test
-    void rejectsNonReadyPackagesIncludingFailedPackages() {
-        for (String status : List.of("PENDING", "IMPORTING", "FAILED")) {
+    void rejectsNonReadyPackagesIncludingFailedAndPartialPackages() {
+        for (String status : List.of("PENDING", "IMPORTING", "FAILED", "PARTIAL")) {
             Fixture fixture = new Fixture();
             fixture.datasetPackage.setStatus(status);
             fixture.stubValidDraft();
@@ -359,6 +363,8 @@ class DatasetWorkspacePublishServiceTest {
         private final DatasetAnnotationRepository annotationRepo =
                 mock(DatasetAnnotationRepository.class);
         private final AuthContext authContext = mock(AuthContext.class);
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final DatasetAsset asset = asset();
         private final DatasetVersion parent = parent();
         private final DatasetVersion draft = draft();
@@ -374,7 +380,8 @@ class DatasetWorkspacePublishServiceTest {
                         sampleRepo,
                         dataRepo,
                         annotationRepo,
-                        authContext
+                        authContext,
+                        auditService
                 );
 
         private void stubValidDraft() {

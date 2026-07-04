@@ -2,6 +2,7 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.v2.V2ImportJobStatusDto;
 import com.tss.platform.service.V2ImportJobService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,5 +25,10 @@ public class V2ImportJobController {
             @RequestParam(defaultValue = "FULL") String mode
     ) {
         return service.retry(importJobId, mode);
+    }
+
+    @GetMapping("/{importJobId}")
+    public V2ImportJobStatusDto getStatus(@PathVariable String importJobId) {
+        return service.getStatus(importJobId);
     }
 }

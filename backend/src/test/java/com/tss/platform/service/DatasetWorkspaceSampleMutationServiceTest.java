@@ -45,6 +45,11 @@ class DatasetWorkspaceSampleMutationServiceTest {
         assertFalse(parentReadySample.getDeleted());
         assertNull(parentReadySample.getDeletedAt());
         verify(fixture.sampleRepo).saveAndFlush(fixture.sample);
+        verify(fixture.auditService).recordSampleDeleted(
+                fixture.asset,
+                fixture.version,
+                fixture.sample
+        );
         verify(fixture.versionRepo, never()).save(any());
         verify(fixture.assetRepo, never()).save(any());
     }
@@ -104,6 +109,7 @@ class DatasetWorkspaceSampleMutationServiceTest {
         assertTrue(result.getDeleted());
         assertSame(deletedAt, result.getDeletedAt());
         verify(fixture.sampleRepo, never()).saveAndFlush(any());
+        verify(fixture.auditService, never()).recordSampleDeleted(any(), any(), any());
     }
 
     @Test
@@ -120,6 +126,11 @@ class DatasetWorkspaceSampleMutationServiceTest {
         assertNull(fixture.sample.getDeletedAt());
         assertFalse(restored.getDeleted());
         verify(fixture.sampleRepo).saveAndFlush(fixture.sample);
+        verify(fixture.auditService).recordSampleRestored(
+                fixture.asset,
+                fixture.version,
+                fixture.sample
+        );
 
         Fixture repeated = new Fixture();
         repeated.stubAuthorizedDraft();
@@ -130,6 +141,7 @@ class DatasetWorkspaceSampleMutationServiceTest {
         assertFalse(unchanged.getDeleted());
         assertNull(unchanged.getDeletedAt());
         verify(repeated.sampleRepo, never()).saveAndFlush(any());
+        verify(repeated.auditService, never()).recordSampleRestored(any(), any(), any());
     }
 
     private static final class Fixture {
@@ -143,6 +155,8 @@ class DatasetWorkspaceSampleMutationServiceTest {
         private final DatasetAssetRepository assetRepo =
                 mock(DatasetAssetRepository.class);
         private final AuthContext authContext = mock(AuthContext.class);
+        private final DatasetWorkspaceAuditService auditService =
+                mock(DatasetWorkspaceAuditService.class);
         private final DatasetVersion version = version();
         private final DatasetAsset asset = asset();
         private final DatasetSample sample = sample();
@@ -151,7 +165,8 @@ class DatasetWorkspaceSampleMutationServiceTest {
                         sampleRepo,
                         versionRepo,
                         assetRepo,
-                        authContext
+                        authContext,
+                        auditService
                 );
 
         private void stubAuthorizedDraft() {

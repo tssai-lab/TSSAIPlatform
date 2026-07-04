@@ -9,4 +9,5 @@ public class DatasetPackageAppendInitRequest {
     private String fileFingerprint;
     private String sampleGrouping;
     private String manifestPath;
+    private Boolean strictManifest;
 }

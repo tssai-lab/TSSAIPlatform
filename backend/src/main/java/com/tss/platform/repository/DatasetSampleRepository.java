@@ -27,6 +27,12 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
 
     Optional<DatasetSample> findByIdAndDeletedFalse(String id);
 
+    Page<DatasetSample> findByDatasetVersionIdInAndExternalIdAndDeletedFalse(
+            Collection<String> datasetVersionIds,
+            String externalId,
+            Pageable pageable
+    );
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from DatasetSample s where s.id = :id")
     Optional<DatasetSample> findByIdForUpdate(@Param("id") String id);
@@ -54,6 +60,20 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
             String datasetVersionId,
             String createdByPackageId
     );
+
+    @Query("""
+            select count(s.id)
+            from DatasetSample s
+            where s.createdByPackageId = :packageId
+              and s.deleted = false
+              and exists (
+                  select v.id
+                  from DatasetVersion v
+                  where v.id = s.datasetVersionId
+                    and v.deleted = false
+              )
+            """)
+    long countActiveByCreatedByPackageId(@Param("packageId") String packageId);
 
     @Query("""
             select s.externalId

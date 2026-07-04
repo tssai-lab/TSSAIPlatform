@@ -14,6 +14,19 @@ public interface DatasetSampleDataRepository extends JpaRepository<DatasetSample
     long countByDatasetVersionIdAndPackageIdIsNull(String datasetVersionId);
 
     @Query("""
+            select count(d.id)
+            from DatasetSampleData d
+            where d.packageId = :packageId
+              and exists (
+                  select v.id
+                  from DatasetVersion v
+                  where v.id = d.datasetVersionId
+                    and v.deleted = false
+              )
+            """)
+    long countActiveByPackageId(@Param("packageId") String packageId);
+
+    @Query("""
             select distinct d.packageId
             from DatasetSampleData d
             where d.datasetVersionId = :datasetVersionId
@@ -33,4 +46,8 @@ public interface DatasetSampleDataRepository extends JpaRepository<DatasetSample
                     String datasetVersionId,
                     Collection<String> sampleIds
             );
+
+    List<DatasetSampleData> findBySampleIdInOrderBySampleIdAscSeqAscIdAsc(
+            Collection<String> sampleIds
+    );
 }

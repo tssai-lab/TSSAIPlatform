@@ -354,6 +354,26 @@ class ManifestParserTest {
     }
 
     @Test
+    void strictManifestRejectsUndeclaredZipFileWithStructuredDetails() {
+        String json = manifest(samples(sample("scene_001", 0, "image.png")));
+
+        ManifestValidationException error = assertThrows(
+                ManifestValidationException.class,
+                () -> parser.parse(
+                        json,
+                        entries("manifest.json", "image.png", "README.txt"),
+                        "manifest.json",
+                        0,
+                        true
+                )
+        );
+
+        assertEquals("INVALID_MANIFEST_UNDECLARED_ENTRY", error.getErrorCode());
+        assertTrue(error.getMessage().contains("README.txt"));
+        assertEquals("README.txt", error.getDetails().get("path"));
+    }
+
+    @Test
     void rejectsUnsupportedManifestVersion() {
         String json = "{\"version\":\"2.0\",\"samples\":[{\"external_id\":\"scene\"}]}";
 
