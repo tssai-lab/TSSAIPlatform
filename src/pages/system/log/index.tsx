@@ -160,6 +160,7 @@ const LogManagement: React.FC = () => {
       search: {
         transform: (value: [string, string]) => ({ operateTime: value }),
       },
+      render: (_, record) => record.operateTime || '-',
     },
     ...(isSuperAdmin
       ? [
