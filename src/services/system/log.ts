@@ -19,6 +19,8 @@ type OperationLogRaw = {
   operationObj?: string;
   ipAddress?: string;
   operationTime?: string;
+  /** 新标准字段，与 operationTime 二选一 */
+  operateTime?: string;
   remarks?: string;
   status?: string;
 };
@@ -105,7 +107,7 @@ function mapOperationLogToLogItem(
     id: Number(raw.id ?? 0),
     username: raw.userName ?? '',
     operateType: typeLabelMap?.[typeKey] ?? typeKey,
-    operateTime: formatOperationTime(raw.operationTime),
+    operateTime: formatOperationTime(raw.operateTime ?? raw.operationTime),
     ip: raw.ipAddress ?? '',
     content: raw.remarks ?? '',
     result: mapStatusToResult(raw.status),
