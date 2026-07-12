@@ -50,6 +50,7 @@
     "echarts": "^6.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "swagger-ui-react": "^5.32.8",
     "three": "^0.184.0"
   },
   "devDependencies": {

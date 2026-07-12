@@ -206,6 +206,13 @@ export default [
   },
   { path: '/dashboard', name: '首页', icon: 'home', component: './dashboard' },
   {
+    path: '/api-doc',
+    name: 'OpenAPI文档',
+    icon: 'link',
+    component: './api-doc',
+    hideInMenu: true,
+  },
+  {
     path: '/403',
     name: '无权限',
     layout: false,

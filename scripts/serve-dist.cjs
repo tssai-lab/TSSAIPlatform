@@ -73,6 +73,8 @@ app.use(
   }),
 );
 
+app.use('/v3/api-docs', createProxyMiddleware(backendTarget));
+
 app.use(express.static(distDir, { extensions: ['html'] }));
 
 app.get('*', (_req, res) => {

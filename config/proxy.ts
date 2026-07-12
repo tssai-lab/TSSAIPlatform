@@ -23,6 +23,11 @@ export default {
       changeOrigin: true,
       pathRewrite: { '^/mlflow-api': '/ajax-api' },
     },
+    /** openAPI服务*/
+    '/v3/api-docs': {
+      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      changeOrigin: true,
+    },
   },
   /**
    * @name 详细的代理配置
@@ -55,6 +60,10 @@ export default {
       target: process.env.DEV_MLFLOW_TARGET || 'http://47.114.84.133:5000',
       changeOrigin: true,
       pathRewrite: { '^/mlflow-api': '/ajax-api' },
+    },
+    '/v3/api-docs': {
+      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      changeOrigin: true,
     },
   },
 };

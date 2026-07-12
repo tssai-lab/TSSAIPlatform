@@ -136,14 +136,12 @@ export const layout: RunTimeLayoutConfig = ({
         width: '331px',
       },
     ],
-    links: isDev
-      ? [
-          <Link key="openapi" to="/umi/plugin/openapi" target="_blank">
-            <LinkOutlined />
-            <span>OpenAPI 文档</span>
-          </Link>,
-        ]
-      : [],
+    links: [
+      <Link key="openapi" to="/api-doc">
+        <LinkOutlined />
+        <span>OpenAPI 文档</span>
+      </Link>,
+    ],
     // 边栏顶部默认 Logo
     menuHeaderRender: undefined,
     // 自定义 403 页面
