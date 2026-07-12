@@ -4,6 +4,7 @@ import com.tss.platform.entity.SchedulerLock;
 import com.tss.platform.repository.SchedulerLockRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -27,6 +28,7 @@ public class SchedulerLockService {
     private final Clock clock;
     private final Supplier<String> ownerIdSupplier;
 
+    @Autowired
     public SchedulerLockService(
             SchedulerLockRepository repo,
             PlatformTransactionManager transactionManager

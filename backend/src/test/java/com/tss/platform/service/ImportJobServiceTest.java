@@ -29,6 +29,7 @@ import com.tss.platform.repository.ImportJobSampleFailureRepository;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -44,12 +45,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -412,6 +415,166 @@ class ImportJobServiceTest {
         assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void stopsBeforePersistingSampleWhenImportJobLeaseIsSupersededAfterClaim() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubContext();
+        when(fixture.jobRepo.completeSuccessIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenAnswer(invocation -> {
+            if (!"RUNNING".equals(fixture.job.getStatus())
+                    || !invocation.getArgument(1).equals(fixture.job.getExecutorId())) {
+                return 0;
+            }
+            fixture.job.setStatus("SUCCESS");
+            fixture.job.setProgress(100);
+            fixture.job.setTotalSamples(invocation.getArgument(3));
+            fixture.job.setImportedSamples(invocation.getArgument(3));
+            fixture.job.setFinishedAt(invocation.getArgument(4));
+            return 1;
+        });
+        when(fixture.jobRepo.markFailedIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenAnswer(invocation -> {
+            if (!"RUNNING".equals(fixture.job.getStatus())
+                    || !invocation.getArgument(1).equals(fixture.job.getExecutorId())) {
+                return 0;
+            }
+            fixture.job.setStatus("FAILED");
+            fixture.job.setErrorMessage(invocation.getArgument(3));
+            fixture.job.setErrorCode(invocation.getArgument(4));
+            fixture.job.setErrorDetailsJson(invocation.getArgument(5));
+            fixture.job.setFinishedAt(invocation.getArgument(6));
+            return 1;
+        });
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(false)
+        )).thenAnswer(invocation -> {
+            fixture.job.setStatus("SUPERSEDED");
+            fixture.job.setExecutorId(null);
+            fixture.version.setDeleted(true);
+            return fixture.twoSamplePlan(0);
+        });
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("SUPERSEDED", fixture.job.getStatus());
+        verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
+        verify(fixture.dataRepo, never()).saveAllAndFlush(any());
+        verify(fixture.annotationRepo, never()).saveAllAndFlush(any());
+        verify(fixture.failureRepo, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void locksDraftVersionInsideSampleTransactionBeforePersistingRows() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubSuccessfulImport();
+        when(fixture.versionRepo.findByIdAndDeletedFalseForUpdate(fixture.version.getId()))
+                .thenReturn(Optional.of(fixture.version));
+
+        fixture.service.execute(fixture.job.getId());
+
+        InOrder writes = inOrder(fixture.versionRepo, fixture.sampleRepo);
+        writes.verify(fixture.versionRepo).findByIdAndDeletedFalseForUpdate(fixture.version.getId());
+        writes.verify(fixture.sampleRepo).saveAllAndFlush(any());
+    }
+
+    @Test
+    void locksDraftVersionForCompletionBeforeMarkingImportSuccess() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubSuccessfulImport();
+        DatasetVersion completionVersion = fixture.version();
+        when(fixture.versionRepo.findByIdAndDeletedFalseForUpdate(fixture.version.getId()))
+                .thenReturn(Optional.of(fixture.version), Optional.of(completionVersion));
+
+        fixture.service.execute(fixture.job.getId());
+
+        ArgumentCaptor<DatasetVersion> savedVersion =
+                ArgumentCaptor.forClass(DatasetVersion.class);
+        InOrder settlement = inOrder(
+                fixture.sampleRepo,
+                fixture.versionRepo,
+                fixture.jobRepo
+        );
+        settlement.verify(fixture.sampleRepo).saveAllAndFlush(any());
+        settlement.verify(fixture.versionRepo)
+                .findByIdAndDeletedFalseForUpdate(fixture.version.getId());
+        settlement.verify(fixture.jobRepo).completeSuccessIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        );
+        settlement.verify(fixture.versionRepo).saveAndFlush(savedVersion.capture());
+        assertSame(completionVersion, savedVersion.getValue());
+        assertEquals("READY", completionVersion.getStatus());
+        assertFalse(completionVersion.getDeleted());
+    }
+
+    @Test
+    void locksAssetBeforeDraftVersionAndFailureCas() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.stubContext();
+        DatasetVersion failureVersion = fixture.version();
+        when(fixture.versionRepo.findByIdAndDeletedFalseForUpdate(fixture.version.getId()))
+                .thenReturn(Optional.of(failureVersion));
+        when(fixture.parser.parse(
+                any(),
+                any(),
+                eq(fixture.session.getManifestPath()),
+                eq(0),
+                eq(false)
+        )).thenThrow(new ManifestValidationException(
+                "INVALID_MANIFEST",
+                "Manifest 内容无效，请检查后重试",
+                Map.of()
+        ));
+
+        fixture.service.execute(fixture.job.getId());
+
+        ArgumentCaptor<DatasetVersion> savedVersion =
+                ArgumentCaptor.forClass(DatasetVersion.class);
+        InOrder settlement = inOrder(
+                fixture.assetRepo,
+                fixture.versionRepo,
+                fixture.jobRepo
+        );
+        settlement.verify(fixture.assetRepo)
+                .findByIdAndDeletedFalseForUpdate(fixture.asset.getId());
+        settlement.verify(fixture.versionRepo)
+                .findByIdAndDeletedFalseForUpdate(fixture.version.getId());
+        settlement.verify(fixture.jobRepo).markFailedIfOwned(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        );
+        settlement.verify(fixture.versionRepo).saveAndFlush(savedVersion.capture());
+        assertSame(failureVersion, savedVersion.getValue());
+        assertEquals("DRAFT", failureVersion.getStatus());
+        assertNull(failureVersion.getPublishedAt());
     }
 
     @Test
@@ -843,6 +1006,8 @@ class ImportJobServiceTest {
             when(jobRepo.findById(job.getId())).thenReturn(Optional.of(job));
             when(jobRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
+            when(versionRepo.findByIdAndDeletedFalseForUpdate(version.getId()))
+                    .thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId())).thenReturn(Optional.of(asset));
             when(sessionRepo.findByImportJobId(job.getId())).thenReturn(Optional.of(session));
             when(packageRepo.findByIdAndDeletedFalse(datasetPackage.getId()))

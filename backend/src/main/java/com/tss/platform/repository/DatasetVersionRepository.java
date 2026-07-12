@@ -23,6 +23,8 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
 
     List<DatasetVersion> findByDeletedFalse();
 
+    List<DatasetVersion> findByStoragePathAndDeletedFalse(String storagePath);
+
     List<DatasetVersion> findByOwnerUserId(Integer ownerUserId);
 
     List<DatasetVersion> findByOwnerUserIdAndDeletedFalse(Integer ownerUserId);

@@ -5,9 +5,13 @@ import io.minio.MinioClient;
 import io.minio.errors.ErrorResponseException;
 import io.minio.messages.ErrorResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.test.context.support.TestPropertySourceUtils;
 
 import java.time.Duration;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -16,6 +20,26 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MinioInitializerTest {
+
+    @Test
+    void springCanSelectTheProductionConstructor() {
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioConfig minioConfig = new MinioConfig();
+        minioConfig.setBucket("models");
+
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
+                    context,
+                    "minio.init.max-attempts=1",
+                    "minio.init.initial-backoff-ms=0");
+            context.registerBean(MinioClient.class, () -> minioClient);
+            context.registerBean(MinioConfig.class, () -> minioConfig);
+            context.register(MinioInitializer.class);
+
+            assertDoesNotThrow(context::refresh);
+            assertNotNull(context.getBean(MinioInitializer.class));
+        }
+    }
 
     @Test
     void retriesBucketCheckBeforeFailingStartup() throws Exception {

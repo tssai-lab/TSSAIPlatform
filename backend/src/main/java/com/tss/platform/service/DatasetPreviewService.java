@@ -7,6 +7,7 @@ import com.tss.platform.dto.DatasetPreviewFileDto;
 import com.tss.platform.dto.DatasetPreviewFileListDto;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.model.ZipEntryInfo;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
@@ -16,8 +17,9 @@ import org.apache.commons.csv.CSVRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,8 +33,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.Inflater;
+import java.util.zip.InflaterInputStream;
 
 @Service
 public class DatasetPreviewService {
@@ -57,6 +59,7 @@ public class DatasetPreviewService {
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
     private final MinioService minioService;
+    private final ZipCentralDirectoryReader zipReader;
     private final AuthContext authContext;
     private final ObjectMapper objectMapper;
     private final int maxZipEntries;
@@ -78,6 +81,7 @@ public class DatasetPreviewService {
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
         this.minioService = minioService;
+        this.zipReader = new ZipCentralDirectoryReader(minioService);
         this.authContext = authContext;
         this.objectMapper = objectMapper;
         this.maxZipEntries = maxZipEntries > 0 ? maxZipEntries : DEFAULT_MAX_ZIP_ENTRIES;
@@ -93,6 +97,28 @@ public class DatasetPreviewService {
             String keyword,
             String kind
     ) {
+        return listFiles(datasetVersionId, page, pageSize, keyword, kind, PreviewUrlMode.V1);
+    }
+
+    public DatasetPreviewFileListDto listFilesForV2(
+            String datasetVersionId,
+            Integer page,
+            Integer pageSize,
+            String keyword,
+            String kind
+    ) {
+        requireValidV2Pagination(page, pageSize);
+        return listFiles(datasetVersionId, page, pageSize, keyword, kind, PreviewUrlMode.V2);
+    }
+
+    private DatasetPreviewFileListDto listFiles(
+            String datasetVersionId,
+            Integer page,
+            Integer pageSize,
+            String keyword,
+            String kind,
+            PreviewUrlMode previewUrlMode
+    ) {
         DatasetSource source = getDatasetSource(datasetVersionId);
         int pageNo = resolvePage(page);
         int size = resolvePageSize(pageSize);
@@ -101,8 +127,8 @@ public class DatasetPreviewService {
         boolean archive = isZip(source.sourceName());
 
         List<DatasetPreviewFileDto> files = archive
-                ? listArchiveFiles(source)
-                : listSingleFile(source);
+                ? listArchiveFiles(source, previewUrlMode)
+                : listSingleFile(source, previewUrlMode);
         List<DatasetPreviewFileDto> filtered = files.stream()
                 .filter(file -> filterKind == null || filterKind.equals(file.getKind()))
                 .filter(file -> matchesKeyword(file, filterKeyword))
@@ -130,27 +156,19 @@ public class DatasetPreviewService {
         DatasetSource source = getDatasetSource(datasetVersionId);
         if (isZip(source.sourceName())) {
             String targetPath = normalizeZipEntryPath(path);
-            try (InputStream is = minioService.downloadStream(source.version().getStoragePath());
-                 ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is), StandardCharsets.UTF_8)) {
-                ZipEntry entry;
-                int entries = 0;
-                while ((entry = zip.getNextEntry()) != null) {
-                    entries += 1;
-                    if (entries > maxZipEntries) {
-                        throw new IllegalArgumentException("dataset zip file contains too many entries");
-                    }
-                    String entryPath = normalizeZipEntryPath(entry.getName());
-                    if (!entry.isDirectory() && targetPath.equals(entryPath)) {
-                        return previewContentStream(entryPath, zip, page, pageSize);
-                    }
-                    zip.closeEntry();
-                }
+            ZipEntryInfo entry = findArchiveFile(
+                    source,
+                    targetPath,
+                    "dataset archive file does not exist: ",
+                    "failed to read dataset archive content"
+            );
+            try (InputStream entryStream = openArchiveEntryStream(source, entry)) {
+                return previewContentStream(entry.normalizedPath(), entryStream, page, pageSize);
             } catch (IllegalArgumentException e) {
                 throw e;
             } catch (Exception e) {
                 throw new IllegalArgumentException("failed to read dataset archive content: " + rootMessage(e));
             }
-            throw new IllegalArgumentException("dataset archive file does not exist: " + targetPath);
         }
 
         if (path != null && !path.isBlank()) {
@@ -163,6 +181,16 @@ public class DatasetPreviewService {
         } catch (Exception e) {
             throw new IllegalArgumentException("failed to read dataset content: " + rootMessage(e));
         }
+    }
+
+    public DatasetContentPreviewDto previewContentForV2(
+            String datasetVersionId,
+            String path,
+            Integer page,
+            Integer pageSize
+    ) {
+        requireValidV2Pagination(page, pageSize);
+        return previewContent(datasetVersionId, path, page, pageSize);
     }
 
     public DatasetImageStream openImage(String datasetVersionId, String path) {
@@ -179,67 +207,139 @@ public class DatasetPreviewService {
             throw new IllegalArgumentException("image preview only supports image files");
         }
 
-        try (InputStream is = minioService.downloadStream(source.version().getStoragePath());
-             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is), StandardCharsets.UTF_8)) {
-            ZipEntry entry;
-            int entries = 0;
-            while ((entry = zip.getNextEntry()) != null) {
-                entries += 1;
-                if (entries > maxZipEntries) {
-                    throw new IllegalArgumentException("dataset zip file contains too many entries");
-                }
-                String entryPath = normalizeZipEntryPath(entry.getName());
-                if (!entry.isDirectory() && targetPath.equals(entryPath)) {
-                    Long declaredSize = entry.getSize() >= 0 ? entry.getSize() : null;
-                    if (!isImagePreviewAllowed(declaredSize)) {
-                        throw new IllegalArgumentException(imageTooLargeMessage());
-                    }
-                    return extractImageEntry(zip, entryPath);
-                }
-                zip.closeEntry();
-            }
+        ZipEntryInfo entry = findArchiveFile(
+                source,
+                targetPath,
+                "dataset image does not exist: ",
+                "failed to read dataset image"
+        );
+        if (!isImagePreviewAllowed(entry.uncompressedSize())) {
+            throw new IllegalArgumentException(imageTooLargeMessage());
+        }
+        try (InputStream entryStream = openArchiveEntryStream(source, entry)) {
+            return extractImageEntry(entryStream, entry.normalizedPath());
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
             throw new IllegalArgumentException("failed to read dataset image: " + rootMessage(e));
         }
-        throw new IllegalArgumentException("dataset image does not exist: " + targetPath);
     }
 
-    private List<DatasetPreviewFileDto> listArchiveFiles(DatasetSource source) {
-        List<DatasetPreviewFileDto> files = new ArrayList<>();
-        try (InputStream is = minioService.downloadStream(source.version().getStoragePath());
-             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is), StandardCharsets.UTF_8)) {
-            ZipEntry entry;
-            int entries = 0;
-            while ((entry = zip.getNextEntry()) != null) {
-                entries += 1;
-                if (entries > maxZipEntries) {
-                    throw new IllegalArgumentException("dataset zip file contains too many entries");
-                }
-                String entryPath = normalizeZipEntryPath(entry.getName());
-                if (!entry.isDirectory()) {
-                    Long sizeBytes = entry.getSize() >= 0 ? entry.getSize() : null;
-                    files.add(toPreviewFile(source, entryPath, sizeBytes));
-                }
-                zip.closeEntry();
+    private ZipEntryInfo findArchiveFile(
+            DatasetSource source,
+            String targetPath,
+            String missingMessage,
+            String failurePrefix
+    ) {
+        for (ZipEntryInfo entry : readArchiveEntries(source, failurePrefix)) {
+            if (!entry.directory() && targetPath.equals(entry.normalizedPath())) {
+                return entry;
             }
+        }
+        throw new IllegalArgumentException(missingMessage + targetPath);
+    }
+
+    private List<ZipEntryInfo> readArchiveEntries(DatasetSource source, String failurePrefix) {
+        Long objectSize = source.version().getSizeBytes();
+        if (objectSize == null || objectSize < 0) {
+            try {
+                objectSize = minioService.stat(source.version().getStoragePath()).size();
+            } catch (Exception exception) {
+                throw new IllegalArgumentException(
+                        "failed to determine dataset archive size: " + rootMessage(exception),
+                        exception
+                );
+            }
+        }
+        if (objectSize < 0) {
+            throw new IllegalArgumentException("dataset archive size is invalid");
+        }
+        try {
+            List<ZipEntryInfo> entries = zipReader.read(
+                    source.version().getStoragePath(),
+                    objectSize
+            );
+            if (entries.size() > maxZipEntries) {
+                throw new IllegalArgumentException("dataset zip file contains too many entries");
+            }
+            return entries;
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalArgumentException("failed to list dataset archive files: " + rootMessage(e));
+            throw new IllegalArgumentException(failurePrefix + ": " + rootMessage(e));
         }
-        return files;
     }
 
-    private List<DatasetPreviewFileDto> listSingleFile(DatasetSource source) {
+    private InputStream openArchiveEntryStream(DatasetSource source, ZipEntryInfo entry)
+            throws Exception {
+        if (entry.compressedSize() == 0) {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+        InputStream compressed = minioService.downloadRange(
+                source.version().getStoragePath(),
+                entry.zipDataOffset(),
+                entry.compressedSize()
+        );
+        if (entry.method() == 0) {
+            return compressed;
+        }
+        if (entry.method() == 8) {
+            Inflater inflater = new Inflater(true);
+            return new InflaterInputStream(compressed, inflater) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        inflater.end();
+                    }
+                }
+            };
+        }
+        try {
+            compressed.close();
+        } catch (IOException ignored) {
+            // Preserve the unsupported method error.
+        }
+        throw new IllegalArgumentException("unsupported ZIP compression method: " + entry.method());
+    }
+
+    private List<DatasetPreviewFileDto> listArchiveFiles(
+            DatasetSource source,
+            PreviewUrlMode previewUrlMode
+    ) {
+        return readArchiveEntries(source, "failed to list dataset archive files").stream()
+                .filter(entry -> !entry.directory())
+                .map(entry -> toPreviewFile(
+                        source,
+                        entry.normalizedPath(),
+                        entry.uncompressedSize(),
+                        previewUrlMode
+                ))
+                .toList();
+    }
+
+    private List<DatasetPreviewFileDto> listSingleFile(
+            DatasetSource source,
+            PreviewUrlMode previewUrlMode
+    ) {
         if (!"NLP".equalsIgnoreCase(source.asset().getType())) {
             throw new IllegalArgumentException("non-archive preview only supports NLP datasets");
         }
-        return List.of(toPreviewFile(source, null, source.version().getSizeBytes()));
+        return List.of(toPreviewFile(
+                source,
+                null,
+                source.version().getSizeBytes(),
+                previewUrlMode
+        ));
     }
 
-    private DatasetPreviewFileDto toPreviewFile(DatasetSource source, String path, Long sizeBytes) {
+    private DatasetPreviewFileDto toPreviewFile(
+            DatasetSource source,
+            String path,
+            Long sizeBytes,
+            PreviewUrlMode previewUrlMode
+    ) {
         String displayName = path == null ? source.sourceName() : path;
         String kind = classifyKind(displayName);
         boolean previewAllowed = isPreviewAllowed(source, kind, sizeBytes);
@@ -251,7 +351,9 @@ public class DatasetPreviewService {
         dto.setKind(kind);
         dto.setSizeBytes(sizeBytes);
         dto.setPreviewAllowed(previewAllowed);
-        dto.setPreviewUrl(previewAllowed ? previewUrl(source.version().getId(), path, kind) : null);
+        dto.setPreviewUrl(previewAllowed
+                ? previewUrl(source.version().getId(), path, kind, previewUrlMode)
+                : null);
         dto.setMessage(previewMessage(source, kind, sizeBytes, previewAllowed));
         return dto;
     }
@@ -452,15 +554,14 @@ public class DatasetPreviewService {
         return new LimitedText(out.toString(StandardCharsets.UTF_8), truncated);
     }
 
-    private DatasetImageStream extractImageEntry(ZipInputStream zip, String entryPath) throws IOException {
+    private DatasetImageStream extractImageEntry(InputStream entryStream, String entryPath) throws IOException {
         Path tempFile = Files.createTempFile("dataset-preview-image-", safeTempSuffix(extensionOf(entryPath)));
-        tempFile.toFile().deleteOnExit();
         boolean complete = false;
         long total = 0;
         byte[] buffer = new byte[8192];
         try (OutputStream out = Files.newOutputStream(tempFile, StandardOpenOption.WRITE)) {
             int len;
-            while ((len = zip.read(buffer)) != -1) {
+            while ((len = entryStream.read(buffer)) != -1) {
                 total += len;
                 if (total > maxImageBytes) {
                     throw new IllegalArgumentException(imageTooLargeMessage());
@@ -474,12 +575,44 @@ public class DatasetPreviewService {
             }
         }
 
-        InputStream stream = Files.newInputStream(
-                tempFile,
-                StandardOpenOption.READ,
-                StandardOpenOption.DELETE_ON_CLOSE
-        );
+        InputStream stream = openDeletingInputStream(tempFile);
         return new DatasetImageStream(stream, fileNameOf(entryPath), imageContentType(entryPath), total);
+    }
+
+    private InputStream openDeletingInputStream(Path tempFile) throws IOException {
+        try {
+            InputStream delegate = Files.newInputStream(
+                    tempFile,
+                    StandardOpenOption.READ,
+                    StandardOpenOption.DELETE_ON_CLOSE
+            );
+            return new FilterInputStream(delegate) {
+                @Override
+                public void close() throws IOException {
+                    IOException failure = null;
+                    try {
+                        super.close();
+                    } catch (IOException exception) {
+                        failure = exception;
+                    }
+                    try {
+                        Files.deleteIfExists(tempFile);
+                    } catch (IOException exception) {
+                        if (failure == null) {
+                            failure = exception;
+                        } else {
+                            failure.addSuppressed(exception);
+                        }
+                    }
+                    if (failure != null) {
+                        throw failure;
+                    }
+                }
+            };
+        } catch (IOException | RuntimeException exception) {
+            Files.deleteIfExists(tempFile);
+            throw exception;
+        }
     }
 
     private DatasetSource getDatasetSource(String datasetVersionId) {
@@ -487,32 +620,78 @@ public class DatasetPreviewService {
             throw new IllegalArgumentException("datasetVersionId cannot be empty");
         }
         DatasetVersion version = datasetVersionRepo.findByIdAndDeletedFalse(datasetVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("dataset not found or no permission"));
+                .orElseThrow(() -> previewNotFound("dataset not found or no permission"));
         DatasetAsset asset = datasetAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException("dataset asset not found or deleted"));
-        if (!"CV".equalsIgnoreCase(asset.getType()) && !"NLP".equalsIgnoreCase(asset.getType())) {
-            throw new IllegalArgumentException("common dataset preview only supports CV or NLP datasets; use point cloud preview for POINT_CLOUD datasets");
-        }
+                .orElseThrow(() -> previewNotFound("dataset not found or no permission"));
 
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
-        authContext.requireOwnerAccess(ownerUserId, "dataset not found or no permission");
+        requireOwnerAccess(ownerUserId);
         requirePreviewableStatus(version);
+        if (!"CV".equalsIgnoreCase(asset.getType()) && !"NLP".equalsIgnoreCase(asset.getType())) {
+            throw previewNotPreviewable(
+                    "common dataset preview only supports CV or NLP datasets; use point cloud preview for POINT_CLOUD datasets"
+            );
+        }
         requireStoragePath(version);
-        authContext.requireObjectAccess(version.getStoragePath(), ownerUserId, "dataset object not found or no permission");
+        requireObjectAccess(version.getStoragePath(), ownerUserId);
         return new DatasetSource(version, asset, sourceName(version));
     }
 
     private void requirePreviewableStatus(DatasetVersion version) {
         String status = version.getStatus();
-        if ("DRAFT".equals(status) || "ARCHIVED".equals(status)) {
-            throw new IllegalArgumentException("dataset version status must be READY or DEPRECATED for preview");
+        if (!"READY".equals(status) && !"DEPRECATED".equals(status)) {
+            throw previewNotPreviewable(
+                    "dataset version status must be READY or DEPRECATED for preview"
+            );
         }
     }
 
     private void requireStoragePath(DatasetVersion version) {
         if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("dataset version storage path is empty");
+            throw previewNotPreviewable("dataset version storage path is empty");
         }
+    }
+
+    private void requireOwnerAccess(Integer ownerUserId) {
+        try {
+            authContext.requireOwnerAccess(ownerUserId, "dataset not found or no permission");
+        } catch (IllegalArgumentException exception) {
+            throw previewNotFound("dataset not found or no permission", exception);
+        }
+    }
+
+    private void requireObjectAccess(String storagePath, Integer ownerUserId) {
+        try {
+            authContext.requireObjectAccess(
+                    storagePath,
+                    ownerUserId,
+                    "dataset not found or no permission"
+            );
+        } catch (IllegalArgumentException exception) {
+            throw previewNotFound("dataset not found or no permission", exception);
+        }
+    }
+
+    private DatasetPreviewAccessException previewNotFound(String message) {
+        return new DatasetPreviewAccessException(
+                DatasetPreviewAccessException.Reason.NOT_FOUND,
+                message
+        );
+    }
+
+    private DatasetPreviewAccessException previewNotFound(String message, Throwable cause) {
+        return new DatasetPreviewAccessException(
+                DatasetPreviewAccessException.Reason.NOT_FOUND,
+                message,
+                cause
+        );
+    }
+
+    private DatasetPreviewAccessException previewNotPreviewable(String message) {
+        return new DatasetPreviewAccessException(
+                DatasetPreviewAccessException.Reason.NOT_PREVIEWABLE,
+                message
+        );
     }
 
     private boolean isPreviewAllowed(DatasetSource source, String kind, Long sizeBytes) {
@@ -542,13 +721,29 @@ public class DatasetPreviewService {
         return "this file type does not support online preview yet; please download and view locally";
     }
 
-    private String previewUrl(String datasetVersionId, String path, String kind) {
+    private String previewUrl(
+            String datasetVersionId,
+            String path,
+            String kind,
+            PreviewUrlMode previewUrlMode
+    ) {
+        if (previewUrlMode == PreviewUrlMode.V2) {
+            String base = "/api/v2/dataset-versions/"
+                    + queryEncode(datasetVersionId)
+                    + (KIND_IMAGE.equals(kind) ? "/preview/image" : "/preview/content");
+            return path == null ? base : base + "?path=" + queryEncode(path);
+        }
         String base = KIND_IMAGE.equals(kind) ? "/api/dataset/preview/image" : "/api/dataset/preview/content";
         String url = base + "?id=" + queryEncode(datasetVersionId);
         if (path != null) {
             url += "&path=" + queryEncode(path);
         }
         return url;
+    }
+
+    private enum PreviewUrlMode {
+        V1,
+        V2
     }
 
     private String normalizeKind(String kind) {
@@ -640,12 +835,24 @@ public class DatasetPreviewService {
         return Math.min(pageSize, maxPageSize);
     }
 
+    private void requireValidV2Pagination(Integer page, Integer pageSize) {
+        if (page != null && page <= 0) {
+            throw new IllegalArgumentException("page must be greater than or equal to 1");
+        }
+        if (pageSize != null && pageSize <= 0) {
+            throw new IllegalArgumentException("pageSize must be greater than or equal to 1");
+        }
+    }
+
     private <T> List<T> paginate(List<T> source, int page, int pageSize) {
         if (source.isEmpty()) {
             return List.of();
         }
-        int from = Math.min((page - 1) * pageSize, source.size());
-        int to = Math.min(from + pageSize, source.size());
+        long requestedOffset = ((long) page - 1L) * pageSize;
+        int from = requestedOffset >= source.size()
+                ? source.size()
+                : Math.toIntExact(requestedOffset);
+        int to = (int) Math.min((long) from + pageSize, source.size());
         return source.subList(from, to);
     }
 

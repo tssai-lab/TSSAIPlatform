@@ -1,6 +1,7 @@
 package com.tss.platform.controller.v2;
 
 import com.tss.platform.service.ManifestValidationException;
+import com.tss.platform.service.DatasetPreviewAccessException;
 import com.tss.platform.service.DatasetWorkspaceAuditService;
 import com.tss.platform.service.ImportJobQueryService;
 import com.tss.platform.service.SampleFileException;
@@ -62,11 +63,42 @@ public class V2ExceptionHandler {
         Map<String, Object> details = exception.getRangeTotal() == null
                 ? Map.of()
                 : Map.of("rangeTotal", exception.getRangeTotal());
-        return response(
+        ResponseEntity<V2ErrorResponse> response = response(
                 exception.getStatus(),
                 "SAMPLE_FILE_ERROR",
                 exception.getMessage(),
                 details,
+                request
+        );
+        if (exception.getStatus() != HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE
+                || exception.getRangeTotal() == null) {
+            return response;
+        }
+        return ResponseEntity.status(response.getStatusCode())
+                .headers(response.getHeaders())
+                .header(HttpHeaders.CONTENT_RANGE, "bytes */" + exception.getRangeTotal())
+                .body(response.getBody());
+    }
+
+    @ExceptionHandler(DatasetPreviewAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleDatasetPreviewAccess(
+            DatasetPreviewAccessException exception,
+            HttpServletRequest request
+    ) {
+        if (exception.getReason() == DatasetPreviewAccessException.Reason.NOT_FOUND) {
+            return response(
+                    HttpStatus.NOT_FOUND,
+                    "DATASET_NOT_FOUND",
+                    "数据集版本不存在或无权访问",
+                    Map.of(),
+                    request
+            );
+        }
+        return response(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "DATASET_NOT_PREVIEWABLE",
+                "该数据集版本当前不可预览",
+                Map.of(),
                 request
         );
     }
@@ -113,6 +145,20 @@ public class V2ExceptionHandler {
         );
     }
 
+    @ExceptionHandler(SampleService.DatasetSampleAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleDatasetSampleAccess(
+            SampleService.DatasetSampleAccessException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "DATASET_SAMPLE_NOT_FOUND",
+                "数据集样本不存在或无权访问",
+                Map.of(),
+                request
+        );
+    }
+
     @ExceptionHandler(DatasetWorkspaceAuditService.DatasetWorkspaceAuditAccessException.class)
     public ResponseEntity<V2ErrorResponse> handleWorkspaceAuditAccess(
             DatasetWorkspaceAuditService.DatasetWorkspaceAuditAccessException exception,
@@ -142,7 +188,7 @@ public class V2ExceptionHandler {
                 HttpStatus.BAD_REQUEST,
                 "INVALID_REQUEST",
                 safeBadRequestMessage(exception),
-                Map.of(),
+                badRequestDetails(exception),
                 request
         );
     }
@@ -188,7 +234,12 @@ public class V2ExceptionHandler {
     ) {
         return ResponseEntity.status(status)
                 .header(TRACE_HEADER, traceId)
-                .body(V2ErrorResponse.failure(code, message, details, traceId));
+                .body(V2ErrorResponse.failure(
+                        code,
+                        message,
+                        V2ErrorDetailsSanitizer.sanitizeDetails(details, message),
+                        traceId
+                ));
     }
 
     private static String traceId(HttpServletRequest request) {
@@ -205,11 +256,20 @@ public class V2ExceptionHandler {
                 : "请求参数格式不正确";
     }
 
-    private static Map<String, Object> reasonDetails(RuntimeException exception) {
-        String message = exception.getMessage();
-        if (message == null || message.isBlank()) {
-            return Map.of();
+    private static Map<String, Object> badRequestDetails(Exception exception) {
+        if (exception instanceof IllegalArgumentException illegalArgumentException) {
+            return V2ErrorDetailsSanitizer.reasonDetails(
+                    illegalArgumentException,
+                    "请求参数不正确，请检查后重试"
+            );
         }
-        return Map.of("reason", message);
+        return Map.of();
+    }
+
+    private static Map<String, Object> reasonDetails(RuntimeException exception) {
+        return V2ErrorDetailsSanitizer.reasonDetails(
+                exception,
+                "请求暂时无法完成，请稍后重试"
+        );
     }
 }

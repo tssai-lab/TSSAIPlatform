@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.DatasetAppendPackageCompleteResponse;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
@@ -9,8 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.Map;
 
 @RestController
 public class DatasetVersionPackageUploadController {
@@ -34,7 +33,7 @@ public class DatasetVersionPackageUploadController {
     }
 
     @PostMapping("/api/dataset-versions/{draftVersionId}/packages/complete")
-    public ApiResponse<Map<String, Object>> complete(
+    public ApiResponse<DatasetAppendPackageCompleteResponse> complete(
             @PathVariable String draftVersionId,
             @RequestBody DatasetUploadCompleteRequest request
     ) {

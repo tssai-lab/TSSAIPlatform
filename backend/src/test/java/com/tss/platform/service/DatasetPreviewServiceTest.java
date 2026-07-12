@@ -9,12 +9,15 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
+import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.zip.ZipEntry;
@@ -28,9 +31,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DatasetPreviewServiceTest {
@@ -57,6 +65,77 @@ class DatasetPreviewServiceTest {
     }
 
     @Test
+    void v2ListFilesUsesVersionedPreviewLinks() throws Exception {
+        byte[] zip = zip(
+                entry("images/a.png", bytes("image")),
+                entry("labels/a.txt", bytes("label"))
+        );
+        TestFixture fixture = fixture("dataset.zip", "CV", 7, (long) zip.length, zip);
+
+        DatasetPreviewFileListDto result =
+                fixture.service.listFilesForV2("dataset-ver-1", 1, 10, null, null);
+
+        DatasetPreviewFileDto image = result.getFiles().stream()
+                .filter(file -> "images/a.png".equals(file.getPath()))
+                .findFirst()
+                .orElseThrow();
+        DatasetPreviewFileDto text = result.getFiles().stream()
+                .filter(file -> "labels/a.txt".equals(file.getPath()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(
+                "/api/v2/dataset-versions/dataset-ver-1/preview/image?path=images%2Fa.png",
+                image.getPreviewUrl()
+        );
+        assertEquals(
+                "/api/v2/dataset-versions/dataset-ver-1/preview/content?path=labels%2Fa.txt",
+                text.getPreviewUrl()
+        );
+        assertFalse(image.getPreviewUrl().contains("/api/dataset/"));
+        assertFalse(text.getPreviewUrl().contains("/api/dataset/"));
+    }
+
+    @Test
+    void v2ListFilesRejectsNonPositivePaginationValues() {
+        TestFixture fixture = fixture("data.txt", "NLP", 7, 4L, bytes("data"));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                fixture.service.listFilesForV2("dataset-ver-1", 0, 10, null, null)
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+                fixture.service.listFilesForV2("dataset-ver-1", 1, 0, null, null)
+        );
+    }
+
+    @Test
+    void veryLargeV2PageReturnsAnEmptyPageWithoutIntegerOverflow() {
+        TestFixture fixture = fixture("data.txt", "NLP", 7, 4L, bytes("data"));
+
+        DatasetPreviewFileListDto result = fixture.service.listFilesForV2(
+                "dataset-ver-1",
+                Integer.MAX_VALUE,
+                100,
+                null,
+                null
+        );
+
+        assertTrue(result.getFiles().isEmpty());
+        assertEquals(Integer.MAX_VALUE, result.getPage());
+    }
+
+    @Test
+    void v2ContentRejectsNonPositivePaginationValues() {
+        TestFixture fixture = fixture("data.txt", "NLP", 7, 4L, bytes("data"));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                fixture.service.previewContentForV2("dataset-ver-1", null, 0, 10)
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+                fixture.service.previewContentForV2("dataset-ver-1", null, 1, 0)
+        );
+    }
+
+    @Test
     void cvZipImageCanBeRead() throws Exception {
         byte[] image = bytes("png-bytes");
         byte[] zip = zip(entry("images/a.png", image));
@@ -72,6 +151,15 @@ class DatasetPreviewServiceTest {
     }
 
     @Test
+    void imagePreviewTempStreamDoesNotRegisterDeleteOnExitHooks() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/tss/platform/service/DatasetPreviewService.java"
+        ));
+
+        assertFalse(source.contains("deleteOnExit("));
+    }
+
+    @Test
     void cvZipTextAnnotationCanBePreviewed() throws Exception {
         byte[] zip = zip(entry("labels/a.txt", bytes("0 0.5 0.5 1 1")));
         TestFixture fixture = fixture("dataset.zip", "CV", 7, (long) zip.length, zip);
@@ -83,6 +171,94 @@ class DatasetPreviewServiceTest {
         assertEquals("TEXT", result.getContentType());
         assertEquals("0 0.5 0.5 1 1", result.getContent());
         assertFalse(result.getTruncated());
+    }
+
+    @Test
+    void zipListAndContentPreviewUseRangeReadsInsteadOfFullArchiveDownloads() throws Exception {
+        byte[] zip = zip(
+                entry("images/a.png", bytes("image")),
+                entry("labels/a.txt", bytes("label"))
+        );
+        TestFixture fixture = fixture("dataset.zip", "CV", 7, (long) zip.length, zip);
+
+        DatasetPreviewFileListDto files =
+                fixture.service.listFiles("dataset-ver-1", 1, 10, null, null);
+        DatasetContentPreviewDto content =
+                fixture.service.previewContent("dataset-ver-1", "labels/a.txt", null, null);
+
+        assertEquals(2, files.getTotal());
+        assertEquals("label", content.getContent());
+        verify(fixture.minioService, never()).downloadStream(fixture.version.getStoragePath());
+        verify(fixture.minioService, atLeastOnce()).downloadRange(
+                eq(fixture.version.getStoragePath()),
+                anyLong(),
+                anyLong()
+        );
+    }
+
+    @Test
+    void largeZipListIsPagedFromRangeReadableIndexWithoutFullArchiveDownload()
+            throws Exception {
+        Entry[] entries = new Entry[250];
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = entry("images/image-" + String.format("%03d", i) + ".png", bytes("image-" + i));
+        }
+        byte[] zip = zip(entries);
+        TestFixture fixture = fixture("dataset.zip", "CV", 7, (long) zip.length, zip);
+
+        DatasetPreviewFileListDto page =
+                fixture.service.listFiles("dataset-ver-1", 3, 50, null, "IMAGE");
+
+        assertEquals(250, page.getTotal());
+        assertEquals(50, page.getFiles().size());
+        assertEquals("images/image-100.png", page.getFiles().get(0).getPath());
+        assertEquals("images/image-149.png", page.getFiles().get(49).getPath());
+        verify(fixture.minioService, never()).downloadStream(fixture.version.getStoragePath());
+        verify(fixture.minioService, atLeastOnce()).downloadRange(
+                eq(fixture.version.getStoragePath()),
+                anyLong(),
+                anyLong()
+        );
+    }
+
+    @Test
+    void archiveWithHistoricalNullSizeUsesAuthorizedObjectStatForRangeIndex()
+            throws Exception {
+        byte[] zip = zip(entry("labels/a.txt", bytes("label")));
+        TestFixture fixture = fixture("dataset.zip", "NLP", 7, null, zip);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn((long) zip.length);
+        when(fixture.minioService.stat(fixture.version.getStoragePath())).thenReturn(stat);
+
+        DatasetPreviewFileListDto result =
+                fixture.service.listFiles("dataset-ver-1", 1, 10, null, null);
+
+        assertEquals(1, result.getTotal());
+        assertEquals("labels/a.txt", result.getFiles().get(0).getPath());
+        verify(fixture.minioService).stat(fixture.version.getStoragePath());
+        verify(fixture.minioService, atLeastOnce()).downloadRange(
+                eq(fixture.version.getStoragePath()),
+                anyLong(),
+                anyLong()
+        );
+    }
+
+    @Test
+    void archiveWithHistoricalNullSizeMapsStatFailureToLegacyArgumentError()
+            throws Exception {
+        byte[] zip = zip(entry("labels/a.txt", bytes("label")));
+        TestFixture fixture = fixture("dataset.zip", "NLP", 7, null, zip);
+        when(fixture.minioService.stat(fixture.version.getStoragePath()))
+                .thenThrow(new IllegalStateException("object metadata unavailable"));
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> fixture.service.listFiles("dataset-ver-1", 1, 10, null, null)
+        );
+
+        assertTrue(error.getMessage().contains("failed to determine dataset archive size"));
+        verify(fixture.minioService).stat(fixture.version.getStoragePath());
+        verify(fixture.minioService, never()).downloadRange(anyString(), anyLong(), anyLong());
     }
 
     @Test
@@ -191,10 +367,11 @@ class DatasetPreviewServiceTest {
         byte[] content = bytes("hello");
         TestFixture fixture = fixture("data.txt", "NLP", 8, (long) content.length, content);
 
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+        DatasetPreviewAccessException error = assertThrows(DatasetPreviewAccessException.class, () ->
                 fixture.service.listFiles("dataset-ver-1", null, null, null, null)
         );
 
+        assertEquals(DatasetPreviewAccessException.Reason.NOT_FOUND, error.getReason());
         assertTrue(error.getMessage().contains("no permission"));
     }
 
@@ -214,10 +391,11 @@ class DatasetPreviewServiceTest {
         byte[] content = bytes("pcd");
         TestFixture fixture = fixture("scan.pcd", "POINT_CLOUD", 7, (long) content.length, content);
 
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+        DatasetPreviewAccessException error = assertThrows(DatasetPreviewAccessException.class, () ->
                 fixture.service.listFiles("dataset-ver-1", null, null, null, null)
         );
 
+        assertEquals(DatasetPreviewAccessException.Reason.NOT_PREVIEWABLE, error.getReason());
         assertTrue(error.getMessage().contains("point cloud preview"));
     }
 
@@ -229,12 +407,14 @@ class DatasetPreviewServiceTest {
         TestFixture archived = fixture("data.txt", "NLP", 7, (long) content.length, content);
         archived.version().setStatus("ARCHIVED");
 
-        assertThrows(IllegalArgumentException.class, () ->
+        DatasetPreviewAccessException draftError = assertThrows(DatasetPreviewAccessException.class, () ->
                 draft.service.listFiles("dataset-ver-1", null, null, null, null)
         );
-        assertThrows(IllegalArgumentException.class, () ->
+        DatasetPreviewAccessException archivedError = assertThrows(DatasetPreviewAccessException.class, () ->
                 archived.service.listFiles("dataset-ver-1", null, null, null, null)
         );
+        assertEquals(DatasetPreviewAccessException.Reason.NOT_PREVIEWABLE, draftError.getReason());
+        assertEquals(DatasetPreviewAccessException.Reason.NOT_PREVIEWABLE, archivedError.getReason());
     }
 
     @Test
@@ -341,6 +521,7 @@ class DatasetPreviewServiceTest {
         version.setStoragePath("users/" + ownerUserId + "/datasets/dataset-asset-1/v1/" + fileName);
         version.setSizeBytes(sizeBytes);
         version.setOwnerUserId(ownerUserId);
+        version.setStatus("READY");
 
         DatasetAsset asset = new DatasetAsset();
         asset.setId("dataset-asset-1");
@@ -371,6 +552,16 @@ class DatasetPreviewServiceTest {
         try {
             when(minioService.downloadStream(version.getStoragePath()))
                     .thenAnswer(invocation -> new ByteArrayInputStream(minioObject));
+            when(minioService.downloadRange(eq(version.getStoragePath()), anyLong(), anyLong()))
+                    .thenAnswer(invocation -> {
+                        long offset = invocation.getArgument(1);
+                        long length = invocation.getArgument(2);
+                        return new ByteArrayInputStream(
+                                minioObject,
+                                Math.toIntExact(offset),
+                                Math.toIntExact(length)
+                        );
+                    });
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -386,7 +577,7 @@ class DatasetPreviewServiceTest {
                 maxImageBytes,
                 200
         );
-        return new TestFixture(service, version);
+        return new TestFixture(service, version, minioService);
     }
 
     private static byte[] zip(Entry... entries) throws Exception {
@@ -412,6 +603,10 @@ class DatasetPreviewServiceTest {
     private record Entry(String name, byte[] content) {
     }
 
-    private record TestFixture(DatasetPreviewService service, DatasetVersion version) {
+    private record TestFixture(
+            DatasetPreviewService service,
+            DatasetVersion version,
+            MinioService minioService
+    ) {
     }
 }

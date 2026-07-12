@@ -36,15 +36,31 @@ public class ZipCentralDirectoryReader {
     }
 
     public List<ZipEntryInfo> read(String objectName, long objectSize) throws Exception {
+        return read(objectName, objectSize, ZipSafetyValidator.MAX_ENTRIES);
+    }
+
+    public List<ZipEntryInfo> read(
+            String objectName,
+            long objectSize,
+            int maxEntries
+    ) throws Exception {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName cannot be blank");
         }
         if (objectSize < 22) {
             throw new IllegalArgumentException("ZIP object is too small");
         }
+        if (maxEntries <= 0) {
+            throw new IllegalArgumentException("maxEntries must be greater than zero");
+        }
 
         Eocd eocd = findEocd(objectName, objectSize);
         validateEocd(eocd, objectSize);
+        if (eocd.entryCount() > maxEntries) {
+            throw new IllegalArgumentException(
+                    "ZIP entry count exceeds " + maxEntries
+            );
+        }
         if (eocd.entryCount() == 0) {
             return List.of();
         }

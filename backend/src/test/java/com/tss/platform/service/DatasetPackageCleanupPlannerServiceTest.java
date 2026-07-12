@@ -82,6 +82,32 @@ class DatasetPackageCleanupPlannerServiceTest {
     }
 
     @Test
+    void dryRunBlocksPackageWhoseStoragePathIsUsedByActiveLegacyReadyVersionWithoutRelation() {
+        Fixture fixture = new Fixture();
+        DatasetVersion ready = fixture.readyVersion("legacy-ready-1");
+        ready.setStoragePath(fixture.datasetPackage.getStoragePath());
+        fixture.stubPackageRelations(List.of(), List.of());
+        when(fixture.versionRepo.findByStoragePathAndDeletedFalse(
+                fixture.datasetPackage.getStoragePath()
+        )).thenReturn(List.of(ready));
+
+        DatasetPackageCleanupPlanDto result =
+                fixture.service.dryRun(fixture.datasetPackage.getId());
+
+        assertFalse(result.isCanDelete());
+        assertReason(result, "ACTIVE_VERSION_STORAGE_REFERENCE");
+        assertTrue(result.getBlockers().stream().noneMatch(blocker ->
+                blocker.getMessage().contains(fixture.datasetPackage.getStoragePath())
+        ));
+        verify(fixture.deleteTaskService, never()).enqueueDefaultBucketDelete(
+                any(),
+                any(),
+                any(),
+                any()
+        );
+    }
+
+    @Test
     void dryRunAllowsPackageReferencedOnlyBySoftDeletedVersion() {
         Fixture fixture = new Fixture();
         DatasetVersion deleted = fixture.readyVersion("deleted-1");
@@ -254,6 +280,8 @@ class DatasetPackageCleanupPlannerServiceTest {
                     .thenReturn(0L);
             when(importJobRepo.countActiveByPackageId(datasetPackage.getId()))
                     .thenReturn(0L);
+            when(versionRepo.findByStoragePathAndDeletedFalse(datasetPackage.getStoragePath()))
+                    .thenReturn(List.of());
         }
 
         private void stubPackageRelations(

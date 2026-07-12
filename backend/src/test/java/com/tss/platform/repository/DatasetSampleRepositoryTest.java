@@ -172,6 +172,31 @@ class DatasetSampleRepositoryTest {
                 annotations.stream().map(DatasetAnnotation::getId).toList());
     }
 
+    @Test
+    void countsOnlyActiveSamplesForRequestedVersions() {
+        sampleRepo.save(sample("sample-v1-a", "version-1", "scene-1", 1, false));
+        sampleRepo.save(sample("sample-v1-b", "version-1", "scene-2", 2, false));
+        sampleRepo.save(sample("sample-v1-deleted", "version-1", "scene-3", 3, true));
+        sampleRepo.save(sample("sample-v2", "version-2", "scene-4", 1, false));
+        sampleRepo.save(sample("sample-v3", "version-3", "scene-5", 1, false));
+        sampleRepo.flush();
+
+        List<DatasetSampleRepository.DatasetVersionSampleCount> result =
+                sampleRepo.countSamplesByDatasetVersionIds(List.of("version-1", "version-2"));
+
+        assertEquals(2, result.size());
+        assertEquals(2L, result.stream()
+                .filter(count -> count.getDatasetVersionId().equals("version-1"))
+                .findFirst()
+                .orElseThrow()
+                .getSampleCount());
+        assertEquals(1L, result.stream()
+                .filter(count -> count.getDatasetVersionId().equals("version-2"))
+                .findFirst()
+                .orElseThrow()
+                .getSampleCount());
+    }
+
     private DatasetSample sample(
             String id,
             String datasetVersionId,

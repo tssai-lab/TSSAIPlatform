@@ -35,4 +35,9 @@ public interface DatasetUploadChunkRepository extends JpaRepository<DatasetUploa
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     void deleteByUploadId(String uploadId);
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from DatasetUploadChunk c where c.id = :id")
+    int deleteByIdImmediately(@Param("id") String id);
 }

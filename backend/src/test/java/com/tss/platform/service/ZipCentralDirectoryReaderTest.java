@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -90,6 +91,42 @@ class ZipCentralDirectoryReaderTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> readerFor(patched).read("dataset.zip", patched.length));
+    }
+
+    @Test
+    void explicitEntryLimitRejectsFromEocdBeforeAnyLocalHeaderRangeRequest() throws Exception {
+        ZipTestFixtures.EntrySpec[] entries = new ZipTestFixtures.EntrySpec[10_001];
+        for (int index = 0; index < entries.length; index += 1) {
+            entries[index] = ZipTestFixtures.stored("entry-" + index + ".txt", "");
+        }
+        byte[] zip = ZipTestFixtures.zip(entries);
+        AtomicInteger localHeaderRangeRequests = new AtomicInteger();
+        MinioService minioService = mock(MinioService.class);
+        when(minioService.downloadRange(eq("dataset.zip"), anyLong(), anyLong()))
+                .thenAnswer(invocation -> {
+                    long offset = invocation.getArgument(1);
+                    long length = invocation.getArgument(2);
+                    int start = Math.toIntExact(offset);
+                    if (length == 30
+                            && start <= zip.length - 4
+                            && (zip[start] & 0xff) == 0x50
+                            && (zip[start + 1] & 0xff) == 0x4b
+                            && (zip[start + 2] & 0xff) == 0x03
+                            && (zip[start + 3] & 0xff) == 0x04) {
+                        localHeaderRangeRequests.incrementAndGet();
+                    }
+                    int end = Math.toIntExact(offset + length);
+                    return new ByteArrayInputStream(java.util.Arrays.copyOfRange(zip, start, end));
+                });
+        ZipCentralDirectoryReader reader = new ZipCentralDirectoryReader(minioService);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> reader.read("dataset.zip", zip.length, 10_000)
+        );
+
+        assertTrue(error.getMessage().contains("10000"));
+        assertEquals(0, localHeaderRangeRequests.get());
     }
 
     private static ZipCentralDirectoryReader readerFor(byte[] object) throws Exception {

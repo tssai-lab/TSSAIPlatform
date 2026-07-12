@@ -148,8 +148,8 @@ class SampleServiceTest {
                 .thenReturn(Optional.of(fixture.asset));
         when(fixture.authContext.canAccessOwner(fixture.asset.getOwnerUserId())).thenReturn(false);
 
-        IllegalArgumentException error = assertThrows(
-                IllegalArgumentException.class,
+        SampleService.DatasetSampleAccessException error = assertThrows(
+                SampleService.DatasetSampleAccessException.class,
                 () -> fixture.service.getSample(sample.getId())
         );
 

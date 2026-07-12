@@ -29,7 +29,7 @@ class V2DatasetPreviewDescriptorServiceTest {
         assertEquals("ARCHIVE", descriptor.getMode());
         assertTrue(descriptor.getCapabilities().contains("LIST_FILES"));
         assertEquals(
-                "/api/dataset/preview/files?id=version-1",
+                "/api/v2/dataset-versions/version-1/preview/files",
                 descriptor.getLinks().get("items")
         );
     }
@@ -43,7 +43,7 @@ class V2DatasetPreviewDescriptorServiceTest {
 
         assertEquals("POINT_CLOUD", descriptor.getMode());
         assertEquals(
-                "/api/dataset/point-cloud/preview?id=version-1",
+                "/api/v2/dataset-versions/version-1/point-cloud/preview",
                 descriptor.getLinks().get("items")
         );
     }
@@ -58,8 +58,12 @@ class V2DatasetPreviewDescriptorServiceTest {
         assertEquals("SAMPLE_GALLERY", descriptor.getMode());
         assertTrue(descriptor.getCapabilities().contains("LIST_SAMPLES"));
         assertEquals(
-                "/api/dataset-versions/version-1/samples",
+                "/api/v2/dataset-versions/version-1/samples",
                 descriptor.getLinks().get("items")
+        );
+        assertEquals(
+                "/api/v2/dataset-sample-data/{dataId}/preview",
+                descriptor.getLinks().get("preview")
         );
     }
 

@@ -1,6 +1,8 @@
 package com.tss.platform.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
+import com.tss.platform.dto.DatasetCvFolderUploadResponse;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
@@ -20,10 +22,19 @@ import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
 import io.minio.GetObjectResponse;
 import io.minio.MinioClient;
+import io.minio.StatObjectResponse;
 import okhttp3.Headers;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
@@ -32,11 +43,15 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -44,6 +59,483 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DatasetUploadServiceEnterpriseVersionTest {
+
+    @Test
+    void missingAndForbiddenUploadSessionsUseSameAccessExceptionContract() {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        DatasetUploadService service = uploadAccessService(sessionRepo, authContext);
+        DatasetUploadSession forbidden = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findById("missing-upload")).thenReturn(Optional.empty());
+        when(sessionRepo.findById(forbidden.getId())).thenReturn(Optional.of(forbidden));
+        doThrow(new IllegalArgumentException("owner mismatch"))
+                .when(authContext)
+                .requireOwnerAccess(
+                        forbidden.getOwnerUserId(),
+                        "uploadId invalid or not accessible"
+                );
+
+        DatasetUploadService.DatasetUploadAccessException missing = assertThrows(
+                DatasetUploadService.DatasetUploadAccessException.class,
+                () -> service.getProgress("missing-upload")
+        );
+        DatasetUploadService.DatasetUploadAccessException denied = assertThrows(
+                DatasetUploadService.DatasetUploadAccessException.class,
+                () -> service.getProgress(forbidden.getId())
+        );
+
+        assertEquals("dataset upload not found or no permission", missing.getMessage());
+        assertEquals(missing.getMessage(), denied.getMessage());
+    }
+
+    @Test
+    void missingLockedUploadSessionUsesAccessExceptionContract() {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadService service = uploadAccessService(
+                sessionRepo,
+                mock(AuthContext.class)
+        );
+        when(sessionRepo.findByIdForUpdate("missing-upload")).thenReturn(Optional.empty());
+
+        DatasetUploadService.DatasetUploadAccessException error = assertThrows(
+                DatasetUploadService.DatasetUploadAccessException.class,
+                () -> service.saveChunk(
+                        "missing-upload",
+                        0,
+                        new MockMultipartFile("file", "part-0", null, new byte[1])
+                )
+        );
+
+        assertEquals("dataset upload not found or no permission", error.getMessage());
+    }
+
+    @Test
+    void saveChunkLocksSessionBeforeAuthorizingAndUploading() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        AuthContext authContext = mock(AuthContext.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                authContext,
+                mock(MinioDeleteTaskService.class)
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0)).thenReturn(Optional.empty());
+        when(chunkRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-1");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "part-0",
+                "application/octet-stream",
+                new byte[100]
+        );
+
+        service.saveChunk(session.getId(), 0, file);
+
+        InOrder order = inOrder(sessionRepo, authContext, minioClient);
+        order.verify(sessionRepo).findByIdForUpdate(session.getId());
+        order.verify(authContext).requireOwnerAccess(
+                session.getOwnerUserId(),
+                "uploadId invalid or not accessible"
+        );
+        order.verify(minioClient).putObject(any());
+        verify(sessionRepo, never()).findById(session.getId());
+    }
+
+    @Test
+    void retransmitEnqueuesOldCleanupInTransactionBeforeCommit() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadChunkService service = new DatasetUploadChunkService(
+                minioClient,
+                "datasets",
+                chunkRepo,
+                sessionRepo,
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        DatasetUploadChunk existing = uploadedChunk();
+        existing.setId("chunk-1");
+        String oldObjectName = existing.getObjectName();
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.of(existing));
+        when(chunkRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-new");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.saveChunk(
+                    session,
+                    0,
+                    new MockMultipartFile("file", "part-0", null, new byte[100])
+            );
+
+            String newObjectName = existing.getObjectName();
+            assertNotEquals(oldObjectName, newObjectName);
+            assertTrue(newObjectName.startsWith(oldObjectName + "-"));
+            verify(deleteTaskService).enqueueDefaultBucketDelete(
+                    oldObjectName,
+                    MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_CHUNK,
+                    oldObjectName,
+                    null
+            );
+            verify(deleteTaskService, never()).enqueueDefaultBucketDeleteImmediately(
+                    any(), any(), any(), any()
+            );
+
+            TransactionSynchronization synchronization =
+                    TransactionSynchronizationManager.getSynchronizations().get(0);
+            synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+
+            verify(deleteTaskService, never()).enqueueDefaultBucketDeleteImmediately(
+                    eq(oldObjectName), any(), any(), any()
+            );
+            verify(deleteTaskService, never()).enqueueDefaultBucketDeleteImmediately(
+                    eq(newObjectName), any(), any(), any()
+            );
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void outerRollbackDeletesOnlyNewRetransmitObject() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadChunkService service = new DatasetUploadChunkService(
+                minioClient,
+                "datasets",
+                chunkRepo,
+                sessionRepo,
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        DatasetUploadChunk existing = uploadedChunk();
+        existing.setId("chunk-1");
+        String oldObjectName = existing.getObjectName();
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.of(existing));
+        when(chunkRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-new");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.saveChunk(
+                    session,
+                    0,
+                    new MockMultipartFile("file", "part-0", null, new byte[100])
+            );
+            String newObjectName = existing.getObjectName();
+
+            TransactionSynchronization synchronization =
+                    TransactionSynchronizationManager.getSynchronizations().get(0);
+            synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+            verify(deleteTaskService).enqueueDefaultBucketDeleteImmediately(
+                    newObjectName,
+                    MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK,
+                    newObjectName,
+                    null
+            );
+            verify(deleteTaskService, never()).enqueueDefaultBucketDeleteImmediately(
+                    eq(oldObjectName), any(), any(), any()
+            );
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void retransmitCleanupEnqueueFailurePropagatesAndDeletesNewObject() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadChunkService service = new DatasetUploadChunkService(
+                minioClient,
+                "datasets",
+                chunkRepo,
+                sessionRepo,
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        DatasetUploadChunk existing = uploadedChunk();
+        existing.setId("chunk-1");
+        String oldObjectName = existing.getObjectName();
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.of(existing));
+        when(chunkRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-new");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        when(deleteTaskService.enqueueDefaultBucketDelete(
+                oldObjectName,
+                MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_CHUNK,
+                oldObjectName,
+                null
+        )).thenThrow(new RuntimeException("delete queue down"));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> service.saveChunk(
+                            session,
+                            0,
+                            new MockMultipartFile("file", "part-0", null, new byte[100])
+                    )
+            );
+
+            String newObjectName = existing.getObjectName();
+            assertTrue(error.getMessage().contains("delete queue down"));
+            verify(deleteTaskService).enqueueDefaultBucketDeleteImmediately(
+                    newObjectName,
+                    MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK,
+                    newObjectName,
+                    null
+            );
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void saveChunkRejectsEveryIncorrectLastPartLengthBeforeUpload() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        DatasetUploadChunkService service = new DatasetUploadChunkService(
+                minioClient,
+                "datasets",
+                chunkRepo,
+                sessionRepo,
+                mock(MinioDeleteTaskService.class)
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        session.setFileSize(150L);
+        session.setChunkSize(100);
+        session.setTotalChunks(2);
+
+        for (int invalidSize : List.of(49, 51)) {
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> service.saveChunk(
+                            session,
+                            1,
+                            new MockMultipartFile(
+                                    "file",
+                                    "part-1",
+                                    null,
+                                    new byte[invalidSize]
+                            )
+                    )
+            );
+            assertTrue(error.getMessage().contains("分片大小必须等于预期大小"));
+        }
+        verify(minioClient, never()).putObject(any());
+    }
+
+    @Test
+    void saveChunkQueuesRollbackDeleteWhenMetadataSaveFailsAfterObjectUpload() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                mock(AuthContext.class),
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-1");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.empty());
+        when(chunkRepo.save(any())).thenThrow(new RuntimeException("db unavailable"));
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "part-0",
+                "application/octet-stream",
+                new byte[100]
+        );
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.saveChunk(session.getId(), 0, file)
+        );
+
+        assertTrue(error.getMessage().contains("db unavailable"));
+        ArgumentCaptor<String> objectNameCaptor = ArgumentCaptor.forClass(String.class);
+        verify(deleteTaskService).enqueueDefaultBucketDeleteImmediately(
+                objectNameCaptor.capture(),
+                eq(MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK),
+                objectNameCaptor.capture(),
+                eq(null)
+        );
+        assertEquals(objectNameCaptor.getAllValues().get(0), objectNameCaptor.getAllValues().get(1));
+        assertTrue(objectNameCaptor.getValue().startsWith(
+                "users/7/datasets/_uploads/dataset-upload-1/part-0-"
+        ));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void saveChunkLogsRollbackDeleteFailureWithoutReplacingOriginalFailure(
+            CapturedOutput output
+    ) throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                mock(AuthContext.class),
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.etag()).thenReturn("etag-1");
+        when(stat.size()).thenReturn(100L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        when(chunkRepo.findByUploadIdAndPartIndex(session.getId(), 0))
+                .thenReturn(Optional.empty());
+        when(chunkRepo.save(any())).thenThrow(new RuntimeException("db unavailable"));
+        when(deleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                anyString(),
+                eq(MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK),
+                anyString(),
+                any()
+        )).thenThrow(new RuntimeException("delete queue down"));
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "part-0",
+                "application/octet-stream",
+                new byte[100]
+        );
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.saveChunk(session.getId(), 0, file)
+        );
+
+        assertTrue(error.getMessage().contains("db unavailable"));
+        assertFalse(error.getMessage().contains("delete queue down"));
+        String logs = output.getOut() + output.getErr();
+        assertTrue(logs.contains("Dataset upload chunk rollback delete enqueue failed"));
+        assertTrue(logs.contains("uploadId=dataset-upload-1"));
+        assertTrue(logs.contains("exceptionType=RuntimeException"));
+        assertFalse(logs.contains("/datasets/_uploads/"));
+    }
+
+    @Test
+    void saveChunkRejectsNonUploadingSessionWithoutWritingObjectOrChunk() throws Exception {
+        for (String status : List.of("DISCARDED", "COMPLETING")) {
+            DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+            DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+            MinioClient minioClient = mock(MinioClient.class);
+            DatasetUploadService service = new DatasetUploadService(
+                    minioClient,
+                    minioConfig(),
+                    sessionRepo,
+                    chunkRepo,
+                    mock(DatasetAssetRepository.class),
+                    mock(DatasetVersionRepository.class),
+                    mock(AuthContext.class),
+                    mock(MinioDeleteTaskService.class)
+            );
+            DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+            session.setStatus(status);
+            when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
+            MockMultipartFile file = new MockMultipartFile(
+                    "file",
+                    "part-0",
+                    "application/octet-stream",
+                    new byte[128]
+            );
+
+            IllegalArgumentException error = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> service.saveChunk(session.getId(), 0, file)
+            );
+
+            assertTrue(error.getMessage().contains("UPLOADING"));
+            verify(minioClient, never()).putObject(any());
+            verify(chunkRepo, never()).save(any());
+        }
+    }
+
+    @Test
+    void saveChunkReturnsCompletedProgressWithoutWritingObjectOrChunk() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                mock(AuthContext.class),
+                mock(MinioDeleteTaskService.class)
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        session.setStatus("COMPLETED");
+        when(sessionRepo.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "part-0",
+                "application/octet-stream",
+                new byte[128]
+        );
+
+        DatasetUploadProgressDto progress = service.saveChunk(session.getId(), 0, file);
+
+        assertEquals("COMPLETED", progress.getStatus());
+        assertEquals(session.getTotalChunks(), progress.getUploadedChunks());
+        verify(minioClient, never()).putObject(any());
+        verify(chunkRepo, never()).save(any());
+        verify(chunkRepo, never()).summarizeProgressByUploadId(anyString());
+    }
 
     @Test
     void progressDoesNotLoadFullChunkEntities() {
@@ -108,14 +600,164 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
-    void completeForNewAssetCreatesFirstReadyVersion() {
+    void completeRejectsLegacyComposeWhenStatSizeDiffersFromSession() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                assetRepo,
+                versionRepo,
+                mock(AuthContext.class),
+                mock(MinioDeleteTaskService.class)
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
+        when(chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
+                .thenReturn(List.of(uploadedChunk()));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize() - 1);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
+        request.setUploadId(session.getId());
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.complete(request)
+        );
+
+        assertTrue(error.getMessage().contains("合并后文件大小与上传会话不一致"));
+        verify(minioClient).statObject(any());
+        verify(versionRepo, never()).saveAndFlush(any(DatasetVersion.class));
+        verify(assetRepo, never()).saveAndFlush(any(DatasetAsset.class));
+    }
+
+    @Test
+    void completeCleansLegacyDestinationWhenTransactionCommitFails() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+        when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        doThrow(new RuntimeException("commit failed"))
+                .when(transactionManager).commit(any());
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                assetRepo,
+                versionRepo,
+                mock(DatasetPackageRepository.class),
+                mock(DatasetVersionPackageRepository.class),
+                mock(ImportJobRepository.class),
+                mock(AuthContext.class),
+                deleteTaskService,
+                transactionManager
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        when(sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
+        when(chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
+                .thenReturn(List.of(uploadedChunk()));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
+        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
+        request.setUploadId(session.getId());
+
+        RuntimeException error = assertThrows(
+                RuntimeException.class,
+                () -> service.complete(request)
+        );
+
+        assertTrue(error.getMessage().contains("commit failed"));
+        assertTrue(session.getStoragePath() != null && !session.getStoragePath().isBlank());
+        verify(deleteTaskService).enqueueDefaultBucketDeleteImmediately(
+                session.getStoragePath(),
+                MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK,
+                session.getStoragePath(),
+                null
+        );
+    }
+
+    @Test
+    void completeDeletesMetadataOnlyForChunksWhoseCleanupWasEnqueued() throws Exception {
+        DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
+        DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
+        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                sessionRepo,
+                chunkRepo,
+                assetRepo,
+                versionRepo,
+                mock(AuthContext.class),
+                deleteTaskService
+        );
+        DatasetUploadSession session = uploadingSession(null, "new-corpus", "NLP", null, null);
+        session.setFileSize(200L);
+        session.setChunkSize(100);
+        session.setTotalChunks(2);
+        DatasetUploadChunk failedCleanup = uploadedChunk(
+                "chunk-0",
+                0,
+                "users/7/datasets/_uploads/dataset-upload-1/part-0-old",
+                100L
+        );
+        DatasetUploadChunk successfulCleanup = uploadedChunk(
+                "chunk-1",
+                1,
+                "users/7/datasets/_uploads/dataset-upload-1/part-1-old",
+                100L
+        );
+        when(sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
+        when(chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
+                .thenReturn(List.of(failedCleanup, successfulCleanup));
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(200L);
+        when(minioClient.statObject(any())).thenReturn(stat);
+        when(deleteTaskService.enqueueDefaultBucketDeleteImmediately(
+                failedCleanup.getObjectName(),
+                MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_CHUNK,
+                session.getId(),
+                null
+        )).thenThrow(new RuntimeException("queue unavailable"));
+        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
+        request.setUploadId(session.getId());
+
+        service.complete(request);
+
+        verify(chunkRepo, never()).deleteByIdImmediately(failedCleanup.getId());
+        verify(chunkRepo).deleteByIdImmediately(successfulCleanup.getId());
+        verify(chunkRepo, never()).deleteByUploadId(session.getId());
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void completeForNewAssetCreatesFirstReadyVersion(CapturedOutput output) throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -131,6 +773,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1"))
                 .thenReturn(List.of(uploadedChunk()));
         when(authContext.currentUserId()).thenReturn(7);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId("dataset-upload-1");
@@ -150,6 +795,12 @@ class DatasetUploadServiceEnterpriseVersionTest {
         assertEquals(asset.getId(), version.getAssetId());
         assertEquals(version.getId(), asset.getCurrentVersionId());
         assertTrue(version.getStoragePath().contains("/v1/corpus.txt"));
+        String logs = output.getOut() + output.getErr();
+        assertTrue(logs.contains("Dataset upload completed"));
+        assertTrue(logs.contains("uploadId=dataset-upload-1"));
+        assertTrue(logs.contains("datasetId=" + asset.getId()));
+        assertTrue(logs.contains("versionId=" + version.getId()));
+        assertFalse(logs.contains(version.getStoragePath()));
     }
 
     @Test
@@ -184,6 +835,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1"))
                 .thenReturn(List.of(uploadedChunk()));
         when(authContext.currentUserId()).thenReturn(7);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
         when(minioClient.getObject(any())).thenAnswer(invocation ->
                 new GetObjectResponse(
                         new Headers.Builder().build(),
@@ -571,7 +1225,11 @@ class DatasetUploadServiceEnterpriseVersionTest {
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> service.init(req));
 
-        assertTrue(error.getMessage().contains("must belong to target asset"));
+        assertEquals("DatasetAllocationAccessException", error.getClass().getSimpleName());
+        assertEquals(
+                "dataset asset or parent version not found or no permission",
+                error.getMessage()
+        );
     }
 
     @Test
@@ -621,18 +1279,94 @@ class DatasetUploadServiceEnterpriseVersionTest {
                 )
         );
 
-        assertTrue(error.getMessage().contains("dataset asset not found"));
+        assertEquals("DatasetAllocationAccessException", error.getClass().getSimpleName());
+        assertEquals(
+                "dataset asset or parent version not found or no permission",
+                error.getMessage()
+        );
     }
 
     @Test
-    void completeForExistingAssetCreatesNextVersionAndUpdatesCurrentVersion() {
+    void uploadCvFolderReturnsTypedResponseWithLegacyJsonFields() throws Exception {
+        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        DatasetUploadService service = new DatasetUploadService(
+                minioClient,
+                minioConfig(),
+                mock(DatasetUploadSessionRepository.class),
+                mock(DatasetUploadChunkRepository.class),
+                assetRepo,
+                versionRepo,
+                authContext,
+                mock(MinioDeleteTaskService.class)
+        );
+        when(authContext.currentUserId()).thenReturn(7);
+        when(versionRepo.findMaxVersionNoByAssetId(anyString())).thenReturn(0);
+        when(versionRepo.existsByAssetIdAndVersion(anyString(), anyString())).thenReturn(false);
+        when(assetRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(versionRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        byte[] validationZip = ZipTestFixtures.zip(
+                ZipTestFixtures.deflated("images/a.png", "image")
+        );
+        when(minioClient.getObject(any())).thenAnswer(invocation ->
+                new GetObjectResponse(
+                        new Headers.Builder().build(),
+                        "datasets",
+                        null,
+                        "images-v1-folder.zip",
+                        new ByteArrayInputStream(validationZip)
+                )
+        );
+
+        DatasetCvFolderUploadResponse result = service.uploadCvFolder(
+                null,
+                "images",
+                null,
+                null,
+                "CV",
+                "IMAGE_CLASSIFICATION",
+                "NONE",
+                "remark",
+                "description",
+                "change",
+                null,
+                List.of(new MockMultipartFile(
+                        "files",
+                        "a.png",
+                        "image/png",
+                        "image".getBytes()
+                )),
+                List.of("images/a.png")
+        );
+
+        assertEquals("CV", result.getType());
+        assertEquals("COMPLETED", result.getStatus());
+        assertEquals("images", result.getName());
+        assertEquals("v1", result.getVersionLabel());
+        assertEquals(7, result.getOwnerUserId());
+        String json = new ObjectMapper()
+                .findAndRegisterModules()
+                .writeValueAsString(result);
+        assertTrue(json.contains("\"uploadId\":null"));
+        assertTrue(json.contains("\"id\":\"" + result.getId() + "\""));
+        assertTrue(json.contains("\"assetId\":\"" + result.getAssetId() + "\""));
+        assertTrue(json.contains("\"status\":\"COMPLETED\""));
+        assertTrue(!json.contains("storagePath"));
+        assertTrue(!json.contains("importJobId"));
+    }
+
+    @Test
+    void completeForExistingAssetCreatesNextVersionAndUpdatesCurrentVersion() throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -676,6 +1410,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1")).thenReturn(List.of(chunk));
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
 
         DatasetUploadCompleteRequest completeRequest = new DatasetUploadCompleteRequest();
         completeRequest.setUploadId("dataset-upload-1");
@@ -699,14 +1436,15 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
-    void completeForExistingAssetRefreshesAutoGeneratedLabelWhenFinalVersionNoChanges() {
+    void completeForExistingAssetRefreshesAutoGeneratedLabelWhenFinalVersionNoChanges() throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -749,6 +1487,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1")).thenReturn(List.of(chunk));
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(2);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
 
         DatasetUploadCompleteRequest completeRequest = new DatasetUploadCompleteRequest();
         completeRequest.setUploadId("dataset-upload-1");
@@ -794,14 +1535,17 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
         when(authContext.currentUserId()).thenReturn(7);
+        StatObjectResponse stat = mock(StatObjectResponse.class);
+        when(stat.size()).thenReturn(session.getFileSize());
+        when(minioClient.statObject(any())).thenReturn(stat);
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId("dataset-upload-1");
         var first = service.complete(request);
         var second = service.complete(request);
 
-        assertEquals(first.get("id"), second.get("id"));
-        assertEquals(first.get("versionNo"), second.get("versionNo"));
+        assertEquals(first.getId(), second.getId());
+        assertEquals(first.getVersionNo(), second.getVersionNo());
         verify(versionRepo, times(1)).saveAndFlush(any(DatasetVersion.class));
         verify(minioClient, times(1)).composeObject(any());
     }
@@ -966,11 +1710,42 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     private DatasetUploadChunk uploadedChunk() {
+        return uploadedChunk(
+                null,
+                0,
+                "users/7/datasets/_uploads/dataset-upload-1/part-0",
+                100L
+        );
+    }
+
+    private DatasetUploadService uploadAccessService(
+            DatasetUploadSessionRepository sessionRepo,
+            AuthContext authContext
+    ) {
+        return new DatasetUploadService(
+                mock(MinioClient.class),
+                minioConfig(),
+                sessionRepo,
+                mock(DatasetUploadChunkRepository.class),
+                mock(DatasetAssetRepository.class),
+                mock(DatasetVersionRepository.class),
+                authContext,
+                mock(MinioDeleteTaskService.class)
+        );
+    }
+
+    private DatasetUploadChunk uploadedChunk(
+            String id,
+            int partIndex,
+            String objectName,
+            long sizeBytes
+    ) {
         DatasetUploadChunk chunk = new DatasetUploadChunk();
+        chunk.setId(id);
         chunk.setUploadId("dataset-upload-1");
-        chunk.setPartIndex(0);
-        chunk.setObjectName("users/7/datasets/_uploads/dataset-upload-1/part-0");
-        chunk.setSizeBytes(100L);
+        chunk.setPartIndex(partIndex);
+        chunk.setObjectName(objectName);
+        chunk.setSizeBytes(sizeBytes);
         return chunk;
     }
 

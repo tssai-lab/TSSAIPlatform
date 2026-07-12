@@ -54,6 +54,18 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
 
     long countByDatasetVersionIdAndDeletedFalse(String datasetVersionId);
 
+    @Query("""
+            select s.datasetVersionId as datasetVersionId,
+                   count(s.id) as sampleCount
+            from DatasetSample s
+            where s.datasetVersionId in :datasetVersionIds
+              and s.deleted = false
+            group by s.datasetVersionId
+            """)
+    List<DatasetVersionSampleCount> countSamplesByDatasetVersionIds(
+            @Param("datasetVersionIds") Collection<String> datasetVersionIds
+    );
+
     long countByDatasetVersionIdAndCreatedByPackageIdIsNull(String datasetVersionId);
 
     long countByDatasetVersionIdAndCreatedByPackageIdAndDeletedFalse(
@@ -118,4 +130,10 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
     Integer findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
             @Param("datasetVersionId") String datasetVersionId
     );
+
+    interface DatasetVersionSampleCount {
+        String getDatasetVersionId();
+
+        long getSampleCount();
+    }
 }

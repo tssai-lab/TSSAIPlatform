@@ -1,5 +1,6 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.dto.DatasetAppendPackageCompleteResponse;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
@@ -8,8 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-
-import java.util.Map;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -32,14 +31,7 @@ class DatasetVersionPackageUploadControllerTest {
         when(service.completeAppendPackage(
                 org.mockito.ArgumentMatchers.eq("draft-1"),
                 org.mockito.ArgumentMatchers.any()
-        )).thenReturn(Map.of(
-                "draftVersionId", "draft-1",
-                "packageId", "package-1",
-                "packageRole", "APPEND",
-                "importJobId", "ijob-1",
-                "versionStatus", "DRAFT",
-                "importStatus", "PENDING"
-        ));
+        )).thenReturn(appendComplete());
         MockMvc mvc = MockMvcBuilders
                 .standaloneSetup(new DatasetVersionPackageUploadController(service))
                 .build();
@@ -64,6 +56,18 @@ class DatasetVersionPackageUploadControllerTest {
                 .andExpect(jsonPath("$.data.packageRole").value("APPEND"))
                 .andExpect(jsonPath("$.data.versionStatus").value("DRAFT"))
                 .andExpect(jsonPath("$.data.importStatus").value("PENDING"));
+    }
+
+    private static DatasetAppendPackageCompleteResponse appendComplete() {
+        DatasetAppendPackageCompleteResponse response =
+                new DatasetAppendPackageCompleteResponse();
+        response.setDraftVersionId("draft-1");
+        response.setPackageId("package-1");
+        response.setPackageRole("APPEND");
+        response.setImportJobId("ijob-1");
+        response.setVersionStatus("DRAFT");
+        response.setImportStatus("PENDING");
+        return response;
     }
 
     @Test
