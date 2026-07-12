@@ -1,3 +1,5 @@
+declare module '*.css';
+
 declare namespace API {
   // 模型相关
   type ModelItem = {
