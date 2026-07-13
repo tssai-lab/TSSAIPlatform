@@ -3,6 +3,7 @@ import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import {
+  Alert,
   Button,
   Dropdown,
   message,
@@ -12,8 +13,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd';
-import React, { useRef } from 'react';
-import { MOCK_TASKS } from '@/constants/mockData';
+import React, { useRef, useState } from 'react';
 import {
   deleteTask,
   fetchTaskList as fetchTaskListService,
@@ -33,6 +33,7 @@ import {
  */
 const TaskList: React.FC = () => {
   const actionRef = useRef<ActionType>();
+  const [loadError, setLoadError] = useState('');
 
   const fetchTaskList = async (params: any) => {
     try {
@@ -50,9 +51,11 @@ const TaskList: React.FC = () => {
       const enriched = await enrichTaskItemsWithDisplayNames(list, {
         skipErrorHandler: true,
       });
+      setLoadError('');
       return { data: enriched, success: true, total };
-    } catch {
-      return { data: MOCK_TASKS, success: true, total: MOCK_TASKS.length };
+    } catch (error: any) {
+      setLoadError(error?.message || '训练任务加载失败，请检查后端服务');
+      return { data: [], success: false, total: 0 };
     }
   };
 
@@ -188,7 +191,7 @@ const TaskList: React.FC = () => {
                       },
                     ]
                   : []),
-                ...(record.status === 'running'
+                ...(['queued', 'running'].includes(record.status)
                   ? [
                       {
                         key: 'stop',
@@ -241,6 +244,14 @@ const TaskList: React.FC = () => {
         </Button>,
       ]}
     >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          message={loadError}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <ProTable
         actionRef={actionRef}
         columns={columns}

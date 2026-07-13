@@ -1,11 +1,11 @@
 import type { ProgressProps } from 'antd';
 
 const STATUS_TEXT: Record<string, string> = {
-  pending: '待执行',
-  queued: '排队中',
-  running: '训练进行中',
-  success: '训练成功',
-  failed: '训练失败',
+  pending: '待提交',
+  queued: '调度中',
+  running: '训练中',
+  success: '已完成',
+  failed: '失败',
   stopped: '已停止',
 };
 

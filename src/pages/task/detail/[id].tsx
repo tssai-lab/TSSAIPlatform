@@ -18,6 +18,7 @@ import {
   List,
   Modal,
   message,
+  Progress,
   Select,
   Space,
   Spin,
@@ -30,7 +31,6 @@ import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import TrainingStatusBanner from '@/components/TrainingStatusBanner';
-import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
   downloadObject,
   fetchTaskDetail,
@@ -366,6 +366,7 @@ const TaskDetail: React.FC = () => {
   const [searchParams] = useSearchParams();
   const versionNoParam = searchParams.get('versionNo');
   const [taskInfo, setTaskInfo] = useState<TaskDetailInfo | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [runIdInput, setRunIdInput] = useState('');
   const [manualRunId, setManualRunId] = useState('');
@@ -414,6 +415,7 @@ const TaskDetail: React.FC = () => {
 
         if (data) {
           setTaskInfo(data);
+          setLoadError('');
           await preloadTaskVersionDisplayNames(
             data.modelVersionId,
             data.datasetVersionId,
@@ -421,11 +423,13 @@ const TaskDetail: React.FC = () => {
           );
           setDisplayNamesReady((t) => t + 1);
         } else {
-          setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
+          setTaskInfo(null);
+          setLoadError('未找到训练任务，请确认任务 ID 是否正确');
         }
         setTaskLastUpdatedAt(new Date().toLocaleTimeString());
-      } catch {
-        setTaskInfo(MOCK_TASK_DETAIL as TaskDetailInfo);
+      } catch (error: any) {
+        setTaskInfo(null);
+        setLoadError(error?.message || '训练任务详情加载失败，请检查后端服务');
         setTaskLastUpdatedAt(new Date().toLocaleTimeString());
       } finally {
         if (showLoading) {
@@ -596,7 +600,25 @@ const TaskDetail: React.FC = () => {
     );
   }
 
-  if (!taskInfo) return null;
+  if (!taskInfo) {
+    return (
+      <PageContainer
+        title="训练结果详情"
+        onBack={() => history.push('/task/list')}
+      >
+        <Alert
+          type="error"
+          showIcon
+          message={loadError || '训练任务不存在或加载失败'}
+          action={
+            <Button size="small" onClick={() => loadTaskDetail(true)}>
+              重试
+            </Button>
+          }
+        />
+      </PageContainer>
+    );
+  }
 
   const latestVersion = versions.length
     ? versions[versions.length - 1]
@@ -710,6 +732,17 @@ const TaskDetail: React.FC = () => {
         </Space>
       }
     >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          style={{ marginBottom: 16 }}
+          message={loadError}
+          onClose={() => setLoadError('')}
+        />
+      )}
+
       {isTracingHistorical && viewingVersionNo != null && (
         <Alert
           type="warning"
@@ -844,10 +877,25 @@ const TaskDetail: React.FC = () => {
               )}
             </Space>
           </Descriptions.Item>
-          <Descriptions.Item label="训练进度">
-            {typeof taskInfo.progress === 'number'
-              ? `${taskInfo.progress}%`
-              : '-'}
+          <Descriptions.Item label="训练进度" span={2}>
+            {typeof taskInfo.progress === 'number' ? (
+              <div style={{ maxWidth: 420 }}>
+                <Progress
+                  percent={taskInfo.progress}
+                  status={
+                    taskInfo.status === 'failed'
+                      ? 'exception'
+                      : taskInfo.status === 'success'
+                        ? 'success'
+                        : isActiveTaskStatus(taskInfo.status)
+                          ? 'active'
+                          : 'normal'
+                  }
+                />
+              </div>
+            ) : (
+              '-'
+            )}
           </Descriptions.Item>
           <Descriptions.Item label="总耗时">
             {resolveTaskDurationText(taskInfo)}
