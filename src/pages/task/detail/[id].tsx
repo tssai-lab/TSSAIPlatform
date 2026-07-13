@@ -29,6 +29,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
+import TrainingStatusBanner from '@/components/TrainingStatusBanner';
 import { MOCK_TASK_DETAIL } from '@/constants/mockData';
 import {
   downloadObject,
@@ -39,6 +40,10 @@ import {
   updateExperimentHyperParams,
 } from '@/services/platform';
 import {
+  formatDisplayDateTime,
+  formatDurationBetween,
+} from '@/utils/formatDateTime';
+import {
   getDatasetVersionDisplayLabel,
   getModelVersionDisplayLabel,
   preloadDatasetVersionDisplayNames,
@@ -48,6 +53,11 @@ import {
   isActiveTaskStatus,
   TASK_STATUS_POLL_INTERVAL_MS,
 } from '@/utils/trainingMetrics';
+import {
+  getTrainingStatusTagColor,
+  getTrainingStatusText,
+  isTrainingTerminal,
+} from '@/utils/trainingStatusDisplay';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -84,15 +94,99 @@ function _shortId(v?: string, keep = 10) {
   return `${v.slice(0, keep)}…`;
 }
 
-function renderHyperParamsCell(hp: any) {
-  const epochs = hp?.epochs ?? hp?.num_epochs;
-  const batch = hp?.batch_size ?? hp?.batch;
-  const lr = hp?.learning_rate ?? hp?.lr0;
-  const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
+function normalizeHyperParams(hp: unknown): Record<string, unknown> | null {
+  if (hp == null) return null;
+  if (typeof hp === 'string') {
+    const trimmed = hp.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  if (typeof hp === 'object' && !Array.isArray(hp)) {
+    return hp as Record<string, unknown>;
+  }
+  return null;
+}
+
+function isHyperParamValuePresent(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as object).length > 0;
+  return true;
+}
+
+/** Profile 训练等场景 hyperParams 可能为 {}，不应展示占位摘要 */
+function hasMeaningfulHyperParams(hp: unknown): boolean {
+  const obj = normalizeHyperParams(hp);
+  if (!obj) return false;
+  return Object.values(obj).some(isHyperParamValuePresent);
+}
+
+function renderHyperParamsCell(hp: unknown) {
+  if (!hasMeaningfulHyperParams(hp)) {
+    return '-';
+  }
+  const obj = normalizeHyperParams(hp)!;
+  const epochs = obj.epochs ?? obj.num_epochs;
+  const batch = obj.batch_size ?? obj.batch;
+  const lr = obj.learning_rate ?? obj.lr0;
+  const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
+  if (hasSummary) {
+    const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
+    return (
+      <Tooltip title={JSON.stringify(obj, null, 2)}>
+        <span>{txt}</span>
+      </Tooltip>
+    );
+  }
+  const json = JSON.stringify(obj);
+  const preview = json.length > 80 ? `${json.slice(0, 80)}…` : json;
   return (
-    <Tooltip title={JSON.stringify(hp ?? {}, null, 2)}>
-      <span>{txt}</span>
+    <Tooltip title={JSON.stringify(obj, null, 2)}>
+      <span>{preview}</span>
     </Tooltip>
+  );
+}
+
+/** 详情页：摘要（若有）+ 完整 JSON 合并为一项 */
+function renderHyperParamsDetail(hp: unknown) {
+  if (!hasMeaningfulHyperParams(hp)) {
+    return '-';
+  }
+  const obj = normalizeHyperParams(hp)!;
+  const epochs = obj.epochs ?? obj.num_epochs;
+  const batch = obj.batch_size ?? obj.batch;
+  const lr = obj.learning_rate ?? obj.lr0;
+  const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
+  const jsonText = JSON.stringify(obj, null, 2);
+  return (
+    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+      {hasSummary && (
+        <Typography.Text type="secondary">
+          {`epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`}
+        </Typography.Text>
+      )}
+      <Typography.Paragraph
+        copyable
+        style={{
+          margin: 0,
+          fontFamily: 'monospace',
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >
+        {jsonText}
+      </Typography.Paragraph>
+    </Space>
   );
 }
 
@@ -112,23 +206,11 @@ function saveContinueTrainingPrefill(record: API.TrainingExperimentVersion) {
 }
 
 function statusText(status?: string) {
-  const map: Record<string, string> = {
-    pending: '待执行',
-    queued: '排队中',
-    running: '运行中',
-    success: '成功',
-    failed: '失败',
-    stopped: '已停止',
-  };
-  return status ? map[status] || status : '-';
+  return getTrainingStatusText(status);
 }
 
 function statusColor(status?: string) {
-  if (status === 'success') return 'success';
-  if (status === 'running') return 'processing';
-  if (status === 'queued') return 'warning';
-  if (status === 'failed') return 'error';
-  return 'default';
+  return getTrainingStatusTagColor(status);
 }
 
 function isExperimentId(value?: string) {
@@ -143,6 +225,27 @@ function mapVersionToTaskDetail(
     createTime: data.createTime || data.createdAt || '',
     runId: data.runId || (data as any).run_id,
   };
+}
+
+function resolveTaskCreatedAt(task: TaskDetailInfo): string | undefined {
+  return task.createTime || (task as { createdAt?: string }).createdAt;
+}
+
+/** 完成时间：优先后端 finishedAt；已结束但未回填时用 updatedAt 兜底 */
+function resolveTaskFinishedAt(task: TaskDetailInfo): string | undefined {
+  if (task.completeTime?.trim()) return task.completeTime;
+  if (task.finishedAt?.trim()) return task.finishedAt;
+  if (isTrainingTerminal(task.status)) {
+    return (task as { updatedAt?: string }).updatedAt;
+  }
+  return undefined;
+}
+
+function resolveTaskDurationText(task: TaskDetailInfo): string {
+  if (task.duration?.trim()) return task.duration;
+  const start = task.startedAt?.trim() || resolveTaskCreatedAt(task);
+  const end = resolveTaskFinishedAt(task);
+  return formatDurationBetween(start, end);
 }
 
 const CONSISTENCY_PROFILE = 'image_text_consistency_fusion_logreg';
@@ -552,7 +655,12 @@ const TaskDetail: React.FC = () => {
       ellipsis: true,
       render: (v: any) => v || '-',
     },
-    { title: '时间', dataIndex: 'createdAt', width: 180 },
+    {
+      title: '时间',
+      dataIndex: 'createdAt',
+      width: 180,
+      render: (v: string) => formatDisplayDateTime(v),
+    },
   ];
 
   const handleCompareVersions = () => {
@@ -632,6 +740,16 @@ const TaskDetail: React.FC = () => {
           />
         )}
 
+      <TrainingStatusBanner
+        status={taskInfo.status}
+        progress={taskInfo.progress}
+        errorMessage={(taskInfo as TaskDetailInfo).errorMessage}
+        taskName={taskInfo.name}
+        lastUpdatedAt={taskLastUpdatedAt}
+        pollIntervalMs={TASK_STATUS_POLL_INTERVAL_MS}
+        metrics={taskInfo.metrics as Record<string, unknown> | undefined}
+      />
+
       <Card title="任务信息" style={{ marginBottom: 16 }}>
         <Descriptions column={2}>
           <Descriptions.Item label="任务名称">
@@ -699,34 +817,20 @@ const TaskDetail: React.FC = () => {
               </Typography.Text>
             </Descriptions.Item>
           )}
-          <Descriptions.Item label="该版本超参数" span={2}>
-            {renderHyperParamsCell((taskInfo as TaskDetailInfo).hyperParams)}
-          </Descriptions.Item>
-          {(taskInfo as TaskDetailInfo).hyperParams && (
-            <Descriptions.Item label="超参数完整 JSON" span={2}>
-              <Typography.Paragraph
-                copyable
-                style={{
-                  margin: 0,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {JSON.stringify(
-                  (taskInfo as TaskDetailInfo).hyperParams,
-                  null,
-                  2,
-                )}
-              </Typography.Paragraph>
+          {hasMeaningfulHyperParams(
+            (taskInfo as TaskDetailInfo).hyperParams,
+          ) && (
+            <Descriptions.Item label="超参数" span={2}>
+              {renderHyperParamsDetail(
+                (taskInfo as TaskDetailInfo).hyperParams,
+              )}
             </Descriptions.Item>
           )}
           <Descriptions.Item label="创建时间">
-            {taskInfo.createTime || (taskInfo as any).createdAt || '-'}
+            {formatDisplayDateTime(resolveTaskCreatedAt(taskInfo))}
           </Descriptions.Item>
           <Descriptions.Item label="完成时间">
-            {taskInfo.completeTime || taskInfo.finishedAt || '-'}
+            {formatDisplayDateTime(resolveTaskFinishedAt(taskInfo))}
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <Space size={8}>
@@ -746,7 +850,7 @@ const TaskDetail: React.FC = () => {
               : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="总耗时">
-            {taskInfo.duration || '-'}
+            {resolveTaskDurationText(taskInfo)}
           </Descriptions.Item>
           {taskLastUpdatedAt && (
             <Descriptions.Item label="状态更新时间">
@@ -859,7 +963,12 @@ const TaskDetail: React.FC = () => {
               ellipsis: true,
               render: (v: any) => v || '-',
             },
-            { title: '时间', dataIndex: 'createdAt', width: 170 },
+            {
+              title: '时间',
+              dataIndex: 'createdAt',
+              width: 170,
+              render: (v: string) => formatDisplayDateTime(v),
+            },
             {
               title: '操作',
               key: 'action',

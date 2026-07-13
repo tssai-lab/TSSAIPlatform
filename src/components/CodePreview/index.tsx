@@ -1,63 +1,96 @@
-import { CopyOutlined } from '@ant-design/icons';
-import { Button, Modal, message } from 'antd';
-import React from 'react';
+import { CopyOutlined, UndoOutlined } from '@ant-design/icons';
+import { Alert, Button, Modal, message, Space } from 'antd';
+import React, { useEffect, useState } from 'react';
+import CodeEditor from '@/components/CodeEditor';
 
 export interface CodePreviewProps {
   codeText?: string;
+  /** 服务端原始内容，用于「恢复原始」 */
+  originalCodeText?: string;
   fileName?: string;
   visible?: boolean;
   onClose?: () => void;
+  /** 关闭弹窗时回传编辑后的内容（供详情页同步） */
+  onContentChange?: (value: string) => void;
+  editable?: boolean;
 }
 
 /**
- * 代码预览弹窗
- * 功能：显示代码文本，支持语法高亮、复制、关闭
+ * 代码预览弹窗：语法高亮 + 可编辑（本地编辑，不回写后端）
  */
 const CodePreview: React.FC<CodePreviewProps> = ({
   codeText = '',
+  originalCodeText,
   fileName = '',
   visible = false,
   onClose,
+  onContentChange,
+  editable = true,
 }) => {
+  const [draft, setDraft] = useState(codeText);
+  const baseline = originalCodeText ?? codeText;
+
+  useEffect(() => {
+    if (visible) {
+      setDraft(codeText);
+    }
+  }, [visible, codeText]);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(codeText).then(() => {
+    navigator.clipboard.writeText(draft).then(() => {
       message.success('代码已复制到剪贴板');
     });
+  };
+
+  const handleReset = () => {
+    setDraft(baseline);
+    message.info('已恢复为服务端原始内容');
+  };
+
+  const handleClose = () => {
+    if (draft !== codeText) {
+      onContentChange?.(draft);
+    }
+    onClose?.();
   };
 
   return (
     <Modal
       title={`代码预览 - ${fileName}`}
       open={visible}
-      onCancel={onClose}
-      footer={[
-        <Button key="copy" icon={<CopyOutlined />} onClick={handleCopy}>
-          复制
-        </Button>,
-        <Button key="close" onClick={onClose}>
-          关闭
-        </Button>,
-      ]}
-      width={800}
+      onCancel={handleClose}
+      footer={
+        <Space wrap>
+          {editable && draft !== baseline && (
+            <Button icon={<UndoOutlined />} onClick={handleReset}>
+              恢复原始
+            </Button>
+          )}
+          <Button icon={<CopyOutlined />} onClick={handleCopy}>
+            复制
+          </Button>
+          <Button type="primary" onClick={handleClose}>
+            关闭
+          </Button>
+        </Space>
+      }
+      width={900}
+      destroyOnClose
     >
-      <div
-        style={{
-          maxHeight: 500,
-          overflow: 'auto',
-          fontFamily: 'monospace',
-          fontSize: 12,
-          background: '#f5f5f5',
-          padding: 16,
-          borderRadius: 4,
-        }}
-      >
-        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-          {codeText || '暂无代码内容'}
-        </pre>
-      </div>
-      <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
-        提示：需要安装 CodeMirror 或类似库实现语法高亮
-      </div>
+      <Alert
+        type="info"
+        showIcon
+        message="编辑仅保存在当前页面，不会回写训练代码包；关闭弹窗后同步到详情页预览区。"
+        style={{ marginBottom: 12 }}
+      />
+      <CodeEditor
+        value={draft}
+        fileName={fileName}
+        onChange={editable ? setDraft : undefined}
+        readOnly={!editable}
+        minHeight="400px"
+        maxHeight="560px"
+      />
     </Modal>
   );
 };

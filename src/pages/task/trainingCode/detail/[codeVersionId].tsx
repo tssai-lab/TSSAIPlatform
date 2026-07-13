@@ -1,7 +1,8 @@
-import { CodeOutlined } from '@ant-design/icons';
+import { CodeOutlined, CopyOutlined, UndoOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useLocation, useParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -17,6 +18,7 @@ import {
   Typography,
 } from 'antd';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import CodeEditor from '@/components/CodeEditor';
 import CodePreview from '@/components/CodePreview';
 import type { CodeVersionDetail, CodeVersionListItem } from '@/services/code';
 import {
@@ -71,6 +73,7 @@ const TrainingCodeDetail: React.FC = () => {
   const [codeFiles, setCodeFiles] = useState<API.ModelCodeFile[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>();
   const [previewContent, setPreviewContent] = useState('');
+  const [originalPreviewContent, setOriginalPreviewContent] = useState('');
   const [previewFileName, setPreviewFileName] = useState('');
   const [codePreviewVisible, setCodePreviewVisible] = useState(false);
 
@@ -112,7 +115,9 @@ const TrainingCodeDetail: React.FC = () => {
           skipErrorHandler: true,
         });
         const data = res?.data;
-        setPreviewContent(data?.content || '');
+        const content = data?.content || '';
+        setPreviewContent(content);
+        setOriginalPreviewContent(content);
         setPreviewFileName(data?.fileName || data?.path || path);
       } catch (error: any) {
         message.error(getApiErrorMessage(error, '代码预览加载失败'));
@@ -136,6 +141,7 @@ const TrainingCodeDetail: React.FC = () => {
         setSelectedPath(res.data.codeFilePath);
         setPreviewFileName(res.data.codeFileName || res.data.codeFilePath);
         setPreviewContent(res.data.codeContent);
+        setOriginalPreviewContent(res.data.codeContent);
       } else if (files[0]?.path) {
         await loadPreview(files[0].path);
       } else {
@@ -162,6 +168,20 @@ const TrainingCodeDetail: React.FC = () => {
     if (!codeVersionId || path === selectedPath) return;
     loadPreview(path);
   };
+
+  const handleResetPreviewContent = () => {
+    setPreviewContent(originalPreviewContent);
+    message.info('已恢复为服务端原始内容');
+  };
+
+  const handleCopyPreviewContent = () => {
+    if (!previewContent) return;
+    navigator.clipboard.writeText(previewContent).then(() => {
+      message.success('代码已复制到剪贴板');
+    });
+  };
+
+  const previewDirty = previewContent !== originalPreviewContent;
 
   const handleDelete = async () => {
     try {
@@ -344,31 +364,44 @@ const TrainingCodeDetail: React.FC = () => {
                 )}
                 {selectedPath && !previewLoading && previewContent && (
                   <>
-                    <pre
-                      style={{
-                        background: '#f5f5f5',
-                        border: '1px solid #d9d9d9',
-                        borderRadius: 6,
-                        padding: 16,
-                        maxHeight: 520,
-                        overflow: 'auto',
-                        margin: 0,
-                        fontFamily: 'Courier New, monospace',
-                        fontSize: 13,
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {previewContent}
-                    </pre>
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<CodeOutlined />}
-                      style={{ marginTop: 12 }}
-                      onClick={() => setCodePreviewVisible(true)}
-                    >
-                      弹窗查看
-                    </Button>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="支持语法高亮与本地编辑；修改不会回写训练代码包，刷新页面后恢复。"
+                      style={{ marginBottom: 12 }}
+                    />
+                    <CodeEditor
+                      value={previewContent}
+                      fileName={previewFileName}
+                      onChange={setPreviewContent}
+                      minHeight="360px"
+                      maxHeight="520px"
+                    />
+                    <Space wrap style={{ marginTop: 12 }}>
+                      <Button
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={handleCopyPreviewContent}
+                      >
+                        复制
+                      </Button>
+                      <Button
+                        size="small"
+                        icon={<UndoOutlined />}
+                        disabled={!previewDirty}
+                        onClick={handleResetPreviewContent}
+                      >
+                        恢复原始
+                      </Button>
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<CodeOutlined />}
+                        onClick={() => setCodePreviewVisible(true)}
+                      >
+                        弹窗查看
+                      </Button>
+                    </Space>
                   </>
                 )}
                 {selectedPath && !previewLoading && !previewContent && (
@@ -387,7 +420,9 @@ const TrainingCodeDetail: React.FC = () => {
         <CodePreview
           visible={codePreviewVisible}
           codeText={previewContent}
+          originalCodeText={originalPreviewContent}
           fileName={previewFileName}
+          onContentChange={setPreviewContent}
           onClose={() => setCodePreviewVisible(false)}
         />
       )}
