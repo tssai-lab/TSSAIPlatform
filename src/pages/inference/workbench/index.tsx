@@ -442,15 +442,15 @@ const InferenceWorkbench: React.FC = () => {
               </Form.Item>
               <Form.Item
                 name="modelVersionId"
-                label="模型版本"
-                rules={[{ required: true, message: '请选择模型版本' }]}
+                label="模型"
+                rules={[{ required: true, message: '请选择模型' }]}
               >
                 <Select
                   showSearch
                   loading={loadingAssets}
                   options={modelSelectOptions}
                   optionFilterProp="label"
-                  placeholder="选择训练产出的模型版本"
+                  placeholder="选择训练产出的模型"
                 />
               </Form.Item>
               <Form.Item
@@ -482,23 +482,21 @@ const InferenceWorkbench: React.FC = () => {
               <Form.Item name="inputMode" label="输入方式">
                 <Radio.Group optionType="button" buttonStyle="solid">
                   <Radio.Button value="SINGLE_OBJECT">单文件</Radio.Button>
-                  <Radio.Button value="DATASET_VERSION">
-                    数据集版本
-                  </Radio.Button>
+                  <Radio.Button value="DATASET_VERSION">数据集</Radio.Button>
                 </Radio.Group>
               </Form.Item>
               {inputMode === 'DATASET_VERSION' ? (
                 <Form.Item
                   name="datasetVersionId"
-                  label="数据集版本"
-                  rules={[{ required: true, message: '请选择数据集版本' }]}
+                  label="数据集"
+                  rules={[{ required: true, message: '请选择数据集' }]}
                 >
                   <Select
                     showSearch
                     loading={loadingAssets}
                     options={datasetSelectOptions}
                     optionFilterProp="label"
-                    placeholder="选择 READY 数据集版本"
+                    placeholder="选择 READY 数据集"
                   />
                 </Form.Item>
               ) : (
