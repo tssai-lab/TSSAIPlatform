@@ -26,15 +26,19 @@ public class CodeVersionController {
 
     @GetMapping("/list")
     public ApiResponse<List<CodeVersionListItemDto>> listApproved() {
-        return ApiResponse.ok(codeVersionService.listApprovedForTraining());
+        try {
+            return ApiResponse.ok(codeVersionService.listApprovedForTraining());
+        } catch (RuntimeException exception) {
+            return ApiResponse.fail("代码版本列表加载失败");
+        }
     }
 
     @PostMapping("/{codeVersionId}/approve")
     public ApiResponse<CodeVersionApprovalDto> approve(@PathVariable String codeVersionId) {
         try {
             return ApiResponse.ok(codeVersionService.approve(codeVersionId));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException exception) {
+            return ApiResponse.fail("代码版本审批失败");
         }
     }
 
@@ -43,6 +47,12 @@ public class CodeVersionController {
             @PathVariable String codeVersionId,
             @RequestParam("trainingProfile") String trainingProfile
     ) {
-        return ApiResponse.ok(codeVersionService.trainingCheck(codeVersionId, trainingProfile));
+        try {
+            return ApiResponse.ok(codeVersionService.trainingCheck(
+                    codeVersionId, trainingProfile
+            ));
+        } catch (RuntimeException exception) {
+            return ApiResponse.fail("代码版本校验失败");
+        }
     }
 }

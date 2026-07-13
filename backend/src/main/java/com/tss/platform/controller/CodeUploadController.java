@@ -30,8 +30,8 @@ public class CodeUploadController {
     ) {
         try {
             return ApiResponse.ok(service.upload(file, codeName, version, trainingProfile, remark));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException exception) {
+            return ApiResponse.fail("代码资产导入失败");
         }
     }
 }

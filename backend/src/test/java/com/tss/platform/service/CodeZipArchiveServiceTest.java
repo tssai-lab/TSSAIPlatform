@@ -24,10 +24,10 @@ class CodeZipArchiveServiceTest {
     private final CodeZipArchiveService service = new CodeZipArchiveService();
 
     @Test
-    void readsValidatedFilesInLexicalNormalizedOrder() throws Exception {
+    void readsValidatedFilesInLexicalOrder() throws Exception {
         byte[] zip = buildZip(
                 entry("z.txt", "last"),
-                entry("src\\train.py", "print('ok')"),
+                entry("src/train.py", "print('ok')"),
                 entry("config/model.yaml", "model: baseline\n")
         );
 
@@ -66,18 +66,56 @@ class CodeZipArchiveServiceTest {
     }
 
     @Test
-    void rejectsDuplicateNormalizedAndExactEntries() throws Exception {
-        byte[] normalizedDuplicate = buildZip(
-                entry("src\\train.py", "pass"),
-                entry("src/train.py", "pass")
-        );
+    void rejectsExactDuplicateEntries() throws Exception {
         byte[] exactDuplicate = buildRawStoredZip(
                 rawEntry("train.py", "one"),
                 rawEntry("train.py", "two")
         );
 
-        assertReason("DUPLICATE_PATH", () -> service.readEntries(new ByteArrayInputStream(normalizedDuplicate)));
         assertReason("DUPLICATE_PATH", () -> service.readEntries(new ByteArrayInputStream(exactDuplicate)));
+    }
+
+    @Test
+    void rejectsRawFileNameAliasesInsteadOfNormalizingThem() throws Exception {
+        List<String> invalidNames = List.of(
+                "src\\train.py",
+                "src//train.py",
+                "./train.py",
+                "src/../train.py",
+                "src/\u0001train.py"
+        );
+
+        for (String invalidName : invalidNames) {
+            byte[] archive = buildRawStoredZip(rawEntry(invalidName, "pass"));
+            assertReason(
+                    "INVALID_PATH",
+                    () -> service.readEntries(new ByteArrayInputStream(archive)),
+                    "raw file name accepted: " + printable(invalidName)
+            );
+        }
+    }
+
+    @Test
+    void rejectsRawDirectoryNameAliasesInsteadOfNormalizingThem() throws Exception {
+        List<String> invalidDirectories = List.of(
+                "src\\/",
+                "src//",
+                "./",
+                "src/../",
+                "src/\u0001/"
+        );
+
+        for (String invalidDirectory : invalidDirectories) {
+            byte[] archive = buildRawStoredZip(
+                    rawEntry(invalidDirectory, ""),
+                    rawEntry("train.py", "pass")
+            );
+            assertReason(
+                    "INVALID_PATH",
+                    () -> service.readEntries(new ByteArrayInputStream(archive)),
+                    "raw directory name accepted: " + printable(invalidDirectory)
+            );
+        }
     }
 
     @Test
@@ -223,6 +261,27 @@ class CodeZipArchiveServiceTest {
     private static void assertReason(String reasonCode, ThrowingAction action) {
         CodeValidationException error = assertThrows(CodeValidationException.class, action::run);
         assertEquals(reasonCode, error.getReasonCode());
+    }
+
+    private static void assertReason(
+            String reasonCode,
+            ThrowingAction action,
+            String context
+    ) {
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                action::run,
+                context
+        );
+        assertEquals(reasonCode, error.getReasonCode(), context);
+    }
+
+    private static String printable(String value) {
+        return value.chars()
+                .mapToObj(character -> character < 0x20 || character == 0x7f
+                        ? String.format("\\u%04x", character)
+                        : Character.toString(character))
+                .collect(java.util.stream.Collectors.joining());
     }
 
     private static EntrySpec entry(String name, String content) {

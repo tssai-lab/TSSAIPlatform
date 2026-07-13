@@ -48,6 +48,8 @@ class CodeAssetAuditServiceTest {
         assertMandatory("fileMoved", String.class, String.class, long.class, String.class);
         assertMandatory("fileDeleted", String.class, String.class, long.class, String.class);
         assertMandatory("workspaceAbandoned", String.class, String.class, long.class);
+        assertMandatory("imported", String.class, String.class, long.class,
+                String.class, String.class);
 
         service.fileUpserted(
                 "asset-1",

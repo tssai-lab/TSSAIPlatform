@@ -51,9 +51,7 @@ public class CodeApprovalService {
 
     @Transactional
     public CodeApprovalRecord decide(String versionId, Decision decision, String reason) {
-        if (!hasAdministratorAuthority()) {
-            throw new CodeApprovalForbiddenException();
-        }
+        requireAdministratorAuthority();
         if (decision == null) {
             throw validation("APPROVAL_DECISION_REQUIRED", "Approval decision is required");
         }
@@ -75,6 +73,17 @@ public class CodeApprovalService {
             case REJECT -> reject(asset, version, sanitizeRequiredReason(reason));
             case REVOKE -> revoke(asset, version, sanitizeRequiredReason(reason));
         };
+    }
+
+    /**
+     * Performs the administrator gate without looking up a code resource. V2
+     * request facades call this before validating request fields so denied users
+     * always receive the same 403 response regardless of resource/request shape.
+     */
+    public void requireAdministratorAuthority() {
+        if (!hasAdministratorAuthority()) {
+            throw new CodeApprovalForbiddenException();
+        }
     }
 
     private boolean hasAdministratorAuthority() {

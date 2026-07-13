@@ -13,6 +13,8 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -141,14 +143,18 @@ public final class CodeZipArchiveService {
             if (entry.isUnixSymlink()) {
                 throw validation("ZIP_SYMLINK", "Symbolic links are not allowed in code archives");
             }
+            String rawEntryName = decodeRawEntryName(entry);
             if (entry.isDirectory()) {
-                if (!directoryPaths.add(normalizeDirectoryPath(entry.getName()))) {
+                String directoryPath = pathPolicy.normalizeRawArchiveDirectoryPath(
+                        rawEntryName
+                );
+                if (!directoryPaths.add(directoryPath)) {
                     throw validation("DUPLICATE_PATH", "Code archive contains duplicate paths");
                 }
                 continue;
             }
 
-            String normalizedPath = pathPolicy.normalizeFilePath(entry.getName());
+            String normalizedPath = pathPolicy.normalizeRawArchiveFilePath(rawEntryName);
             filePolicy.validateSupportedPath(normalizedPath);
             if (files.containsKey(normalizedPath)) {
                 throw validation("DUPLICATE_PATH", "Code archive contains duplicate paths");
@@ -189,6 +195,22 @@ public final class CodeZipArchiveService {
             content.write(buffer, 0, read);
         }
         return new EntryContent(content.toByteArray(), total);
+    }
+
+    private static String decodeRawEntryName(ZipArchiveEntry entry) {
+        byte[] rawName = entry.getRawName();
+        if (rawName == null || rawName.length == 0) {
+            throw validation("INVALID_PATH", "Code file path is invalid");
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(rawName))
+                    .toString();
+        } catch (CharacterCodingException exception) {
+            throw validation("INVALID_PATH", "Code file path is invalid");
+        }
     }
 
     private static boolean localHeaderUsesEncryption(
@@ -252,14 +274,6 @@ public final class CodeZipArchiveService {
         zip.setFallbackToUTF8(true);
         zip.setCreateUnicodeExtraFields(UnicodeExtraFieldPolicy.NEVER);
         zip.setUseZip64(Zip64Mode.Never);
-    }
-
-    private String normalizeDirectoryPath(String rawPath) {
-        if (rawPath == null || !rawPath.replace('\\', '/').endsWith("/")) {
-            throw validation("INVALID_PATH", "Code directory path is invalid");
-        }
-        String normalized = rawPath.replace('\\', '/');
-        return pathPolicy.normalizeFilePath(normalized.substring(0, normalized.length() - 1));
     }
 
     private static void validateDirectoryConflicts(Collection<String> directories, Collection<String> files) {

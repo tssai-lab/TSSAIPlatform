@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -461,7 +462,76 @@ class CodeWorkspaceOverlayServiceTest {
                 () -> service.move("workspace-1", "large.txt", "moved.txt", 0L, "a".repeat(64)));
         assertThrows(CodeContentTooLargeException.class,
                 () -> service.delete("workspace-1", "large.txt", 0L, "a".repeat(64)));
-        verify(archiveReader, never()).read(any(), any(), any(), anyLong());
+        byte[] downloadable = bytes("large but bounded");
+        when(archiveReader.read(
+                base,
+                7,
+                large,
+                CodeVersionArchiveReader.MAX_CODE_UNCOMPRESSED_BYTES
+        )).thenReturn(downloadable);
+
+        CodeWorkspaceDownload download = service.download("workspace-1", "large.txt");
+
+        assertArrayEquals(downloadable, download.bytes());
+        assertEquals("large.txt", download.descriptor().name());
+        verify(archiveReader, never()).read(
+                base, 7, large, CodeFilePolicy.EDITABLE_LIMIT_BYTES
+        );
+    }
+
+    @Test
+    void downloadCachesOneEffectiveByteCopyForDescriptorAndPayload() {
+        byte[] original = bytes("original");
+        CodeWorkspaceFileDelta delta = upsertDelta("once.txt", "original");
+        when(deltaRepository.findByWorkspaceIdAndPath("workspace-1", "once.txt"))
+                .thenReturn(Optional.of(delta));
+        CodeFilePolicy observingPolicy = mock(CodeFilePolicy.class);
+        when(observingPolicy.sha256(any(byte[].class))).thenReturn(delta.getContentHash());
+        CodeFileDescriptor descriptor = new CodeFilePolicy().describe("once.txt", original);
+        doAnswer(invocation -> {
+            byte[] observed = invocation.getArgument(1);
+            observed[0] = (byte) 'X';
+            return descriptor;
+        }).when(observingPolicy).describe(eq("once.txt"), any(byte[].class));
+        CodeWorkspaceOverlayService singleReadService = new CodeWorkspaceOverlayService(
+                workspaceRepository,
+                deltaRepository,
+                assetRepository,
+                versionRepository,
+                archiveReader,
+                new CodePathPolicy(),
+                observingPolicy,
+                auditService,
+                authContext
+        );
+
+        CodeWorkspaceDownload download = singleReadService.download(
+                "workspace-1", "once.txt"
+        );
+
+        assertEquals((byte) 'X', download.bytes()[0]);
+    }
+
+    @Test
+    void exactOneMiBBaseFileRemainsPreviewable() {
+        CodeVersion base = attachBase();
+        CodeArchiveEntry boundary = entry(
+                "boundary.txt", CodeFilePolicy.EDITABLE_LIMIT_BYTES
+        );
+        byte[] bytes = new byte[(int) CodeFilePolicy.EDITABLE_LIMIT_BYTES];
+        when(archiveReader.list(base, 7)).thenReturn(List.of(boundary));
+        when(deltaRepository.findByWorkspaceIdAndPath("workspace-1", "boundary.txt"))
+                .thenReturn(Optional.empty());
+        when(archiveReader.read(
+                base, 7, boundary, CodeFilePolicy.EDITABLE_LIMIT_BYTES
+        )).thenReturn(bytes);
+
+        CodeWorkspaceContent content = service.content("workspace-1", "boundary.txt");
+
+        assertEquals(CodeFilePolicy.EDITABLE_LIMIT_BYTES, content.descriptor().sizeBytes());
+        assertTrue(content.descriptor().previewable());
+        assertTrue(content.descriptor().editable());
+        assertEquals(1_048_576, content.rawBytes().length);
     }
 
     @Test

@@ -122,6 +122,34 @@ public class CodeWorkspaceOverlayService {
         return content(scope.workspace(), normalizedPath, file.bytes());
     }
 
+    /**
+     * Downloads a bounded file without applying the 1 MiB online-preview limit.
+     * Ownership, path, archive range, length, CRC and delta hash checks remain in force.
+     */
+    @Transactional(readOnly = true)
+    public CodeWorkspaceDownload download(String workspaceId, String path) {
+        String normalizedPath = pathPolicy.normalizeFilePath(path);
+        AccessScope scope = readableScope(workspaceId);
+        EffectiveFile file = effectiveFile(
+                scope,
+                normalizedPath,
+                CodeVersionArchiveReader.MAX_CODE_UNCOMPRESSED_BYTES
+        ).orElseThrow(CodeAssetAccessException::new);
+        Long currentRevision = workspaceRepository.findRevisionByIdAndDeletedFalse(workspaceId)
+                .orElseThrow(CodeAssetAccessException::new);
+        if (!Objects.equals(scope.workspace().getRevision(), currentRevision)) {
+            throw conflict(
+                    "WORKSPACE_REVISION_CONFLICT",
+                    "Code workspace changed while file was read"
+            );
+        }
+        byte[] bytes = file.bytes();
+        return new CodeWorkspaceDownload(
+                filePolicy.describe(normalizedPath, bytes),
+                bytes
+        );
+    }
+
     @Transactional
     public CodeWorkspaceContent upsert(
             String workspaceId,
@@ -321,6 +349,14 @@ public class CodeWorkspaceOverlayService {
     }
 
     private Optional<EffectiveFile> effectiveFile(AccessScope scope, String normalizedPath) {
+        return effectiveFile(scope, normalizedPath, CodeFilePolicy.EDITABLE_LIMIT_BYTES);
+    }
+
+    private Optional<EffectiveFile> effectiveFile(
+            AccessScope scope,
+            String normalizedPath,
+            long outputLimit
+    ) {
         Optional<CodeWorkspaceFileDelta> delta = deltaRepository.findByWorkspaceIdAndPath(
                 scope.workspace().getId(),
                 normalizedPath
@@ -336,7 +372,8 @@ public class CodeWorkspaceOverlayService {
                     || value.getContentHash() == null) {
                 throw new CodeAssetAccessException();
             }
-            if (value.getSizeBytes() > CodeFilePolicy.EDITABLE_LIMIT_BYTES) {
+            if (value.getSizeBytes() > outputLimit
+                    || value.getSizeBytes() > Integer.MAX_VALUE) {
                 throw new CodeContentTooLargeException();
             }
             byte[] bytes = value.getContentBytes();
@@ -360,14 +397,14 @@ public class CodeWorkspaceOverlayService {
         if (entry == null) {
             return Optional.empty();
         }
-        if (entry.uncompressedSize() > CodeFilePolicy.EDITABLE_LIMIT_BYTES) {
+        if (entry.uncompressedSize() > outputLimit) {
             throw new CodeContentTooLargeException();
         }
         byte[] bytes = archiveReader.read(
                 scope.baseVersion(),
                 scope.asset().getOwnerUserId(),
                 entry,
-                CodeFilePolicy.EDITABLE_LIMIT_BYTES
+                outputLimit
         );
         return Optional.of(new EffectiveFile(bytes, filePolicy.sha256(bytes)));
     }

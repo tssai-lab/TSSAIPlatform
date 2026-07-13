@@ -40,6 +40,31 @@ public final class CodePathPolicy {
     }
 
     /**
+     * Validates a raw ZIP central-directory file name without accepting aliases.
+     * Unlike interactive paths, archive names containing backslashes or control
+     * characters are rejected instead of normalized.
+     */
+    public String normalizeRawArchiveFilePath(String rawPath) {
+        if (rawPath == null
+                || rawPath.indexOf('\\') >= 0
+                || containsControlCharacter(rawPath)) {
+            throw invalidPath();
+        }
+        return normalizeFilePath(rawPath);
+    }
+
+    /** Validates a raw directory entry and returns its slash-free canonical path. */
+    public String normalizeRawArchiveDirectoryPath(String rawPath) {
+        if (rawPath == null
+                || !rawPath.endsWith("/")
+                || rawPath.indexOf('\\') >= 0
+                || containsControlCharacter(rawPath)) {
+            throw invalidPath();
+        }
+        return normalizeFilePath(rawPath.substring(0, rawPath.length() - 1));
+    }
+
+    /**
      * Normalizes a virtual directory prefix. Root is represented by the empty
      * string; non-root prefixes never end with a slash.
      */
@@ -96,5 +121,14 @@ public final class CodePathPolicy {
 
     private static CodeValidationException invalidPath() {
         return new CodeValidationException("INVALID_PATH", "Code file path is invalid");
+    }
+
+    private static boolean containsControlCharacter(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            if (Character.isISOControl(text.charAt(index))) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -61,12 +61,13 @@ public class CodeVersionArchiveReader {
             long totalUncompressedBytes = 0;
             for (ZipEntryInfo zipEntry : zipEntries) {
                 if (zipEntry.directory()) {
+                    pathPolicy.normalizeRawArchiveDirectoryPath(zipEntry.path());
                     continue;
                 }
                 if (zipEntry.encrypted() || (zipEntry.method() != 0 && zipEntry.method() != 8)) {
                     throw inaccessible();
                 }
-                String path = pathPolicy.normalizeFilePath(zipEntry.normalizedPath());
+                String path = pathPolicy.normalizeRawArchiveFilePath(zipEntry.path());
                 filePolicy.validateSupportedPath(path);
                 if (zipEntry.compressedSize() < 0 || zipEntry.uncompressedSize() < 0) {
                     throw inaccessible();

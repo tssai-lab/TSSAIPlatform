@@ -17,18 +17,21 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.training.TrainingProfileRegistry;
-import io.minio.MinioClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TrainingCodeVersionSecurityTest {
@@ -37,6 +40,9 @@ class TrainingCodeVersionSecurityTest {
     private CodeAssetRepository codeAssetRepo;
     private CodeVersionService codeVersionService;
     private AuthContext authContext;
+    private CodeValidationService codeValidationService;
+    private CodeApprovalService codeApprovalService;
+    private CodeArtifactResolver codeArtifactResolver;
 
     private TrainingExperimentService trainingExperimentService;
     private DatasetVersionRepository datasetVersionRepo;
@@ -49,10 +55,17 @@ class TrainingCodeVersionSecurityTest {
         codeVersionRepo = mock(CodeVersionRepository.class);
         codeAssetRepo = mock(CodeAssetRepository.class);
         authContext = mock(AuthContext.class);
-        MinioClient minioClient = mock(MinioClient.class);
-        com.tss.platform.config.MinioConfig minioConfig = mock(com.tss.platform.config.MinioConfig.class);
-        when(minioConfig.getBucket()).thenReturn("test-bucket");
-        codeVersionService = new CodeVersionService(codeVersionRepo, codeAssetRepo, authContext, minioClient, minioConfig);
+        codeValidationService = mock(CodeValidationService.class);
+        codeApprovalService = mock(CodeApprovalService.class);
+        codeArtifactResolver = mock(CodeArtifactResolver.class);
+        codeVersionService = new CodeVersionService(
+                codeVersionRepo,
+                codeAssetRepo,
+                authContext,
+                codeValidationService,
+                codeApprovalService,
+                codeArtifactResolver
+        );
 
         datasetVersionRepo = mock(DatasetVersionRepository.class);
         datasetAssetRepo = mock(DatasetAssetRepository.class);
@@ -74,39 +87,154 @@ class TrainingCodeVersionSecurityTest {
 
         doNothing().when(authContext).requireOwnerAccess(anyInt(), org.mockito.ArgumentMatchers.anyString());
         when(authContext.currentUserId()).thenReturn(1);
+        when(codeArtifactResolver.resolve(anyString(), anyInt()))
+                .thenReturn(resolved("code-ver-approved"));
     }
 
     @Test
     void pendingCodeVersionRejectedForTraining() {
         CodeVersion pending = readyCodeVersion("code-ver-pending", CodeApprovalStatus.PENDING);
-        when(codeVersionRepo.findByIdAndDeletedFalse(pending.getId())).thenReturn(Optional.of(pending));
-        when(codeAssetRepo.findByIdAndDeletedFalse(pending.getAssetId())).thenReturn(Optional.of(codeAsset("asset-1")));
+        when(codeArtifactResolver.resolve(pending.getId(), 1)).thenThrow(
+                new CodeValidationException("APPROVAL_REQUIRED", "internal approval detail")
+        );
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> codeVersionService.requireApprovedForTraining(pending.getId())
         );
-        assertEquals("训练代码版本未通过准入校验，不能用于训练", error.getMessage());
+        assertEquals("训练代码版本未满足准入条件", error.getMessage());
+        org.junit.jupiter.api.Assertions.assertFalse(error.getMessage().contains("internal"));
     }
 
     @Test
     void approvedCodeVersionPassesApprovalCheck() {
         CodeVersion approved = readyCodeVersion("code-ver-approved", CodeApprovalStatus.APPROVED);
-        when(codeVersionRepo.findByIdAndDeletedFalse(approved.getId())).thenReturn(Optional.of(approved));
-        when(codeAssetRepo.findByIdAndDeletedFalse(approved.getAssetId())).thenReturn(Optional.of(codeAsset("asset-1")));
 
         assertDoesNotThrow(() -> codeVersionService.requireApprovedForTraining(approved.getId()));
+        verify(codeArtifactResolver).resolve(approved.getId(), 1);
     }
 
     @Test
     void missingCodeVersionRejectedForTraining() {
-        when(codeVersionRepo.findByIdAndDeletedFalse("missing-code")).thenReturn(Optional.empty());
+        when(codeArtifactResolver.resolve("missing-code", 1))
+                .thenThrow(new CodeAssetAccessException());
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> codeVersionService.requireApprovedForTraining("missing-code")
         );
-        assertEquals("训练代码版本不存在: missing-code", error.getMessage());
+        assertEquals("训练代码版本不存在或无权限", error.getMessage());
+    }
+
+    @Test
+    void trainingCheckRevalidatesButNeverApproves() {
+        CodeVersion pending = readyCodeVersion("code-ver-pending", CodeApprovalStatus.PENDING);
+        pending.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        when(codeValidationService.validateVersion(pending.getId())).thenReturn(
+                new CodeValidationResult(
+                        CodeArtifactAssembler.POLICY_VERSION,
+                        "a".repeat(64),
+                        "PASSED",
+                        null,
+                        "Code artifact validation passed",
+                        1
+                )
+        );
+        when(codeVersionRepo.findAssetIdByIdAndDeletedFalse(pending.getId()))
+                .thenReturn(Optional.of(pending.getAssetId()));
+        when(codeAssetRepo.findByIdAndDeletedFalse(pending.getAssetId()))
+                .thenReturn(Optional.of(codeAsset(pending.getAssetId())));
+        when(codeVersionRepo.findByIdAndAssetIdAndDeletedFalse(
+                pending.getId(), pending.getAssetId()
+        ))
+                .thenReturn(Optional.of(pending));
+
+        var result = codeVersionService.trainingCheck(
+                pending.getId(),
+                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG
+        );
+
+        assertEquals(true, result.getPassed());
+        assertEquals(CodeApprovalStatus.PENDING, result.getApprovalStatus());
+        assertEquals(CodeApprovalStatus.PENDING, pending.getApprovalStatus());
+        verify(codeApprovalService, never()).decide(
+                anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()
+        );
+        verify(codeVersionRepo, never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void administratorCannotUseLegacyTrainingCheckAcrossOwners() {
+        when(authContext.currentUserId()).thenReturn(99);
+        when(authContext.isAdmin()).thenReturn(true);
+        when(codeVersionRepo.findAssetIdByIdAndDeletedFalse("owner-7-version"))
+                .thenReturn(Optional.of("owner-7-asset"));
+        CodeAsset otherOwner = codeAsset("owner-7-asset");
+        otherOwner.setOwnerUserId(7);
+        when(codeAssetRepo.findByIdAndDeletedFalse("owner-7-asset"))
+                .thenReturn(Optional.of(otherOwner));
+
+        assertThrows(
+                CodeAssetAccessException.class,
+                () -> codeVersionService.trainingCheck(
+                        "owner-7-version",
+                        TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG
+                )
+        );
+
+        verify(codeValidationService, never()).validateVersion(anyString());
+        verify(codeVersionRepo, never()).findByIdAndAssetIdAndDeletedFalse(
+                anyString(), anyString()
+        );
+    }
+
+    @Test
+    void legacyApproveDelegatesToAdministratorOnlyApprovalService() {
+        when(codeApprovalService.decide(
+                "secret-version", CodeApprovalService.Decision.APPROVE, null
+        )).thenThrow(new CodeApprovalForbiddenException());
+
+        assertThrows(
+                CodeApprovalForbiddenException.class,
+                () -> codeVersionService.approve("secret-version")
+        );
+
+        verify(codeVersionRepo, never()).findByIdAndDeletedFalse(anyString());
+        verify(codeVersionRepo, never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void approvedListUsesOnlyCurrentOwnerCandidatesAndResolverEligibility() {
+        CodeAsset ownerAsset = codeAsset("asset-1");
+        CodeVersion eligible = readyCodeVersion(
+                "code-ver-eligible", CodeApprovalStatus.APPROVED
+        );
+        eligible.setVersion("v1");
+        eligible.setFileName("eligible.zip");
+        CodeVersion stale = readyCodeVersion(
+                "code-ver-stale", CodeApprovalStatus.APPROVED
+        );
+        stale.setVersion("v2");
+        stale.setFileName("stale.zip");
+        CodeVersion crossOwner = readyCodeVersion(
+                "code-ver-cross", CodeApprovalStatus.APPROVED
+        );
+        crossOwner.setOwnerUserId(2);
+        when(codeAssetRepo.findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(1))
+                .thenReturn(List.of(ownerAsset));
+        when(codeVersionRepo.findByAssetIdAndDeletedFalseOrderByCreatedAtDesc("asset-1"))
+                .thenReturn(List.of(eligible, stale, crossOwner));
+        when(codeArtifactResolver.resolve(eligible.getId(), 1))
+                .thenReturn(resolved(eligible.getId()));
+        when(codeArtifactResolver.resolve(stale.getId(), 1)).thenThrow(
+                new CodeValidationException("APPROVAL_EVIDENCE_STALE", "internal stale detail")
+        );
+
+        var result = codeVersionService.listApprovedForTraining();
+
+        assertEquals(1, result.size());
+        assertEquals(eligible.getId(), result.get(0).getCodeVersionId());
+        verify(codeArtifactResolver, never()).resolve(crossOwner.getId(), 1);
     }
 
     @Test
@@ -213,6 +341,8 @@ class TrainingCodeVersionSecurityTest {
     private static CodeAsset codeAsset(String id) {
         CodeAsset asset = new CodeAsset();
         asset.setId(id);
+        asset.setName("Code asset");
+        asset.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
         asset.setOwnerUserId(1);
         asset.setDeleted(false);
         return asset;
@@ -234,5 +364,22 @@ class TrainingCodeVersionSecurityTest {
         asset.setOwnerUserId(1);
         asset.setDeleted(false);
         return asset;
+    }
+
+    private static ResolvedCodeArtifact resolved(String versionId) {
+        return new ResolvedCodeArtifact(
+                "asset-1",
+                versionId,
+                "TRAINING",
+                "python:3.11",
+                "train.py",
+                "NLP",
+                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG,
+                "a".repeat(64),
+                "validation-1",
+                CodeArtifactAssembler.POLICY_VERSION,
+                "approval-1",
+                "users/1/codes/asset-1/versions/" + versionId + "/artifact.zip"
+        );
     }
 }

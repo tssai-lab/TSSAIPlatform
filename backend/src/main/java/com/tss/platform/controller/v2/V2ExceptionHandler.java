@@ -6,6 +6,14 @@ import com.tss.platform.service.DatasetWorkspaceAuditService;
 import com.tss.platform.service.ImportJobQueryService;
 import com.tss.platform.service.SampleFileException;
 import com.tss.platform.service.SampleService;
+import com.tss.platform.service.CodeApprovalForbiddenException;
+import com.tss.platform.service.CodeAssetImportException;
+import com.tss.platform.service.CodeArtifactStorageException;
+import com.tss.platform.service.CodeAssetAccessException;
+import com.tss.platform.service.CodeContentTooLargeException;
+import com.tss.platform.service.CodeValidationException;
+import com.tss.platform.service.CodeWorkspaceConflictException;
+import com.tss.platform.service.CodeWorkspacePublishException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -17,15 +25,112 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Slf4j
 @RestControllerAdvice(basePackages = "com.tss.platform.controller.v2")
 public class V2ExceptionHandler {
 
     private static final String TRACE_HEADER = "X-Trace-Id";
+    private static final Pattern STABLE_REASON_CODE = Pattern.compile("[A-Z0-9_]+");
+
+    @ExceptionHandler(CodeAssetAccessException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeAssetAccess(
+            CodeAssetAccessException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "CODE_ASSET_NOT_FOUND",
+                "代码资产不存在或无权访问",
+                Map.of(),
+                request
+        );
+    }
+
+    @ExceptionHandler(CodeApprovalForbiddenException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeApprovalForbidden(
+            CodeApprovalForbiddenException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.FORBIDDEN,
+                "CODE_APPROVAL_FORBIDDEN",
+                "需要管理员审批权限",
+                Map.of(),
+                request
+        );
+    }
+
+    @ExceptionHandler(CodeWorkspaceConflictException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeWorkspaceConflict(
+            CodeWorkspaceConflictException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.CONFLICT,
+                "CODE_ASSET_CONFLICT",
+                "代码资产已发生变更，请刷新后重试",
+                Map.of("reasonCode", stableReasonCode(
+                        exception.getReasonCode(), "CONFLICT"
+                )),
+                request
+        );
+    }
+
+    @ExceptionHandler(CodeContentTooLargeException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeContentTooLarge(
+            CodeContentTooLargeException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "CODE_CONTENT_TOO_LARGE",
+                "代码文件超过在线预览或编辑上限",
+                Map.of("reasonCode", stableReasonCode(
+                        exception.getReasonCode(), "FILE_TOO_LARGE"
+                )),
+                request
+        );
+    }
+
+    @ExceptionHandler(CodeValidationException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeValidation(
+            CodeValidationException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "CODE_VALIDATION_FAILED",
+                "代码资产校验失败",
+                Map.of("reasonCode", stableReasonCode(
+                        exception.getReasonCode(), "VALIDATION_FAILED"
+                )),
+                request
+        );
+    }
+
+    @ExceptionHandler({
+            CodeArtifactStorageException.class,
+            CodeAssetImportException.class,
+            CodeWorkspacePublishException.class
+    })
+    public ResponseEntity<V2ErrorResponse> handleCodeStorage(
+            RuntimeException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "CODE_STORAGE_UNAVAILABLE",
+                "代码制品存储暂时不可用",
+                Map.of("reasonCode", "STORAGE_UNAVAILABLE"),
+                request
+        );
+    }
 
     @ExceptionHandler(V2BusinessException.class)
     public ResponseEntity<V2ErrorResponse> handleBusiness(
@@ -177,6 +282,7 @@ public class V2ExceptionHandler {
             IllegalArgumentException.class,
             MethodArgumentNotValidException.class,
             MissingServletRequestParameterException.class,
+            MissingServletRequestPartException.class,
             MethodArgumentTypeMismatchException.class,
             HttpMessageNotReadableException.class
     })
@@ -184,11 +290,14 @@ public class V2ExceptionHandler {
             Exception exception,
             HttpServletRequest request
     ) {
+        Map<String, Object> details = isCodeResourceRequest(request)
+                ? Map.of("reasonCode", "INVALID_REQUEST")
+                : badRequestDetails(exception);
         return response(
                 HttpStatus.BAD_REQUEST,
                 "INVALID_REQUEST",
                 safeBadRequestMessage(exception),
-                badRequestDetails(exception),
+                details,
                 request
         );
     }
@@ -271,5 +380,28 @@ public class V2ExceptionHandler {
                 exception,
                 "请求暂时无法完成，请稍后重试"
         );
+    }
+
+    private static boolean isCodeResourceRequest(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        String path = contextPath != null
+                && !contextPath.isEmpty()
+                && uri.startsWith(contextPath)
+                ? uri.substring(contextPath.length())
+                : uri;
+        return hasPathPrefix(path, "/api/v2/code-assets")
+                || hasPathPrefix(path, "/api/v2/code-workspaces")
+                || hasPathPrefix(path, "/api/v2/code-versions");
+    }
+
+    private static boolean hasPathPrefix(String path, String prefix) {
+        return path.equals(prefix) || path.startsWith(prefix + "/");
+    }
+
+    private static String stableReasonCode(String value, String fallback) {
+        return value != null && STABLE_REASON_CODE.matcher(value).matches()
+                ? value
+                : fallback;
     }
 }

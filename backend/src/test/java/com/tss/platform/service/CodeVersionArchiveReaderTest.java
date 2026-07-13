@@ -89,6 +89,22 @@ class CodeVersionArchiveReaderTest {
     }
 
     @Test
+    void listingRejectsAmbiguousRawCentralDirectoryNamesInsteadOfAliasingThem() throws Exception {
+        CodeVersion version = version();
+        for (String raw : List.of(
+                "src\\train.py",
+                "src//train.py",
+                "src/./train.py",
+                "src/../train.py"
+        )) {
+            when(centralDirectoryReader.read(OBJECT_NAME, 4096L, 10_000)).thenReturn(List.of(
+                    zipEntry(raw, "src/train.py", 0, 1, 1, 1, false)
+            ));
+            assertGenericAccess(() -> reader.list(version, 7));
+        }
+    }
+
+    @Test
     void readsStoredEntryAndVerifiesExactLengthAndCrc() throws Exception {
         byte[] raw = "line1\r\nline2\n".getBytes(StandardCharsets.UTF_8);
         CodeArchiveEntry entry = archiveEntry("notes.txt", 0, raw, raw.length, 100L);

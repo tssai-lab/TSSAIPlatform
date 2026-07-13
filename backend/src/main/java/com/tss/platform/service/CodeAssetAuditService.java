@@ -69,6 +69,20 @@ public class CodeAssetAuditService {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
+    public void assetCreated(String assetId, long revision) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("reasonCode", "ASSET_CREATED");
+        append(assetId, null, null, "CREATE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void assetUpdated(String assetId, long revision) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("reasonCode", "ASSET_UPDATED");
+        append(assetId, null, null, "UPDATE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
     public void fileUpserted(
             String assetId,
             String workspaceId,
@@ -132,6 +146,22 @@ public class CodeAssetAuditService {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
+    public void imported(
+            String assetId,
+            String versionId,
+            long fileCount,
+            String artifactSha256,
+            String policyVersion
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "artifactSha256", artifactSha256
+        );
+        metadata.put("fileCount", fileCount);
+        metadata.put("policyVersion", policyVersion);
+        append(assetId, versionId, null, "IMPORT", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
     public void validated(
             String assetId,
             String versionId,
@@ -186,6 +216,20 @@ public class CodeAssetAuditService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void revoked(String assetId, String versionId) {
         decision(assetId, versionId, "REVOKE", null, null, "APPROVAL_REVOKED");
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void deprecated(String assetId, String versionId) {
+        append(assetId, versionId, null, "DEPRECATE", metadata(
+                "reasonCode", "VERSION_DEPRECATED"
+        ));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void archived(String assetId, String versionId) {
+        append(assetId, versionId, null, "ARCHIVE", metadata(
+                "reasonCode", "VERSION_ARCHIVED"
+        ));
     }
 
     static Map<String, Object> validateMetadata(Map<String, ?> metadata) {
