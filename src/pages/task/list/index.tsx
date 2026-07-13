@@ -2,7 +2,16 @@ import { MoreOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
-import { Button, Dropdown, message, Popconfirm, Space, Tag } from 'antd';
+import {
+  Button,
+  Dropdown,
+  message,
+  Popconfirm,
+  Progress,
+  Space,
+  Tag,
+  Tooltip,
+} from 'antd';
 import React, { useRef } from 'react';
 import { MOCK_TASKS } from '@/constants/mockData';
 import {
@@ -11,6 +20,12 @@ import {
   stopTask,
 } from '@/services/platform';
 import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
+import {
+  getTrainingProgressStatus,
+  getTrainingStatusTagColor,
+  getTrainingStatusText,
+  normalizeTrainingProgress,
+} from '@/utils/trainingStatusDisplay';
 
 /**
  * 训练任务列表页 - Page 层
@@ -61,17 +76,18 @@ const TaskList: React.FC = () => {
     }
   };
 
-  const getStatusTag = (status: string) => {
-    const statusMap: Record<string, { color: string; text: string }> = {
-      pending: { color: 'default', text: '待执行' },
-      queued: { color: 'warning', text: '排队中' },
-      running: { color: 'processing', text: '运行中' },
-      success: { color: 'success', text: '成功' },
-      failed: { color: 'error', text: '失败' },
-      stopped: { color: 'default', text: '已停止' },
-    };
-    const statusInfo = statusMap[status] || { color: 'default', text: status };
-    return <Tag color={statusInfo.color}>{statusInfo.text}</Tag>;
+  const getStatusTag = (status: string, errorMessage?: string) => {
+    const text = getTrainingStatusText(status);
+    const color = getTrainingStatusTagColor(status);
+    const tag = <Tag color={color}>{text}</Tag>;
+    if (status === 'failed' && errorMessage?.trim()) {
+      return (
+        <Tooltip title={errorMessage} overlayStyle={{ maxWidth: 480 }}>
+          {tag}
+        </Tooltip>
+      );
+    }
+    return tag;
   };
 
   const columns: ProColumns<API.TaskItem>[] = [
@@ -117,14 +133,25 @@ const TaskList: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (_, record) => getStatusTag(record.status),
+      render: (_, record) => getStatusTag(record.status, record.errorMessage),
     },
     {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
+      width: 160,
       hideInSearch: true,
-      render: (progress) => `${progress || 0}%`,
+      render: (_, record) => {
+        const percent = normalizeTrainingProgress(record.progress);
+        return (
+          <Progress
+            percent={percent}
+            size="small"
+            status={getTrainingProgressStatus(record.status)}
+            format={(value) => `${value ?? 0}%`}
+          />
+        );
+      },
     },
     {
       title: '操作',

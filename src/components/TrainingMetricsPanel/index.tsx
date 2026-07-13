@@ -2,7 +2,6 @@ import { ReloadOutlined } from '@ant-design/icons';
 import {
   Button,
   Input,
-  Progress,
   Select,
   Space,
   Spin,
@@ -352,15 +351,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             MLflow 指标末值（训练写入后自动更新）
           </Typography.Text>
           <MlflowMetricSummaryGrid summaries={mlflowMetricSummaries} />
-        </div>
-      )}
-
-      {isActive && typeof progress === 'number' && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 4, fontSize: 12, color: '#8c8c8c' }}>
-            训练进度 {progress}%
-          </div>
-          <Progress percent={progress} status="active" />
         </div>
       )}
 

@@ -6,6 +6,7 @@
  * 布局组件
  */
 
+import CodeEditor from './CodeEditor';
 import CodePreview from './CodePreview';
 import Footer from './Footer';
 /**
@@ -14,6 +15,16 @@ import Footer from './Footer';
 import JsonEditor from './JsonEditor';
 import { Question, SelectLang } from './RightContent';
 import { AvatarDropdown, AvatarName } from './RightContent/AvatarDropdown';
+import TrainingStatusBanner from './TrainingStatusBanner';
 
-export { AvatarDropdown, AvatarName, Footer, Question, SelectLang };
-export { JsonEditor, CodePreview };
+export {
+  AvatarDropdown,
+  AvatarName,
+  CodeEditor,
+  CodePreview,
+  Footer,
+  JsonEditor,
+  Question,
+  SelectLang,
+  TrainingStatusBanner,
+};
