@@ -1,5 +1,3 @@
-import 'swagger-ui-react/swagger-ui.css';
-
 import { ReloadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import {
@@ -16,8 +14,13 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import SwaggerUI from 'swagger-ui-react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 
 import { METHOD_TAG_COLOR, MODULE_ORDER, TAG_MODULE_MAP } from './constants';
@@ -145,13 +148,16 @@ const HttpMethodTag: React.FC<{ method: string }> = ({ method }) => {
 };
 
 /** Swagger UI 主题覆盖 — 注入自定义 CSS 匹配 Ant Design 风格 */
-function useSwaggerTheme() {
+function useSwaggerTheme(ready: boolean) {
   useEffect(() => {
+    if (!ready) return;
     const styleId = 'swagger-ui-theme-override';
-    if (document.getElementById(styleId)) return;
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = `
+    // 延迟一帧确保 CDN CSS 已插入 DOM，主题覆盖在它之后生效
+    const timer = setTimeout(() => {
+      if (document.getElementById(styleId)) return;
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
       .swagger-ui {
         font-family: AlibabaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
@@ -233,13 +239,121 @@ function useSwaggerTheme() {
         font-family: AlibabaSans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
     `;
-    document.head.appendChild(style);
+      document.head.appendChild(style);
+    }, 0);
     return () => {
+      clearTimeout(timer);
       const el = document.getElementById(styleId);
       if (el) el.remove();
     };
-  }, []);
+  }, [ready]);
 }
+
+// ==================== CDN Swagger UI 组件 ====================
+
+/** Swagger UI CDN 地址（与 swagger-ui-react@5.32.8 内部版本匹配） */
+const SWAGGER_CDN_CSS =
+  'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css';
+const SWAGGER_CDN_JS =
+  'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js';
+const SWAGGER_CONTAINER_ID = 'swagger-ui-cdn-container';
+
+/** 全局标记，避免重复加载 CDN 脚本 */
+let swaggerScriptPromise: Promise<void> | null = null;
+
+function loadSwaggerUICDN(): Promise<void> {
+  if (swaggerScriptPromise) return swaggerScriptPromise;
+
+  swaggerScriptPromise = new Promise<void>((resolve) => {
+    // 如果已经加载过（SPA 路由切换回来），直接 resolve
+    if ((window as any).SwaggerUIBundle) {
+      resolve();
+      return;
+    }
+
+    // 加载 CSS
+    const cssId = 'swagger-ui-cdn-css';
+    if (!document.getElementById(cssId)) {
+      const link = document.createElement('link');
+      link.id = cssId;
+      link.rel = 'stylesheet';
+      link.href = SWAGGER_CDN_CSS;
+      document.head.appendChild(link);
+    }
+
+    // 加载 JS
+    const scriptId = 'swagger-ui-cdn-js';
+    if (!document.getElementById(scriptId)) {
+      const script = document.createElement('script');
+      script.id = scriptId;
+      script.src = SWAGGER_CDN_JS;
+      script.crossOrigin = 'anonymous';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        // 加载失败时清除标记，允许重试
+        swaggerScriptPromise = null;
+        resolve();
+      };
+      document.head.appendChild(script);
+    } else {
+      resolve();
+    }
+  });
+
+  return swaggerScriptPromise;
+}
+
+interface SwaggerUICDNProps {
+  spec: any;
+  requestInterceptor?: (req: any) => any;
+}
+
+const SwaggerUICDN: React.FC<SwaggerUICDNProps> = ({
+  spec,
+  requestInterceptor,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scriptReady, setScriptReady] = useState(
+    () => !!(window as any).SwaggerUIBundle,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    loadSwaggerUICDN().then(() => {
+      if (!cancelled) setScriptReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const SwaggerUIBundle = (window as any).SwaggerUIBundle;
+    if (!scriptReady || !SwaggerUIBundle || !spec) return;
+
+    // 销毁旧实例
+    const container = document.getElementById(SWAGGER_CONTAINER_ID);
+    if (container) container.innerHTML = '';
+
+    // 创建新实例
+    SwaggerUIBundle({
+      spec,
+      dom_id: `#${SWAGGER_CONTAINER_ID}`,
+      docExpansion: 'list',
+      defaultModelsExpandDepth: -1,
+      requestInterceptor,
+      showExtensions: false,
+      showCommonExtensions: false,
+    });
+
+    return () => {
+      const el = document.getElementById(SWAGGER_CONTAINER_ID);
+      if (el) el.innerHTML = '';
+    };
+  }, [scriptReady, spec, requestInterceptor]);
+
+  return <div id={SWAGGER_CONTAINER_ID} ref={containerRef} />;
+};
 
 // ==================== 主页面 ====================
 
@@ -248,8 +362,9 @@ const ApiDoc: React.FC = () => {
   const [specLoading, setSpecLoading] = useState(true);
   const [specError, setSpecError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('overview');
+  const [themeReady, setThemeReady] = useState(false);
 
-  useSwaggerTheme();
+  useSwaggerTheme(themeReady);
 
   const fetchSpec = useCallback(async () => {
     setSpecLoading(true);
@@ -266,6 +381,17 @@ const ApiDoc: React.FC = () => {
     } finally {
       setSpecLoading(false);
     }
+  }, []);
+
+  // 预加载 CDN swagger UI 资源
+  useEffect(() => {
+    let cancelled = false;
+    loadSwaggerUICDN().then(() => {
+      if (!cancelled) setThemeReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -474,13 +600,9 @@ const ApiDoc: React.FC = () => {
               <Spin spinning={specLoading} tip="正在加载 API 文档...">
                 <div style={{ minHeight: 400 }}>
                   {spec ? (
-                    <SwaggerUI
-                      spec={spec as any}
-                      docExpansion="list"
-                      defaultModelsExpandDepth={-1}
+                    <SwaggerUICDN
+                      spec={spec}
                       requestInterceptor={requestInterceptor}
-                      showExtensions={false}
-                      showCommonExtensions={false}
                     />
                   ) : (
                     !specLoading && (
