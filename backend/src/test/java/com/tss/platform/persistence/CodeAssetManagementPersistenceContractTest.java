@@ -202,12 +202,40 @@ class CodeAssetManagementPersistenceContractTest {
     }
 
     @Test
+    void v29ReviewerConstraintEnforcesLegacyAndNonLegacyNullabilityInBothDirections() throws Exception {
+        String sql = migrationSql().toLowerCase(Locale.ROOT);
+
+        assertTrue(sql.contains(
+                "decision = 'legacy_approval_imported' and reviewer_user_id is null"));
+        assertTrue(sql.contains(
+                "decision <> 'legacy_approval_imported' and reviewer_user_id is not null"));
+    }
+
+    @Test
+    void v29HistoryIndexesMatchDescendingRepositoryOrder() throws Exception {
+        String sql = migrationSql().toLowerCase(Locale.ROOT);
+
+        assertTrue(sql.contains(
+                "on code_validation_run (version_id, created_at desc, id desc)"));
+        assertTrue(sql.contains(
+                "on code_approval_record (version_id, created_at desc, id desc)"));
+        assertTrue(sql.contains(
+                "on code_asset_audit_log (asset_id, created_at desc, id desc)"));
+        assertTrue(sql.contains(
+                "on code_asset_audit_log (version_id, created_at desc, id desc)"));
+        assertTrue(sql.contains(
+                "on code_asset_audit_log (workspace_id, created_at desc, id desc)"));
+    }
+
+    @Test
     void readmeRegistersV29AsTheCurrentMigration() throws Exception {
         String resource = "db/migration/README.md";
         try (var input = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource)) {
             assertNotNull(input, resource);
             String readme = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             assertTrue(readme.contains("当前最高迁移版本为 `V29`"));
+            assertTrue(readme.contains("V1-V29"));
+            assertFalse(readme.contains("V1-V28"));
             assertTrue(readme.contains("V29__code_asset_workspace_validation_approval.sql"));
         }
     }

@@ -118,7 +118,10 @@ CREATE TABLE code_approval_record (
             'LEGACY_APPROVAL_IMPORTED'
         )),
     CONSTRAINT ck_code_approval_record_reviewer
-        CHECK (decision = 'LEGACY_APPROVAL_IMPORTED' OR reviewer_user_id IS NOT NULL)
+        CHECK (
+            (decision = 'LEGACY_APPROVAL_IMPORTED' AND reviewer_user_id IS NULL)
+            OR (decision <> 'LEGACY_APPROVAL_IMPORTED' AND reviewer_user_id IS NOT NULL)
+        )
 );
 
 CREATE TABLE code_asset_audit_log (
@@ -175,22 +178,22 @@ CREATE INDEX idx_code_workspace_file_delta_workspace_updated
     ON code_workspace_file_delta (workspace_id, updated_at DESC, id);
 
 CREATE INDEX idx_code_validation_run_version_created
-    ON code_validation_run (version_id, created_at DESC, id);
+    ON code_validation_run (version_id, created_at DESC, id DESC);
 
 CREATE INDEX idx_code_approval_record_version_created
-    ON code_approval_record (version_id, created_at DESC, id);
+    ON code_approval_record (version_id, created_at DESC, id DESC);
 
 CREATE INDEX idx_code_approval_record_validation_run
     ON code_approval_record (validation_run_id);
 
 CREATE INDEX idx_code_asset_audit_log_asset_created
-    ON code_asset_audit_log (asset_id, created_at DESC, id);
+    ON code_asset_audit_log (asset_id, created_at DESC, id DESC);
 
 CREATE INDEX idx_code_asset_audit_log_version_created
-    ON code_asset_audit_log (version_id, created_at DESC, id);
+    ON code_asset_audit_log (version_id, created_at DESC, id DESC);
 
 CREATE INDEX idx_code_asset_audit_log_workspace_created
-    ON code_asset_audit_log (workspace_id, created_at DESC, id);
+    ON code_asset_audit_log (workspace_id, created_at DESC, id DESC);
 
 INSERT INTO code_approval_record (
     id,
