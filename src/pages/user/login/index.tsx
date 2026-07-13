@@ -149,6 +149,7 @@ const Login: React.FC = () => {
         (msg as any)?.status === 'ok' || (msg as any)?.code === 200;
       if (isSuccess) {
         setLoginErrorMsg('');
+        setUserLoginState({});
         // 登录成功后把 token 写入本地（使用 utils/storage），供 request 拦截器读取
         const token =
           (msg as any)?.data?.token ??
