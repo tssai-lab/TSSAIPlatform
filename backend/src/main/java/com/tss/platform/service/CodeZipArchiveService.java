@@ -39,6 +39,7 @@ public final class CodeZipArchiveService {
     public static final long MAX_EXPANDED_BYTES = 512L * 1024 * 1024;
 
     private static final long FIXED_ZIP_TIMESTAMP_MILLIS = 315_532_800_000L;
+    private static final int ZIP_ENCRYPTION_FLAGS = 0x0041;
 
     private final int maxEntries;
     private final long maxExpandedBytes;
@@ -131,7 +132,7 @@ public final class CodeZipArchiveService {
             if (entries > maxEntries) {
                 throw validation("ZIP_TOO_MANY_ENTRIES", "Code archive has too many entries");
             }
-            if (entry.getGeneralPurposeBit().usesEncryption()
+            if ((entry.getRawFlag() & ZIP_ENCRYPTION_FLAGS) != 0
                     || localHeaderUsesEncryption(localHeaders, entry)) {
                 throw validation("ZIP_ENCRYPTED", "Encrypted code archives are not supported");
             }
@@ -208,7 +209,7 @@ public final class CodeZipArchiveService {
             throw new IOException("ZIP local header signature is invalid");
         }
         header.getShort();
-        return (header.getShort() & 1) != 0;
+        return (Short.toUnsignedInt(header.getShort()) & ZIP_ENCRYPTION_FLAGS) != 0;
     }
 
     private TreeMap<String, byte[]> normalizeOutputFiles(Map<String, byte[]> files) {

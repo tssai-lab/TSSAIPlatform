@@ -128,6 +128,41 @@ class CodeZipArchiveServiceTest {
     }
 
     @Test
+    void rejectsStrongEncryptionBitPresentOnlyInCentralDirectory() throws Exception {
+        byte[] zip = buildRawStoredZip(new RawEntry(
+                "secret.py",
+                "content".getBytes(StandardCharsets.UTF_8),
+                0x0040,
+                0
+        ));
+        zip[6] = 0;
+        zip[7] = 0;
+
+        assertReason("ZIP_ENCRYPTED", () -> service.readEntries(new ByteArrayInputStream(zip)));
+    }
+
+    @Test
+    void rejectsStrongEncryptionBitPresentOnlyInLocalHeader() throws Exception {
+        byte[] zip = buildRawStoredZip(rawEntry("secret.py", "content"));
+        zip[6] = 0x40;
+        zip[7] = 0;
+
+        assertReason("ZIP_ENCRYPTED", () -> service.readEntries(new ByteArrayInputStream(zip)));
+    }
+
+    @Test
+    void rejectsStrongEncryptionBitPresentInCentralAndLocalHeaders() throws Exception {
+        byte[] zip = buildRawStoredZip(new RawEntry(
+                "secret.py",
+                "content".getBytes(StandardCharsets.UTF_8),
+                0x0040,
+                0
+        ));
+
+        assertReason("ZIP_ENCRYPTED", () -> service.readEntries(new ByteArrayInputStream(zip)));
+    }
+
+    @Test
     void rejectsUnixSymlinkFromCentralDirectoryMetadata() throws Exception {
         byte[] zip = buildRawStoredZip(new RawEntry(
                 "link.py",
