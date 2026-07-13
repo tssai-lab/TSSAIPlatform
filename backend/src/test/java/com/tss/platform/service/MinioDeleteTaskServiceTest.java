@@ -27,6 +27,12 @@ import static org.mockito.Mockito.when;
 class MinioDeleteTaskServiceTest {
 
     @Test
+    void exposesDedicatedCodeArtifactUpgradeSourceType() {
+        assertEquals("CODE_ARTIFACT_UPGRADE",
+                MinioDeleteTaskService.SOURCE_CODE_ARTIFACT_UPGRADE);
+    }
+
+    @Test
     void resetsStaleProcessingTasksBeforePollingPendingIds() {
         Fixture fixture = new Fixture();
         MinioDeleteTask pending = new MinioDeleteTask();

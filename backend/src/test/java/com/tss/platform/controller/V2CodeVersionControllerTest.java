@@ -3,6 +3,7 @@ package com.tss.platform.controller;
 import com.tss.platform.controller.v2.V2CodeVersionController;
 import com.tss.platform.controller.v2.V2ExceptionHandler;
 import com.tss.platform.dto.v2.V2CodeApprovalResult;
+import com.tss.platform.dto.v2.V2CodeArtifactUpgradeResult;
 import com.tss.platform.dto.v2.V2CodeConsumerManifest;
 import com.tss.platform.dto.v2.V2CodeFileContent;
 import com.tss.platform.dto.v2.V2CodeFileNode;
@@ -10,9 +11,11 @@ import com.tss.platform.dto.v2.V2CodeValidationResult;
 import com.tss.platform.dto.v2.V2CodeVersionDto;
 import com.tss.platform.service.CodeApprovalForbiddenException;
 import com.tss.platform.service.CodeAssetAccessException;
+import com.tss.platform.service.CodeArtifactStorageException;
 import com.tss.platform.service.CodeContentTooLargeException;
 import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeWorkspaceConflictException;
+import com.tss.platform.service.CodeArtifactUpgradeService;
 import com.tss.platform.service.V2CodeVersionQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,13 +43,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class V2CodeVersionControllerTest {
 
     private V2CodeVersionQueryService service;
+    private CodeArtifactUpgradeService artifactUpgradeService;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         service = mock(V2CodeVersionQueryService.class);
+        artifactUpgradeService = mock(CodeArtifactUpgradeService.class);
         mvc = MockMvcBuilders
-                .standaloneSetup(new V2CodeVersionController(service))
+                .standaloneSetup(new V2CodeVersionController(service, artifactUpgradeService))
                 .setControllerAdvice(new V2ExceptionHandler())
                 .build();
     }
@@ -193,6 +198,16 @@ class V2CodeVersionControllerTest {
         when(service.approve(eq("version-1"), any())).thenReturn(approval);
         when(service.deprecate("version-1")).thenReturn(versionDto("DEPRECATED"));
         when(service.archive("version-1")).thenReturn(versionDto("ARCHIVED"));
+        when(artifactUpgradeService.upgrade("version-1")).thenReturn(
+                new V2CodeArtifactUpgradeResult(
+                        "version-1",
+                        "a".repeat(64),
+                        123L,
+                        "PENDING",
+                        true,
+                        validation
+                )
+        );
 
         mvc.perform(post("/api/v2/code-versions/version-1/validate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -214,6 +229,17 @@ class V2CodeVersionControllerTest {
                         .content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ARCHIVED"));
+        mvc.perform(post("/api/v2/code-versions/version-1/artifact-upgrade"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionId").value("version-1"))
+                .andExpect(jsonPath("$.approvalStatus").value("PENDING"))
+                .andExpect(jsonPath("$.upgraded").value(true))
+                .andExpect(jsonPath("$.validation.status").value("PASSED"))
+                .andExpect(jsonPath("$.storagePath").doesNotExist())
+                .andExpect(jsonPath("$.objectName").doesNotExist())
+                .andExpect(jsonPath("$.bucket").doesNotExist())
+                .andExpect(jsonPath("$.url").doesNotExist());
+        verify(artifactUpgradeService).upgrade("version-1");
     }
 
     @Test
@@ -258,6 +284,8 @@ class V2CodeVersionControllerTest {
                 .thenThrow(new CodeValidationException(
                         "VALIDATION_EVIDENCE_MISSING", "validation failed"
                 ));
+        when(artifactUpgradeService.upgrade("upgrade-storage"))
+                .thenThrow(new CodeArtifactStorageException());
 
         mvc.perform(post("/api/v2/code-versions/hidden/approval")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -289,6 +317,11 @@ class V2CodeVersionControllerTest {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.details.reasonCode")
                         .value("VALIDATION_EVIDENCE_MISSING"));
+        mvc.perform(post("/api/v2/code-versions/upgrade-storage/artifact-upgrade"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.errorCode").value("CODE_STORAGE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.details.reasonCode")
+                        .value("STORAGE_UNAVAILABLE"));
     }
 
     private static V2CodeVersionDto versionDto() {

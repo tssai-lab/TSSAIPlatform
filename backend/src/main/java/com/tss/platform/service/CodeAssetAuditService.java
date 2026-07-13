@@ -162,6 +162,19 @@ public class CodeAssetAuditService {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
+    public void artifactUpgraded(
+            String assetId,
+            String versionId,
+            String artifactSha256
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "artifactSha256", artifactSha256
+        );
+        metadata.put("reasonCode", "LEGACY_ARTIFACT_UPGRADED");
+        append(assetId, versionId, null, "ARTIFACT_UPGRADE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
     public void validated(
             String assetId,
             String versionId,

@@ -8,6 +8,7 @@ import com.tss.platform.dto.v2.V2CodeWorkspaceOpenRequest;
 import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeWorkspace;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import java.util.UUID;
 public class V2CodeAssetService {
 
     private final CodeAssetRepository assetRepository;
+    private final CodeVersionRepository versionRepository;
     private final CodeWorkspaceRepository workspaceRepository;
     private final CodeWorkspaceService workspaceService;
     private final CodeAssetAuditService auditService;
@@ -31,6 +33,7 @@ public class V2CodeAssetService {
 
     public V2CodeAssetService(
             CodeAssetRepository assetRepository,
+            CodeVersionRepository versionRepository,
             CodeWorkspaceRepository workspaceRepository,
             CodeWorkspaceService workspaceService,
             CodeAssetAuditService auditService,
@@ -38,6 +41,7 @@ public class V2CodeAssetService {
             AuthContext authContext
     ) {
         this.assetRepository = assetRepository;
+        this.versionRepository = versionRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceService = workspaceService;
         this.auditService = auditService;
@@ -99,11 +103,28 @@ public class V2CodeAssetService {
         if (revision(asset) != request.getAssetRevision()) {
             throw conflict("ASSET_REVISION_CONFLICT", "Code asset revision is stale");
         }
+        String normalizedTrainingProfile = asset.getTrainingProfile();
+        boolean trainingProfileChanged = false;
+        if (request.isTrainingProfilePresent()) {
+            normalizedTrainingProfile = optional(
+                    request.getTrainingProfile(), "trainingProfile", 128
+            );
+            trainingProfileChanged = !Objects.equals(
+                    asset.getTrainingProfile(), normalizedTrainingProfile
+            );
+            if (trainingProfileChanged
+                    && versionRepository.existsByAssetIdAndDeletedFalse(asset.getId())) {
+                throw conflict(
+                        "TRAINING_PROFILE_IMMUTABLE",
+                        "Code asset training profile is immutable after the first version"
+                );
+            }
+        }
         if (request.isNamePresent()) {
             asset.setName(required(request.getName(), "name", 255));
         }
-        if (request.isTrainingProfilePresent()) {
-            asset.setTrainingProfile(optional(request.getTrainingProfile(), "trainingProfile", 128));
+        if (trainingProfileChanged) {
+            asset.setTrainingProfile(normalizedTrainingProfile);
         }
         if (request.isPurposePresent()) {
             asset.setPurpose(optional(request.getPurpose(), "purpose", 1024));
@@ -120,7 +141,7 @@ public class V2CodeAssetService {
         if (request.isRemarkPresent()) {
             asset.setRemark(optional(request.getRemark(), "remark", 1024));
         }
-        if (request.hasChanges()) {
+        if (trainingProfileChanged || hasNonProfileChanges(request)) {
             asset.setUpdatedAt(Instant.now());
             asset = assetRepository.saveAndFlush(asset);
             auditService.assetUpdated(asset.getId(), revision(asset));
@@ -180,6 +201,15 @@ public class V2CodeAssetService {
     private String optionalPath(String value) {
         String normalized = optional(value, "entryScript", 1024);
         return normalized == null ? null : pathPolicy.normalizeFilePath(normalized);
+    }
+
+    private static boolean hasNonProfileChanges(V2CodeAssetPatchRequest request) {
+        return request.isNamePresent()
+                || request.isPurposePresent()
+                || request.isRuntimePresent()
+                || request.isEntryScriptPresent()
+                || request.isTrainingTypePresent()
+                || request.isRemarkPresent();
     }
 
     private Integer currentUserId() {

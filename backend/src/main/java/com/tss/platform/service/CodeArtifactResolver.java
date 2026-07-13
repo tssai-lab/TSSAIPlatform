@@ -24,17 +24,20 @@ public class CodeArtifactResolver {
     private final CodeAssetRepository assetRepository;
     private final CodeValidationRunRepository validationRunRepository;
     private final CodeApprovalRecordRepository approvalRecordRepository;
+    private final CodeArtifactStorageService storageService;
 
     public CodeArtifactResolver(
             CodeVersionRepository versionRepository,
             CodeAssetRepository assetRepository,
             CodeValidationRunRepository validationRunRepository,
-            CodeApprovalRecordRepository approvalRecordRepository
+            CodeApprovalRecordRepository approvalRecordRepository,
+            CodeArtifactStorageService storageService
     ) {
         this.versionRepository = versionRepository;
         this.assetRepository = assetRepository;
         this.validationRunRepository = validationRunRepository;
         this.approvalRecordRepository = approvalRecordRepository;
+        this.storageService = storageService;
     }
 
     @Transactional
@@ -57,6 +60,8 @@ public class CodeArtifactResolver {
                 "VERSION_NOT_READY", "Code version is not ready");
         require(version.getArtifactSha256() != null
                         && SHA256.matcher(version.getArtifactSha256()).matches(),
+                "ARTIFACT_EVIDENCE_INVALID", "Code artifact evidence is invalid");
+        require(version.getSizeBytes() != null && version.getSizeBytes() >= 0,
                 "ARTIFACT_EVIDENCE_INVALID", "Code artifact evidence is invalid");
         require("PASSED".equals(version.getValidationStatus())
                         && CodeArtifactAssembler.POLICY_VERSION.equals(
@@ -108,6 +113,21 @@ public class CodeArtifactResolver {
                         && !".".equals(leaf)
                         && !"..".equals(leaf),
                 "STORAGE_REFERENCE_INVALID", "Code artifact storage reference is invalid");
+
+        StoredCodeArtifact stored;
+        try {
+            stored = storageService.read(storagePath);
+        } catch (CodeArtifactStorageException exception) {
+            throw validation("STORAGE_READ_FAILED", "Code artifact could not be read");
+        }
+        require(stored != null,
+                "STORAGE_READ_FAILED", "Code artifact could not be read");
+        require(Objects.equals(storagePath, stored.objectName()),
+                "STORAGE_REFERENCE_INVALID", "Code artifact storage reference is invalid");
+        require(Objects.equals(version.getArtifactSha256(), stored.artifactSha256()),
+                "ARTIFACT_SHA256_MISMATCH", "Code artifact hash does not match");
+        require(version.getSizeBytes() == stored.sizeBytes(),
+                "ARTIFACT_SIZE_MISMATCH", "Code artifact size does not match");
 
         return new ResolvedCodeArtifact(
                 asset.getId(),

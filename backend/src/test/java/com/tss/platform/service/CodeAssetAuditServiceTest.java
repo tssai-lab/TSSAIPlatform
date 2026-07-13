@@ -50,6 +50,7 @@ class CodeAssetAuditServiceTest {
         assertMandatory("workspaceAbandoned", String.class, String.class, long.class);
         assertMandatory("imported", String.class, String.class, long.class,
                 String.class, String.class);
+        assertMandatory("artifactUpgraded", String.class, String.class, String.class);
 
         service.fileUpserted(
                 "asset-1",
@@ -71,6 +72,24 @@ class CodeAssetAuditServiceTest {
         assertTrue(saved.getMetadataJson().contains("\"oldHash\""));
         assertTrue(saved.getMetadataJson().contains("\"newHash\""));
         assertFalse(saved.getMetadataJson().toLowerCase().contains("path"));
+    }
+
+    @Test
+    void artifactUpgradeAuditContainsOnlyHashAndStableReasonCode() {
+        service.artifactUpgraded("asset-1", "version-1", "a".repeat(64));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(CodeAssetAuditLog.class);
+        verify(repository).save(captor.capture());
+        CodeAssetAuditLog saved = captor.getValue();
+        assertEquals("ARTIFACT_UPGRADE", saved.getAction());
+        assertEquals("version-1", saved.getVersionId());
+        assertTrue(saved.getMetadataJson().contains("\"artifactSha256\""));
+        assertTrue(saved.getMetadataJson().contains("\"reasonCode\":\"LEGACY_ARTIFACT_UPGRADED\""));
+        String metadata = saved.getMetadataJson().toLowerCase();
+        assertFalse(metadata.contains("storage"));
+        assertFalse(metadata.contains("object"));
+        assertFalse(metadata.contains("bucket"));
+        assertFalse(metadata.contains("url"));
     }
 
     @Test

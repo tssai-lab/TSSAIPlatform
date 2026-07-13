@@ -8,6 +8,7 @@
 
 - 模型资产与模型版本管理。
 - 数据集资产与数据集版本管理。
+- 代码资产、在线编辑工作区、不可变代码版本、校验与审批证据管理。
 - 模型/数据集分片上传与 MinIO 存储。
 - 训练任务/训练实验元数据管理、结果回写和当前本地轻量训练启动。
 - 用户资源隔离与文件归属校验。
@@ -33,8 +34,8 @@ StpUtil.getTokenSession().get("roleId")
 
 | roleId | 说明 | 模块二权限 |
 | --- | --- | --- |
-| 1 | super_admin | 可访问全部资源 |
-| 2 | admin | 可访问全部资源 |
+| 1 | super_admin | 通常可访问全部资源；V2 代码源码仍为 owner-only，仅显式审批/恢复端点开放管理员能力 |
+| 2 | admin | 通常可访问全部资源；V2 代码源码仍为 owner-only，仅显式审批/恢复端点开放管理员能力 |
 | 3 | user | 只能访问自己的资源 |
 
 资源隔离字段：
@@ -43,11 +44,11 @@ StpUtil.getTokenSession().get("roleId")
 owner_user_id
 ```
 
-普通用户查询、详情、删除、下载时均按 `owner_user_id` 过滤。管理员不受 owner 限制。
+普通用户查询、详情、删除、下载时均按 `owner_user_id` 过滤。模型、数据集等既有接口中的管理员通常不受 owner 限制；V2 代码资产、版本、工作区及源码读取是例外，始终按当前用户过滤，跨用户统一返回 `404`。管理员仅能通过显式的审批和历史制品恢复接口执行管理操作，且权限检查先于资源查询。
 
 ## 3. 统一响应格式
 
-模块二接口统一使用：
+Legacy 模块二接口主要使用 `ApiResponse<T>`：
 
 ```json
 {
@@ -67,7 +68,21 @@ owner_user_id
 }
 ```
 
-前端和其他模块判断模块二接口是否成功时，以 `success` 为准。
+调用 Legacy 接口时以前述 `success` 为准。V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`）成功时直接返回 DTO、列表或文件流，不包裹 `ApiResponse`；JSON 失败响应使用 `V2ErrorResponse`：
+
+```json
+{
+  "success": false,
+  "errorCode": "CODE_ASSET_CONFLICT",
+  "errorMessage": "code asset conflict",
+  "details": {
+    "reasonCode": "WORKSPACE_REVISION_CONFLICT"
+  },
+  "traceId": "..."
+}
+```
+
+V2 代码接口使用真实 HTTP 状态：`403` 表示管理员能力不足，`404` 隐藏不存在或跨用户资源，`409` 表示并发或生命周期冲突，`413` 表示超出在线内容上限，`422` 表示校验失败，`503` 表示制品存储暂不可用。
 
 ## 4. 稳定资源 ID
 
@@ -79,6 +94,10 @@ owner_user_id
 | `modelAssetId` / `assetId` | 模型资产 ID，表示同一模型的逻辑集合 | 稳定 |
 | `datasetVersionId` | 数据集版本 ID，对应数据集文件和数据集元数据 | 稳定 |
 | `datasetAssetId` / `assetId` | 数据集资产 ID，表示同一数据集的逻辑集合 | 稳定 |
+| `codeAssetId` / `assetId` | 代码资产 ID，表示同一代码资产的逻辑集合 | 稳定 |
+| `codeVersionId` / `versionId` | 已发布、不可变代码版本 ID | 稳定 |
+| `codeWorkspaceId` / `workspaceId` | 代码编辑工作区 ID，只在草稿生命周期中有效 | 临时 |
+| `artifactSha256` | 已发布代码制品原始字节的 SHA-256 证据 | 版本级稳定证据 |
 | `experimentId` | 训练实验 ID，包含多个实验版本 | 稳定 |
 | `trainingVersionId` | 训练实验版本 ID | 稳定 |
 | `uploadId` | 上传会话 ID，只在上传流程中有效 | 临时 |
@@ -447,13 +466,44 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 
 该路径只面向模块二内部工作区回溯，返回字段不作为训练执行模块、推理模块或前端以外新模块的稳定契约。训练侧仍应只依赖 READY `datasetVersionId`、consumer manifest 以及固定 preview/download 链接。
 
-## 7. 训练实验边界
+## 7. 代码资产与训练实验边界
 
-训练任务和训练实验不是纯元数据管理：创建实验首个版本或实验新版本后，当前代码会在事务提交后异步启动 `TrainingExecutorRouter`。不带 `trainingProfile` 的兼容任务走本地 runner；带 `trainingProfile` 的任务走 K8s profile 训练路径，要求训练代码版本已准入。
+### 7.1 V2 代码资产管理
+
+代码资产的稳定生命周期为：
+
+```text
+CodeAsset -> CodeWorkspace（可变草稿） -> CodeVersion（不可变版本）
+          -> ValidationRun（SHA 绑定校验证据） -> ApprovalRecord（管理员审批证据）
+```
+
+V2 代码资源按以下稳定路径分组：
+
+| 资源 | 稳定路径与能力 |
+| --- | --- |
+| 资产 | `POST/GET /api/v2/code-assets`、`POST /api/v2/code-assets/import`、`GET/PATCH /api/v2/code-assets/{assetId}`、版本列表和工作区列表/创建 |
+| 工作区 | `GET /api/v2/code-workspaces/{workspaceId}`、目录树、文件内容/下载/写入/移动/删除、`validate`、`publish`、`abandon` |
+| 版本 | `GET /api/v2/code-versions/{versionId}`、目录树、文件内容/下载、完整 ZIP、`consumer-manifest`、`validate`、`approval`、`artifact-upgrade`、`deprecate`、`archive` |
+
+资产、版本和工作区的普通读取与编辑都是 owner-only；跨用户访问按 `404 / CODE_ASSET_NOT_FOUND` 处理。已发布版本不可修改，继续编辑必须创建基于版本的工作区。工作区写、移动、删除、校验、发布和放弃必须使用 `expectedWorkspaceRevision` 做 CAS；已有文件的修改、移动和删除还必须携带匹配的 `expectedContentHash`，新建文件不传内容哈希，冲突为 `409 / CODE_ASSET_CONFLICT`。
+
+在线文件仅支持 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`。后端返回 `python`、`json`、`yaml`、`markdown` 或 `plaintext` 形式的 `languageId`，前端据此选择 Monaco Editor 高亮器；后端不返回高亮 HTML，也不执行源码。在线内容必须是 UTF-8 且原始字节不超过 `1,048,576` bytes；大文件仍可列出和下载，但内容接口返回 `413 / CODE_CONTENT_TOO_LARGE`。`contentHash` 针对原始字节计算，不规范化 BOM 或换行。
+
+代码版本生命周期状态为 `READY / DEPRECATED / ARCHIVED`，校验状态为 `NOT_RUN / PASSED / FAILED`，审批状态为 `PENDING / APPROVED / REJECTED / REVOKED`。校验只生成与当前制品 SHA、策略版本绑定的证据，不自动审批；审批是独立管理员动作。Legacy `/api/code/version/{codeVersionId}/training-check` 同样只校验，`/approve` 仅管理员可用，并要求当前 SHA 对应最新且通过的校验证据。
+
+资产 `trainingProfile` 在还没有未删除代码版本时可改；首个版本产生后，改为不同值或置空返回 `409`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。每个版本保存发布时的 profile 快照，`consumer-manifest` 只从不可变版本返回 `assetId`、`versionId`、用途、运行时、入口脚本、训练类型、`trainingProfile`、`artifactSha256`、校验策略和审批证据，不返回 `storagePath`、MinIO 参数或下载 URL。
+
+内部 `CodeArtifactResolver` 每次解析都会实际读取对象，并核对 objectName、SHA-256 和长度；数据库引用、实际 SHA 或实际长度不一致时拒绝消费。通用 `/api/files` 写入和删除接口也不能操作归一化后的 `users/{owner}/codes` 及其后代，防止绕过版本服务修改或删除制品。
+
+`POST /api/v2/code-versions/{versionId}/artifact-upgrade` 是管理员对单个历史版本的恢复操作：它只接受精确符合旧规则的来源路径，复制到唯一 canonical 对象，核对实际字节、SHA 和长度后原子更新证据，并对失败上传做补偿清理。恢复成功会重新校验但保持 `PENDING`，必须再单独审批；响应不暴露新旧存储路径。已经 canonical 且证据一致的重试是幂等操作。
+
+### 7.2 当前训练兼容边界
+
+本节描述现有训练调用兼容行为，不表示本次代码资产改动修改了训练执行器。训练任务和训练实验不是纯元数据管理：创建实验首个版本或实验新版本后，当前代码会在事务提交后异步启动 `TrainingExecutorRouter`。不带 `trainingProfile` 的兼容任务走本地 runner；带 `trainingProfile` 的任务走 K8s profile 训练路径，要求训练代码版本已准入。
 
 当前本地 runner 只解析数据集 zip 中的图片和路径包含 `labels/` 的 YOLO `.txt` 标签，并写回 `running`、`success` 或 `failed` 结果。模型/数据集类型校验通过，不代表所有数据集类型或标注格式都能被当前本地 runner 成功训练。
 
-当前 profile 训练只支持 `image_text_consistency_fusion_logreg`。该路径会校验基础模型权重版本、训练数据集版本、训练代码版本和 `trainingProfile` 的匹配关系；Worker 使用固定 profile 命令，`hyperParams` 只作为记录和传递字段，不能覆盖固定训练命令。
+当前 profile 训练只支持 `image_text_consistency_fusion_logreg`。该路径会校验基础模型权重版本、训练数据集版本、训练代码版本和冻结后的资产 `trainingProfile` 的匹配关系；Worker 使用固定 profile 命令，`hyperParams` 只作为记录和传递字段，不能覆盖固定训练命令。模块二面向新消费者的稳定契约仍以代码版本快照和 `consumer-manifest` 为准。
 
 兼容路径：
 
@@ -462,18 +512,18 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 /api/experiments
 ```
 
-训练代码资产接口：
+Legacy 代码资产路径：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
 | `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
-| `POST` | `/api/code/version/{codeVersionId}/approve` | 手工批准代码版本 |
-| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案做代码包结构准入检查；通过后自动置为 `APPROVED` |
+| `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员独立批准当前 SHA 已通过校验的版本 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 校验代码包结构并刷新校验证据；不会自动批准 |
 
-代码包准入只代表路径、扩展名、固定入口和 profile 元数据检查通过，不代表完成代码安全审计。
+代码包准入只代表路径、扩展名、固定入口和 profile 元数据检查通过，不代表完成代码安全审计，也不等于管理员审批。
 
-### 7.1 训练任务接口
+### 7.3 训练任务接口
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -497,7 +547,7 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 | `hyperParams` / `params` | 超参数 JSON；legacy 路径必填，profile 路径不传时按 `{}` 记录 |
 | `remark` | 备注，可选 |
 
-创建时后端会校验数据集版本存在且调用方可访问，数据集版本为 `READY` 且具备 `storagePath`。不带 `trainingProfile` 的 legacy 路径会校验模型类型与数据集类型一致，`codeVersionId` 仍只做非空校验。带 `trainingProfile` 的 profile 路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。
+创建时后端会校验数据集版本存在且调用方可访问，数据集版本为 `READY` 且具备 `storagePath`。不带 `trainingProfile` 的 legacy 路径会校验模型类型与数据集类型一致，`codeVersionId` 仍只做非空校验。带 `trainingProfile` 的当前兼容路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、冻结后的代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求；新消费者应以代码版本快照为准。
 
 返回稳定字段：
 
@@ -527,7 +577,7 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 | `createdAt` | 创建时间 |
 | `updatedAt` | 更新时间 |
 
-### 7.2 实验版本接口
+### 7.4 实验版本接口
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -566,7 +616,7 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 | `GET` | `/download?objectName=...` | 下载文件 |
 | `DELETE` | `/delete?objectName=...` | 删除文件 |
 
-通用文件接口主要用于调试或辅助能力。业务模块优先通过模型/数据集版本 ID 引用文件。
+通用文件接口主要用于调试或辅助能力。业务模块优先通过模型、数据集或代码版本 ID 引用文件。
 
 普通用户上传相对 `objectName` 时，后端会返回归一化后的对象名：
 
@@ -582,7 +632,7 @@ users/{当前用户ID}/files/{objectName}
 users/{当前用户ID}/...
 ```
 
-管理员可访问全部对象。
+管理员通常可访问全部对象，但所有角色都不能通过通用上传或删除接口操作归一化后的 `users/{owner}/codes` 或其任意后代；该命名空间由代码资产服务独占管理。`GET /download` 保持只读兼容，普通 `users/{owner}/files/**` 行为不变。
 
 ### 8.1 MinIO 启动初始化与删除清理
 
@@ -615,8 +665,9 @@ roleId
 前端应：
 
 - 所有模块二业务请求都带 `Authorization: Bearer <token>`。
-- 判断响应时使用 `success`。
+- Legacy 接口按 `ApiResponse.success` 判断；V2 代码接口按真实 HTTP 状态和 `V2ErrorResponse.errorCode/details.reasonCode` 处理。
 - 训练创建时提交 `modelVersionId` 和 `datasetVersionId`。
+- 代码编辑器保存 `codeAssetId`、`workspaceId`、`codeVersionId`、workspace revision 和内容哈希；以 `languageId` 配置 Monaco Editor，不要求后端生成高亮 HTML。
 - 不直接拼接或持久依赖 MinIO 对象路径。
 
 ### 9.3 训练执行模块
@@ -633,7 +684,7 @@ hyperParams
 ownerUserId
 ```
 
-训练执行模块不应绕过模块二直接扫描 MinIO。需要文件时，应先通过模型版本 ID、数据集版本 ID 获取元数据，再由后端内部服务读取对象。
+训练执行模块不应绕过模块二直接扫描 MinIO。需要文件时，应先通过模型版本 ID、数据集版本 ID 获取元数据，再由后端内部服务读取对象。代码制品应按 `codeVersionId` 使用 `consumer-manifest` 和内部解析器；不得依赖 JPA 实体或 MinIO 路径。解析器只有在版本状态和校验/审批证据满足调用要求，且实际对象名、SHA-256、长度均与版本证据一致时才交付制品。本条是模块二提供的消费边界，不声明现有训练执行器已完成统一解析器改造。
 
 ### 9.3.1 数据集交付与训练适配边界
 
@@ -679,17 +730,19 @@ MinIO objectName
 - 可以新增响应字段。
 - 不删除或重命名本文档标记为稳定的字段。
 - 不改变稳定 ID 的含义。
-- 不改变普通用户只能访问自己资源、管理员可访问全部资源的规则。
+- 不改变普通用户只能访问自己资源的规则；管理员权限按资源显式定义，V2 代码源码读取仍为 owner-only，审批和历史制品恢复仅通过专用管理员端点开放。
 - 不要求其他模块直接访问 MinIO。
 - 若需要破坏性变更，应新增接口版本或新增兼容字段，保留旧字段一段时间。
+
+历史代码版本的旧批准状态不等价于当前 SHA 的有效审批证据。历史恢复必须按“单版本 `artifact-upgrade` -> 重新校验 -> 管理员单独审批”执行；恢复和校验均不得自动批准。
 
 ## 11. 当前内部实现，不作为外部契约
 
 ### 11.1 Legacy 与 V2 调用边界
 
-Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`latestDraftVersionId`。这些字段只服务现有页面兼容，不作为新模块的稳定集成契约。`importJobId` 已在 V2 中重分类为导入状态查询和失败重试句柄，稳定暴露于 V2 上传、编辑会话、状态查询和重试结果；新模块应优先使用 `GET /api/v2/import-jobs/{importJobId}`、`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL` 或 `POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL`，而不是 Legacy retry 路径。
+Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`latestDraftVersionId`。这些字段只服务现有页面兼容，不作为新模块的稳定集成契约；V2 代码 DTO、`consumer-manifest` 和 `artifact-upgrade` 响应永不返回存储路径。`importJobId` 已在 V2 中重分类为导入状态查询和失败重试句柄，稳定暴露于 V2 上传、编辑会话、状态查询和重试结果；新模块应优先使用 `GET /api/v2/import-jobs/{importJobId}`、`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL` 或 `POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL`，而不是 Legacy retry 路径。
 
-新模块必须优先使用 V2 数据集列表、V2 预览 descriptor 和 consumer manifest。需要文件内容时，通过 consumer manifest 返回的固定 preview/download 链接访问。
+新模块必须优先使用 V2 数据集列表、V2 预览 descriptor 和 consumer manifest。需要数据集文件内容时，通过 consumer manifest 返回的固定 preview/download 链接访问。代码消费者必须优先使用 V2 代码版本 ID、代码 `consumer-manifest` 和内部 `CodeArtifactResolver`，不能把 Legacy `storagePath` 当作契约。
 
 ### 11.2 后台调度与分布式锁
 
@@ -718,7 +771,11 @@ workspace 审计日志查询已经提供，但只属于模块二内部回溯能�
 ```text
 模型版本 ID
 数据集版本 ID
+代码资产 ID、代码工作区 ID、不可变代码版本 ID
 READY 数据集消费清单
+不含存储路径的代码 consumer manifest
+发布时固化的 trainingProfile 与制品 SHA-256/长度证据
+与当前 SHA 和策略版本绑定的代码校验/管理员审批证据
 跨 READY DatasetVersion 的 externalId 查询
 FAILED ImportJob FULL retry
 PARTIAL ImportJob INCREMENTAL retry
@@ -731,7 +788,8 @@ owner_user_id 资源隔离
 数据集任务类型 CV/NLP/POINT_CLOUD/ROBOT/MULTIMODAL
 pending/running/success/failed/stopped 训练状态语义
 Authorization: Bearer <token> 鉴权方式
-ApiResponse 响应格式
+Legacy ApiResponse 与 V2 代码 V2ErrorResponse/真实 HTTP 状态
+不向新消费者暴露 MinIO 路径、凭据或持久下载地址
 ```
 
 这就是模块二 v1 的稳定对外边界。

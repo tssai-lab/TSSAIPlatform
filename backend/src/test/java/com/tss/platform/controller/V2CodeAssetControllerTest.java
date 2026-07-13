@@ -9,6 +9,7 @@ import com.tss.platform.dto.v2.V2CodeWorkspaceDto;
 import com.tss.platform.service.CodeAssetAccessException;
 import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.CodeAssetAuditService;
@@ -119,6 +120,24 @@ class V2CodeAssetControllerTest {
     }
 
     @Test
+    void mapsImmutableTrainingProfileConflictTo409() throws Exception {
+        V2CodeAssetService service = mock(V2CodeAssetService.class);
+        when(service.patch(eq("asset-1"), any()))
+                .thenThrow(new CodeWorkspaceConflictException(
+                        "TRAINING_PROFILE_IMMUTABLE",
+                        "Code asset training profile is immutable"
+                ));
+
+        mvc(service).perform(patch("/api/v2/code-assets/asset-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"assetRevision\":1,\"trainingProfile\":\"profile-b\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CODE_ASSET_CONFLICT"))
+                .andExpect(jsonPath("$.details.reasonCode")
+                        .value("TRAINING_PROFILE_IMMUTABLE"));
+    }
+
+    @Test
     void sanitizesNonStableConflictReasonCode() throws Exception {
         V2CodeAssetService service = mock(V2CodeAssetService.class);
         when(service.patch(eq("asset-1"), any()))
@@ -140,6 +159,7 @@ class V2CodeAssetControllerTest {
     @Test
     void adminGetsNoImplicitCrossOwnerAccessAndOwnerCheckPrecedesRevision() throws Exception {
         CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
         CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
         CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
         AuthContext auth = mock(AuthContext.class);
@@ -149,14 +169,7 @@ class V2CodeAssetControllerTest {
                 .thenReturn(Optional.of(foreign));
         when(auth.currentUserId()).thenReturn(99);
         when(auth.isAdmin()).thenReturn(true);
-        V2CodeAssetService service = new V2CodeAssetService(
-                assets,
-                workspaces,
-                mock(CodeWorkspaceService.class),
-                audit,
-                new CodePathPolicy(),
-                auth
-        );
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
         V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
                 "{\"assetRevision\":9,\"name\":\"leak\"}",
                 V2CodeAssetPatchRequest.class
@@ -179,12 +192,14 @@ class V2CodeAssetControllerTest {
                 () -> service.patch("asset-1", missingRevision)
         );
         verify(assets, never()).saveAndFlush(any());
+        verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
         verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test
     void patchClearsExplicitNullPreservesAbsentFieldAndAuditsNewRevision() throws Exception {
         CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
         CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
         CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
         AuthContext auth = mock(AuthContext.class);
@@ -199,14 +214,7 @@ class V2CodeAssetControllerTest {
         });
         when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
         when(auth.currentUserId()).thenReturn(7);
-        V2CodeAssetService service = new V2CodeAssetService(
-                assets,
-                workspaces,
-                mock(CodeWorkspaceService.class),
-                audit,
-                new CodePathPolicy(),
-                auth
-        );
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
         V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
                 "{\"assetRevision\":3,\"remark\":null}",
                 V2CodeAssetPatchRequest.class
@@ -217,12 +225,14 @@ class V2CodeAssetControllerTest {
         org.assertj.core.api.Assertions.assertThat(owned.getRemark()).isNull();
         org.assertj.core.api.Assertions.assertThat(owned.getRuntime()).isEqualTo("python3.11");
         org.assertj.core.api.Assertions.assertThat(result.assetRevision()).isEqualTo(4L);
+        verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
         verify(audit).assetUpdated("asset-1", 4L);
     }
 
     @Test
     void staleAssetRevisionDoesNotWriteOrAudit() throws Exception {
         CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
         CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
         CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
         AuthContext auth = mock(AuthContext.class);
@@ -230,10 +240,7 @@ class V2CodeAssetControllerTest {
         when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
                 .thenReturn(Optional.of(owned));
         when(auth.currentUserId()).thenReturn(7);
-        V2CodeAssetService service = new V2CodeAssetService(
-                assets, workspaces, mock(CodeWorkspaceService.class), audit,
-                new CodePathPolicy(), auth
-        );
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
         V2CodeAssetPatchRequest stale = new ObjectMapper().readValue(
                 "{\"assetRevision\":3,\"remark\":\"new\"}",
                 V2CodeAssetPatchRequest.class
@@ -246,7 +253,151 @@ class V2CodeAssetControllerTest {
         org.assertj.core.api.Assertions.assertThat(conflict.getReasonCode())
                 .isEqualTo("ASSET_REVISION_CONFLICT");
         verify(assets, never()).saveAndFlush(any());
+        verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
         verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void existingVersionRejectsDifferentProfileBeforeAnyPartialMutation() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        owned.setTrainingProfile("profile-a");
+        owned.setRemark("old-remark");
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(versions.existsByAssetIdAndDeletedFalse("asset-1")).thenReturn(true);
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"trainingProfile\":\" profile-b \","
+                        + "\"name\":\"Renamed\",\"remark\":\"new-remark\"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        CodeWorkspaceConflictException conflict = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeWorkspaceConflictException.class,
+                () -> service.patch("asset-1", patch)
+        );
+
+        org.assertj.core.api.Assertions.assertThat(conflict.getReasonCode())
+                .isEqualTo("TRAINING_PROFILE_IMMUTABLE");
+        org.assertj.core.api.Assertions.assertThat(owned.getTrainingProfile()).isEqualTo("profile-a");
+        org.assertj.core.api.Assertions.assertThat(owned.getName()).isEqualTo("Trainer");
+        org.assertj.core.api.Assertions.assertThat(owned.getRemark()).isEqualTo("old-remark");
+        org.assertj.core.api.Assertions.assertThat(owned.getUpdatedAt()).isEqualTo(Instant.EPOCH);
+        verify(versions).existsByAssetIdAndDeletedFalse("asset-1");
+        verify(assets, never()).saveAndFlush(any());
+        verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void existingVersionRejectsExplicitNullProfileBeforeAnyPartialMutation() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        owned.setTrainingProfile("profile-a");
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(versions.existsByAssetIdAndDeletedFalse("asset-1")).thenReturn(true);
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"trainingProfile\":null,\"name\":\"Renamed\"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        CodeWorkspaceConflictException conflict = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeWorkspaceConflictException.class,
+                () -> service.patch("asset-1", patch)
+        );
+
+        org.assertj.core.api.Assertions.assertThat(conflict.getReasonCode())
+                .isEqualTo("TRAINING_PROFILE_IMMUTABLE");
+        org.assertj.core.api.Assertions.assertThat(owned.getTrainingProfile()).isEqualTo("profile-a");
+        org.assertj.core.api.Assertions.assertThat(owned.getName()).isEqualTo("Trainer");
+        org.assertj.core.api.Assertions.assertThat(owned.getUpdatedAt()).isEqualTo(Instant.EPOCH);
+        verify(versions).existsByAssetIdAndDeletedFalse("asset-1");
+        verify(assets, never()).saveAndFlush(any());
+        verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void profileCanChangeInAllDirectionsBeforeTheFirstVersion() throws Exception {
+        assertProfileChangeWithoutVersions(null, " profile-a ", "profile-a");
+        assertProfileChangeWithoutVersions("profile-a", null, null);
+        assertProfileChangeWithoutVersions("profile-a", "profile-b", "profile-b");
+    }
+
+    @Test
+    void sameProfileWithExistingVersionIsATrueNoOp() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        owned.setTrainingProfile("profile-a");
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"trainingProfile\":\" profile-a \"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        V2CodeAssetDto result = service.patch("asset-1", patch);
+
+        org.assertj.core.api.Assertions.assertThat(result.trainingProfile()).isEqualTo("profile-a");
+        org.assertj.core.api.Assertions.assertThat(result.assetRevision()).isEqualTo(3L);
+        org.assertj.core.api.Assertions.assertThat(owned.getUpdatedAt()).isEqualTo(Instant.EPOCH);
+        verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
+        verify(assets, never()).saveAndFlush(any());
+        verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void existingVersionStillAllowsOtherMetadataWithSameProfile() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        owned.setTrainingProfile("profile-a");
+        owned.setRemark("old-remark");
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(assets.saveAndFlush(owned)).thenAnswer(invocation -> {
+            owned.setRowVersion(4L);
+            return owned;
+        });
+        when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"trainingProfile\":\" profile-a \","
+                        + "\"name\":\"Renamed\",\"remark\":\"new-remark\"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        V2CodeAssetDto result = service.patch("asset-1", patch);
+
+        org.assertj.core.api.Assertions.assertThat(result.trainingProfile()).isEqualTo("profile-a");
+        org.assertj.core.api.Assertions.assertThat(owned.getName()).isEqualTo("Renamed");
+        org.assertj.core.api.Assertions.assertThat(owned.getRemark()).isEqualTo("new-remark");
+        org.assertj.core.api.Assertions.assertThat(result.assetRevision()).isEqualTo(4L);
+        verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
+        verify(assets).saveAndFlush(owned);
+        verify(audit).assetUpdated("asset-1", 4L);
     }
 
     @Test
@@ -292,6 +443,63 @@ class V2CodeAssetControllerTest {
                 now,
                 open
         );
+    }
+
+    private static V2CodeAssetService service(
+            CodeAssetRepository assets,
+            CodeVersionRepository versions,
+            CodeWorkspaceRepository workspaces,
+            CodeAssetAuditService audit,
+            AuthContext auth
+    ) {
+        return new V2CodeAssetService(
+                assets,
+                versions,
+                workspaces,
+                mock(CodeWorkspaceService.class),
+                audit,
+                new CodePathPolicy(),
+                auth
+        );
+    }
+
+    private static void assertProfileChangeWithoutVersions(
+            String currentProfile,
+            String requestedProfile,
+            String expectedProfile
+    ) throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        owned.setTrainingProfile(currentProfile);
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(versions.existsByAssetIdAndDeletedFalse("asset-1")).thenReturn(false);
+        when(assets.saveAndFlush(owned)).thenAnswer(invocation -> {
+            owned.setRowVersion(4L);
+            return owned;
+        });
+        when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        String profileJson = requestedProfile == null
+                ? "null"
+                : new ObjectMapper().writeValueAsString(requestedProfile);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"trainingProfile\":" + profileJson + "}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        V2CodeAssetDto result = service.patch("asset-1", patch);
+
+        org.assertj.core.api.Assertions.assertThat(result.trainingProfile()).isEqualTo(expectedProfile);
+        org.assertj.core.api.Assertions.assertThat(result.assetRevision()).isEqualTo(4L);
+        verify(versions).existsByAssetIdAndDeletedFalse("asset-1");
+        verify(assets).saveAndFlush(owned);
+        verify(audit).assetUpdated("asset-1", 4L);
     }
 
     private static CodeAsset entity(int ownerId, long revision) {

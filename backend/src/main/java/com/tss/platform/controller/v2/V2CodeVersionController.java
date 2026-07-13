@@ -2,6 +2,7 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.v2.V2CodeApprovalRequest;
 import com.tss.platform.dto.v2.V2CodeApprovalResult;
+import com.tss.platform.dto.v2.V2CodeArtifactUpgradeResult;
 import com.tss.platform.dto.v2.V2CodeConsumerManifest;
 import com.tss.platform.dto.v2.V2CodeFileContent;
 import com.tss.platform.dto.v2.V2CodeFileNode;
@@ -11,6 +12,7 @@ import com.tss.platform.dto.v2.V2CodeVersionDeprecateRequest;
 import com.tss.platform.dto.v2.V2CodeVersionDto;
 import com.tss.platform.dto.v2.V2CodeVersionValidateRequest;
 import com.tss.platform.service.CodeValidationException;
+import com.tss.platform.service.CodeArtifactUpgradeService;
 import com.tss.platform.service.V2CodeVersionQueryService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -34,9 +36,14 @@ public class V2CodeVersionController {
     private static final String NOSNIFF_HEADER = "X-Content-Type-Options";
 
     private final V2CodeVersionQueryService service;
+    private final CodeArtifactUpgradeService artifactUpgradeService;
 
-    public V2CodeVersionController(V2CodeVersionQueryService service) {
+    public V2CodeVersionController(
+            V2CodeVersionQueryService service,
+            CodeArtifactUpgradeService artifactUpgradeService
+    ) {
         this.service = service;
+        this.artifactUpgradeService = artifactUpgradeService;
     }
 
     @GetMapping("/code-assets/{assetId}/versions")
@@ -97,6 +104,11 @@ public class V2CodeVersionController {
             @RequestBody(required = false) V2CodeApprovalRequest request
     ) {
         return service.approve(versionId, request);
+    }
+
+    @PostMapping("/code-versions/{versionId}/artifact-upgrade")
+    public V2CodeArtifactUpgradeResult upgradeArtifact(@PathVariable String versionId) {
+        return artifactUpgradeService.upgrade(versionId);
     }
 
     @PostMapping("/code-versions/{versionId}/deprecate")

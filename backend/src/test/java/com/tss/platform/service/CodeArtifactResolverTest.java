@@ -38,6 +38,8 @@ class CodeArtifactResolverTest {
             mock(CodeValidationRunRepository.class);
     private final CodeApprovalRecordRepository approvalRepository =
             mock(CodeApprovalRecordRepository.class);
+    private final CodeArtifactStorageService storageService =
+            mock(CodeArtifactStorageService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private CodeArtifactResolver resolver;
@@ -49,7 +51,11 @@ class CodeArtifactResolverTest {
     @BeforeEach
     void setUp() {
         resolver = new CodeArtifactResolver(
-                versionRepository, assetRepository, validationRepository, approvalRepository
+                versionRepository,
+                assetRepository,
+                validationRepository,
+                approvalRepository,
+                storageService
         );
         asset = asset();
         version = version();
@@ -63,6 +69,9 @@ class CodeArtifactResolverTest {
                 .thenReturn(Optional.of(validation));
         when(approvalRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
                 .thenReturn(Optional.of(approval));
+        when(storageService.read(version.getStoragePath())).thenReturn(stored(
+                version.getStoragePath(), version.getArtifactSha256(), 3
+        ));
     }
 
     @Test
@@ -76,7 +85,7 @@ class CodeArtifactResolverTest {
 
         assertThrows(CodeAssetAccessException.class, () -> resolver.resolve("version-1", 8));
         verify(validationRepository, never())
-                .findTopByVersionIdOrderByCreatedAtDescIdDesc("version-cross");
+                .findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1");
     }
 
     @Test
@@ -86,6 +95,13 @@ class CodeArtifactResolverTest {
         var order = inOrder(versionRepository, assetRepository);
         order.verify(versionRepository).findByIdAndDeletedFalseForUpdate("version-1");
         order.verify(assetRepository).findByIdAndDeletedFalse("asset-1");
+    }
+
+    @Test
+    void successfulResolveReadsAndVerifiesTheActualStoredArtifact() {
+        resolver.resolve("version-1", 7);
+
+        verify(storageService).read(version.getStoragePath());
     }
 
     @Test
@@ -193,6 +209,54 @@ class CodeArtifactResolverTest {
     }
 
     @Test
+    void rejectsMissingOrNegativeDatabaseSizeEvidenceWithoutReadingStorage() {
+        version.setSizeBytes(null);
+        assertReason("ARTIFACT_EVIDENCE_INVALID");
+
+        version.setSizeBytes(-1L);
+        assertReason("ARTIFACT_EVIDENCE_INVALID");
+
+        verify(storageService, never()).read(any());
+    }
+
+    @Test
+    void storageReadFailureIsFailClosed() {
+        when(storageService.read(version.getStoragePath()))
+                .thenThrow(new CodeArtifactStorageException());
+
+        assertReason("STORAGE_READ_FAILED");
+    }
+
+    @Test
+    void rejectsStoredObjectNameMismatch() {
+        when(storageService.read(version.getStoragePath())).thenReturn(stored(
+                "users/7/codes/asset-1/versions/version-1/other.zip",
+                version.getArtifactSha256(),
+                3
+        ));
+
+        assertReason("STORAGE_REFERENCE_INVALID");
+    }
+
+    @Test
+    void rejectsActualStoredShaMismatch() {
+        when(storageService.read(version.getStoragePath())).thenReturn(stored(
+                version.getStoragePath(), "b".repeat(64), 3
+        ));
+
+        assertReason("ARTIFACT_SHA256_MISMATCH");
+    }
+
+    @Test
+    void rejectsActualStoredSizeMismatch() {
+        when(storageService.read(version.getStoragePath())).thenReturn(stored(
+                version.getStoragePath(), version.getArtifactSha256(), 4
+        ));
+
+        assertReason("ARTIFACT_SIZE_MISMATCH");
+    }
+
+    @Test
     void returnsStableInternalResultAndAllowlistedManifestWithoutLeaks() throws Exception {
         ResolvedCodeArtifact resolved = resolver.resolve("version-1", 7);
 
@@ -276,6 +340,7 @@ class CodeArtifactResolverTest {
         version.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
         version.setApprovalStatus(CodeApprovalStatus.APPROVED);
         version.setStoragePath("users/7/codes/asset-1/versions/version-1/artifact.zip");
+        version.setSizeBytes(3L);
         version.setPurpose("TRAINING");
         version.setRuntime("python:3.11");
         version.setEntryScript("train.py");
@@ -304,5 +369,9 @@ class CodeArtifactResolverTest {
         record.setPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
         record.setDecision(CodeApprovalStatus.APPROVED);
         return record;
+    }
+
+    private static StoredCodeArtifact stored(String objectName, String sha256, int size) {
+        return new StoredCodeArtifact(objectName, new byte[size], sha256, size);
     }
 }

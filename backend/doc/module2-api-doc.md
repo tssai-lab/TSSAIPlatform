@@ -1,6 +1,6 @@
 # 模块二 API 接口文档
 
-本文档描述模块二当前后端实际提供的 API，范围包括模型资产、模型版本、数据集资产、数据集版本、上传、训练实验、训练任务和通用文件对象接口。模块一登录、注册、用户管理接口不在本文档范围内；模块二只依赖模块一提供的登录态。
+本文档描述模块二当前后端实际提供的 API，范围包括模型资产、模型版本、数据集资产、数据集版本、代码资产、代码工作区、不可变代码版本、上传、训练实验、训练任务和通用文件对象接口。模块一登录、注册、用户管理接口不在本文档范围内；模块二只依赖模块一提供的登录态。
 
 ## 1. 通用约定
 
@@ -14,7 +14,7 @@
 | 文件上传请求头 | `Content-Type: multipart/form-data` |
 | 鉴权头 | `Authorization: Bearer <token>` |
 
-当前 `WebConfig` 会拦截全部 `/api/**` 请求，因此包括 `/api/files/health` 在内的模块二接口都需要登录态。普通用户只能访问自己的资源；`roleId` 为 `1` 或 `2` 的管理员可访问全部资源，但个别写入接口有更严格的所有者限制，具体见对应章节。
+当前 `WebConfig` 会拦截全部 `/api/**` 请求，因此包括 `/api/files/health` 在内的模块二接口都需要登录态。普通用户只能访问自己的资源；`roleId` 为 `1` 或 `2` 的管理员通常可访问全部资源，但 V2 代码资产、工作区和源码读取仍为 owner-only，管理员能力仅在审批、历史制品恢复等显式端点开放，具体见对应章节。
 
 ### 1.2 统一响应格式
 
@@ -41,6 +41,7 @@
 例外：
 
 - `GET /api/files/download` 成功时直接返回文件流；失败时返回 JSON。
+- V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`）成功时直接返回 DTO、列表或文件流，不包裹 legacy `ApiResponse`；失败时返回 `V2ErrorResponse` 并使用真实 HTTP 状态，详见 18.7。
 - 未登录时，请求会先被拦截器拦截，HTTP 状态为 `401`，响应体是模块一 `Result` 格式，例如 `{"code":401,"message":"请先登录","data":null}`，不会进入模块二 Controller。
 - 图片流、点云流和通用下载接口成功时返回二进制流；失败时返回 JSON，前端不能固定按 JSON 解析这些接口。
 
@@ -118,6 +119,9 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 | `modelVersionId` / `id` | 模型版本 ID |
 | `datasetAssetId` / `assetId` | 数据集资产 ID |
 | `datasetVersionId` / `id` | 数据集版本 ID |
+| `codeAssetId` / `assetId` | 代码资产 ID |
+| `codeVersionId` / `versionId` | 不可变代码版本 ID |
+| `workspaceId` | 代码编辑工作区 ID |
 | `experimentId` | 训练实验 ID |
 | `trainingVersionId` / `id` | 训练实验版本 ID |
 | `uploadId` | 上传会话 ID |
@@ -135,7 +139,7 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 6. `previewUrl` 是受鉴权保护的相对 URL。使用 `<img>`、Three.js Loader 等不会自动附加 Axios 拦截器请求头的组件时，应先用带令牌的 `fetch`/请求库取得 `Blob` 或 `ArrayBuffer`，再交给组件解析。
 7. 列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。
 8. zip entry 路径入参可以使用 `/` 或 `\`，后端会统一规范化为 `/`；后端返回的 `path` 固定使用 `/`，作为查询参数时仍需 URL 编码，不要自行拼接。
-9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域状态编辑。
+9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 或 `PATCH /api/v2/code-assets/{assetId}` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域编辑。
 10. ImportJob 恢复、上传会话恢复、数据集生命周期维护和 MinIO 删除任务均为后台异步流程；前端应以状态查询、编辑会话和列表聚合结果为准，不假设物理文件清理或失败恢复已经在业务接口返回时完成。
 
 登录示例：
@@ -1759,10 +1763,10 @@ DELETE /api/dataset-versions/{id}
 | --- | --- | --- |
 | `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
 | `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
-| `POST` | `/api/code/version/{codeVersionId}/approve` | 手工批准代码版本 |
-| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案做代码包结构准入检查；通过后自动置为 `APPROVED` |
+| `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员单独批准代码版本；要求当前制品 SHA 对应最新且通过的校验证据 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验代码包结构并刷新校验证据；不会自动批准 |
 
-`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。准入通过只代表结构、固定入口和 profile 元数据检查通过，不代表完成代码安全审计。
+`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。准入通过只代表结构、固定入口和 profile 元数据检查通过，不代表完成代码安全审计，也不等于管理员审批；审批必须调用独立审批接口。
 
 当前唯一训练方案为 `image_text_consistency_fusion_logreg`（展示名：图文一致性基线训练），要求代码包包含固定入口 `scripts/training/train_fusion_baseline.py`，并要求训练数据集类型为 `NLP`。
 
@@ -1786,7 +1790,7 @@ POST /api/task/create
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注 |
 
-后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。不带 `trainingProfile` 的 legacy 路径会校验模型版本存在、模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。带 `trainingProfile` 的 profile 路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。
+后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。不带 `trainingProfile` 的 legacy 路径会校验模型版本存在、模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。带 `trainingProfile` 的当前兼容路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、冻结后的代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。模块二在首个未删除代码版本产生后禁止修改该字段，版本消费清单则返回发布时固化的 profile 快照。
 
 当前代码的额外行为：
 
@@ -2022,7 +2026,7 @@ Content-Type: multipart/form-data
 users/{当前用户ID}/files/{objectName}
 ```
 
-如果普通用户传入的 `objectName` 已经以 `users/{当前用户ID}/` 开头，则保持该用户前缀下的路径。管理员可上传到任意合法对象路径。
+如果普通用户传入的 `objectName` 已经以 `users/{当前用户ID}/` 开头，则保持该用户前缀下的路径。管理员通常可上传到任意合法对象路径，但所有角色都不能通过本接口写入归一化后的 `users/{owner}/codes` 或其任意后代；该命名空间由代码资产服务独占管理。
 
 `objectName` 不能包含控制字符，也不能包含单独的 `.` 或 `..` 路径段。该接口不会创建 `model_asset`、`dataset_asset` 或版本记录，业务模型和数据集不要使用它代替专用上传流程。
 
@@ -2051,6 +2055,8 @@ DELETE /api/files/delete?objectName={objectName}
 ```
 
 删除不会同步阻塞删除 MinIO 对象，而是写入删除任务。
+
+所有角色都不能通过本接口删除归一化后的 `users/{owner}/codes` 或其任意后代。`GET /api/files/download` 保持只读兼容，不受该写保护影响；普通 `users/{owner}/files/**` 行为不变。
 
 响应 `data`：
 
@@ -2958,10 +2964,83 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 - profile 训练提交 `baseModelVersionId`（或兼容字段 `modelVersionId`）、`datasetVersionId`、`codeVersionId`、`trainingProfile` 和 `hyperParams`。
 - `datasetVersionId` 必须指向未删除、调用方可访问、具有存储路径的 `READY` 版本。
 - legacy 路径要求模型与数据集类型匹配；profile 路径要求数据集类型符合该 `trainingProfile` 的固定要求。
-- profile 路径要求 `codeVersionId` 指向 `READY` + `APPROVED` 的代码版本，并且代码资产 `trainingProfile` 与请求一致。
+- 当前 profile 兼容路径要求 `codeVersionId` 指向 `READY` + `APPROVED` 的代码版本，并且冻结后的代码资产 `trainingProfile` 与请求一致；模块二的稳定消费契约以版本中固化的 profile 快照为准。
 - 当前唯一 profile 为 `image_text_consistency_fusion_logreg`，展示名为“图文一致性基线训练”，要求代码入口 `scripts/training/train_fusion_baseline.py` 和 `NLP` 数据集。
 - `MULTIMODAL` 当前不能进入训练任务类型。
 - 模块二向训练侧稳定交付 READY `datasetVersionId` 和 consumer manifest；训练侧负责 batch 组装、样本选择和多模态适配。
 - 训练侧不得依赖 `storagePath`、MinIO objectName、ZIP offset 或模块二数据库表结构。
 - 本地训练器当前实际只支持 CV/YOLO 图片和 `labels/*.txt` 数据。
 - legacy 本地训练器主要有效超参数为 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）；profile 路径记录并传递 `hyperParams`，但不能覆盖固定训练命令。
+
+### 18.7 V2 代码资产、工作区与版本
+
+V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` 为稳定标识。成功响应直接返回 DTO、列表或下载流；JSON 失败响应为 `V2ErrorResponse`（`success=false`、`errorCode`、`errorMessage`、`details`、`traceId`），同时返回真实 HTTP 状态和 `X-Trace-Id`，不使用 legacy `ApiResponse`。
+
+普通 V2 代码资产、版本和工作区的读取与编辑均为 owner-only；跨用户访问统一隐藏为 `404 / CODE_ASSET_NOT_FOUND`。管理员身份不会获得通用源码读取权。只有审批和历史制品恢复是显式管理员能力，并且先检查管理员权限：无权限返回 `403 / CODE_APPROVAL_FORBIDDEN`。
+
+资产接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/v2/code-assets` | 创建空代码资产，成功为 `201` |
+| `POST` | `/api/v2/code-assets/import` | multipart 导入 ZIP；part 为 JSON `metadata` 和 `file`，成功为 `201` |
+| `GET` | `/api/v2/code-assets` | 查询当前用户资产 |
+| `GET` | `/api/v2/code-assets/{assetId}` | 查询资产详情 |
+| `PATCH` | `/api/v2/code-assets/{assetId}` | 以 `assetRevision` 做资产元数据 CAS 更新 |
+| `GET` | `/api/v2/code-assets/{assetId}/versions` | 查询版本列表 |
+| `GET` | `/api/v2/code-assets/{assetId}/workspaces` | 查询打开的工作区 |
+| `POST` | `/api/v2/code-assets/{assetId}/workspaces` | 打开工作区，可传 `baseVersionId`，成功为 `201` |
+
+`trainingProfile` 在该资产还没有任何未删除代码版本时可修改；首个版本产生后，改为不同值或显式置空均返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。传入与当前值相同的 profile 是幂等 no-op。发布或导入时，`trainingProfile` 会固化到 `CodeVersion`；consumer manifest 返回该版本快照，不回读可变资产元数据。这里描述的是模块二的稳定代码消费契约；本次修复不声明训练执行器已同步改造，包括训练在内的新消费者应通过 `codeVersionId` 使用版本快照。
+
+工作区接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v2/code-workspaces/{workspaceId}` | 工作区摘要 |
+| `GET` | `/api/v2/code-workspaces/{workspaceId}/tree?prefix=...` | 虚拟目录树 |
+| `GET` | `/api/v2/code-workspaces/{workspaceId}/files/content?path=...` | UTF-8 在线内容 |
+| `GET` | `/api/v2/code-workspaces/{workspaceId}/files/download?path=...` | 下载单文件 |
+| `PUT` | `/api/v2/code-workspaces/{workspaceId}/files?path=...` | 新建或覆盖文件 |
+| `POST` | `/api/v2/code-workspaces/{workspaceId}/files/move` | 移动或重命名文件 |
+| `DELETE` | `/api/v2/code-workspaces/{workspaceId}/files?path=...` | 删除文件 |
+| `POST` | `/api/v2/code-workspaces/{workspaceId}/validate` | 校验当前工作区 |
+| `POST` | `/api/v2/code-workspaces/{workspaceId}/publish` | 发布不可变版本，成功为 `201` |
+| `POST` | `/api/v2/code-workspaces/{workspaceId}/abandon` | 放弃工作区 |
+
+代码文件只允许 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`；`languageId` 为 `python`、`json`、`yaml`、`markdown` 或 `plaintext`，仅供前端选择 Monaco 高亮器，后端不执行源码。目录是从文件路径推导出的虚拟节点。在线读取和编辑只接受 UTF-8 且最多 `1,048,576` bytes；超限返回 `413 / CODE_CONTENT_TOO_LARGE`，但文件仍可在树中列出并通过下载接口取回。`contentHash` 是原始字节的 SHA-256，不是规范化文本哈希。
+
+写、移动、删除、校验、发布和放弃请求必须使用 `expectedWorkspaceRevision` 做工作区 CAS；针对已有文件的写、移动、删除还必须携带匹配的 `expectedContentHash`，新建文件则不传内容哈希。冲突返回 `409 / CODE_ASSET_CONFLICT`，典型 reasonCode 为 `WORKSPACE_REVISION_CONFLICT`、`CONTENT_HASH_CONFLICT`、`TARGET_EXISTS` 或 `WORKSPACE_READ_ONLY`。
+
+版本接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v2/code-versions/{versionId}` | 版本详情 |
+| `GET` | `/api/v2/code-versions/{versionId}/tree?prefix=...` | 只读虚拟目录树 |
+| `GET` | `/api/v2/code-versions/{versionId}/files/content?path=...` | 只读在线内容 |
+| `GET` | `/api/v2/code-versions/{versionId}/files/download?path=...` | 下载单文件 |
+| `GET` | `/api/v2/code-versions/{versionId}/download` | 下载完整 ZIP |
+| `GET` | `/api/v2/code-versions/{versionId}/consumer-manifest` | 稳定消费清单 |
+| `POST` | `/api/v2/code-versions/{versionId}/validate` | 生成或刷新校验证据，不自动审批 |
+| `POST` | `/api/v2/code-versions/{versionId}/approval` | 管理员独立审批 |
+| `POST` | `/api/v2/code-versions/{versionId}/artifact-upgrade` | 管理员恢复单个历史制品 |
+| `POST` | `/api/v2/code-versions/{versionId}/deprecate` | 标记弃用 |
+| `POST` | `/api/v2/code-versions/{versionId}/archive` | 归档 |
+
+版本状态为 `READY`、`DEPRECATED`、`ARCHIVED`；校验状态为 `NOT_RUN`、`PASSED`、`FAILED`；审批状态为 `PENDING`、`APPROVED`、`REJECTED`、`REVOKED`。`validate` 和 legacy `training-check` 只生成或刷新校验证据，绝不自动改为 `APPROVED`。legacy `/api/code/version/{codeVersionId}/approve` 与 V2 `/approval` 均为管理员独立审批，并要求当前制品 SHA 对应最新且通过的校验记录。
+
+`consumer-manifest` 只返回 `assetId`、`versionId`、`purpose`、`runtime`、`entryScript`、`trainingType`、`trainingProfile`、`artifactSha256`、`validationRunId`、`validationPolicyVersion`、`approvalRecordId`。解析器每次消费都会实际读取对象，并精确核对 objectName、数据库 SHA-256 和数据库 size；不一致或读取失败会拒绝交付，典型 reasonCode 为 `STORAGE_REFERENCE_INVALID`、`ARTIFACT_SHA256_MISMATCH`、`ARTIFACT_SIZE_MISMATCH`、`STORAGE_READ_FAILED`。manifest 不暴露 `storagePath`、MinIO 信息或可持久化 URL。
+
+`artifact-upgrade` 只处理一个 `versionId`，管理员鉴权先于资源查询。它仅接受精确匹配旧规则的 legacy 对象路径，复制到唯一的版本级 canonical 对象，按原始字节核对 SHA 和 size，在事务内更新证据并写审计，旧对象进入异步删除；失败会补偿清理新对象。成功后自动重新校验，但审批状态仍为 `PENDING`，必须再调用 `/approval`；对已经是 canonical 且证据一致的版本重试时幂等返回 `upgraded=false`。成功字段仅为 `versionId`、`artifactSha256`、`sizeBytes`、`approvalStatus`、`upgraded`、`validation`，不返回路径。失败使用 `403`、`404`、`409`、`422` 或 `503`；冲突/证据 reasonCode 包括 `ARTIFACT_UPGRADE_APPROVAL_CONFLICT`、`ARTIFACT_UPGRADE_CONFLICT`、`LEGACY_STORAGE_REFERENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_MISMATCH`、`ARTIFACT_STORAGE_EVIDENCE_INVALID`、`ARTIFACT_COPY_MISMATCH`。
+
+V2 代码顶层错误码：
+
+| HTTP | `errorCode` | 说明 |
+| --- | --- | --- |
+| `404` | `CODE_ASSET_NOT_FOUND` | 不存在或 owner 不匹配 |
+| `403` | `CODE_APPROVAL_FORBIDDEN` | 缺少审批/恢复管理员权限 |
+| `409` | `CODE_ASSET_CONFLICT` | CAS、生命周期或恢复冲突，细分见 `details.reasonCode` |
+| `413` | `CODE_CONTENT_TOO_LARGE` | 超出在线内容上限 |
+| `422` | `CODE_VALIDATION_FAILED` | 代码包、证据或消费完整性校验失败 |
+| `503` | `CODE_STORAGE_UNAVAILABLE` | 制品存储暂不可用 |

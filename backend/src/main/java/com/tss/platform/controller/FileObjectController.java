@@ -65,6 +65,7 @@ public class FileObjectController {
                 return ApiResponse.fail("objectName 不能为空");
             }
             name = normalizeUserObjectName(name);
+            requireGenericFileMutationAllowed(name);
             minioService.uploadFile(name, file);
             StatObjectResponse stat = minioService.stat(name);
             Map<String, Object> data = new HashMap<>();
@@ -102,6 +103,7 @@ public class FileObjectController {
     public ApiResponse<Map<String, Object>> delete(@RequestParam("objectName") String objectName) {
         try {
             String cleanName = requireObjectAccess(objectName);
+            requireGenericFileMutationAllowed(cleanName);
             minioDeleteTaskService.enqueueDefaultBucketDelete(
                     cleanName,
                     MinioDeleteTaskService.SOURCE_FILE_OBJECT,
@@ -138,6 +140,16 @@ public class FileObjectController {
             throw new IllegalArgumentException("object not found or no permission");
         }
         return cleanName;
+    }
+
+    private static void requireGenericFileMutationAllowed(String objectName) {
+        String[] components = objectName.split("/", -1);
+        if (components.length >= 3
+                && "users".equals(components[0])
+                && !components[1].isEmpty()
+                && "codes".equals(components[2])) {
+            throw new IllegalArgumentException("受管代码制品不能通过通用文件接口修改");
+        }
     }
 
     private String currentUserPrefix() {
