@@ -95,6 +95,11 @@ class CodeAssetManagementPersistenceContractTest {
 
         assertEquals("code_workspace_file_delta", tableName(CodeWorkspaceFileDelta.class));
         assertArrayEquals(content, delta.getContentBytes());
+        content[0] = 'X';
+        assertEquals('p', delta.getContentBytes()[0]);
+        byte[] returned = delta.getContentBytes();
+        returned[0] = 'Y';
+        assertEquals('p', delta.getContentBytes()[0]);
         assertEquals("src/train.py", delta.getPath());
 
         CodeValidationRun validation = new CodeValidationRun();
@@ -173,9 +178,19 @@ class CodeAssetManagementPersistenceContractTest {
         assertTrue(sql.contains("create table code_asset_audit_log"));
         assertTrue(sql.contains("ck_code_workspace_status"));
         assertTrue(sql.contains("'open', 'published', 'abandoned'"));
+        assertTrue(sql.contains("ck_code_workspace_revision"));
+        assertTrue(sql.contains("revision >= 0"));
         assertTrue(sql.contains("bytea"));
         assertTrue(sql.contains("ck_code_workspace_file_delta_operation"));
         assertTrue(sql.contains("'upsert', 'delete'"));
+        assertTrue(sql.contains("ck_code_workspace_file_delta_payload"));
+        assertTrue(sql.contains("size_bytes = octet_length(content_bytes)"));
+        assertTrue(sql.contains("size_bytes >= 0"));
+        assertTrue(sql.contains("content_hash ~ '^[0-9a-f]{64}$'"));
+        assertTrue(sql.contains("operation = 'delete'"));
+        assertTrue(sql.contains("content_bytes is null"));
+        assertTrue(sql.contains("content_hash is null"));
+        assertTrue(sql.contains("size_bytes is null"));
         assertTrue(sql.contains("ck_code_validation_run_status"));
         assertTrue(sql.contains("ck_code_approval_record_decision"));
         assertTrue(sql.contains("'legacy_approval_imported'"));

@@ -1,0 +1,207 @@
+package com.tss.platform.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.entity.CodeAssetAuditLog;
+import com.tss.platform.repository.CodeAssetAuditLogRepository;
+import com.tss.platform.security.AuthContext;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Pattern;
+
+@Service
+public class CodeAssetAuditService {
+
+    private static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern REASON_CODE = Pattern.compile("[A-Z0-9_]+");
+    private static final Set<String> ALLOWED_KEYS = Set.of(
+            "assetId",
+            "versionId",
+            "workspaceId",
+            "revision",
+            "fileCount",
+            "fileHash",
+            "oldHash",
+            "newHash",
+            "artifactSha256",
+            "policyVersion",
+            "reasonCode"
+    );
+    private static final Set<String> FORBIDDEN_KEY_PARTS = Set.of(
+            "content",
+            "source",
+            "storage",
+            "object",
+            "bucket",
+            "url",
+            "token",
+            "secret"
+    );
+
+    private final CodeAssetAuditLogRepository repository;
+    private final AuthContext authContext;
+    private final ObjectMapper objectMapper;
+
+    public CodeAssetAuditService(
+            CodeAssetAuditLogRepository repository,
+            AuthContext authContext,
+            ObjectMapper objectMapper
+    ) {
+        this.repository = repository;
+        this.authContext = authContext;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void workspaceOpened(String assetId, String workspaceId, long revision) {
+        append(assetId, workspaceId, "WORKSPACE_OPENED", metadata(
+                "revision", revision
+        ));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void fileUpserted(
+            String assetId,
+            String workspaceId,
+            long revision,
+            String oldHash,
+            String newHash
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        putIfNotNull(metadata, "oldHash", oldHash);
+        putIfNotNull(metadata, "newHash", newHash);
+        append(assetId, workspaceId, "FILE_UPSERTED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void fileMoved(
+            String assetId,
+            String workspaceId,
+            long revision,
+            String fileHash
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("fileCount", 2L);
+        putIfNotNull(metadata, "fileHash", fileHash);
+        append(assetId, workspaceId, "FILE_MOVED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void fileDeleted(
+            String assetId,
+            String workspaceId,
+            long revision,
+            String oldHash
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        putIfNotNull(metadata, "oldHash", oldHash);
+        append(assetId, workspaceId, "FILE_DELETED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void workspaceAbandoned(String assetId, String workspaceId, long revision) {
+        append(assetId, workspaceId, "WORKSPACE_ABANDONED", metadata(
+                "revision", revision
+        ));
+    }
+
+    static Map<String, Object> validateMetadata(Map<String, ?> metadata) {
+        if (metadata == null) {
+            throw invalidMetadata();
+        }
+        LinkedHashMap<String, Object> safe = new LinkedHashMap<>();
+        for (Map.Entry<String, ?> entry : metadata.entrySet()) {
+            String key = entry.getKey();
+            if (key == null || !ALLOWED_KEYS.contains(key) || hasForbiddenPart(key)) {
+                throw invalidMetadata();
+            }
+            Object value = entry.getValue();
+            validateValue(key, value);
+            safe.put(key, value);
+        }
+        return Collections.unmodifiableMap(safe);
+    }
+
+    private void append(
+            String assetId,
+            String workspaceId,
+            String action,
+            Map<String, ?> metadata
+    ) {
+        Map<String, Object> safe = validateMetadata(metadata);
+        String metadataJson;
+        try {
+            metadataJson = objectMapper.writeValueAsString(safe);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Unable to serialize safe code audit metadata", exception);
+        }
+
+        CodeAssetAuditLog auditLog = new CodeAssetAuditLog();
+        auditLog.setId("code-audit-" + UUID.randomUUID().toString().replace("-", ""));
+        auditLog.setAssetId(assetId);
+        auditLog.setWorkspaceId(workspaceId);
+        auditLog.setAction(action);
+        auditLog.setActorUserId(authContext.currentUserId());
+        auditLog.setMetadataJson(metadataJson);
+        auditLog.setCreatedAt(Instant.now());
+        repository.save(auditLog);
+    }
+
+    private static LinkedHashMap<String, Object> metadata(String key, Object value) {
+        LinkedHashMap<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(key, value);
+        return metadata;
+    }
+
+    private static void putIfNotNull(Map<String, Object> metadata, String key, Object value) {
+        if (value != null) {
+            metadata.put(key, value);
+        }
+    }
+
+    private static boolean hasForbiddenPart(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return FORBIDDEN_KEY_PARTS.stream().anyMatch(normalized::contains);
+    }
+
+    private static void validateValue(String key, Object value) {
+        if (value == null
+                || value instanceof byte[]
+                || value instanceof Map<?, ?>
+                || value instanceof Iterable<?>
+                || value.getClass().isArray()) {
+            throw invalidMetadata();
+        }
+        if ("revision".equals(key) || "fileCount".equals(key)) {
+            if (!(value instanceof Number number)
+                    || number.longValue() < 0
+                    || number.doubleValue() != number.longValue()) {
+                throw invalidMetadata();
+            }
+            return;
+        }
+        if (!(value instanceof String text) || text.length() > 256) {
+            throw invalidMetadata();
+        }
+        if (key.endsWith("Hash") || "artifactSha256".equals(key)) {
+            if (!HASH.matcher(text).matches()) {
+                throw invalidMetadata();
+            }
+        } else if ("reasonCode".equals(key) && !REASON_CODE.matcher(text).matches()) {
+            throw invalidMetadata();
+        }
+    }
+
+    private static IllegalArgumentException invalidMetadata() {
+        return new IllegalArgumentException("Audit metadata is not allowed");
+    }
+}

@@ -43,6 +43,15 @@ class CodeAssetRepositoryContractTest {
                 String.class
         );
         assertPessimisticWriteQuery(versionLock, "deleted = false");
+
+        assertEquals(
+                Optional.class,
+                CodeVersionRepository.class.getMethod(
+                        "findByIdAndAssetIdAndDeletedFalse",
+                        String.class,
+                        String.class
+                ).getReturnType()
+        );
     }
 
     @Test
@@ -67,17 +76,40 @@ class CodeAssetRepositoryContractTest {
                 String.class
         );
         assertPessimisticWriteQuery(workspaceLock, "deleted = false");
+
+        Method readableWorkspace = CodeWorkspaceRepository.class.getMethod(
+                "findByIdAndDeletedFalse",
+                String.class
+        );
+        assertEquals(Optional.class, readableWorkspace.getReturnType());
+        assertFalse(readableWorkspace.isAnnotationPresent(Lock.class));
+
+        Method workspaceAssetLocator = CodeWorkspaceRepository.class.getMethod(
+                "findAssetIdByIdAndDeletedFalse",
+                String.class
+        );
+        assertEquals(Optional.class, workspaceAssetLocator.getReturnType());
+        Query locatorQuery = workspaceAssetLocator.getAnnotation(Query.class);
+        assertNotNull(locatorQuery);
+        assertTrue(locatorQuery.value().contains("select w.assetId"));
+
+        Method workspaceRevision = CodeWorkspaceRepository.class.getMethod(
+                "findRevisionByIdAndDeletedFalse",
+                String.class
+        );
+        assertEquals(Optional.class, workspaceRevision.getReturnType());
+        Query revisionQuery = workspaceRevision.getAnnotation(Query.class);
+        assertNotNull(revisionQuery);
+        assertTrue(revisionQuery.value().contains("select w.revision"));
     }
 
     @Test
     void supportingRepositoriesExposeDeterministicHistoryLookups() throws Exception {
-        assertEquals(
-                List.class,
-                CodeWorkspaceFileDeltaRepository.class.getMethod(
-                        "findByWorkspaceIdOrderByPathAsc",
-                        String.class
-                ).getReturnType()
+        Method allDeltaMetadata = CodeWorkspaceFileDeltaRepository.class.getMethod(
+                "findMetadataByWorkspaceIdOrderByPathAsc",
+                String.class
         );
+        assertMetadataOnlyDeltaQuery(allDeltaMetadata);
         assertEquals(
                 Optional.class,
                 CodeWorkspaceFileDeltaRepository.class.getMethod(
@@ -86,6 +118,12 @@ class CodeAssetRepositoryContractTest {
                         String.class
                 ).getReturnType()
         );
+        Method prefixedDeltaMetadata = CodeWorkspaceFileDeltaRepository.class.getMethod(
+                "findMetadataByWorkspaceIdAndPathStartingWithOrderByPathAsc",
+                String.class,
+                String.class
+        );
+        assertMetadataOnlyDeltaQuery(prefixedDeltaMetadata);
         assertEquals(
                 Optional.class,
                 CodeValidationRunRepository.class.getMethod(
@@ -134,5 +172,19 @@ class CodeAssetRepositoryContractTest {
         Query query = method.getAnnotation(Query.class);
         assertNotNull(query);
         assertTrue(query.value().contains(queryFragment));
+    }
+
+    private static void assertMetadataOnlyDeltaQuery(Method method) {
+        assertEquals(List.class, method.getReturnType());
+        Query query = method.getAnnotation(Query.class);
+        assertNotNull(query);
+        assertTrue(query.value().contains("d.path as path"));
+        assertTrue(query.value().contains("d.operation as operation"));
+        assertTrue(query.value().contains("d.sizeBytes as sizeBytes"));
+        assertTrue(query.value().contains("d.contentHash as contentHash"));
+        assertFalse(query.value().contains("contentBytes"));
+        if (method.getParameterCount() == 2) {
+            assertTrue(query.value().contains("escape '!'"));
+        }
     }
 }

@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.Instant;
+import java.util.Arrays;
 
 @Getter
 @Setter
@@ -26,6 +27,9 @@ import java.time.Instant;
         )
 )
 public class CodeWorkspaceFileDelta {
+
+    public static final String OPERATION_UPSERT = "UPSERT";
+    public static final String OPERATION_DELETE = "DELETE";
 
     @Id
     @Column(name = "id", length = 64)
@@ -54,4 +58,14 @@ public class CodeWorkspaceFileDelta {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    public byte[] getContentBytes() {
+        return contentBytes == null ? null : Arrays.copyOf(contentBytes, contentBytes.length);
+    }
+
+    public void setContentBytes(byte[] contentBytes) {
+        this.contentBytes = contentBytes == null
+                ? null
+                : Arrays.copyOf(contentBytes, contentBytes.length);
+    }
 }

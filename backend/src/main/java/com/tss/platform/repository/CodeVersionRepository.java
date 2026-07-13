@@ -14,6 +14,8 @@ public interface CodeVersionRepository extends JpaRepository<CodeVersion, String
 
     Optional<CodeVersion> findByIdAndDeletedFalse(String id);
 
+    Optional<CodeVersion> findByIdAndAssetIdAndDeletedFalse(String id, String assetId);
+
     List<CodeVersion> findByDeletedFalseOrderByCreatedAtDesc();
 
     List<CodeVersion> findByAssetIdAndDeletedFalseOrderByCreatedAtDesc(String assetId);

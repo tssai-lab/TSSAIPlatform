@@ -67,4 +67,49 @@ class CodePathPolicyTest {
     void treatsPathsAsCaseSensitive() {
         assertDoesNotThrow(() -> policy.validateNoTreeConflicts(List.of("Train.py", "train.py")));
     }
+
+    @Test
+    void normalizesRootAndVirtualDirectoryPrefixes() {
+        assertEquals("", policy.normalizeDirectoryPrefix(null));
+        assertEquals("", policy.normalizeDirectoryPrefix(" "));
+        assertEquals("", policy.normalizeDirectoryPrefix("/"));
+        assertEquals("src/training", policy.normalizeDirectoryPrefix("src\\training/"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "//",
+            "/absolute",
+            "C:\\training",
+            "a/../training",
+            "a/./training",
+            "a//training",
+            "nul\u0000name"
+    })
+    void rejectsUnsafeVirtualDirectoryPrefixes(String rawPrefix) {
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                () -> policy.normalizeDirectoryPrefix(rawPrefix)
+        );
+        assertEquals("INVALID_PATH", error.getReasonCode());
+    }
+
+    @Test
+    void enforcesPersistedPathCharacterLimit() {
+        String exact = "a".repeat(1020) + ".txt";
+        assertEquals(1024, exact.length());
+        assertEquals(exact, policy.normalizeFilePath(exact));
+
+        CodeValidationException file = assertThrows(
+                CodeValidationException.class,
+                () -> policy.normalizeFilePath("a".repeat(1021) + ".txt")
+        );
+        assertEquals("INVALID_PATH", file.getReasonCode());
+
+        CodeValidationException directory = assertThrows(
+                CodeValidationException.class,
+                () -> policy.normalizeDirectoryPrefix("a".repeat(1025))
+        );
+        assertEquals("INVALID_PATH", directory.getReasonCode());
+    }
 }

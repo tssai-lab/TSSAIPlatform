@@ -11,6 +11,14 @@ import java.util.Optional;
 
 public interface CodeWorkspaceRepository extends JpaRepository<CodeWorkspace, String> {
 
+    Optional<CodeWorkspace> findByIdAndDeletedFalse(String id);
+
+    @Query("select w.assetId from CodeWorkspace w where w.id = :id and w.deleted = false")
+    Optional<String> findAssetIdByIdAndDeletedFalse(@Param("id") String id);
+
+    @Query("select w.revision from CodeWorkspace w where w.id = :id and w.deleted = false")
+    Optional<Long> findRevisionByIdAndDeletedFalse(@Param("id") String id);
+
     @Query("""
             select w from CodeWorkspace w
             where w.assetId = :assetId

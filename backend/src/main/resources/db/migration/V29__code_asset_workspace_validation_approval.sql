@@ -52,6 +52,8 @@ CREATE TABLE code_workspace (
     deleted_at          TIMESTAMP WITH TIME ZONE,
     CONSTRAINT ck_code_workspace_status
         CHECK (status IN ('OPEN', 'PUBLISHED', 'ABANDONED')),
+    CONSTRAINT ck_code_workspace_revision
+        CHECK (revision >= 0),
     CONSTRAINT fk_code_workspace_asset
         FOREIGN KEY (asset_id) REFERENCES code_asset (id),
     CONSTRAINT fk_code_workspace_base_version
@@ -74,6 +76,25 @@ CREATE TABLE code_workspace_file_delta (
         FOREIGN KEY (workspace_id) REFERENCES code_workspace (id),
     CONSTRAINT ck_code_workspace_file_delta_operation
         CHECK (operation IN ('UPSERT', 'DELETE')),
+    CONSTRAINT ck_code_workspace_file_delta_payload
+        CHECK (
+            (
+                operation = 'UPSERT'
+                AND content_bytes IS NOT NULL
+                AND content_hash IS NOT NULL
+                AND size_bytes IS NOT NULL
+                AND size_bytes >= 0
+                AND size_bytes = octet_length(content_bytes)
+                AND content_hash ~ '^[0-9a-f]{64}$'
+            )
+            OR
+            (
+                operation = 'DELETE'
+                AND content_bytes IS NULL
+                AND content_hash IS NULL
+                AND size_bytes IS NULL
+            )
+        ),
     CONSTRAINT uk_code_workspace_file_delta_path
         UNIQUE (workspace_id, path)
 );

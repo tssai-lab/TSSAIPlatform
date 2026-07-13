@@ -1,5 +1,7 @@
 package com.tss.platform.service;
 
+import org.springframework.stereotype.Component;
+
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -16,6 +18,7 @@ import java.util.Objects;
 /**
  * Shared extension, preview and raw-content hashing policy for code files.
  */
+@Component
 public final class CodeFilePolicy {
 
     public static final long EDITABLE_LIMIT_BYTES = 1_048_576L;
@@ -55,6 +58,39 @@ public final class CodeFilePolicy {
                 true,
                 reasonCode,
                 sha256(rawBytes)
+        );
+    }
+
+    /**
+     * Describes metadata that already passed strict archive/edit validation.
+     * This method deliberately does not read or decode source bytes.
+     */
+    public CodeFileDescriptor describeTrustedMetadata(
+            String normalizedPath,
+            long sizeBytes,
+            String contentHash
+    ) {
+        if (sizeBytes < 0) {
+            throw validation("INVALID_SIZE", "Code file size is invalid");
+        }
+        FileType fileType = requireSupportedType(normalizedPath);
+        String extension = extensionOf(normalizedPath);
+        boolean editable = sizeBytes <= EDITABLE_LIMIT_BYTES;
+        int slash = normalizedPath.lastIndexOf('/');
+        String name = slash < 0 ? normalizedPath : normalizedPath.substring(slash + 1);
+        return new CodeFileDescriptor(
+                normalizedPath,
+                name,
+                "FILE",
+                extension,
+                fileType.languageId(),
+                fileType.contentType(),
+                sizeBytes,
+                editable,
+                editable,
+                true,
+                editable ? null : "FILE_TOO_LARGE",
+                contentHash
         );
     }
 
