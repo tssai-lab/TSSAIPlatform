@@ -51,4 +51,6 @@ public interface CodeWorkspaceFileDeltaRepository
     );
 
     Optional<CodeWorkspaceFileDelta> findByWorkspaceIdAndPath(String workspaceId, String path);
+
+    List<CodeWorkspaceFileDelta> findByWorkspaceIdOrderByPathAsc(String workspaceId);
 }

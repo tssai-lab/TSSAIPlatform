@@ -9,9 +9,30 @@ ALTER TABLE code_version
     ADD COLUMN artifact_sha256 VARCHAR(64),
     ADD COLUMN validation_status VARCHAR(32) NOT NULL DEFAULT 'NOT_RUN',
     ADD COLUMN validation_policy_version VARCHAR(128),
+    ADD COLUMN purpose VARCHAR(1024),
+    ADD COLUMN runtime VARCHAR(128),
+    ADD COLUMN entry_script VARCHAR(1024),
+    ADD COLUMN training_type VARCHAR(128),
+    ADD COLUMN training_profile VARCHAR(128),
     ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE,
     ADD COLUMN deprecated_at TIMESTAMP WITH TIME ZONE,
     ADD COLUMN archived_at TIMESTAMP WITH TIME ZONE;
+
+UPDATE code_version version_row
+SET purpose = asset_row.purpose,
+    runtime = asset_row.runtime,
+    entry_script = COALESCE(
+        asset_row.entry_script,
+        CASE asset_row.training_profile
+            WHEN 'image_text_consistency_fusion_logreg'
+                THEN 'scripts/training/train_fusion_baseline.py'
+            ELSE NULL
+        END
+    ),
+    training_type = asset_row.training_type,
+    training_profile = asset_row.training_profile
+FROM code_asset asset_row
+WHERE asset_row.id = version_row.asset_id;
 
 DO $$
 BEGIN

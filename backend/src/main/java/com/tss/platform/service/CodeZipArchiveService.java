@@ -5,6 +5,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream.UnicodeExtraFieldPolicy;
 import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -33,6 +34,7 @@ import java.util.zip.ZipEntry;
 /**
  * Reads fully validated code ZIPs and emits canonical, byte-stable archives.
  */
+@Component
 public final class CodeZipArchiveService {
 
     public static final int MAX_ENTRIES = 10_000;

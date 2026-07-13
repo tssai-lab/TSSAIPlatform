@@ -43,6 +43,21 @@ public class CodeVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "purpose", length = 1024)
+    private String purpose;
+
+    @Column(name = "runtime", length = 128)
+    private String runtime;
+
+    @Column(name = "entry_script", length = 1024)
+    private String entryScript;
+
+    @Column(name = "training_type", length = 128)
+    private String trainingType;
+
+    @Column(name = "training_profile", length = 128)
+    private String trainingProfile;
+
     @Column(name = "status", nullable = false, length = 32)
     private String status = "READY";
 

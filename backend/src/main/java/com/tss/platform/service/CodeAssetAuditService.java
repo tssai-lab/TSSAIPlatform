@@ -63,7 +63,7 @@ public class CodeAssetAuditService {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void workspaceOpened(String assetId, String workspaceId, long revision) {
-        append(assetId, workspaceId, "WORKSPACE_OPENED", metadata(
+        append(assetId, null, workspaceId, "WORKSPACE_OPENED", metadata(
                 "revision", revision
         ));
     }
@@ -79,7 +79,7 @@ public class CodeAssetAuditService {
         LinkedHashMap<String, Object> metadata = metadata("revision", revision);
         putIfNotNull(metadata, "oldHash", oldHash);
         putIfNotNull(metadata, "newHash", newHash);
-        append(assetId, workspaceId, "FILE_UPSERTED", metadata);
+        append(assetId, null, workspaceId, "FILE_UPSERTED", metadata);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -92,7 +92,7 @@ public class CodeAssetAuditService {
         LinkedHashMap<String, Object> metadata = metadata("revision", revision);
         metadata.put("fileCount", 2L);
         putIfNotNull(metadata, "fileHash", fileHash);
-        append(assetId, workspaceId, "FILE_MOVED", metadata);
+        append(assetId, null, workspaceId, "FILE_MOVED", metadata);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -104,14 +104,88 @@ public class CodeAssetAuditService {
     ) {
         LinkedHashMap<String, Object> metadata = metadata("revision", revision);
         putIfNotNull(metadata, "oldHash", oldHash);
-        append(assetId, workspaceId, "FILE_DELETED", metadata);
+        append(assetId, null, workspaceId, "FILE_DELETED", metadata);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void workspaceAbandoned(String assetId, String workspaceId, long revision) {
-        append(assetId, workspaceId, "WORKSPACE_ABANDONED", metadata(
+        append(assetId, null, workspaceId, "WORKSPACE_ABANDONED", metadata(
                 "revision", revision
         ));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void published(
+            String assetId,
+            String versionId,
+            String workspaceId,
+            long revision,
+            long fileCount,
+            String artifactSha256,
+            String policyVersion
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("fileCount", fileCount);
+        metadata.put("artifactSha256", artifactSha256);
+        metadata.put("policyVersion", policyVersion);
+        append(assetId, versionId, workspaceId, "PUBLISH", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void validated(
+            String assetId,
+            String versionId,
+            String artifactSha256,
+            String policyVersion,
+            String reasonCode,
+            long fileCount
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "artifactSha256", artifactSha256
+        );
+        metadata.put("policyVersion", policyVersion);
+        metadata.put("fileCount", fileCount);
+        putIfNotNull(metadata, "reasonCode", reasonCode);
+        append(assetId, versionId, null, "VALIDATE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void workspaceValidated(
+            String assetId,
+            String workspaceId,
+            long revision,
+            String artifactSha256,
+            String policyVersion,
+            String reasonCode,
+            long fileCount
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("artifactSha256", artifactSha256);
+        metadata.put("policyVersion", policyVersion);
+        metadata.put("fileCount", fileCount);
+        putIfNotNull(metadata, "reasonCode", reasonCode);
+        append(assetId, null, workspaceId, "VALIDATE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void approved(
+            String assetId,
+            String versionId,
+            String artifactSha256,
+            String policyVersion
+    ) {
+        decision(assetId, versionId, "APPROVE", artifactSha256, policyVersion,
+                "APPROVAL_APPROVED");
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void rejected(String assetId, String versionId) {
+        decision(assetId, versionId, "REJECT", null, null, "APPROVAL_REJECTED");
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void revoked(String assetId, String versionId) {
+        decision(assetId, versionId, "REVOKE", null, null, "APPROVAL_REVOKED");
     }
 
     static Map<String, Object> validateMetadata(Map<String, ?> metadata) {
@@ -133,6 +207,7 @@ public class CodeAssetAuditService {
 
     private void append(
             String assetId,
+            String versionId,
             String workspaceId,
             String action,
             Map<String, ?> metadata
@@ -148,12 +223,27 @@ public class CodeAssetAuditService {
         CodeAssetAuditLog auditLog = new CodeAssetAuditLog();
         auditLog.setId("code-audit-" + UUID.randomUUID().toString().replace("-", ""));
         auditLog.setAssetId(assetId);
+        auditLog.setVersionId(versionId);
         auditLog.setWorkspaceId(workspaceId);
         auditLog.setAction(action);
         auditLog.setActorUserId(authContext.currentUserId());
         auditLog.setMetadataJson(metadataJson);
         auditLog.setCreatedAt(Instant.now());
         repository.save(auditLog);
+    }
+
+    private void decision(
+            String assetId,
+            String versionId,
+            String action,
+            String artifactSha256,
+            String policyVersion,
+            String reasonCode
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata("reasonCode", reasonCode);
+        putIfNotNull(metadata, "artifactSha256", artifactSha256);
+        putIfNotNull(metadata, "policyVersion", policyVersion);
+        append(assetId, versionId, null, action, metadata);
     }
 
     private static LinkedHashMap<String, Object> metadata(String key, Object value) {
