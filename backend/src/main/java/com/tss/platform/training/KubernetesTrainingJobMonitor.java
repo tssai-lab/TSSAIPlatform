@@ -48,8 +48,7 @@ public class KubernetesTrainingJobMonitor {
         List<TrainingExperimentVersion> activeTasks = repository.findAllByOrderByCreatedAtDesc()
                 .stream()
                 .filter(task -> !TERMINAL_STATUSES.contains(task.getStatus()))
-                .filter(task -> "queued".equals(task.getStatus()) || "running".equals(task.getStatus())
-                        || "pending".equals(task.getStatus()))
+                .filter(task -> "queued".equals(task.getStatus()) || "running".equals(task.getStatus()))
                 .toList();
 
         for (TrainingExperimentVersion task : activeTasks) {
@@ -73,7 +72,7 @@ public class KubernetesTrainingJobMonitor {
         );
         if (!result.success()) {
             if (result.output() != null && result.output().contains("NotFound")) {
-                if ("queued".equals(task.getStatus()) || "pending".equals(task.getStatus())) {
+                if ("queued".equals(task.getStatus())) {
                     markFailed(task.getId(), "K8s Job 不存在或尚未创建: " + jobName);
                 }
             }
@@ -86,6 +85,7 @@ public class KubernetesTrainingJobMonitor {
         int active = parseInt(parts, 2);
 
         if (succeeded > 0) {
+            markSucceeded(task.getId());
             return;
         }
         if (failed > 0) {
@@ -141,6 +141,20 @@ public class KubernetesTrainingJobMonitor {
             }
             version.setUpdatedAt(Instant.now());
             repository.save(version);
+        }));
+    }
+
+    private void markSucceeded(String trainingId) {
+        transactionTemplate.executeWithoutResult(tx -> repository.findById(trainingId).ifPresent(version -> {
+            if (TERMINAL_STATUSES.contains(version.getStatus())) {
+                return;
+            }
+            version.setStatus("success");
+            version.setProgress(100);
+            version.setFinishedAt(Instant.now());
+            version.setUpdatedAt(Instant.now());
+            repository.save(version);
+            LOG.info("训练任务因 K8s Job 成功而同步为 success: id={}", trainingId);
         }));
     }
 

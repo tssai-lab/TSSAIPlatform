@@ -52,6 +52,7 @@ public class TrainingExperimentService {
             "failed",
             "stopped"
     );
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
 
     private final TrainingExperimentVersionRepository repo;
     private final ModelVersionRepository modelVersionRepo;
@@ -271,6 +272,9 @@ public class TrainingExperimentService {
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
+        if (!"queued".equals(version.getStatus()) && !"running".equals(version.getStatus())) {
+            throw new IllegalArgumentException("只有调度中或训练中的任务可以停止");
+        }
         trainingExecutorRouter.stop(version.getId());
         version.setStatus("stopped");
         version.setProgress(progressOf("stopped"));
@@ -326,6 +330,9 @@ public class TrainingExperimentService {
     ) {
         TrainingExperimentVersion version = repo.findById(trainingId)
                 .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
+        if (TERMINAL_STATUSES.contains(version.getStatus())) {
+            return toDto(version);
+        }
         applyResult(version, req);
         return toDto(repo.save(version));
     }

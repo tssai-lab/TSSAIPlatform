@@ -27,8 +27,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
             "/api/user/register/mobile",
             "/api/user/sms/code",
             "/api/user/forget/password",
-            "/api/user/login",
-            "/api/internal/training/result"
+            "/api/user/login"
     );
     private static final List<String> USER_SELF_PATHS = Arrays.asList(
             "/api/user/current-user",

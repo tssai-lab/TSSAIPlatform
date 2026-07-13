@@ -20,11 +20,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class KubernetesTrainingExecutor implements TrainingExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesTrainingExecutor.class);
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
@@ -107,7 +109,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     }
 
     private void submitJob(String trainingId) {
-        updateStatus(trainingId, "queued", 0, null);
         try {
             TrainingExperimentVersion task = repository.findById(trainingId)
                     .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
@@ -147,6 +148,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             if (!result.success()) {
                 throw new IllegalStateException("提交 K8s Job 失败: " + result.errorMessage() + "\n" + result.output());
             }
+            updateStatus(trainingId, "queued", 0, null);
             LOG.info("K8s 训练 Job 已提交: trainingId={}, profile={}, job={}",
                     trainingId, task.getTrainingProfile(), KubernetesJobNaming.jobNameForTraining(trainingId));
         } catch (Exception e) {
@@ -196,6 +198,11 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
 
     private void updateStatus(String trainingId, String status, int progress, String errorMessage) {
         transactionTemplate.executeWithoutResult(tx -> repository.findById(trainingId).ifPresent(version -> {
+            if (TERMINAL_STATUSES.contains(version.getStatus())) {
+                LOG.info("忽略终态训练任务的状态更新: trainingId={}, current={}, requested={}",
+                        trainingId, version.getStatus(), status);
+                return;
+            }
             version.setStatus(status);
             version.setProgress(progress);
             version.setUpdatedAt(Instant.now());
