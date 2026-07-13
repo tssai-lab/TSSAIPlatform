@@ -49,11 +49,29 @@ public class CodeVersion {
     @Column(name = "approval_status", nullable = false, length = 32)
     private String approvalStatus = "PENDING";
 
+    @Column(name = "artifact_sha256", length = 64)
+    private String artifactSha256;
+
+    @Column(name = "validation_status", nullable = false, length = 32)
+    private String validationStatus = "NOT_RUN";
+
+    @Column(name = "validation_policy_version", length = 128)
+    private String validationPolicyVersion;
+
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 
     @Column(name = "created_at")
     private Instant createdAt;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    @Column(name = "deprecated_at")
+    private Instant deprecatedAt;
+
+    @Column(name = "archived_at")
+    private Instant archivedAt;
 
     @Column(name = "deleted", nullable = false)
     private Boolean deleted = false;

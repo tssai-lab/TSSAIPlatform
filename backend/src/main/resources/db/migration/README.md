@@ -11,7 +11,7 @@ Flyway repair 或重新基线化。
 
 ## 当前迁移总览
 
-当前最高迁移版本为 `V28`。V1-V28 共同构成从空数据库升级到当前源码所需结构的
+当前最高迁移版本为 `V29`。V1-V29 共同构成从空数据库升级到当前源码所需结构的
 完整历史链路，均应保留。
 
 | 版本 | 主要职责 | 当前定位 |
@@ -44,6 +44,7 @@ Flyway repair 或重新基线化。
 | V26 | dataset workspace 审计日志 | 工作区内部回溯 |
 | V27 | ImportJob PARTIAL 和失败样本表 | 增量 retry |
 | V28 | 上传会话 DISCARDED 状态 | 草稿放弃与清理 |
+| V29 | 代码工作区、校验、审批和审计结构 | 代码资产管理基础 |
 
 部分旧约束会被后续迁移替换，但这不表示旧迁移可以删除：
 
@@ -252,6 +253,16 @@ Flyway repair 或重新基线化。
 
 - 保留 `UPLOADING`、`COMPLETING`、`COMPLETED` 三个既有状态。
 - 新增 `DISCARDED`，用于草稿放弃后阻止会话继续上传，同时保留会话审计链。
+
+## V29__code_asset_workspace_validation_approval.sql
+
+建立代码资产工作区、文件增量、校验、审批和审计持久化基础。
+
+- 为 `code_asset` 增加用途、运行时、入口脚本、训练类型和乐观锁版本字段。
+- 为 `code_version` 增加制品哈希、校验状态、策略版本和生命周期时间字段，并补充资产外键及状态约束。
+- 创建 `code_workspace` 和 `code_workspace_file_delta`，通过部分唯一索引保证每个资产最多一个未删除的 OPEN 工作区。
+- 创建 `code_validation_run`、`code_approval_record` 和 `code_asset_audit_log`，并通过 PostgreSQL trigger 拒绝审计日志 UPDATE/DELETE。
+- 将历史 APPROVED 状态保存为 `LEGACY_APPROVAL_IMPORTED` 记录后重置为 PENDING，要求按新流程重新校验和审批。
 
 ## 维护规则
 

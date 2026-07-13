@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -25,6 +26,18 @@ public class CodeAsset {
     @Column(name = "training_profile", length = 128)
     private String trainingProfile;
 
+    @Column(name = "purpose", length = 1024)
+    private String purpose;
+
+    @Column(name = "runtime", length = 128)
+    private String runtime;
+
+    @Column(name = "entry_script", length = 1024)
+    private String entryScript;
+
+    @Column(name = "training_type", length = 128)
+    private String trainingType;
+
     @Column(name = "remark", length = 1024)
     private String remark;
 
@@ -36,6 +49,10 @@ public class CodeAsset {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    @Version
+    @Column(name = "row_version", nullable = false)
+    private Long rowVersion;
 
     @Column(name = "deleted", nullable = false)
     private Boolean deleted = false;
