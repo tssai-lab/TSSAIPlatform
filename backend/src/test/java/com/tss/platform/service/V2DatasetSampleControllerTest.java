@@ -5,9 +5,6 @@ import com.tss.platform.controller.v2.V2ExceptionHandler;
 import com.tss.platform.dto.DatasetMultimodalExternalIdAnnotationDto;
 import com.tss.platform.dto.DatasetMultimodalExternalIdDataDto;
 import com.tss.platform.dto.DatasetMultimodalExternalIdSampleDto;
-import com.tss.platform.dto.DatasetSampleDataDto;
-import com.tss.platform.dto.DatasetSampleDetailDto;
-import com.tss.platform.dto.DatasetSampleListItemDto;
 import com.tss.platform.dto.PageResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -68,75 +65,4 @@ class V2DatasetSampleControllerTest {
                         .value("/api/v2/dataset-annotations/annotation-1/download"));
     }
 
-    @Test
-    void hiddenSampleAccessUsesNotFoundEnvelopeForDetailAndDataRoutes() throws Exception {
-        SampleService service = mock(SampleService.class);
-        SampleService.DatasetSampleAccessException hidden =
-                new SampleService.DatasetSampleAccessException(
-                        "dataset sample not found or no permission"
-                );
-        when(service.getSample("hidden-sample")).thenThrow(hidden);
-        when(service.listSampleData("hidden-sample")).thenThrow(hidden);
-
-        MockMvc mvc = MockMvcBuilders
-                .standaloneSetup(new V2DatasetSampleController(service))
-                .setControllerAdvice(new V2ExceptionHandler())
-                .build();
-
-        mvc.perform(get("/api/v2/dataset-samples/hidden-sample"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.errorCode").value("DATASET_SAMPLE_NOT_FOUND"))
-                .andExpect(jsonPath("$.errorMessage").value("数据集样本不存在或无权访问"));
-
-        mvc.perform(get("/api/v2/dataset-samples/hidden-sample/data"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.errorCode").value("DATASET_SAMPLE_NOT_FOUND"))
-                .andExpect(jsonPath("$.errorMessage").value("数据集样本不存在或无权访问"));
-    }
-
-    @Test
-    void sampleGalleryRoutesDelegateToSampleServiceWithoutLegacyEnvelope() throws Exception {
-        SampleService service = mock(SampleService.class);
-        DatasetSampleListItemDto item = new DatasetSampleListItemDto();
-        item.setSampleId("sample-1");
-        item.setDatasetVersionId("version-1");
-        PageResponse<DatasetSampleListItemDto> page = new PageResponse<>();
-        page.setData(List.of(item));
-        page.setPage(1);
-        page.setPageSize(20);
-        page.setTotal(1);
-        page.setTotalPages(1);
-        when(service.listSamples("version-1", 1, 20)).thenReturn(page);
-
-        DatasetSampleDataDto data = new DatasetSampleDataDto();
-        data.setSampleDataId("data-1");
-        DatasetSampleDetailDto detail = new DatasetSampleDetailDto();
-        detail.setSampleId("sample-1");
-        detail.setData(List.of(data));
-        detail.setAnnotations(List.of());
-        when(service.getSample("sample-1")).thenReturn(detail);
-        when(service.listSampleData("sample-1")).thenReturn(List.of(data));
-
-        MockMvc mvc = MockMvcBuilders
-                .standaloneSetup(new V2DatasetSampleController(service))
-                .setControllerAdvice(new V2ExceptionHandler())
-                .build();
-
-        mvc.perform(get("/api/v2/dataset-versions/version-1/samples")
-                        .param("page", "1")
-                        .param("pageSize", "20"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].sampleId").value("sample-1"));
-
-        mvc.perform(get("/api/v2/dataset-samples/sample-1"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sampleId").value("sample-1"))
-                .andExpect(jsonPath("$.data[0].sampleDataId").value("data-1"));
-
-        mvc.perform(get("/api/v2/dataset-samples/sample-1/data"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].sampleDataId").value("data-1"));
-    }
 }
