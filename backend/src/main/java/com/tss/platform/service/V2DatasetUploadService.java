@@ -3,7 +3,6 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.controller.v2.V2BusinessException;
-import com.tss.platform.controller.v2.V2ErrorDetailsSanitizer;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
@@ -46,8 +45,6 @@ public class V2DatasetUploadService {
     public V2DatasetUploadDto init(DatasetUploadInitRequest request) {
         try {
             return describe(uploadService.init(request));
-        } catch (DatasetVersionAllocationService.DatasetAllocationAccessException exception) {
-            throw datasetAllocationNotFound();
         } catch (IllegalArgumentException exception) {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
@@ -81,8 +78,6 @@ public class V2DatasetUploadService {
     ) {
         try {
             return describe(uploadService.saveChunk(uploadId, partIndex, file));
-        } catch (DatasetUploadService.DatasetUploadAccessException exception) {
-            throw notFound();
         } catch (IllegalArgumentException exception) {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
@@ -121,8 +116,6 @@ public class V2DatasetUploadService {
                 uploadService.complete(request);
             }
             return describe(uploadService.getProgress(uploadId));
-        } catch (DatasetUploadService.DatasetUploadAccessException exception) {
-            throw notFound();
         } catch (IllegalArgumentException exception) {
             throw new V2BusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY,
@@ -238,18 +231,10 @@ public class V2DatasetUploadService {
         );
     }
 
-    private V2BusinessException datasetAllocationNotFound() {
-        return new V2BusinessException(
-                HttpStatus.NOT_FOUND,
-                "DATASET_NOT_FOUND",
-                "数据集资产或父版本不存在或无权访问"
-        );
-    }
-
     private Map<String, Object> reasonDetails(IllegalArgumentException exception) {
-        return V2ErrorDetailsSanitizer.reasonDetails(
-                exception,
-                "上传请求暂时无法完成，请稍后重试"
-        );
+        String message = exception.getMessage();
+        return message == null || message.isBlank()
+                ? Map.of()
+                : Map.of("reason", message);
     }
 }

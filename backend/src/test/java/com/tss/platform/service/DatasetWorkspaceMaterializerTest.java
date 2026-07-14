@@ -16,15 +16,11 @@ import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.springframework.boot.test.system.CapturedOutput;
-import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.SliceImpl;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,40 +37,10 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DatasetWorkspaceMaterializerTest {
-
-    @Test
-    @ExtendWith(OutputCaptureExtension.class)
-    void materializeLogsSummaryWithoutStoragePath(CapturedOutput output) {
-        Fixture fixture = new Fixture();
-        when(fixture.versionPackageRepo.findByDatasetVersionIdOrderByPackageOrderAsc(
-                fixture.parent.getId()
-        )).thenReturn(List.of());
-        when(fixture.sampleRepo
-                .findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
-                        eq(fixture.parent.getId()),
-                        any()
-                ))
-                .thenReturn(new SliceImpl<>(
-                        List.of(),
-                        PageRequest.of(0, DatasetWorkspaceMaterializer.BATCH_SIZE),
-                        false
-                ));
-
-        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
-
-        String logs = output.getOut() + output.getErr();
-        assertTrue(logs.contains("Dataset workspace materialization started"));
-        assertTrue(logs.contains("Dataset workspace materialization completed"));
-        assertTrue(logs.contains("datasetId=" + fixture.asset.getId()));
-        assertTrue(logs.contains("parentVersionId=" + fixture.parent.getId()));
-        assertTrue(logs.contains("draftVersionId=" + fixture.draft.getId()));
-        assertFalse(logs.contains(fixture.parent.getStoragePath()));
-    }
 
     @Test
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -431,49 +397,6 @@ class DatasetWorkspaceMaterializerTest {
                 dataCaptor.getValue().stream().map(DatasetSampleData::getPackageId).toList()
         );
         verify(fixture.annotationRepo, never()).saveAll(any());
-    }
-
-    @Test
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    void materializesLargeSingleModalZipInPersistenceBatches()
-            throws Exception {
-        Fixture fixture = new Fixture();
-        fixture.asset.setType("CV");
-        fixture.parent.setFileName("dataset.zip");
-        fixture.parent.setSizeBytes(1024L);
-        when(fixture.versionPackageRepo.findByDatasetVersionIdOrderByPackageOrderAsc(
-                fixture.parent.getId()
-        )).thenReturn(List.of());
-        when(fixture.packageRepo.saveAndFlush(any())).thenAnswer(invocation ->
-                invocation.getArgument(0)
-        );
-        List<ZipEntryInfo> entries = new ArrayList<>();
-        for (int i = 0; i < DatasetWorkspaceMaterializer.BATCH_SIZE + 1; i++) {
-            entries.add(zipEntry("images/image-" + i + ".jpg"));
-        }
-        when(fixture.zipReader.read(
-                fixture.parent.getStoragePath(),
-                fixture.parent.getSizeBytes()
-        )).thenReturn(entries);
-
-        fixture.materializer.materialize(fixture.asset, fixture.parent, fixture.draft);
-
-        ArgumentCaptor<List<DatasetSample>> sampleCaptor = ArgumentCaptor.forClass(List.class);
-        ArgumentCaptor<List<DatasetSampleData>> dataCaptor = ArgumentCaptor.forClass(List.class);
-        verify(fixture.sampleRepo, times(2)).saveAll(sampleCaptor.capture());
-        verify(fixture.dataRepo, times(2)).saveAll(dataCaptor.capture());
-        assertEquals(
-                DatasetWorkspaceMaterializer.BATCH_SIZE,
-                sampleCaptor.getAllValues().get(0).size()
-        );
-        assertEquals(1, sampleCaptor.getAllValues().get(1).size());
-        assertEquals(
-                DatasetWorkspaceMaterializer.BATCH_SIZE,
-                dataCaptor.getAllValues().get(0).size()
-        );
-        assertEquals(1, dataCaptor.getAllValues().get(1).size());
-        verify(fixture.entityManager, times(2)).flush();
-        verify(fixture.entityManager, times(2)).clear();
     }
 
     private static void assertRelation(

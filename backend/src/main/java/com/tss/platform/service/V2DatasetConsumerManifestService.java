@@ -93,7 +93,7 @@ public class V2DatasetConsumerManifestService {
         manifest.setDatasetVersionId(version.getId());
         manifest.setDatasetId(asset.getId());
         manifest.setType(asset.getType());
-        manifest.setVersionLabel(V2ImportJobDisplayHelper.displayVersion(version));
+        manifest.setVersionLabel(displayVersion(version));
         manifest.setStatus(version.getStatus());
         manifest.setPage(resolvedPage);
         manifest.setPageSize(resolvedPageSize);
@@ -193,8 +193,8 @@ public class V2DatasetConsumerManifestService {
         target.setChecksum(source.getChecksum());
         target.setContentType(source.getContentType());
         target.setMetadata(source.getMetadata());
-        target.setPreviewUrl("/api/v2/dataset-sample-data/" + source.getId() + "/preview");
-        target.setDownloadUrl("/api/v2/dataset-sample-data/" + source.getId() + "/download");
+        target.setPreviewUrl("/api/dataset-sample-data/" + source.getId() + "/preview");
+        target.setDownloadUrl("/api/dataset-sample-data/" + source.getId() + "/download");
         return target;
     }
 
@@ -209,7 +209,7 @@ public class V2DatasetConsumerManifestService {
         target.setChecksum(source.getChecksum());
         target.setContentType(source.getContentType());
         target.setMetadata(source.getMetadata());
-        target.setDownloadUrl("/api/v2/dataset-annotations/" + source.getId() + "/download");
+        target.setDownloadUrl("/api/dataset-annotations/" + source.getId() + "/download");
         return target;
     }
 
@@ -222,6 +222,13 @@ public class V2DatasetConsumerManifestService {
             return DEFAULT_PAGE_SIZE;
         }
         return Math.min(pageSize, MAX_PAGE_SIZE);
+    }
+
+    private static String displayVersion(DatasetVersion version) {
+        if (version.getVersionLabel() != null && !version.getVersionLabel().isBlank()) {
+            return version.getVersionLabel();
+        }
+        return version.getVersion();
     }
 
     private V2BusinessException notFound() {

@@ -2,7 +2,6 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
-import com.tss.platform.dto.DatasetAppendPackageCompleteResponse;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.entity.DatasetAsset;
@@ -28,6 +27,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,8 +72,6 @@ class DatasetAppendPackageUploadTest {
                 fixture.version,
                 saved.get()
         );
-        verify(fixture.versionRepo).findByIdAndDeletedFalseForUpdate(fixture.version.getId());
-        verify(fixture.versionRepo, never()).findByIdAndDeletedFalse(fixture.version.getId());
     }
 
     @Test
@@ -209,38 +207,6 @@ class DatasetAppendPackageUploadTest {
         assertCompletesAppend("AUTO_DIRECTORY", null);
     }
 
-    @Test
-    void completeAppendClaimsSessionBeforeTakingChunkSnapshot() {
-        Fixture fixture = new Fixture();
-        DatasetUploadSession session = fixture.appendSession();
-        AtomicInteger claimCount = new AtomicInteger();
-        fixture.stubOwnedDraft();
-        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
-        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any()))
-                .thenAnswer(invocation -> {
-                    claimCount.incrementAndGet();
-                    return 1;
-                });
-        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
-                .thenAnswer(invocation -> {
-                    assertEquals(1, claimCount.get(), "session must be claimed before reading chunks");
-                    assertTrue(
-                            fixture.activeTransactions.get() > 0,
-                            "the frozen chunk snapshot must be read in the claim transaction"
-                    );
-                    throw new ChunkSnapshotObservedException();
-                });
-        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
-        request.setUploadId(session.getId());
-
-        assertThrows(
-                ChunkSnapshotObservedException.class,
-                () -> fixture.service.completeAppendPackage(fixture.version.getId(), request)
-        );
-
-        verify(fixture.transactionManager).rollback(any());
-    }
-
     private void assertCompletesAppend(
             String sampleGrouping,
             String manifestPath
@@ -298,7 +264,7 @@ class DatasetAppendPackageUploadTest {
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId(session.getId());
-        DatasetAppendPackageCompleteResponse result =
+        Map<String, Object> result =
                 fixture.service.completeAppendPackage(fixture.version.getId(), request);
 
         assertEquals("PENDING", savedPackage.get().getStatus());
@@ -315,11 +281,11 @@ class DatasetAppendPackageUploadTest {
         assertEquals("PENDING", savedJob.get().getStatus());
         assertEquals("DRAFT", fixture.version.getStatus());
         assertEquals("ready-1", fixture.asset.getCurrentVersionId());
-        assertEquals("APPEND", result.getPackageRole());
-        assertEquals("DRAFT", result.getVersionStatus());
-        assertEquals("PENDING", result.getImportStatus());
-        assertEquals(savedPackage.get().getId(), result.getPackageId());
-        assertEquals(savedJob.get().getId(), result.getImportJobId());
+        assertEquals("APPEND", result.get("packageRole"));
+        assertEquals("DRAFT", result.get("versionStatus"));
+        assertEquals("PENDING", result.get("importStatus"));
+        assertEquals(savedPackage.get().getId(), result.get("packageId"));
+        assertEquals(savedJob.get().getId(), result.get("importJobId"));
         verify(fixture.importJobLauncher).launch(savedJob.get().getId());
         verify(fixture.auditService).recordAppendCompleted(
                 fixture.asset,
@@ -361,11 +327,11 @@ class DatasetAppendPackageUploadTest {
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId(session.getId());
 
-        DatasetAppendPackageCompleteResponse result =
+        Map<String, Object> result =
                 fixture.service.completeAppendPackage(fixture.version.getId(), request);
         var progress = fixture.service.getProgress(session.getId());
 
-        assertEquals("package-1", result.getPackageId());
+        assertEquals("package-1", result.get("packageId"));
         assertFalse(new ObjectMapper()
                 .findAndRegisterModules()
                 .writeValueAsString(progress)
@@ -385,52 +351,6 @@ class DatasetAppendPackageUploadTest {
         assertThrows(IllegalArgumentException.class, () -> fixture.service.complete(request));
 
         verify(fixture.minioClient, never()).composeObject(any());
-    }
-
-    @Test
-    void finalizeAccessRaceResetsAppendSessionAndRethrowsAccessException() throws Exception {
-        Fixture fixture = new Fixture();
-        DatasetUploadSession session = fixture.appendSession();
-        session.setStoragePath("stale-object");
-        session.setImportJobId("stale-job");
-        DatasetUploadChunk chunk = fixture.chunk(session);
-        fixture.stubOwnedDraft();
-        when(fixture.sessionRepo.findById(session.getId())).thenReturn(
-                Optional.of(session),
-                Optional.of(session),
-                Optional.empty(),
-                Optional.of(session)
-        );
-        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any())).thenReturn(1);
-        when(fixture.sessionRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
-                .thenReturn(List.of(chunk));
-        StatObjectResponse stat = mock(StatObjectResponse.class);
-        when(stat.size()).thenReturn(session.getFileSize());
-        when(fixture.minioClient.statObject(any())).thenReturn(stat);
-        String destinationObject = DatasetUploadService.appendPackageDestinationObject(session);
-        DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
-        request.setUploadId(session.getId());
-
-        DatasetUploadService.DatasetUploadAccessException error = assertThrows(
-                DatasetUploadService.DatasetUploadAccessException.class,
-                () -> fixture.service.completeAppendPackage(fixture.version.getId(), request)
-        );
-
-        assertEquals("dataset upload not found or no permission", error.getMessage());
-        assertEquals("UPLOADING", session.getStatus());
-        assertNull(session.getStoragePath());
-        assertNull(session.getImportJobId());
-        verify(fixture.sessionRepo).saveAndFlush(session);
-        verify(fixture.deleteTaskService).enqueueDefaultBucketDeleteImmediately(
-                destinationObject,
-                MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_ROLLBACK,
-                destinationObject,
-                null
-        );
-    }
-
-    private static final class ChunkSnapshotObservedException extends RuntimeException {
     }
 
     private static final class Fixture {
@@ -495,8 +415,6 @@ class DatasetAppendPackageUploadTest {
 
         private void stubOwnedDraft() {
             when(versionRepo.findByIdAndDeletedFalse(version.getId()))
-                    .thenReturn(Optional.of(version));
-            when(versionRepo.findByIdAndDeletedFalseForUpdate(version.getId()))
                     .thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalse(asset.getId()))
                     .thenReturn(Optional.of(asset));

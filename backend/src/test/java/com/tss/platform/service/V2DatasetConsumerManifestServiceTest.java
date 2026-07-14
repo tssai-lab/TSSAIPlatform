@@ -53,20 +53,19 @@ class V2DatasetConsumerManifestServiceTest {
         assertEquals("dataset-ver-ready", manifest.getDatasetVersionId());
         assertEquals("dataset-asset-1", manifest.getDatasetId());
         assertEquals("MULTIMODAL", manifest.getType());
-        assertEquals("v1", manifest.getVersionLabel());
         assertEquals("READY", manifest.getStatus());
         assertEquals(1, manifest.getSamples().size());
         assertEquals("scene-001", manifest.getSamples().get(0).getExternalId());
         assertEquals(
-                "/api/v2/dataset-sample-data/data-1/preview",
+                "/api/dataset-sample-data/data-1/preview",
                 manifest.getSamples().get(0).getData().get(0).getPreviewUrl()
         );
         assertEquals(
-                "/api/v2/dataset-sample-data/data-1/download",
+                "/api/dataset-sample-data/data-1/download",
                 manifest.getSamples().get(0).getData().get(0).getDownloadUrl()
         );
         assertEquals(
-                "/api/v2/dataset-annotations/ann-1/download",
+                "/api/dataset-annotations/ann-1/download",
                 manifest.getSamples().get(0).getAnnotations().get(0).getDownloadUrl()
         );
 

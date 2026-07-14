@@ -9,13 +9,9 @@ import com.tss.platform.dto.v2.V2DatasetUploadDto;
 import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.ImportJob;
-import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
-import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
-import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -45,74 +41,11 @@ class V2DatasetUploadServiceTest {
                 () -> fixture.service.init(request)
         );
 
-        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, error.getStatus());
         assertEquals("INVALID_UPLOAD_REQUEST", error.getErrorCode());
-        assertEquals("上传请求无效，请检查 ZIP 文件和数据集信息", error.getMessage());
         assertEquals(
                 "CV zip must contain at least 1 image file",
                 error.getDetails().get("reason")
         );
-    }
-
-    @Test
-    void initAccessFailureReturnsStableNotFoundWithoutDetails() {
-        Fixture fixture = new Fixture();
-        DatasetUploadInitRequest request = new DatasetUploadInitRequest();
-        request.setAssetId("asset-secret");
-        request.setFileName("dataset.zip");
-        request.setFileSize(128L);
-        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
-        when(assetRepo.findByIdAndDeletedFalse("asset-secret"))
-                .thenReturn(Optional.empty());
-        DatasetVersionAllocationService allocationService =
-                new DatasetVersionAllocationService(
-                        assetRepo,
-                        mock(DatasetVersionRepository.class),
-                        mock(AuthContext.class)
-                );
-        when(fixture.uploadService.init(request))
-                .thenAnswer(invocation -> {
-                    allocationService.resolveTargetAsset(
-                            request.getAssetId(),
-                            "NLP",
-                            null,
-                            null
-                    );
-                    return null;
-                });
-
-        V2BusinessException error = assertThrows(
-                V2BusinessException.class,
-                () -> fixture.service.init(request)
-        );
-
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
-        assertEquals("DATASET_NOT_FOUND", error.getErrorCode());
-        assertEquals("数据集资产或父版本不存在或无权访问", error.getMessage());
-        assertTrue(error.getDetails().isEmpty());
-    }
-
-    @Test
-    void initFailureDoesNotExposeInfrastructureReasonDetails() {
-        Fixture fixture = new Fixture();
-        DatasetUploadInitRequest request = new DatasetUploadInitRequest();
-        request.setFileName("dataset.zip");
-        request.setFileSize(128L);
-        when(fixture.uploadService.init(request))
-                .thenThrow(new IllegalArgumentException(
-                        "MinIO bucket=models object=secret.zip"
-                ));
-
-        V2BusinessException error = assertThrows(
-                V2BusinessException.class,
-                () -> fixture.service.init(request)
-        );
-
-        assertEquals("INVALID_UPLOAD_REQUEST", error.getErrorCode());
-        String reason = String.valueOf(error.getDetails().get("reason"));
-        assertFalse(reason.contains("MinIO"));
-        assertFalse(reason.contains("bucket=models"));
-        assertFalse(reason.contains("secret.zip"));
     }
 
     @Test
@@ -218,76 +151,6 @@ class V2DatasetUploadServiceTest {
 
         verify(fixture.uploadService).initAppendPackage("draft-2", request);
         assertEquals("draft-2", result.getEditSessionId());
-    }
-
-    @Test
-    void saveChunkFailureUsesStableV2BusinessEnvelope() {
-        Fixture fixture = new Fixture();
-        when(fixture.uploadService.saveChunk(
-                org.mockito.ArgumentMatchers.eq("upload-1"),
-                org.mockito.ArgumentMatchers.eq(0),
-                any()
-        )).thenThrow(new IllegalArgumentException(
-                "upload session must be UPLOADING, current status=DISCARDED"
-        ));
-
-        V2BusinessException error = assertThrows(
-                V2BusinessException.class,
-                () -> fixture.service.saveChunk(
-                        "upload-1",
-                        0,
-                        mock(org.springframework.web.multipart.MultipartFile.class)
-                )
-        );
-
-        assertEquals("UPLOAD_CHUNK_FAILED", error.getErrorCode());
-        assertEquals("文件分片上传失败，请重试", error.getMessage());
-        assertEquals(
-                "upload session must be UPLOADING, current status=DISCARDED",
-                error.getDetails().get("reason")
-        );
-    }
-
-    @Test
-    void saveChunkAccessFailureReturnsDatasetUploadNotFound() {
-        Fixture fixture = new Fixture();
-        when(fixture.uploadService.saveChunk(
-                org.mockito.ArgumentMatchers.eq("upload-secret"),
-                org.mockito.ArgumentMatchers.eq(0),
-                any()
-        )).thenThrow(new DatasetUploadService.DatasetUploadAccessException());
-
-        V2BusinessException error = assertThrows(
-                V2BusinessException.class,
-                () -> fixture.service.saveChunk(
-                        "upload-secret",
-                        0,
-                        mock(org.springframework.web.multipart.MultipartFile.class)
-                )
-        );
-
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
-        assertEquals("DATASET_UPLOAD_NOT_FOUND", error.getErrorCode());
-        assertTrue(error.getDetails().isEmpty());
-    }
-
-    @Test
-    void completeAccessFailureAfterInitialLookupReturnsDatasetUploadNotFound() {
-        Fixture fixture = new Fixture();
-        DatasetUploadProgressDto progress = fixture.progress();
-        when(fixture.uploadService.getProgress("upload-1")).thenReturn(progress);
-        fixture.stubSession(fixture.initialSession());
-        when(fixture.uploadService.complete(any(DatasetUploadCompleteRequest.class)))
-                .thenThrow(new DatasetUploadService.DatasetUploadAccessException());
-
-        V2BusinessException error = assertThrows(
-                V2BusinessException.class,
-                () -> fixture.service.complete("upload-1")
-        );
-
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
-        assertEquals("DATASET_UPLOAD_NOT_FOUND", error.getErrorCode());
-        assertTrue(error.getDetails().isEmpty());
     }
 
     @Test

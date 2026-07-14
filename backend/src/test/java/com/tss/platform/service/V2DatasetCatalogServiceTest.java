@@ -17,14 +17,12 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
@@ -54,7 +52,6 @@ class V2DatasetCatalogServiceTest {
         assertEquals("READY", item.getCurrentVersion().getStatus());
         assertEquals("READY", item.getDisplayStatus());
         assertEquals(9L, item.getCurrentVersionFileCount());
-        assertEquals(item.getCurrentVersionFileCount(), item.getFileCount());
         assertFalse(item.getHasDraft());
         assertNull(item.getEditSessionId());
         assertTrue(item.getAvailableActions().contains("PREVIEW"));
@@ -97,25 +94,6 @@ class V2DatasetCatalogServiceTest {
         assertEquals("scene-1", item.getUserError().getDetails().get("sampleName"));
         assertTrue(item.getAvailableActions().contains("ADD_DATA"));
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
-    }
-
-    @Test
-    void getsSingleDatasetDetailUsingTheV2ListItemContract() {
-        Fixture fixture = new Fixture();
-        DatasetAsset asset = fixture.asset();
-        DatasetVersion ready = fixture.version("ready-1", "READY", 1);
-        asset.setCurrentVersionId(ready.getId());
-        fixture.stub(List.of(asset), List.of(ready), List.of());
-        when(fixture.fileCountService.countCurrentVersionFiles(asset, ready)).thenReturn(9L);
-
-        V2DatasetListItem item = fixture.service.get(asset.getId());
-
-        assertEquals(asset.getId(), item.getDatasetId());
-        assertEquals(ready.getId(), item.getCurrentVersion().getVersionId());
-        assertEquals("READY", item.getDisplayStatus());
-        assertEquals(9L, item.getCurrentVersionFileCount());
-        assertEquals(item.getCurrentVersionFileCount(), item.getFileCount());
-        assertFalse(item.getHasDraft());
     }
 
     @Test
@@ -169,8 +147,8 @@ class V2DatasetCatalogServiceTest {
         DatasetAsset asset = fixture.asset();
         DatasetVersion draft = fixture.version("draft-1", "DRAFT", 1);
         fixture.stub(List.of(asset), List.of(draft), List.of());
-        when(fixture.sampleRepo.countSamplesByDatasetVersionIds(anyCollection()))
-                .thenReturn(List.of(sampleCount(draft.getId(), 0L)));
+        when(fixture.sampleRepo.countByDatasetVersionIdAndDeletedFalse(draft.getId()))
+                .thenReturn(0L);
 
         V2DatasetListItem item = fixture.service
                 .list(null, null, null, null, null)
@@ -179,28 +157,6 @@ class V2DatasetCatalogServiceTest {
 
         assertFalse(item.getCanPublish());
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
-    }
-
-    @Test
-    void listUsesBatchDraftSampleCountsForReturnedDrafts() {
-        Fixture fixture = new Fixture();
-        DatasetAsset first = fixture.asset("asset-1", "first");
-        DatasetAsset second = fixture.asset("asset-2", "second");
-        DatasetVersion firstDraft = fixture.version("draft-1", "asset-1", "DRAFT", 1);
-        DatasetVersion secondDraft = fixture.version("draft-2", "asset-2", "DRAFT", 1);
-        fixture.stub(
-                List.of(first, second),
-                List.of(firstDraft, secondDraft),
-                List.of()
-        );
-
-        PageResponse<V2DatasetListItem> page =
-                fixture.service.list(null, null, 1, null, 20);
-
-        assertEquals(2, page.getData().size());
-        assertTrue(page.getData().stream().allMatch(V2DatasetListItem::getCanPublish));
-        verify(fixture.sampleRepo).countSamplesByDatasetVersionIds(anyCollection());
-        verify(fixture.sampleRepo, never()).countByDatasetVersionIdAndDeletedFalse(anyString());
     }
 
     @Test
@@ -398,18 +354,10 @@ class V2DatasetCatalogServiceTest {
             )).thenReturn(new PageImpl<>(assets, Pageable.unpaged(), total));
             when(versionRepo.findByAssetIdInAndDeletedFalse(anyCollection())).thenReturn(versions);
             when(importJobRepo.findByDatasetVersionIdIn(anyCollection())).thenReturn(jobs);
-            for (DatasetAsset asset : assets) {
-                when(assetRepo.findByIdAndDeletedFalse(asset.getId()))
-                        .thenReturn(Optional.of(asset));
-                when(authContext.canAccessOwner(asset.getOwnerUserId())).thenReturn(true);
-            }
             for (DatasetVersion version : versions) {
                 if ("DRAFT".equals(version.getStatus())) {
-                    when(sampleRepo.countSamplesByDatasetVersionIds(anyCollection()))
-                            .thenReturn(versions.stream()
-                                    .filter(candidate -> "DRAFT".equals(candidate.getStatus()))
-                                    .map(candidate -> sampleCount(candidate.getId(), 1L))
-                                    .toList());
+                    when(sampleRepo.countByDatasetVersionIdAndDeletedFalse(version.getId()))
+                            .thenReturn(1L);
                 }
             }
         }
@@ -460,22 +408,5 @@ class V2DatasetCatalogServiceTest {
             job.setCreatedAt(Instant.parse("2026-01-10T00:00:00Z"));
             return job;
         }
-    }
-
-    private static DatasetSampleRepository.DatasetVersionSampleCount sampleCount(
-            String datasetVersionId,
-            long sampleCount
-    ) {
-        return new DatasetSampleRepository.DatasetVersionSampleCount() {
-            @Override
-            public String getDatasetVersionId() {
-                return datasetVersionId;
-            }
-
-            @Override
-            public long getSampleCount() {
-                return sampleCount;
-            }
-        };
     }
 }

@@ -1,9 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
-import com.tss.platform.dto.DatasetCvFolderUploadResponse;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
-import com.tss.platform.dto.DatasetUploadCompleteResponse;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
 import com.tss.platform.service.DatasetUploadService;
@@ -12,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/dataset/upload")
@@ -55,7 +54,7 @@ public class DatasetUploadController {
     }
 
     @PostMapping("/complete")
-    public ApiResponse<DatasetUploadCompleteResponse> complete(@RequestBody DatasetUploadCompleteRequest req) {
+    public ApiResponse<Map<String, Object>> complete(@RequestBody DatasetUploadCompleteRequest req) {
         try {
             return ApiResponse.ok(service.complete(req));
         } catch (IllegalArgumentException e) {
@@ -64,7 +63,7 @@ public class DatasetUploadController {
     }
 
     @PostMapping(value = "/folder", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ApiResponse<DatasetCvFolderUploadResponse> folder(
+    public ApiResponse<Map<String, Object>> folder(
             @RequestParam(required = false) String assetId,
             @RequestParam(required = false) String datasetName,
             @RequestParam(required = false) String version,

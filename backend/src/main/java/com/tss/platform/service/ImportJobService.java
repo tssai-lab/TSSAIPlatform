@@ -43,7 +43,6 @@ import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -500,25 +499,17 @@ public class ImportJobService {
             ImportJobSampleFailure retryFailure =
                     retryByExternalId.get(manifestSample.externalId());
             retriedExternalIds.add(manifestSample.externalId());
-            requireActiveImportLease(context, executorId, false);
             try {
                 if (incrementalRetry) {
                     validateRetrySampleConflicts(context.versionId(), manifestSample);
                 }
-                SamplePersistResult result = persistSample(
-                        context,
-                        version,
-                        manifestSample,
-                        executorId
-                );
+                SamplePersistResult result = persistSample(context, version, manifestSample);
                 importedNow += result.samples();
                 dataCount += result.dataItems();
                 annotationCount += result.annotations();
                 if (retryFailure != null && failureRepo != null) {
                     failureRepo.markResolved(retryFailure.getId(), Instant.now());
                 }
-            } catch (ImportLeaseLostException exception) {
-                throw exception;
             } catch (Exception exception) {
                 failedNow += 1;
                 ImportFailure failure = importFailure(exception);
@@ -545,6 +536,7 @@ public class ImportJobService {
         if (failedNow == 0) {
             completeSuccessfulImport(
                     context,
+                    version,
                     asset,
                     executorId,
                     totalSamples,
@@ -662,11 +654,9 @@ public class ImportJobService {
     private SamplePersistResult persistSample(
             ImportContext context,
             DatasetVersion version,
-            ManifestSample manifestSample,
-            String executorId
+            ManifestSample manifestSample
     ) {
         return sampleTransaction.execute(status -> {
-            requireActiveImportLease(context, executorId, true);
             Instant now = Instant.now();
             DatasetSample sample =
                     toSample(version, context.packageId(), manifestSample, now);
@@ -715,37 +705,9 @@ public class ImportJobService {
         });
     }
 
-    private DatasetVersion requireActiveImportLease(
-            ImportContext context,
-            String executorId,
-            boolean lockVersion
-    ) {
-        ImportJob job = jobRepo.findById(context.importJobId())
-                .orElseThrow(() -> new ImportLeaseLostException(
-                        "import job lease was lost: " + context.importJobId()
-                ));
-        if (!JOB_RUNNING.equals(job.getStatus()) || !executorId.equals(job.getExecutorId())) {
-            throw new ImportLeaseLostException(
-                    "import job lease was lost: " + context.importJobId()
-            );
-        }
-        Optional<DatasetVersion> currentVersion = lockVersion
-                ? versionRepo.findByIdAndDeletedFalseForUpdate(context.versionId())
-                : versionRepo.findByIdAndDeletedFalse(context.versionId());
-        DatasetVersion version = currentVersion.orElseThrow(() -> new ImportLeaseLostException(
-                "dataset version was discarded during import: " + context.versionId()
-        ));
-        if (Boolean.TRUE.equals(version.getDeleted())
-                || !VERSION_DRAFT.equals(version.getStatus())) {
-            throw new ImportLeaseLostException(
-                    "dataset version is no longer an active DRAFT: " + context.versionId()
-            );
-        }
-        return version;
-    }
-
     private void completeSuccessfulImport(
             ImportContext context,
+            DatasetVersion version,
             DatasetAsset asset,
             String executorId,
             int totalSamples,
@@ -753,8 +715,7 @@ public class ImportJobService {
             int totalAnnotationCount
     ) {
         Instant now = Instant.now();
-        DatasetVersion lockedVersion = requireActiveImportLease(context, executorId, true);
-        lockedVersion.setFileCount(countPersistedFiles(lockedVersion.getId()));
+        version.setFileCount(countPersistedFiles(version.getId()));
         int completed = jobRepo.completeSuccessIfOwned(
                 context.importJobId(),
                 executorId,
@@ -771,15 +732,15 @@ public class ImportJobService {
             setPackageStatus(context.packageId(), VERSION_READY);
         }
         if (context.appendPackage()) {
-            versionRepo.saveAndFlush(lockedVersion);
+            versionRepo.saveAndFlush(version);
             supersedeOlderFailedAppendImports(context, now);
         } else {
-            lockedVersion.setStatus(VERSION_READY);
-            lockedVersion.setPublishedAt(now);
-            versionRepo.saveAndFlush(lockedVersion);
+            version.setStatus(VERSION_READY);
+            version.setPublishedAt(now);
+            versionRepo.saveAndFlush(version);
 
-            if (shouldUpdateCurrentVersion(asset, lockedVersion)) {
-                asset.setCurrentVersionId(lockedVersion.getId());
+            if (shouldUpdateCurrentVersion(asset, version)) {
+                asset.setCurrentVersionId(version.getId());
                 asset.setUpdatedAt(now);
                 assetRepo.saveAndFlush(asset);
             }
@@ -787,7 +748,7 @@ public class ImportJobService {
         if (auditService != null) {
             auditService.recordImportSucceeded(
                     asset,
-                    lockedVersion,
+                    version,
                     jobRepo.findById(context.importJobId())
                             .orElseThrow(() -> new IllegalArgumentException(
                                     "import job not found: " + context.importJobId()
@@ -996,12 +957,6 @@ public class ImportJobService {
         ));
     }
 
-    private static final class ImportLeaseLostException extends RuntimeException {
-        private ImportLeaseLostException(String message) {
-            super(message);
-        }
-    }
-
     private record SamplePersistResult(
             int samples,
             int dataItems,
@@ -1119,20 +1074,6 @@ public class ImportJobService {
             ImportFailure failure
     ) {
         Instant now = Instant.now();
-        ImportJob job = jobRepo.findById(importJobId).orElse(null);
-        if (job == null) {
-            return;
-        }
-        DatasetVersion versionSnapshot = versionRepo.findByIdAndDeletedFalse(
-                job.getDatasetVersionId()
-        ).orElse(null);
-        DatasetAsset asset = versionSnapshot == null
-                ? null
-                : assetRepo.findByIdAndDeletedFalseForUpdate(versionSnapshot.getAssetId())
-                        .orElse(null);
-        DatasetVersion version = versionRepo.findByIdAndDeletedFalseForUpdate(
-                job.getDatasetVersionId()
-        ).orElse(null);
         int failed = jobRepo.markFailedIfOwned(
                 importJobId,
                 executorId,
@@ -1145,11 +1086,20 @@ public class ImportJobService {
         if (failed != 1) {
             return;
         }
-        job = jobRepo.findById(importJobId).orElse(job);
+        ImportJob job = jobRepo.findById(importJobId).orElse(null);
+        if (job == null) {
+            return;
+        }
+        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(
+                job.getDatasetVersionId()
+        ).orElse(null);
+        DatasetAsset asset = null;
         if (version != null) {
             version.setStatus(VERSION_DRAFT);
             version.setPublishedAt(null);
             versionRepo.saveAndFlush(version);
+            asset = assetRepo.findByIdAndDeletedFalseForUpdate(version.getAssetId())
+                    .orElse(null);
         }
         String packageRole = null;
         if (job.getPackageId() != null) {

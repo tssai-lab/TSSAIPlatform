@@ -1,7 +1,6 @@
 package com.tss.platform.controller.v2;
 
 import com.tss.platform.service.ManifestValidationException;
-import com.tss.platform.service.DatasetPreviewAccessException;
 import com.tss.platform.service.DatasetWorkspaceAuditService;
 import com.tss.platform.service.ImportJobQueryService;
 import com.tss.platform.service.SampleFileException;
@@ -185,29 +184,6 @@ public class V2ExceptionHandler {
                 .body(response.getBody());
     }
 
-    @ExceptionHandler(DatasetPreviewAccessException.class)
-    public ResponseEntity<V2ErrorResponse> handleDatasetPreviewAccess(
-            DatasetPreviewAccessException exception,
-            HttpServletRequest request
-    ) {
-        if (exception.getReason() == DatasetPreviewAccessException.Reason.NOT_FOUND) {
-            return response(
-                    HttpStatus.NOT_FOUND,
-                    "DATASET_NOT_FOUND",
-                    "数据集版本不存在或无权访问",
-                    Map.of(),
-                    request
-            );
-        }
-        return response(
-                HttpStatus.UNPROCESSABLE_ENTITY,
-                "DATASET_NOT_PREVIEWABLE",
-                "该数据集版本当前不可预览",
-                Map.of(),
-                request
-        );
-    }
-
     @ExceptionHandler(ImportJobQueryService.ImportJobAccessException.class)
     public ResponseEntity<V2ErrorResponse> handleImportJobAccess(
             ImportJobQueryService.ImportJobAccessException exception,
@@ -245,20 +221,6 @@ public class V2ExceptionHandler {
                 HttpStatus.NOT_FOUND,
                 "DATASET_NOT_FOUND",
                 "数据集版本不存在或无权访问",
-                Map.of(),
-                request
-        );
-    }
-
-    @ExceptionHandler(SampleService.DatasetSampleAccessException.class)
-    public ResponseEntity<V2ErrorResponse> handleDatasetSampleAccess(
-            SampleService.DatasetSampleAccessException exception,
-            HttpServletRequest request
-    ) {
-        return response(
-                HttpStatus.NOT_FOUND,
-                "DATASET_SAMPLE_NOT_FOUND",
-                "数据集样本不存在或无权访问",
                 Map.of(),
                 request
         );

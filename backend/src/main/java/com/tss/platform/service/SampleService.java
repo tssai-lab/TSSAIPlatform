@@ -167,10 +167,10 @@ public class SampleService {
 
     private DatasetSample requireAuthorizedSample(String sampleId) {
         if (sampleId == null || sampleId.isBlank()) {
-            throw new DatasetSampleAccessException(SAMPLE_NOT_FOUND);
+            throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }
         DatasetSample sample = sampleRepo.findByIdAndDeletedFalse(sampleId)
-                .orElseThrow(() -> new DatasetSampleAccessException(SAMPLE_NOT_FOUND));
+                .orElseThrow(() -> new IllegalArgumentException(SAMPLE_NOT_FOUND));
         requireReadyVersion(sample.getDatasetVersionId(), SAMPLE_NOT_FOUND);
         return sample;
     }
@@ -400,9 +400,6 @@ public class SampleService {
         if (VERSION_NOT_FOUND.equals(errorMessage)) {
             return new DatasetVersionAccessException(errorMessage);
         }
-        if (SAMPLE_NOT_FOUND.equals(errorMessage)) {
-            return new DatasetSampleAccessException(errorMessage);
-        }
         return new IllegalArgumentException(errorMessage);
     }
 
@@ -420,13 +417,6 @@ public class SampleService {
     public static class DatasetVersionAccessException extends IllegalArgumentException {
 
         public DatasetVersionAccessException(String message) {
-            super(message);
-        }
-    }
-
-    public static class DatasetSampleAccessException extends IllegalArgumentException {
-
-        public DatasetSampleAccessException(String message) {
             super(message);
         }
     }

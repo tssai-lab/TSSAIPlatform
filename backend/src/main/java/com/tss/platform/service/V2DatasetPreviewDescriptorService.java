@@ -67,9 +67,9 @@ public class V2DatasetPreviewDescriptorService {
                 "PREVIEW_IMAGE"
         ));
         Map<String, String> links = new LinkedHashMap<>();
-        links.put("items", "/api/v2/dataset-versions/" + versionId + "/preview/files");
-        links.put("content", "/api/v2/dataset-versions/" + versionId + "/preview/content");
-        links.put("image", "/api/v2/dataset-versions/" + versionId + "/preview/image");
+        links.put("items", "/api/dataset/preview/files?id=" + versionId);
+        links.put("content", "/api/dataset/preview/content?id=" + versionId);
+        links.put("image", "/api/dataset/preview/image?id=" + versionId);
         descriptor.setLinks(Map.copyOf(links));
     }
 
@@ -80,9 +80,9 @@ public class V2DatasetPreviewDescriptorService {
                 "STREAM_POINT_CLOUD"
         ));
         Map<String, String> links = new LinkedHashMap<>();
-        links.put("items", "/api/v2/dataset-versions/" + versionId + "/point-cloud/preview");
-        links.put("file", "/api/v2/dataset-versions/" + versionId + "/point-cloud/file");
-        links.put("zipFile", "/api/v2/dataset-versions/" + versionId + "/point-cloud/zip-file");
+        links.put("items", "/api/dataset/point-cloud/preview?id=" + versionId);
+        links.put("file", "/api/dataset/point-cloud/file?id=" + versionId);
+        links.put("zipFile", "/api/dataset/point-cloud/zip-file?id=" + versionId);
         descriptor.setLinks(Map.copyOf(links));
     }
 
@@ -98,11 +98,11 @@ public class V2DatasetPreviewDescriptorService {
                 "DOWNLOAD_SAMPLE_DATA"
         ));
         Map<String, String> links = new LinkedHashMap<>();
-        links.put("items", "/api/v2/dataset-versions/" + versionId + "/samples");
-        links.put("sample", "/api/v2/dataset-samples/{sampleId}");
-        links.put("sampleData", "/api/v2/dataset-samples/{sampleId}/data");
-        links.put("preview", "/api/v2/dataset-sample-data/{dataId}/preview");
-        links.put("download", "/api/v2/dataset-sample-data/{dataId}/download");
+        links.put("items", "/api/dataset-versions/" + versionId + "/samples");
+        links.put("sample", "/api/dataset-samples/{sampleId}");
+        links.put("sampleData", "/api/dataset-samples/{sampleId}/data");
+        links.put("preview", "/api/dataset-sample-data/{dataId}/preview");
+        links.put("download", "/api/dataset-sample-data/{dataId}/download");
         descriptor.setLinks(Map.copyOf(links));
     }
 

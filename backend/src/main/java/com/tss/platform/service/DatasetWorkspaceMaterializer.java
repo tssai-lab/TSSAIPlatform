@@ -20,8 +20,6 @@ import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionPackageRepository;
 import jakarta.persistence.EntityManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -38,9 +36,6 @@ import java.util.UUID;
 
 @Service
 public class DatasetWorkspaceMaterializer {
-
-    private static final Logger log =
-            LoggerFactory.getLogger(DatasetWorkspaceMaterializer.class);
 
     static final int BATCH_SIZE = 500;
 
@@ -88,12 +83,6 @@ public class DatasetWorkspaceMaterializer {
             DatasetVersion parent,
             DatasetVersion draft
     ) {
-        log.info(
-                "Dataset workspace materialization started: datasetId={}, parentVersionId={}, draftVersionId={}",
-                asset.getId(),
-                parent.getId(),
-                draft.getId()
-        );
         Instant now = Instant.now();
         String generatedPrimaryPackageId = copyPackageRelations(
                 asset,
@@ -109,20 +98,10 @@ public class DatasetWorkspaceMaterializer {
                     generatedPrimaryPackageId,
                     now
             );
-            log.info(
-                    "Dataset workspace materialization completed: datasetId={}, parentVersionId={}, draftVersionId={}, mode={}, packageId={}",
-                    asset.getId(),
-                    parent.getId(),
-                    draft.getId(),
-                    "SINGLE_MODAL_ZIP",
-                    generatedPrimaryPackageId
-            );
             return;
         }
 
         Pageable pageable = PageRequest.of(0, BATCH_SIZE);
-        int batchCount = 0;
-        long sampleCount = 0L;
         while (true) {
             Slice<DatasetSample> parentSamples =
                     sampleRepo.findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
@@ -130,34 +109,14 @@ public class DatasetWorkspaceMaterializer {
                             pageable
                     );
             if (parentSamples.isEmpty()) {
-                log.info(
-                        "Dataset workspace materialization completed: datasetId={}, parentVersionId={}, draftVersionId={}, mode={}, sampleBatchCount={}, sampleCount={}",
-                        asset.getId(),
-                        parent.getId(),
-                        draft.getId(),
-                        "COPY",
-                        batchCount,
-                        sampleCount
-                );
                 return;
             }
 
             copySampleBatch(parent, draft, parentSamples.getContent(), now);
-            batchCount += 1;
-            sampleCount += parentSamples.getNumberOfElements();
             entityManager.flush();
             entityManager.clear();
 
             if (!parentSamples.hasNext()) {
-                log.info(
-                        "Dataset workspace materialization completed: datasetId={}, parentVersionId={}, draftVersionId={}, mode={}, sampleBatchCount={}, sampleCount={}",
-                        asset.getId(),
-                        parent.getId(),
-                        draft.getId(),
-                        "COPY",
-                        batchCount,
-                        sampleCount
-                );
                 return;
             }
             pageable = parentSamples.nextPageable();
@@ -277,8 +236,8 @@ public class DatasetWorkspaceMaterializer {
                 entries,
                 0
         );
-        List<DatasetSample> samples = new ArrayList<>(BATCH_SIZE);
-        List<DatasetSampleData> dataItems = new ArrayList<>(BATCH_SIZE);
+        List<DatasetSample> samples = new ArrayList<>(plan.totalSamples());
+        List<DatasetSampleData> dataItems = new ArrayList<>(plan.totalDataCount());
         for (ManifestSample manifestSample : plan.samples()) {
             DatasetSample sample = toSample(draft, packageId, manifestSample, now);
             samples.add(sample);
@@ -291,35 +250,13 @@ public class DatasetWorkspaceMaterializer {
                         now
                 ));
             }
-            if (samples.size() >= BATCH_SIZE) {
-                saveSingleModalBatch(samples, dataItems);
-            }
         }
-        if (!samples.isEmpty()) {
-            saveSingleModalBatch(samples, dataItems);
-        }
-        log.info(
-                "Dataset workspace single-modal ZIP materialization completed: datasetId={}, parentVersionId={}, draftVersionId={}, packageId={}, sampleCount={}",
-                asset.getId(),
-                parent.getId(),
-                draft.getId(),
-                packageId,
-                plan.samples().size()
-        );
-    }
-
-    private void saveSingleModalBatch(
-            List<DatasetSample> samples,
-            List<DatasetSampleData> dataItems
-    ) {
-        sampleRepo.saveAll(List.copyOf(samples));
+        sampleRepo.saveAll(samples);
         if (!dataItems.isEmpty()) {
-            dataRepo.saveAll(List.copyOf(dataItems));
+            dataRepo.saveAll(dataItems);
         }
         entityManager.flush();
         entityManager.clear();
-        samples.clear();
-        dataItems.clear();
     }
 
     private void copySampleBatch(

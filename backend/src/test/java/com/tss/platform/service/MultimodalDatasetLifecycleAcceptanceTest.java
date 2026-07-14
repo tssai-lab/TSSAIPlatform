@@ -130,10 +130,10 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         DatasetUploadCompleteRequest completeRequest =
                 new DatasetUploadCompleteRequest();
         completeRequest.setUploadId(appendInit.getUploadId());
-        var appendComplete =
+        Map<String, Object> appendComplete =
                 fixture.uploadService.completeAppendPackage(v2Id, completeRequest);
-        String appendPackageId = appendComplete.getPackageId();
-        String appendJobId = appendComplete.getImportJobId();
+        String appendPackageId = String.valueOf(appendComplete.get("packageId"));
+        String appendJobId = String.valueOf(appendComplete.get("importJobId"));
         assertEquals("PENDING", fixture.packages.get(appendPackageId).getStatus());
 
         fixture.importJobService.execute(appendJobId);
@@ -239,13 +239,15 @@ class MultimodalDatasetLifecycleAcceptanceTest {
         DatasetUploadCompleteRequest conflictCompleteRequest =
                 new DatasetUploadCompleteRequest();
         conflictCompleteRequest.setUploadId(conflictInit.getUploadId());
-        var conflictComplete =
+        Map<String, Object> conflictComplete =
                 fixture.uploadService.completeAppendPackage(
                         conflictDraftId,
                         conflictCompleteRequest
                 );
-        String conflictJobId = conflictComplete.getImportJobId();
-        String conflictPackageId = conflictComplete.getPackageId();
+        String conflictJobId =
+                String.valueOf(conflictComplete.get("importJobId"));
+        String conflictPackageId =
+                String.valueOf(conflictComplete.get("packageId"));
         fixture.stubConflictPlan(sampleGrouping);
 
         fixture.importJobService.execute(conflictJobId);

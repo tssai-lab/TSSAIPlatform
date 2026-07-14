@@ -35,12 +35,6 @@ public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUpl
             String uploadPurpose
     );
 
-    List<DatasetUploadSession> findByVersionId(String versionId);
-
-    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from DatasetUploadSession s where s.versionId = :versionId")
-    List<DatasetUploadSession> findByVersionIdForUpdate(@Param("versionId") String versionId);
-
     @Modifying(flushAutomatically = true, clearAutomatically = false)
     @Query("""
             update DatasetUploadSession s

@@ -4,7 +4,6 @@ import com.tss.platform.dto.PageResponse;
 import com.tss.platform.dto.v2.V2DatasetListItem;
 import com.tss.platform.service.V2DatasetCatalogService;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,10 +27,5 @@ public class V2DatasetController {
             @RequestParam(required = false) Integer pageSize
     ) {
         return service.list(type, keyword, page, current, pageSize);
-    }
-
-    @GetMapping("/{datasetId}")
-    public V2DatasetListItem get(@PathVariable String datasetId) {
-        return service.get(datasetId);
     }
 }

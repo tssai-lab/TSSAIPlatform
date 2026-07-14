@@ -170,12 +170,6 @@ public class DatasetPackageCleanupPlannerService {
                     "DatasetPackage",
                     datasetPackage.getId()
             );
-        } else {
-            addActiveStorageReferenceBlockers(
-                    plan,
-                    datasetPackage.getStoragePath(),
-                    versionIds
-            );
         }
 
         plan.setCanDelete(plan.getBlockers().isEmpty());
@@ -271,28 +265,6 @@ public class DatasetPackageCleanupPlannerService {
                         child.getId()
                 );
             }
-        }
-    }
-
-    private void addActiveStorageReferenceBlockers(
-            DatasetPackageCleanupPlanDto plan,
-            String storagePath,
-            Set<String> relationVersionIds
-    ) {
-        for (DatasetVersion version :
-                versionRepo.findByStoragePathAndDeletedFalse(storagePath)) {
-            if (version == null
-                    || version.getId() == null
-                    || relationVersionIds.contains(version.getId())) {
-                continue;
-            }
-            addBlocker(
-                    plan,
-                    "ACTIVE_VERSION_STORAGE_REFERENCE",
-                    "package storage is still referenced by an active DatasetVersion",
-                    "DatasetVersion",
-                    version.getId()
-            );
         }
     }
 

@@ -1,12 +1,10 @@
 package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
-import com.tss.platform.dto.v2.V2DatasetDiscardResult;
 import com.tss.platform.dto.v2.V2DatasetEditSessionDto;
 import com.tss.platform.dto.v2.V2DatasetPublishResult;
 import com.tss.platform.dto.v2.V2DatasetUploadDto;
 import com.tss.platform.service.V2DatasetEditService;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,11 +38,6 @@ public class V2DatasetEditController {
             @RequestBody DatasetPackageAppendInitRequest request
     ) {
         return service.initUpload(editSessionId, request);
-    }
-
-    @DeleteMapping("/dataset-edit-sessions/{editSessionId}")
-    public V2DatasetDiscardResult discard(@PathVariable String editSessionId) {
-        return service.discard(editSessionId);
     }
 
     @PostMapping("/dataset-edit-sessions/{editSessionId}/publish")

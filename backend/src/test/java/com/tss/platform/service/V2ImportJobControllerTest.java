@@ -60,22 +60,4 @@ class V2ImportJobControllerTest {
                 .andExpect(jsonPath("$.status").value("PARTIAL"))
                 .andExpect(jsonPath("$.displayStatus").value("IMPORT_PARTIAL"));
     }
-
-    @Test
-    void illegalArgumentFailureIncludesConcreteReasonInDetails() throws Exception {
-        V2ImportJobService service = mock(V2ImportJobService.class);
-        when(service.getStatus("ijob-invalid"))
-                .thenThrow(new IllegalArgumentException("分片未上传完成"));
-
-        MockMvc mvc = MockMvcBuilders
-                .standaloneSetup(new V2ImportJobController(service))
-                .setControllerAdvice(new V2ExceptionHandler())
-                .build();
-
-        mvc.perform(get("/api/v2/import-jobs/ijob-invalid"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("INVALID_REQUEST"))
-                .andExpect(jsonPath("$.errorMessage").value("请求参数不正确，请检查后重试"))
-                .andExpect(jsonPath("$.details.reason").value("分片未上传完成"));
-    }
 }

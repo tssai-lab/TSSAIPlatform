@@ -6,11 +6,9 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
 import com.tss.platform.model.DatasetTaskType;
 import com.tss.platform.repository.DatasetAssetRepository;
-import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.security.AuthContext;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,42 +33,21 @@ public class DatasetCatalogQueryService {
     private final DatasetAssetRepository assetRepo;
     private final DatasetVersionRepository versionRepo;
     private final ImportJobRepository importJobRepo;
-    private final DatasetSampleRepository sampleRepo;
     private final DatasetVersionFileCountService fileCountService;
     private final AuthContext authContext;
 
-    @Autowired
     public DatasetCatalogQueryService(
             DatasetAssetRepository assetRepo,
             DatasetVersionRepository versionRepo,
             ImportJobRepository importJobRepo,
-            DatasetSampleRepository sampleRepo,
             DatasetVersionFileCountService fileCountService,
             AuthContext authContext
     ) {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
         this.importJobRepo = importJobRepo;
-        this.sampleRepo = sampleRepo;
         this.fileCountService = fileCountService;
         this.authContext = authContext;
-    }
-
-    public DatasetCatalogQueryService(
-            DatasetAssetRepository assetRepo,
-            DatasetVersionRepository versionRepo,
-            ImportJobRepository importJobRepo,
-            DatasetVersionFileCountService fileCountService,
-            AuthContext authContext
-    ) {
-        this(
-                assetRepo,
-                versionRepo,
-                importJobRepo,
-                null,
-                fileCountService,
-                authContext
-        );
     }
 
     @Transactional(readOnly = true)
@@ -95,46 +72,6 @@ public class DatasetCatalogQueryService {
         return list(type, keyword, page, current, pageSize, true);
     }
 
-    @Transactional(readOnly = true)
-    public CatalogItem get(String datasetId) {
-        if (datasetId == null || datasetId.isBlank()) {
-            throw new DatasetCatalogAccessException();
-        }
-        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(datasetId)
-                .orElseThrow(DatasetCatalogAccessException::new);
-        if (!authContext.isAdmin() && !authContext.canAccessOwner(asset.getOwnerUserId())) {
-            throw new DatasetCatalogAccessException();
-        }
-
-        List<DatasetVersion> versions = versionRepo.findByAssetIdInAndDeletedFalse(
-                Set.of(asset.getId())
-        );
-        DatasetVersion ready = currentReadyVersion(asset, versions);
-        DatasetVersion draft = versions.stream()
-                .filter(version -> "DRAFT".equals(version.getStatus()))
-                .reduce(this::newerVersion)
-                .orElse(null);
-        List<ImportJob> draftJobs = draft == null
-                ? List.of()
-                : importJobRepo.findByDatasetVersionId(draft.getId());
-        ImportJob latestJob = latestImportJob(draftJobs);
-        Long draftSampleCount = draft == null
-                ? 0L
-                : sampleCountsByVersion(Set.of(draft.getId()))
-                        .getOrDefault(draft.getId(), 0L);
-        Long fileCount = fileCountService.countCurrentVersionFiles(asset, ready);
-        return new CatalogItem(
-                asset,
-                versions,
-                ready,
-                draft,
-                draftJobs,
-                latestJob,
-                draftSampleCount,
-                fileCount
-        );
-    }
-
     private PageResponse<CatalogItem> list(
             String type,
             String keyword,
@@ -146,8 +83,8 @@ public class DatasetCatalogQueryService {
         String normalizedType = type == null || type.isBlank()
                 ? null
                 : DatasetTaskType.normalize(type);
-        String normalizedKeyword = keyword == null || keyword.isBlank()
-                ? null
+        String normalizedKeyword = keyword == null
+                ? ""
                 : keyword.trim().toLowerCase(Locale.ROOT);
         int pageNo = resolvePage(page, current);
         boolean unpaged = unpagedWhenPageSizeAbsent && (pageSize == null || pageSize <= 0);
@@ -183,7 +120,6 @@ public class DatasetCatalogQueryService {
                 .map(DatasetVersion::getId)
                 .collect(Collectors.toSet());
         Map<String, List<ImportJob>> jobsByVersion = importJobsByVersion(draftIds);
-        Map<String, Long> sampleCountsByVersion = sampleCountsByVersion(draftIds);
 
         List<CatalogItem> items = assets.stream()
                 .map(asset -> {
@@ -195,9 +131,6 @@ public class DatasetCatalogQueryService {
                             ? List.of()
                             : jobsByVersion.getOrDefault(draft.getId(), List.of());
                     ImportJob latestJob = latestImportJob(draftJobs);
-                    Long draftSampleCount = draft == null
-                            ? 0L
-                            : sampleCountsByVersion.getOrDefault(draft.getId(), 0L);
                     Long fileCount = fileCountService.countCurrentVersionFiles(asset, ready);
                     return new CatalogItem(
                             asset,
@@ -206,7 +139,6 @@ public class DatasetCatalogQueryService {
                             draft,
                             draftJobs,
                             latestJob,
-                            draftSampleCount,
                             fileCount
                     );
                 })
@@ -221,19 +153,6 @@ public class DatasetCatalogQueryService {
                 ? (assetPage.getTotalElements() == 0 ? 0 : 1)
                 : assetPage.getTotalPages());
         return response;
-    }
-
-    private Map<String, Long> sampleCountsByVersion(Collection<String> draftIds) {
-        if (draftIds.isEmpty() || sampleRepo == null) {
-            return Map.of();
-        }
-        return sampleRepo.countSamplesByDatasetVersionIds(draftIds).stream()
-                .filter(summary -> summary.getDatasetVersionId() != null)
-                .collect(Collectors.toMap(
-                        DatasetSampleRepository.DatasetVersionSampleCount::getDatasetVersionId,
-                        DatasetSampleRepository.DatasetVersionSampleCount::getSampleCount,
-                        Long::sum
-                ));
     }
 
     private Map<String, List<ImportJob>> importJobsByVersion(
@@ -327,11 +246,7 @@ public class DatasetCatalogQueryService {
             DatasetVersion latestDraft,
             List<ImportJob> latestDraftImportJobs,
             ImportJob latestDraftImportJob,
-            Long latestDraftSampleCount,
             Long currentVersionFileCount
     ) {
-    }
-
-    public static class DatasetCatalogAccessException extends RuntimeException {
     }
 }

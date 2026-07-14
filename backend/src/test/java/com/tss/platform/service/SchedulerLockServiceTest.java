@@ -3,7 +3,6 @@ package com.tss.platform.service;
 import com.tss.platform.entity.SchedulerLock;
 import com.tss.platform.repository.SchedulerLockRepository;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -17,9 +16,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,21 +27,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SchedulerLockServiceTest {
-
-    @Test
-    void springCanSelectTheProductionConstructor() {
-        SchedulerLockRepository repo = mock(SchedulerLockRepository.class);
-        PlatformTransactionManager transactionManager = new NoOpTransactionManager();
-
-        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
-            context.registerBean(SchedulerLockRepository.class, () -> repo);
-            context.registerBean(PlatformTransactionManager.class, () -> transactionManager);
-            context.register(SchedulerLockService.class);
-
-            assertDoesNotThrow(context::refresh);
-            assertNotNull(context.getBean(SchedulerLockService.class));
-        }
-    }
 
     @Test
     void runsTaskWhenLockIsAbsent() {
