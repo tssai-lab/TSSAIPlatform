@@ -50,7 +50,7 @@ Do not put database passwords, MinIO keys or Kubernetes tokens in GitHub Actions
 
 ## Deployment and rollback
 
-1. Push a clean POC commit to `ops/poc-automation`; the CI workflow tests, builds and publishes an image tagged with the commit SHA.
+1. Push a clean integration commit to `backend-ops`; the CI workflow tests the latest backend code, builds it and publishes an image tagged with the commit SHA. Keep `ops/poc-automation` only as the historical isolated POC branch.
 2. Wait for that CI run to be green.
 3. Create and push a unique `poc-bootstrap-*` tag on that same commit. This runs the secret bootstrap once.
 4. Create and push a different unique `poc-deploy-*` tag on that same commit. This deploys the image whose tag matches the commit SHA.
