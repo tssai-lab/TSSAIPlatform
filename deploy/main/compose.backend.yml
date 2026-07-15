@@ -1,0 +1,17 @@
+services:
+  backend:
+    image: ${TSS_BACKEND_IMAGE:?TSS_BACKEND_IMAGE must be set}
+    container_name: tss-backend
+    network_mode: host
+    env_file:
+      - ./backend/.env.runtime
+    volumes:
+      - ./backend/logs:/app/logs
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true

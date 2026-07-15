@@ -1,0 +1,81 @@
+name: Deploy Main Backend Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Commit SHA image tag produced by Backend CI and Image
+        required: true
+        type: string
+  push:
+    tags:
+      - "main-deploy-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tss-main-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: poc
+    env:
+      DEPLOY_HOST: ${{ vars.POC_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.POC_DEPLOY_USER }}
+      GHCR_USERNAME: ${{ vars.POC_GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.POC_GHCR_PULL_TOKEN }}
+    steps:
+      - name: Check out deployment ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate deployment configuration
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$GHCR_USERNAME"
+          test -n "$GHCR_TOKEN"
+
+      - name: Resolve immutable image tag
+        id: image
+        env:
+          MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            image_tag="$MANUAL_IMAGE_TAG"
+          else
+            image_tag="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          fi
+          [[ "$image_tag" =~ ^[0-9a-f]{40}$ ]]
+          echo "tag=$image_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Load deployment key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.POC_DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Trust Main server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Log GitHub runner in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ env.GHCR_USERNAME }}
+          password: ${{ env.GHCR_TOKEN }}
+
+      - name: Transfer image and deploy Main backend
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-backend:${{ steps.image.outputs.tag }}"
+          docker pull "$image"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          set -o pipefail
+          docker save "$image" \
+            | gzip -1 \
+            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-load-backend '$image' '$image_id'"
