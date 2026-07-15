@@ -1,4 +1,4 @@
-name: Deploy Backend POC
+name: Deploy Main Backend Validation
 
 on:
   workflow_dispatch:
@@ -9,13 +9,13 @@ on:
         type: string
   push:
     tags:
-      - "poc-deploy-*"
+      - "main-deploy-*"
 
 permissions:
   contents: read
 
 concurrency:
-  group: tss-backend-poc
+  group: tss-main-backend
   cancel-in-progress: false
 
 jobs:
@@ -25,16 +25,20 @@ jobs:
     env:
       DEPLOY_HOST: ${{ vars.POC_DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.POC_DEPLOY_USER }}
+      GHCR_USERNAME: ${{ vars.POC_GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.POC_GHCR_PULL_TOKEN }}
     steps:
-      - name: Check out deployment files
+      - name: Check out deployment ref
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate deployment inputs
+      - name: Validate deployment configuration
         run: |
           test -n "$DEPLOY_HOST"
           test -n "$DEPLOY_USER"
+          test -n "$GHCR_USERNAME"
+          test -n "$GHCR_TOKEN"
 
       - name: Resolve immutable image tag
         id: image
@@ -49,7 +53,7 @@ jobs:
           [[ "$image_tag" =~ ^[0-9a-f]{40}$ ]]
           echo "tag=$image_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Load POC deployment key
+      - name: Load deployment key
         uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.POC_DEPLOY_SSH_PRIVATE_KEY }}
@@ -59,24 +63,14 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Render immutable image reference
+      - name: Log Main server in to GitHub Container Registry
         run: |
-          cp -R deploy/k8s/poc "${RUNNER_TEMP}/poc"
+          set +x
+          printf '%s\n%s\n' "$GHCR_USERNAME" "$GHCR_TOKEN" \
+            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-login-ghcr"
+
+      - name: Deploy and verify Main backend
+        run: |
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-backend:${{ steps.image.outputs.tag }}"
-          sed -i "s|IMAGE_PLACEHOLDER|${image}|g" "${RUNNER_TEMP}/poc/backend.yaml"
-
-      - name: Upload manifests to Main server
-        run: |
-          scp -r "${RUNNER_TEMP}/poc" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/tss-poc-${GITHUB_RUN_ID}"
-
-      - name: Apply and verify POC
-        run: |
-          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "
-            set -euo pipefail
-            kubectl -n tss-poc get secret tss-poc-datastore tss-backend-runtime ghcr-pull >/dev/null
-            kubectl apply -k /tmp/tss-poc-${GITHUB_RUN_ID}
-            kubectl -n tss-poc rollout status deployment/tss-postgres --timeout=180s
-            kubectl -n tss-poc rollout status deployment/tss-minio --timeout=180s
-            kubectl -n tss-poc rollout status deployment/tss-backend --timeout=240s
-            kubectl -n tss-poc get deployments,pods,services -o wide
-          "
+          printf '%s\n' "$image" \
+            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-deploy-backend"

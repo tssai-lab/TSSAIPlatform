@@ -67,3 +67,11 @@ git push origin poc-deploy-20260715-01
 ```
 
 The POC service is ClusterIP only. It does not add an external Nginx route or public port.
+
+## Main server single-machine validation
+
+When the existing Main server backend is intentionally empty, `deploy/main/compose.backend.yml` can start the backend directly in `/opt/tss-platform` while reusing the existing Docker PostgreSQL and MinIO containers. This is a real server deployment, but it is still a single-machine validation and is not highly available.
+
+Before enabling it, create a logical PostgreSQL backup and a MinIO archive. Then run `bootstrap-main-backend.sh` as root, pointing it at `compose.backend.yml`. The bootstrap writes server-only runtime credentials and grants `tss-deployer` permission to run exactly two root-owned scripts: GHCR login and the backend deployment.
+
+After the matching CI commit is green, push a unique `main-deploy-*` tag on that commit. The deployment script pulls the immutable image, updates only the `tss-backend` container, and waits for `http://127.0.0.1:8080/v3/api-docs`. If the new container does not become healthy, it restores the previous backend image or removes the failed initial container.
