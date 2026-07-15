@@ -8,6 +8,7 @@ import com.tss.platform.dto.v2.V2CodeAssetPatchRequest;
 import com.tss.platform.dto.v2.V2CodeWorkspaceDto;
 import com.tss.platform.service.CodeAssetAccessException;
 import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
@@ -300,7 +301,7 @@ class V2CodeAssetControllerTest {
         org.assertj.core.api.Assertions.assertThat(owned.getUpdatedAt())
                 .isEqualTo(owned.getDeletedAt());
         verify(assets).saveAndFlush(owned);
-        verify(versions, never()).delete(any());
+        verify(versions, never()).delete(any(CodeVersion.class));
         verify(workspaces, never()).delete(any());
         verify(audit).assetDeleted("asset-1", 4L);
 

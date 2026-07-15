@@ -16,13 +16,16 @@ import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeRiskFindingRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,13 +105,15 @@ public class V2AdminCodeReviewService {
         Sort.Direction direction = normalizeSortDirection(sortDirection);
         validateListRequest(ownerUserId, submittedFrom, submittedTo, page, pageSize);
 
-        Page<CodeVersion> versions = versionRepository.findCodeReviewTasks(
-                normalizedApprovalStatus,
-                normalizedRiskLevel,
-                ownerUserId,
-                normalizedKeyword,
-                submittedFrom,
-                submittedTo,
+        Page<CodeVersion> versions = versionRepository.findAll(
+                reviewTaskSpecification(
+                        normalizedApprovalStatus,
+                        normalizedRiskLevel,
+                        ownerUserId,
+                        normalizedKeyword,
+                        submittedFrom,
+                        submittedTo
+                ),
                 PageRequest.of(
                         page,
                         pageSize,
@@ -325,6 +330,50 @@ public class V2AdminCodeReviewService {
             throw new IllegalArgumentException("keyword is invalid");
         }
         return normalized;
+    }
+
+    private static Specification<CodeVersion> reviewTaskSpecification(
+            String approvalStatus,
+            String riskLevel,
+            Integer ownerUserId,
+            String keyword,
+            Instant submittedFrom,
+            Instant submittedTo
+    ) {
+        return (version, query, criteria) -> {
+            var asset = query.from(CodeAsset.class);
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(criteria.equal(asset.get("id"), version.get("assetId")));
+            predicates.add(criteria.isFalse(asset.get("deleted")));
+            predicates.add(criteria.isFalse(version.get("deleted")));
+            predicates.add(criteria.equal(
+                    version.get("approvalStatus"), approvalStatus
+            ));
+            if (riskLevel != null) {
+                predicates.add(criteria.equal(version.get("riskLevel"), riskLevel));
+            }
+            if (ownerUserId != null) {
+                predicates.add(criteria.equal(version.get("ownerUserId"), ownerUserId));
+            }
+            if (keyword != null) {
+                String pattern = "%" + keyword.toLowerCase(Locale.ROOT) + "%";
+                predicates.add(criteria.or(
+                        criteria.like(criteria.lower(asset.get("name")), pattern),
+                        criteria.like(criteria.lower(version.get("version")), pattern)
+                ));
+            }
+            if (submittedFrom != null) {
+                predicates.add(criteria.greaterThanOrEqualTo(
+                        version.get("createdAt"), submittedFrom
+                ));
+            }
+            if (submittedTo != null) {
+                predicates.add(criteria.lessThanOrEqualTo(
+                        version.get("createdAt"), submittedTo
+                ));
+            }
+            return criteria.and(predicates.toArray(Predicate[]::new));
+        };
     }
 
     private static String normalizeSortProperty(String value) {

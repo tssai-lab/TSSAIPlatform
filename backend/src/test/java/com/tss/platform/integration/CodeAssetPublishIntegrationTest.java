@@ -25,6 +25,7 @@ import com.tss.platform.service.CodeZipArchiveService;
 import com.tss.platform.service.MinioDeleteTaskScheduler;
 import com.tss.platform.service.MinioDeleteTaskService;
 import com.tss.platform.service.MinioService;
+import com.tss.platform.service.V2AdminCodeReviewService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -148,6 +149,9 @@ class CodeAssetPublishIntegrationTest {
 
     @Autowired
     private CodeWorkspacePublishService publishService;
+
+    @Autowired
+    private V2AdminCodeReviewService codeReviewService;
 
     @MockitoSpyBean
     private CodeArtifactStorageService storageService;
@@ -296,6 +300,41 @@ class CodeAssetPublishIntegrationTest {
                 () -> assertTrue(deleteTaskRepository.findAll().stream().noneMatch(task ->
                         Objects.equals(task.getObjectName(), persistedVersion.getStoragePath())))
         );
+    }
+
+    @Test
+    void codeReviewQueueQueryAcceptsAbsentOptionalFiltersOnPostgres() {
+        String suffix = compactUuid();
+        CodeAsset asset = persistAsset("review-query-" + suffix);
+        CodeVersion version = new CodeVersion();
+        Instant now = Instant.now();
+        version.setId("review-version-" + suffix);
+        version.setAssetId(asset.getId());
+        version.setVersion("review-v1");
+        version.setStatus("READY");
+        version.setApprovalStatus(CodeApprovalStatus.PENDING);
+        version.setValidationStatus("NOT_RUN");
+        version.setOwnerUserId(OWNER_USER_ID);
+        version.setCreatedAt(now);
+        version.setUpdatedAt(now);
+        version.setDeleted(false);
+        versionRepository.saveAndFlush(version);
+
+        var page = codeReviewService.list(
+                CodeApprovalStatus.PENDING,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "SUBMITTED_AT",
+                "DESC",
+                0,
+                20
+        );
+
+        assertTrue(page.items().stream()
+                .anyMatch(candidate -> version.getId().equals(candidate.versionId())));
     }
 
     @Test
@@ -721,7 +760,7 @@ class CodeAssetPublishIntegrationTest {
 
                 @Override
                 public boolean isAdmin() {
-                    return false;
+                    return true;
                 }
 
                 @Override

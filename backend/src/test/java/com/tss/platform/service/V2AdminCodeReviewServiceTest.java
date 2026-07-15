@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -98,9 +99,8 @@ class V2AdminCodeReviewServiceTest {
         CodeVersion version = version();
         CodeAsset asset = asset();
         CodeRiskAssessment assessment = assessment();
-        when(versionRepository.findCodeReviewTasks(
-                eq("PENDING"), eq("HIGH"), eq(7), eq("unsafe"),
-                eq(Instant.EPOCH), eq(Instant.EPOCH.plusSeconds(60)), any(Pageable.class)
+        when(versionRepository.findAll(
+                any(Specification.class), any(Pageable.class)
         )).thenReturn(new PageImpl<>(
                 List.of(version), PageRequest.of(0, 10), 1
         ));
@@ -118,12 +118,30 @@ class V2AdminCodeReviewServiceTest {
         assertEquals("risk-1", result.items().get(0).riskAssessmentId());
         assertEquals(2, result.items().get(0).findingCount());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(versionRepository).findCodeReviewTasks(
-                eq("PENDING"), eq("HIGH"), eq(7), eq("unsafe"),
-                eq(Instant.EPOCH), eq(Instant.EPOCH.plusSeconds(60)), pageable.capture()
+        verify(versionRepository).findAll(
+                any(Specification.class), pageable.capture()
         );
         assertEquals(10, pageable.getValue().getPageSize());
         assertEquals("createdAt: DESC,id: DESC", pageable.getValue().getSort().toString());
+    }
+
+    @Test
+    void absentFiltersBuildDynamicSpecificationWithoutNullableQueryParameters() {
+        when(authContext.isAdmin()).thenReturn(true);
+        when(versionRepository.findAll(
+                any(Specification.class), any(Pageable.class)
+        )).thenReturn(org.springframework.data.domain.Page.empty());
+
+        var result = service.list(
+                "PENDING", null, null, null,
+                null, null, "SUBMITTED_AT", "DESC", 0, 20
+        );
+
+        assertTrue(result.items().isEmpty());
+        assertEquals(0, result.totalElements());
+        verify(versionRepository).findAll(
+                any(Specification.class), any(Pageable.class)
+        );
     }
 
     @Test
@@ -239,8 +257,8 @@ class V2AdminCodeReviewServiceTest {
                 null, null, "ASSET_NAME", "DESC", 0, 20
         ));
 
-        verify(versionRepository, never()).findCodeReviewTasks(
-                any(), any(), any(), any(), any(), any(), any()
+        verify(versionRepository, never()).findAll(
+                any(Specification.class), any(Pageable.class)
         );
     }
 
