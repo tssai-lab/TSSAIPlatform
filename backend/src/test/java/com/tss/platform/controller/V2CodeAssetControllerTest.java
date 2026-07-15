@@ -13,6 +13,7 @@ import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.CodeAssetAuditService;
+import com.tss.platform.service.CodeAssetReferenceChecker;
 import com.tss.platform.service.CodePathPolicy;
 import com.tss.platform.service.CodeWorkspaceService;
 import com.tss.platform.service.CodeWorkspaceConflictException;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -117,6 +119,18 @@ class V2CodeAssetControllerTest {
                         .value("ASSET_REVISION_CONFLICT"))
                 .andExpect(jsonPath("$.details.reason").doesNotExist())
                 .andExpect(jsonPath("$.traceId").value("trace-cas"));
+    }
+
+    @Test
+    void deletesOwnedAssetWithRevisionCasAndReturns204() throws Exception {
+        V2CodeAssetService service = mock(V2CodeAssetService.class);
+
+        mvc(service).perform(delete("/api/v2/code-assets/asset-1")
+                        .queryParam("expectedAssetRevision", "3"))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        verify(service).delete("asset-1", 3L);
     }
 
     @Test
@@ -255,6 +269,137 @@ class V2CodeAssetControllerTest {
         verify(assets, never()).saveAndFlush(any());
         verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
         verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void softDeleteLocksOwnedAssetAndPreservesRowsAndObjectsByOnlyUpdatingAsset() {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetReferenceChecker references = mock(CodeAssetReferenceChecker.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
+        when(references.hasReferences("asset-1")).thenReturn(false);
+        when(assets.saveAndFlush(owned)).thenAnswer(invocation -> {
+            owned.setRowVersion(4L);
+            return owned;
+        });
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(
+                assets, versions, workspaces, references, audit, auth
+        );
+
+        service.delete("asset-1", 3L);
+
+        org.assertj.core.api.Assertions.assertThat(owned.getDeleted()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(owned.getDeletedAt()).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(owned.getUpdatedAt())
+                .isEqualTo(owned.getDeletedAt());
+        verify(assets).saveAndFlush(owned);
+        verify(versions, never()).delete(any());
+        verify(workspaces, never()).delete(any());
+        verify(audit).assetDeleted("asset-1", 4L);
+
+        var order = org.mockito.Mockito.inOrder(assets, workspaces, references);
+        order.verify(assets).findByIdAndDeletedFalseForUpdate("asset-1");
+        order.verify(workspaces).findOpenByAssetId("asset-1");
+        order.verify(references).hasReferences("asset-1");
+    }
+
+    @Test
+    void softDeleteRejectsStaleAssetRevisionBeforeWorkspaceAndReferenceChecks() {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetReferenceChecker references = mock(CodeAssetReferenceChecker.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(entity(7, 4L)));
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(
+                assets, versions, workspaces, references, audit, auth
+        );
+
+        CodeWorkspaceConflictException stale = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeWorkspaceConflictException.class,
+                () -> service.delete("asset-1", 3L)
+        );
+
+        org.assertj.core.api.Assertions.assertThat(stale.getReasonCode())
+                .isEqualTo("ASSET_REVISION_CONFLICT");
+        verify(workspaces, never()).findOpenByAssetId(any());
+        verify(references, never()).hasReferences(any());
+        verify(assets, never()).saveAndFlush(any());
+        verify(audit, never()).assetDeleted(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void softDeleteRejectsOpenWorkspaceAndPersistedReferencesWithoutMutation() {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetReferenceChecker references = mock(CodeAssetReferenceChecker.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(auth.currentUserId()).thenReturn(7);
+        when(workspaces.findOpenByAssetId("asset-1"))
+                .thenReturn(Optional.of(new com.tss.platform.entity.CodeWorkspace()));
+        V2CodeAssetService service = service(
+                assets, versions, workspaces, references, audit, auth
+        );
+
+        CodeWorkspaceConflictException open = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeWorkspaceConflictException.class,
+                () -> service.delete("asset-1", 3L)
+        );
+        org.assertj.core.api.Assertions.assertThat(open.getReasonCode())
+                .isEqualTo("OPEN_WORKSPACE_EXISTS");
+        verify(references, never()).hasReferences(any());
+
+        when(workspaces.findOpenByAssetId("asset-1")).thenReturn(Optional.empty());
+        when(references.hasReferences("asset-1")).thenReturn(true);
+        CodeWorkspaceConflictException inUse = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeWorkspaceConflictException.class,
+                () -> service.delete("asset-1", 3L)
+        );
+        org.assertj.core.api.Assertions.assertThat(inUse.getReasonCode())
+                .isEqualTo("CODE_ASSET_IN_USE");
+        org.assertj.core.api.Assertions.assertThat(owned.getDeleted()).isFalse();
+        verify(assets, never()).saveAndFlush(any());
+        verify(audit, never()).assetDeleted(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void softDeleteHidesForeignAssetBeforeRevisionAndReferenceChecks() {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetReferenceChecker references = mock(CodeAssetReferenceChecker.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(entity(8, 3L)));
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(
+                assets, versions, workspaces, references, audit, auth
+        );
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                CodeAssetAccessException.class,
+                () -> service.delete("asset-1", 999L)
+        );
+
+        verify(workspaces, never()).findOpenByAssetId(any());
+        verify(references, never()).hasReferences(any());
+        verify(assets, never()).saveAndFlush(any());
     }
 
     @Test
@@ -452,11 +597,30 @@ class V2CodeAssetControllerTest {
             CodeAssetAuditService audit,
             AuthContext auth
     ) {
+        return service(
+                assets,
+                versions,
+                workspaces,
+                mock(CodeAssetReferenceChecker.class),
+                audit,
+                auth
+        );
+    }
+
+    private static V2CodeAssetService service(
+            CodeAssetRepository assets,
+            CodeVersionRepository versions,
+            CodeWorkspaceRepository workspaces,
+            CodeAssetReferenceChecker references,
+            CodeAssetAuditService audit,
+            AuthContext auth
+    ) {
         return new V2CodeAssetService(
                 assets,
                 versions,
                 workspaces,
                 mock(CodeWorkspaceService.class),
+                references,
                 audit,
                 new CodePathPolicy(),
                 auth

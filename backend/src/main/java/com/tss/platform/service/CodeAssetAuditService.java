@@ -3,6 +3,7 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.CodeAssetAuditLog;
+import com.tss.platform.model.CodeAuditActorType;
 import com.tss.platform.repository.CodeAssetAuditLogRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,14 @@ public class CodeAssetAuditService {
             "newHash",
             "artifactSha256",
             "policyVersion",
+            "riskAssessmentId",
+            "validationRunId",
+            "riskLevel",
+            "reviewDisposition",
+            "decisionOrigin",
+            "scannerVersion",
+            "riskPolicyVersion",
+            "findingCount",
             "reasonCode"
     );
     private static final Set<String> FORBIDDEN_KEY_PARTS = Set.of(
@@ -80,6 +89,13 @@ public class CodeAssetAuditService {
         LinkedHashMap<String, Object> metadata = metadata("revision", revision);
         metadata.put("reasonCode", "ASSET_UPDATED");
         append(assetId, null, null, "UPDATE", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void assetDeleted(String assetId, long revision) {
+        LinkedHashMap<String, Object> metadata = metadata("revision", revision);
+        metadata.put("reasonCode", "ASSET_DELETED");
+        append(assetId, null, null, "DELETE", metadata);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -245,6 +261,77 @@ public class CodeAssetAuditService {
         ));
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void riskAssessmentQueued(
+            String assetId,
+            String versionId,
+            String assessmentId,
+            String validationRunId,
+            String artifactSha256,
+            String riskPolicyVersion
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "riskAssessmentId", assessmentId
+        );
+        metadata.put("validationRunId", validationRunId);
+        metadata.put("artifactSha256", artifactSha256);
+        metadata.put("riskPolicyVersion", riskPolicyVersion);
+        appendSystem(assetId, versionId, "RISK_ASSESSMENT_QUEUED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void riskAssessmentCompleted(
+            String assetId,
+            String versionId,
+            String assessmentId,
+            String riskLevel,
+            String reviewDisposition,
+            String scannerVersion,
+            long findingCount
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "riskAssessmentId", assessmentId
+        );
+        metadata.put("riskLevel", riskLevel);
+        metadata.put("reviewDisposition", reviewDisposition);
+        metadata.put("scannerVersion", scannerVersion);
+        metadata.put("findingCount", findingCount);
+        appendSystem(assetId, versionId, "RISK_ASSESSMENT_COMPLETED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void riskAssessmentFailed(
+            String assetId,
+            String versionId,
+            String assessmentId,
+            String reasonCode
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "riskAssessmentId", assessmentId
+        );
+        metadata.put("reasonCode", reasonCode);
+        appendSystem(assetId, versionId, "RISK_ASSESSMENT_FAILED", metadata);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void automaticDecision(
+            String assetId,
+            String versionId,
+            String assessmentId,
+            String action,
+            String artifactSha256,
+            String riskPolicyVersion,
+            String decisionOrigin
+    ) {
+        LinkedHashMap<String, Object> metadata = metadata(
+                "riskAssessmentId", assessmentId
+        );
+        metadata.put("artifactSha256", artifactSha256);
+        metadata.put("riskPolicyVersion", riskPolicyVersion);
+        metadata.put("decisionOrigin", decisionOrigin);
+        appendSystem(assetId, versionId, action, metadata);
+    }
+
     static Map<String, Object> validateMetadata(Map<String, ?> metadata) {
         if (metadata == null) {
             throw invalidMetadata();
@@ -283,7 +370,33 @@ public class CodeAssetAuditService {
         auditLog.setVersionId(versionId);
         auditLog.setWorkspaceId(workspaceId);
         auditLog.setAction(action);
+        auditLog.setActorType(CodeAuditActorType.USER);
         auditLog.setActorUserId(authContext.currentUserId());
+        auditLog.setMetadataJson(metadataJson);
+        auditLog.setCreatedAt(Instant.now());
+        repository.save(auditLog);
+    }
+
+    private void appendSystem(
+            String assetId,
+            String versionId,
+            String action,
+            Map<String, ?> metadata
+    ) {
+        Map<String, Object> safe = validateMetadata(metadata);
+        String metadataJson;
+        try {
+            metadataJson = objectMapper.writeValueAsString(safe);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Unable to serialize safe code audit metadata", exception);
+        }
+        CodeAssetAuditLog auditLog = new CodeAssetAuditLog();
+        auditLog.setId("code-audit-" + UUID.randomUUID().toString().replace("-", ""));
+        auditLog.setAssetId(assetId);
+        auditLog.setVersionId(versionId);
+        auditLog.setAction(action);
+        auditLog.setActorType(CodeAuditActorType.SYSTEM);
+        auditLog.setActorUserId(null);
         auditLog.setMetadataJson(metadataJson);
         auditLog.setCreatedAt(Instant.now());
         repository.save(auditLog);
@@ -328,7 +441,9 @@ public class CodeAssetAuditService {
                 || value.getClass().isArray()) {
             throw invalidMetadata();
         }
-        if ("revision".equals(key) || "fileCount".equals(key)) {
+        if ("revision".equals(key)
+                || "fileCount".equals(key)
+                || "findingCount".equals(key)) {
             if (!(value instanceof Number number)
                     || number.longValue() < 0
                     || number.doubleValue() != number.longValue()) {

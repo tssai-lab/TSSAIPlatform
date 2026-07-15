@@ -137,7 +137,8 @@ class TrainingCodeVersionSecurityTest {
                         "PASSED",
                         null,
                         "Code artifact validation passed",
-                        1
+                        1,
+                        true
                 )
         );
         when(codeVersionRepo.findAssetIdByIdAndDeletedFalse(pending.getId()))
@@ -155,6 +156,7 @@ class TrainingCodeVersionSecurityTest {
         );
 
         assertEquals(true, result.getPassed());
+        assertEquals(true, result.getReused());
         assertEquals(CodeApprovalStatus.PENDING, result.getApprovalStatus());
         assertEquals(CodeApprovalStatus.PENDING, pending.getApprovalStatus());
         verify(codeApprovalService, never()).decide(

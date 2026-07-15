@@ -155,6 +155,7 @@ public class CodeVersionService {
                 .trainingProfile(profile)
                 .trainingProfileDisplayName(TrainingProfileRegistry.displayNameOf(profile))
                 .passed(reasons.isEmpty())
+                .reused(validation.reused())
                 .approvalStatus(version.getApprovalStatus())
                 .reasons(List.copyOf(reasons))
                 .checkedAt(checkedAt)

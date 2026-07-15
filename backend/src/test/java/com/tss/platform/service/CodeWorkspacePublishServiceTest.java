@@ -63,6 +63,8 @@ class CodeWorkspacePublishServiceTest {
             mock(CodeArtifactStorageService.class);
     private final MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
+    private final CodeRiskAssessmentService riskAssessmentService =
+            mock(CodeRiskAssessmentService.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final PlatformTransactionManager transactionManager =
             mock(PlatformTransactionManager.class);
@@ -117,6 +119,7 @@ class CodeWorkspacePublishServiceTest {
                 storageService,
                 deleteTaskService,
                 auditService,
+                riskAssessmentService,
                 authContext,
                 transactionManager
         );
@@ -188,6 +191,9 @@ class CodeWorkspacePublishServiceTest {
         assertEquals(published.getId(), runCaptor.getValue().getVersionId());
         assertEquals(published.getArtifactSha256(), runCaptor.getValue().getArtifactSha256());
         assertEquals("PASSED", runCaptor.getValue().getStatus());
+        verify(riskAssessmentService).enqueue(
+                published.getId(), runCaptor.getValue().getId(), 7
+        );
         verify(auditService).published(
                 "asset-1", published.getId(), "workspace-1", 4L, 2L,
                 published.getArtifactSha256(), CodeArtifactAssembler.POLICY_VERSION

@@ -52,6 +52,8 @@ class CodeAssetImportServiceTest {
             mock(CodeArtifactStorageService.class);
     private final MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
+    private final CodeRiskAssessmentService riskAssessmentService =
+            mock(CodeRiskAssessmentService.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final PlatformTransactionManager transactionManager =
             mock(PlatformTransactionManager.class);
@@ -96,6 +98,7 @@ class CodeAssetImportServiceTest {
                 storageService,
                 deleteTaskService,
                 auditService,
+                riskAssessmentService,
                 authContext,
                 transactionManager
         );
@@ -156,6 +159,9 @@ class CodeAssetImportServiceTest {
         assertEquals(result.artifactSha256(), validationCaptor.getValue().getArtifactSha256());
         assertEquals("PASSED", validationCaptor.getValue().getStatus());
         assertNotNull(validationCaptor.getValue().getCompletedAt());
+        verify(riskAssessmentService).enqueue(
+                result.versionId(), validationCaptor.getValue().getId(), 7
+        );
         verify(auditService).imported(
                 result.assetId(), result.versionId(), 2L, result.artifactSha256(),
                 CodeArtifactAssembler.POLICY_VERSION
@@ -204,7 +210,7 @@ class CodeAssetImportServiceTest {
     }
 
     @Test
-    void rejectsRawZipPathAliasBeforeAnyUpload() {
+    void importsWindowsZipPathAfterSafeNormalization() {
         MockMultipartFile file = new MockMultipartFile(
                 "file",
                 "aliased.zip",
@@ -224,14 +230,14 @@ class CodeAssetImportServiceTest {
                 null
         );
 
-        CodeValidationException error = assertThrows(
-                CodeValidationException.class,
-                () -> service.importAsset(file, aliasedEntry)
-        );
+        CodeAssetImportResult result = service.importAsset(file, aliasedEntry);
 
-        assertEquals("INVALID_PATH", error.getReasonCode());
-        verify(storageService, never()).upload(anyString(), any(byte[].class));
-        verify(assetRepository, never()).saveAndFlush(any());
+        assertEquals("PASSED", result.validationStatus());
+        Map<String, byte[]> normalized = zipService.readEntries(
+                new java.io.ByteArrayInputStream(uploadedBytes.get())
+        );
+        assertEquals(java.util.Set.of("src/train.py"), normalized.keySet());
+        assertArrayEquals(bytes("print('aliased')\n"), normalized.get("src/train.py"));
     }
 
     @Test

@@ -76,12 +76,24 @@ class CodeZipArchiveServiceTest {
     }
 
     @Test
-    void rejectsRawFileNameAliasesInsteadOfNormalizingThem() throws Exception {
+    void acceptsWindowsSeparatorsButRejectsOtherUnsafeRawAliases() throws Exception {
+        byte[] windowsArchive = buildRawStoredZip(
+                rawEntry("src\\train.py", "pass"),
+                rawEntry("config\\model.yaml", "epochs: 2\n")
+        );
+        LinkedHashMap<String, byte[]> normalized = service.readEntries(
+                new ByteArrayInputStream(windowsArchive)
+        );
+        assertEquals(List.of("config/model.yaml", "src/train.py"),
+                new ArrayList<>(normalized.keySet()));
+
         List<String> invalidNames = List.of(
-                "src\\train.py",
                 "src//train.py",
                 "./train.py",
                 "src/../train.py",
+                "..\\train.py",
+                "C:\\train.py",
+                "\\\\server\\share\\train.py",
                 "src/\u0001train.py"
         );
 
@@ -96,7 +108,18 @@ class CodeZipArchiveServiceTest {
     }
 
     @Test
-    void rejectsRawDirectoryNameAliasesInsteadOfNormalizingThem() throws Exception {
+    void acceptsWindowsDirectorySeparatorsButRejectsUnsafeRawDirectories() throws Exception {
+        byte[] windowsDirectory = buildRawStoredZip(
+                rawEntry("src\\", ""),
+                rawEntry("src\\train.py", "pass")
+        );
+        assertEquals(
+                List.of("src/train.py"),
+                new ArrayList<>(service.readEntries(
+                        new ByteArrayInputStream(windowsDirectory)
+                ).keySet())
+        );
+
         List<String> invalidDirectories = List.of(
                 "src\\/",
                 "src//",
@@ -130,6 +153,31 @@ class CodeZipArchiveServiceTest {
                 "DUPLICATE_PATH",
                 () -> service.readEntries(new ByteArrayInputStream(duplicateDirectories))
         );
+    }
+
+    @Test
+    void rejectsDuplicatesAndTreeConflictsAfterWindowsPathNormalization() throws Exception {
+        byte[] duplicateFiles = buildRawStoredZip(
+                rawEntry("src\\train.py", "one"),
+                rawEntry("src/train.py", "two")
+        );
+        assertReason("DUPLICATE_PATH",
+                () -> service.readEntries(new ByteArrayInputStream(duplicateFiles)));
+
+        byte[] duplicateDirectories = buildRawStoredZip(
+                rawEntry("src\\", ""),
+                rawEntry("src/", ""),
+                rawEntry("train.py", "pass")
+        );
+        assertReason("DUPLICATE_PATH",
+                () -> service.readEntries(new ByteArrayInputStream(duplicateDirectories)));
+
+        byte[] treeConflict = buildRawStoredZip(
+                rawEntry("src\\train.py", "pass"),
+                rawEntry("src/train.py\\config.json", "{}")
+        );
+        assertReason("TREE_CONFLICT",
+                () -> service.readEntries(new ByteArrayInputStream(treeConflict)));
     }
 
     @Test

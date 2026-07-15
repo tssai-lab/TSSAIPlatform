@@ -17,6 +17,7 @@ import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeWorkspaceConflictException;
 import com.tss.platform.service.CodeArtifactUpgradeService;
 import com.tss.platform.service.V2CodeVersionQueryService;
+import com.tss.platform.service.V2CodeRiskQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -44,14 +45,18 @@ class V2CodeVersionControllerTest {
 
     private V2CodeVersionQueryService service;
     private CodeArtifactUpgradeService artifactUpgradeService;
+    private V2CodeRiskQueryService riskQueryService;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         service = mock(V2CodeVersionQueryService.class);
         artifactUpgradeService = mock(CodeArtifactUpgradeService.class);
+        riskQueryService = mock(V2CodeRiskQueryService.class);
         mvc = MockMvcBuilders
-                .standaloneSetup(new V2CodeVersionController(service, artifactUpgradeService))
+                .standaloneSetup(new V2CodeVersionController(
+                        service, artifactUpgradeService, riskQueryService
+                ))
                 .setControllerAdvice(new V2ExceptionHandler())
                 .build();
     }
@@ -188,7 +193,7 @@ class V2CodeVersionControllerTest {
     void exposesValidationApprovalAndLifecycleCommands() throws Exception {
         V2CodeValidationResult validation = new V2CodeValidationResult(
                 "code-asset-policy-v1", "a".repeat(64), "PASSED", null,
-                "Code artifact validation passed", 1
+                "Code artifact validation passed", 1, true
         );
         V2CodeApprovalResult approval = new V2CodeApprovalResult(
                 "approval-1", "version-1", "APPROVED", null,
@@ -213,7 +218,8 @@ class V2CodeVersionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("PASSED"));
+                .andExpect(jsonPath("$.status").value("PASSED"))
+                .andExpect(jsonPath("$.reused").value(true));
         mvc.perform(post("/api/v2/code-versions/version-1/approval")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"APPROVE\"}"))

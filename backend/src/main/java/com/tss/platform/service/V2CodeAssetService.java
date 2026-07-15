@@ -27,6 +27,7 @@ public class V2CodeAssetService {
     private final CodeVersionRepository versionRepository;
     private final CodeWorkspaceRepository workspaceRepository;
     private final CodeWorkspaceService workspaceService;
+    private final CodeAssetReferenceChecker referenceChecker;
     private final CodeAssetAuditService auditService;
     private final CodePathPolicy pathPolicy;
     private final AuthContext authContext;
@@ -36,6 +37,7 @@ public class V2CodeAssetService {
             CodeVersionRepository versionRepository,
             CodeWorkspaceRepository workspaceRepository,
             CodeWorkspaceService workspaceService,
+            CodeAssetReferenceChecker referenceChecker,
             CodeAssetAuditService auditService,
             CodePathPolicy pathPolicy,
             AuthContext authContext
@@ -44,6 +46,7 @@ public class V2CodeAssetService {
         this.versionRepository = versionRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceService = workspaceService;
+        this.referenceChecker = referenceChecker;
         this.auditService = auditService;
         this.pathPolicy = pathPolicy;
         this.authContext = authContext;
@@ -147,6 +150,27 @@ public class V2CodeAssetService {
             auditService.assetUpdated(asset.getId(), revision(asset));
         }
         return toDto(asset, workspaceRepository.findOpenByAssetId(asset.getId()).isPresent());
+    }
+
+    @Transactional
+    public void delete(String assetId, long expectedAssetRevision) {
+        CodeAsset asset = requireOwnedAsset(assetId, true);
+        if (expectedAssetRevision < 0 || revision(asset) != expectedAssetRevision) {
+            throw conflict("ASSET_REVISION_CONFLICT", "Code asset revision is stale");
+        }
+        if (workspaceRepository.findOpenByAssetId(asset.getId()).isPresent()) {
+            throw conflict("OPEN_WORKSPACE_EXISTS", "Code asset has an open workspace");
+        }
+        if (referenceChecker.hasReferences(asset.getId())) {
+            throw conflict("CODE_ASSET_IN_USE", "Code asset is referenced by another module");
+        }
+
+        Instant now = Instant.now();
+        asset.setDeleted(true);
+        asset.setDeletedAt(now);
+        asset.setUpdatedAt(now);
+        CodeAsset saved = assetRepository.saveAndFlush(asset);
+        auditService.assetDeleted(saved.getId(), revision(saved));
     }
 
     @Transactional(readOnly = true)

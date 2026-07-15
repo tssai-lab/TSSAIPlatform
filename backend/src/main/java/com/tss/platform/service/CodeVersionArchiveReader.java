@@ -8,8 +8,10 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.Inflater;
@@ -163,6 +165,72 @@ public class CodeVersionArchiveReader {
         }
     }
 
+    /**
+     * Computes a raw-content SHA-256 for one validated entry without retaining
+     * the entry body in memory. Declared length, object range and CRC are checked
+     * while streaming, so the result is suitable for workspace content-hash CAS.
+     */
+    public String sha256(
+            CodeVersion version,
+            Integer assetOwnerId,
+            CodeArchiveEntry entry
+    ) {
+        String objectName = authorize(version, assetOwnerId);
+        if (entry == null
+                || entry.uncompressedSize() < 0
+                || entry.compressedSize() < 0
+                || entry.zipDataOffset() < 0
+                || entry.uncompressedSize() > MAX_CODE_UNCOMPRESSED_BYTES
+                || (entry.method() != 0 && entry.method() != 8)) {
+            throw inaccessible();
+        }
+        if (version.getSizeBytes() == null
+                || !rangeWithin(
+                        entry.zipDataOffset(),
+                        entry.compressedSize(),
+                        version.getSizeBytes()
+                )) {
+            throw inaccessible();
+        }
+        if (entry.compressedSize() == 0) {
+            if (entry.uncompressedSize() == 0 && entry.crc32() == 0) {
+                return sha256Hex(new byte[0]);
+            }
+            throw inaccessible();
+        }
+
+        try (InputStream range = minioService.downloadRange(
+                objectName,
+                entry.zipDataOffset(),
+                entry.compressedSize()
+        )) {
+            InputStream bounded = new RangeInputStream(range, entry.compressedSize());
+            HashResult result;
+            if (entry.method() == 0) {
+                if (entry.compressedSize() != entry.uncompressedSize()) {
+                    throw inaccessible();
+                }
+                result = hashBoundedOutput(bounded, entry.uncompressedSize());
+            } else {
+                Inflater inflater = new Inflater(true);
+                try {
+                    InflaterInputStream inflated = new InflaterInputStream(bounded, inflater, 8192);
+                    result = hashBoundedOutput(inflated, entry.uncompressedSize());
+                } finally {
+                    inflater.end();
+                }
+            }
+            if (result.crc32() != entry.crc32()) {
+                throw inaccessible();
+            }
+            return result.sha256();
+        } catch (CodeAssetAccessException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw inaccessible();
+        }
+    }
+
     private String authorize(CodeVersion version, Integer assetOwnerId) {
         if (version == null
                 || assetOwnerId == null
@@ -217,6 +285,40 @@ public class CodeVersionArchiveReader {
         }
     }
 
+    private static HashResult hashBoundedOutput(
+            InputStream input,
+            long expectedSize
+    ) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        CRC32 crc = new CRC32();
+        byte[] buffer = new byte[8192];
+        long count = 0;
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read == 0) {
+                continue;
+            }
+            if (count > expectedSize - read) {
+                throw new IOException("Code archive output exceeds its declared length");
+            }
+            digest.update(buffer, 0, read);
+            crc.update(buffer, 0, read);
+            count += read;
+        }
+        if (count != expectedSize) {
+            throw new IOException("Code archive entry length mismatch");
+        }
+        return new HashResult(HexFormat.of().formatHex(digest.digest()), crc.getValue());
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
     private static CodeAssetAccessException inaccessible() {
         return new CodeAssetAccessException();
     }
@@ -265,5 +367,8 @@ public class CodeVersionArchiveReader {
             remaining -= read;
             return read;
         }
+    }
+
+    private record HashResult(String sha256, long crc32) {
     }
 }

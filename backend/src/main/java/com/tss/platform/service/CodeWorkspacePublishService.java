@@ -42,6 +42,7 @@ public class CodeWorkspacePublishService {
     private final CodeArtifactStorageService storageService;
     private final MinioDeleteTaskService deleteTaskService;
     private final CodeAssetAuditService auditService;
+    private final CodeRiskAssessmentService riskAssessmentService;
     private final AuthContext authContext;
     private final TransactionTemplate transactionTemplate;
 
@@ -55,6 +56,7 @@ public class CodeWorkspacePublishService {
             CodeArtifactStorageService storageService,
             MinioDeleteTaskService deleteTaskService,
             CodeAssetAuditService auditService,
+            CodeRiskAssessmentService riskAssessmentService,
             AuthContext authContext,
             PlatformTransactionManager transactionManager
     ) {
@@ -67,6 +69,7 @@ public class CodeWorkspacePublishService {
         this.storageService = storageService;
         this.deleteTaskService = deleteTaskService;
         this.auditService = auditService;
+        this.riskAssessmentService = riskAssessmentService;
         this.authContext = authContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(
@@ -238,6 +241,10 @@ public class CodeWorkspacePublishService {
         run.setCreatedAt(now);
         run.setCompletedAt(now);
         validationRunRepository.saveAndFlush(run);
+
+        riskAssessmentService.enqueue(
+                version.getId(), run.getId(), asset.getOwnerUserId()
+        );
 
         workspace.setStatus(CodeWorkspace.STATUS_PUBLISHED);
         workspace.setClosedVersionId(versionId);

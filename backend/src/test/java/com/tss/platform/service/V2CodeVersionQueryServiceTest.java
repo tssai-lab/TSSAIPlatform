@@ -30,6 +30,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -306,11 +307,12 @@ class V2CodeVersionQueryServiceTest {
     void approvalDelegatesWithoutOwnerPrelookupSoAuthorityIsCheckedFirst() {
         CodeApprovalRecord record = approvalRecord();
         when(approvalService.decide(
-                "missing-version", CodeApprovalService.Decision.APPROVE, null
+                eq("missing-version"), eq(CodeApprovalService.Decision.APPROVE),
+                eq(null), any(CodeApprovalService.ApprovalExpectation.class)
         )).thenReturn(record);
 
         var result = service.approve(
-                "missing-version", new V2CodeApprovalRequest("APPROVE", null)
+                "missing-version", approvalRequest()
         );
 
         assertEquals("APPROVED", result.decision());
@@ -332,6 +334,7 @@ class V2CodeVersionQueryServiceTest {
 
         verify(approvalService, times(2)).requireAdministratorAuthority();
         verify(approvalService, never()).decide(any(), any(), any());
+        verify(approvalService, never()).decide(any(), any(), any(), any());
         verify(versionRepository, never()).findAssetIdByIdAndDeletedFalse("missing-version");
         verify(assetRepository, never()).findByIdAndDeletedFalse("asset-1");
     }
@@ -344,13 +347,14 @@ class V2CodeVersionQueryServiceTest {
     })
     void approvalStateFailuresBecomeConflicts(String reasonCode) {
         when(approvalService.decide(
-                "version-1", CodeApprovalService.Decision.APPROVE, null
+                eq("version-1"), eq(CodeApprovalService.Decision.APPROVE),
+                eq(null), any(CodeApprovalService.ApprovalExpectation.class)
         )).thenThrow(new CodeValidationException(reasonCode, "core state failure"));
 
         CodeWorkspaceConflictException exception = assertThrows(
                 CodeWorkspaceConflictException.class,
                 () -> service.approve(
-                        "version-1", new V2CodeApprovalRequest("APPROVE", null)
+                        "version-1", approvalRequest()
                 )
         );
 
@@ -360,7 +364,8 @@ class V2CodeVersionQueryServiceTest {
     @Test
     void approvalEvidenceFailureRemainsUnprocessableValidation() {
         when(approvalService.decide(
-                "version-1", CodeApprovalService.Decision.APPROVE, null
+                eq("version-1"), eq(CodeApprovalService.Decision.APPROVE),
+                eq(null), any(CodeApprovalService.ApprovalExpectation.class)
         )).thenThrow(new CodeValidationException(
                 "VALIDATION_EVIDENCE_MISSING", "core evidence failure"
         ));
@@ -368,7 +373,7 @@ class V2CodeVersionQueryServiceTest {
         CodeValidationException exception = assertThrows(
                 CodeValidationException.class,
                 () -> service.approve(
-                        "version-1", new V2CodeApprovalRequest("APPROVE", null)
+                        "version-1", approvalRequest()
                 )
         );
 
@@ -392,6 +397,28 @@ class V2CodeVersionQueryServiceTest {
 
         assertThrows(CodeArtifactStorageException.class,
                 () -> service.validate("version-1"));
+    }
+
+    @Test
+    void validationResponseExposesReusedEvidenceWithoutChangingStatus() {
+        CodeVersion version = version();
+        ownerScope(version, asset(), 7);
+        when(validationService.validateVersion("version-1")).thenReturn(
+                new CodeValidationResult(
+                        CodeArtifactAssembler.POLICY_VERSION,
+                        SHA,
+                        "PASSED",
+                        null,
+                        "Code artifact validation passed",
+                        1,
+                        true
+                )
+        );
+
+        var result = service.validate("version-1");
+
+        assertEquals("PASSED", result.status());
+        assertTrue(result.reused());
     }
 
     @Test
@@ -499,5 +526,16 @@ class V2CodeVersionQueryServiceTest {
         record.setPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
         record.setCreatedAt(Instant.EPOCH);
         return record;
+    }
+
+    private static V2CodeApprovalRequest approvalRequest() {
+        return new V2CodeApprovalRequest(
+                "APPROVE",
+                null,
+                "validation-1",
+                "risk-1",
+                SHA,
+                CodeStaticRiskScanner.RISK_POLICY_VERSION
+        );
     }
 }

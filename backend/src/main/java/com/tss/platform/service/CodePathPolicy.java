@@ -40,24 +40,22 @@ public final class CodePathPolicy {
     }
 
     /**
-     * Validates a raw ZIP central-directory file name without accepting aliases.
-     * Unlike interactive paths, archive names containing backslashes or control
-     * characters are rejected instead of normalized.
+     * Canonicalizes a raw ZIP central-directory file name. Backslashes emitted by
+     * Windows ZIP tools are treated as separators, then all ordinary path safety
+     * rules are applied to the canonical slash form.
      */
     public String normalizeRawArchiveFilePath(String rawPath) {
         if (rawPath == null
-                || rawPath.indexOf('\\') >= 0
                 || containsControlCharacter(rawPath)) {
             throw invalidPath();
         }
         return normalizeFilePath(rawPath);
     }
 
-    /** Validates a raw directory entry and returns its slash-free canonical path. */
+    /** Canonicalizes a raw directory entry and returns its slash-free path. */
     public String normalizeRawArchiveDirectoryPath(String rawPath) {
         if (rawPath == null
-                || !rawPath.endsWith("/")
-                || rawPath.indexOf('\\') >= 0
+                || (!rawPath.endsWith("/") && !rawPath.endsWith("\\"))
                 || containsControlCharacter(rawPath)) {
             throw invalidPath();
         }

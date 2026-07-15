@@ -2,11 +2,13 @@ package com.tss.platform.service;
 
 import com.tss.platform.entity.CodeApprovalRecord;
 import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ public class CodeArtifactResolver {
     private final CodeAssetRepository assetRepository;
     private final CodeValidationRunRepository validationRunRepository;
     private final CodeApprovalRecordRepository approvalRecordRepository;
+    private final CodeRiskAssessmentRepository riskAssessmentRepository;
     private final CodeArtifactStorageService storageService;
 
     public CodeArtifactResolver(
@@ -31,12 +34,14 @@ public class CodeArtifactResolver {
             CodeAssetRepository assetRepository,
             CodeValidationRunRepository validationRunRepository,
             CodeApprovalRecordRepository approvalRecordRepository,
+            CodeRiskAssessmentRepository riskAssessmentRepository,
             CodeArtifactStorageService storageService
     ) {
         this.versionRepository = versionRepository;
         this.assetRepository = assetRepository;
         this.validationRunRepository = validationRunRepository;
         this.approvalRecordRepository = approvalRecordRepository;
+        this.riskAssessmentRepository = riskAssessmentRepository;
         this.storageService = storageService;
     }
 
@@ -94,6 +99,7 @@ public class CodeArtifactResolver {
                         && Objects.equals(approval.getArtifactSha256(), version.getArtifactSha256())
                         && CodeArtifactAssembler.POLICY_VERSION.equals(approval.getPolicyVersion()),
                 "APPROVAL_EVIDENCE_STALE", "Code version approval evidence is stale");
+        CodeRiskAssessment riskAssessment = requireRiskEvidence(version, validationRun, approval);
 
         String storagePath = version.getStoragePath();
         String prefix = "users/" + consumerOwnerId
@@ -141,8 +147,41 @@ public class CodeArtifactResolver {
                 validationRun.getId(),
                 validationRun.getPolicyVersion(),
                 approval.getId(),
+                approval.getDecisionSource(),
+                riskAssessment == null ? null : riskAssessment.getId(),
+                riskAssessment == null ? null : riskAssessment.getRiskLevel(),
+                riskAssessment == null ? null : riskAssessment.getRiskPolicyVersion(),
                 storagePath
         );
+    }
+
+    private CodeRiskAssessment requireRiskEvidence(
+            CodeVersion version,
+            CodeValidationRun validationRun,
+            CodeApprovalRecord approval
+    ) {
+        if (approval.getRiskAssessmentId() == null) {
+            require(approval.getApprovalPolicyVersion() == null,
+                    "APPROVAL_EVIDENCE_STALE", "Code approval evidence is stale");
+            return null;
+        }
+        CodeRiskAssessment assessment = riskAssessmentRepository.findById(
+                approval.getRiskAssessmentId()
+        ).orElseThrow(() -> validation(
+                "RISK_EVIDENCE_MISSING", "Code risk evidence is missing"
+        ));
+        require("COMPLETED".equals(assessment.getStatus())
+                        && !"BLOCK".equals(assessment.getDisposition())
+                        && CodeStaticRiskScanner.RISK_POLICY_VERSION.equals(
+                                assessment.getRiskPolicyVersion())
+                        && Objects.equals(assessment.getVersionId(), version.getId())
+                        && Objects.equals(assessment.getValidationRunId(), validationRun.getId())
+                        && Objects.equals(assessment.getArtifactSha256(),
+                                version.getArtifactSha256())
+                        && CodeApprovalService.APPROVAL_POLICY_VERSION.equals(
+                                approval.getApprovalPolicyVersion()),
+                "RISK_EVIDENCE_STALE", "Code risk evidence is stale");
+        return assessment;
     }
 
     private static String normalizedEntryScript(CodeVersion version) {

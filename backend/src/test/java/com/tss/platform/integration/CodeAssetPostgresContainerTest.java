@@ -84,8 +84,8 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
-    void flywayAppliesEveryVersionFromV1ThroughV29() throws SQLException {
-        List<String> expectedVersions = IntStream.rangeClosed(1, 29)
+    void flywayAppliesEveryVersionFromV1ThroughV30() throws SQLException {
+        List<String> expectedVersions = IntStream.rangeClosed(1, 30)
                 .mapToObj(Integer::toString)
                 .toList();
         List<String> installedVersions = queryStrings("""
@@ -96,13 +96,15 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("29", installedVersions.get(installedVersions.size() - 1));
+        assertEquals("30", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",
                 "code_validation_run",
                 "code_approval_record",
-                "code_asset_audit_log"
+                "code_asset_audit_log",
+                "code_risk_assessment",
+                "code_risk_finding"
         )) {
             assertEquals(
                     1L,
@@ -111,7 +113,7 @@ class CodeAssetPostgresContainerTest {
                             FROM information_schema.tables
                             WHERE table_schema = 'public' AND table_name = ?
                             """, table),
-                    () -> "V29 table was not created: " + table
+                    () -> "code asset table was not created: " + table
             );
         }
     }
@@ -370,6 +372,216 @@ class CodeAssetPostgresContainerTest {
                         VALUES (?, ?, ?, 'TEST', 7, CURRENT_TIMESTAMP)
                         """,
                 id("orphan-audit-workspace"), assetId, id("missing-workspace")
+        );
+    }
+
+    @Test
+    void v30PersistsRiskEvidenceAutomaticDecisionsAndSystemAuditActors()
+            throws SQLException {
+        String assetId = id("risk-asset");
+        String versionId = id("risk-version");
+        String validationId = id("risk-validation");
+        String lowAssessmentId = id("risk-low");
+        String blockAssessmentId = id("risk-block");
+        String artifactSha256 = "a".repeat(64);
+
+        insertAsset(assetId);
+        insertVersion(versionId, assetId);
+        executeUpdate(
+                "UPDATE code_version SET artifact_sha256 = ? WHERE id = ?",
+                artifactSha256,
+                versionId
+        );
+        executeUpdate("""
+                INSERT INTO code_validation_run (
+                    id, version_id, artifact_sha256, policy_version, status,
+                    requested_by_user_id, created_at, completed_at
+                )
+                VALUES (?, ?, ?, 'validation-v1', 'PASSED', 7,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, validationId, versionId, artifactSha256);
+
+        executeUpdate("""
+                INSERT INTO code_risk_assessment (
+                    id, version_id, validation_run_id, artifact_sha256,
+                    risk_policy_version, scanner_version, status, risk_level,
+                    disposition, finding_count, requested_by_user_id,
+                    created_at, started_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, 'risk-v1', 'scanner-v1', 'COMPLETED', 'LOW',
+                        'AUTO_APPROVE', 1, NULL,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, lowAssessmentId, versionId, validationId, artifactSha256);
+        executeUpdate("""
+                INSERT INTO code_risk_finding (
+                    id, risk_assessment_id, rule_id, severity, category,
+                    file_path, line_start, line_end, description, created_at
+                )
+                VALUES (?, ?, 'PYTHON_NETWORK', 'LOW', 'NETWORK',
+                        'src/train.py', 12, 12,
+                        'Network import was classified by policy', CURRENT_TIMESTAMP)
+                """, id("risk-finding"), lowAssessmentId);
+        executeUpdate("""
+                UPDATE code_version
+                SET latest_risk_assessment_id = ?,
+                    risk_status = 'COMPLETED',
+                    risk_level = 'LOW',
+                    review_disposition = 'AUTO_APPROVE',
+                    risk_policy_version = 'risk-v1'
+                WHERE id = ?
+                """, lowAssessmentId, versionId);
+        executeUpdate("""
+                INSERT INTO code_approval_record (
+                    id, version_id, artifact_sha256, validation_run_id,
+                    policy_version, decision, decision_source,
+                    risk_assessment_id, approval_policy_version,
+                    reviewer_user_id, created_at
+                )
+                VALUES (?, ?, ?, ?, 'validation-v1', 'APPROVED', 'AUTO_POLICY',
+                        ?, 'approval-v1', NULL, CURRENT_TIMESTAMP)
+                """, id("risk-auto-approve"), versionId, artifactSha256,
+                validationId, lowAssessmentId);
+
+        executeUpdate("""
+                INSERT INTO code_risk_assessment (
+                    id, version_id, validation_run_id, artifact_sha256,
+                    risk_policy_version, scanner_version, status, risk_level,
+                    disposition, finding_count, created_at, started_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, 'risk-v1', 'scanner-v1', 'COMPLETED', 'HIGH',
+                        'BLOCK', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP)
+                """, blockAssessmentId, versionId, validationId, artifactSha256);
+        executeUpdate("""
+                INSERT INTO code_approval_record (
+                    id, version_id, artifact_sha256, validation_run_id,
+                    policy_version, decision, decision_source,
+                    risk_assessment_id, approval_policy_version,
+                    reviewer_user_id, created_at
+                )
+                VALUES (?, ?, ?, ?, 'validation-v1', 'REJECTED', 'AUTO_POLICY',
+                        ?, 'approval-v1', NULL, CURRENT_TIMESTAMP)
+                """, id("risk-auto-reject"), versionId, artifactSha256,
+                validationId, blockAssessmentId);
+
+        executeUpdate("""
+                INSERT INTO code_asset_audit_log (
+                    id, asset_id, version_id, action, actor_type,
+                    actor_user_id, created_at
+                )
+                VALUES (?, ?, ?, 'AUTO_RISK_DECISION', 'SYSTEM', NULL,
+                        CURRENT_TIMESTAMP)
+                """, id("risk-system-audit"), assetId, versionId);
+
+        assertEquals(2L, queryLong(
+                "SELECT COUNT(*) FROM code_risk_assessment WHERE version_id = ?",
+                versionId
+        ));
+        assertEquals(2L, queryLong("""
+                SELECT COUNT(*)
+                FROM code_approval_record
+                WHERE version_id = ? AND decision_source = 'AUTO_POLICY'
+                  AND reviewer_user_id IS NULL
+                """, versionId));
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM code_asset_audit_log
+                WHERE version_id = ? AND actor_type = 'SYSTEM'
+                  AND actor_user_id IS NULL
+                """, versionId));
+    }
+
+    @Test
+    void v30RejectsMismatchedEvidenceInvalidRiskStatesAndSpoofedActors()
+            throws SQLException {
+        String assetId = id("bad-risk-asset");
+        String versionId = id("bad-risk-version");
+        String validationId = id("bad-risk-validation");
+
+        insertAsset(assetId);
+        insertVersion(versionId, assetId);
+        executeUpdate("""
+                INSERT INTO code_validation_run (
+                    id, version_id, artifact_sha256, policy_version, status,
+                    requested_by_user_id, created_at, completed_at
+                )
+                VALUES (?, ?, repeat('a', 64), 'validation-v1', 'PASSED', 7,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, validationId, versionId);
+
+        assertForeignKeyViolation(
+                "fk_code_risk_assessment_validation_evidence",
+                """
+                        INSERT INTO code_risk_assessment (
+                            id, version_id, validation_run_id, artifact_sha256,
+                            risk_policy_version, scanner_version, created_at
+                        )
+                        VALUES (?, ?, ?, repeat('b', 64),
+                                'risk-v1', 'scanner-v1', CURRENT_TIMESTAMP)
+                        """,
+                id("bad-risk-hash"), versionId, validationId
+        );
+        assertCheckViolation(
+                "ck_code_risk_assessment_status",
+                """
+                        INSERT INTO code_risk_assessment (
+                            id, version_id, validation_run_id, artifact_sha256,
+                            risk_policy_version, scanner_version, status, created_at
+                        )
+                        VALUES (?, ?, ?, repeat('a', 64),
+                                'risk-v1', 'scanner-v1', 'WAITING', CURRENT_TIMESTAMP)
+                        """,
+                id("bad-risk-status"), versionId, validationId
+        );
+        assertCheckViolation(
+                "ck_code_risk_assessment_completed_disposition",
+                """
+                        INSERT INTO code_risk_assessment (
+                            id, version_id, validation_run_id, artifact_sha256,
+                            risk_policy_version, scanner_version, status,
+                            completed_at, created_at
+                        )
+                        VALUES (?, ?, ?, repeat('a', 64),
+                                'risk-v1', 'scanner-v1', 'COMPLETED',
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """,
+                id("bad-risk-complete"), versionId, validationId
+        );
+        assertCheckViolation(
+                "ck_code_approval_record_reviewer",
+                """
+                        INSERT INTO code_approval_record (
+                            id, version_id, decision, decision_source,
+                            reviewer_user_id, created_at
+                        )
+                        VALUES (?, ?, 'APPROVED', 'AUTO_POLICY', NULL,
+                                CURRENT_TIMESTAMP)
+                        """,
+                id("bad-auto-decision"), versionId
+        );
+        assertCheckViolation(
+                "ck_code_asset_audit_log_actor",
+                """
+                        INSERT INTO code_asset_audit_log (
+                            id, asset_id, action, actor_type,
+                            actor_user_id, created_at
+                        )
+                        VALUES (?, ?, 'SPOOFED_SYSTEM', 'SYSTEM', 7,
+                                CURRENT_TIMESTAMP)
+                        """,
+                id("bad-system-actor"), assetId
+        );
+        assertCheckViolation(
+                "ck_code_asset_audit_log_actor",
+                """
+                        INSERT INTO code_asset_audit_log (
+                            id, asset_id, action, actor_type,
+                            actor_user_id, created_at
+                        )
+                        VALUES (?, ?, 'MISSING_USER', 'USER', NULL,
+                                CURRENT_TIMESTAMP)
+                        """,
+                id("bad-user-actor"), assetId
         );
     }
 

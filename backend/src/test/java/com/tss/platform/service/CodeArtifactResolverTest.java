@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.entity.CodeApprovalRecord;
 import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +40,8 @@ class CodeArtifactResolverTest {
             mock(CodeValidationRunRepository.class);
     private final CodeApprovalRecordRepository approvalRepository =
             mock(CodeApprovalRecordRepository.class);
+    private final CodeRiskAssessmentRepository riskAssessmentRepository =
+            mock(CodeRiskAssessmentRepository.class);
     private final CodeArtifactStorageService storageService =
             mock(CodeArtifactStorageService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -55,6 +59,7 @@ class CodeArtifactResolverTest {
                 assetRepository,
                 validationRepository,
                 approvalRepository,
+                riskAssessmentRepository,
                 storageService
         );
         asset = asset();
@@ -206,6 +211,49 @@ class CodeArtifactResolverTest {
             version.setStoragePath(path);
             assertReason("STORAGE_REFERENCE_INVALID");
         }
+    }
+
+    @Test
+    void newApprovalEvidenceMustBindCurrentCompletedRiskAssessment() {
+        CodeRiskAssessment risk = new CodeRiskAssessment();
+        risk.setId("risk-1");
+        risk.setVersionId("version-1");
+        risk.setValidationRunId("validation-1");
+        risk.setArtifactSha256(version.getArtifactSha256());
+        risk.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
+        risk.setScannerVersion(CodeStaticRiskScanner.SCANNER_VERSION);
+        risk.setStatus("COMPLETED");
+        risk.setRiskLevel("LOW");
+        risk.setDisposition("AUTO_APPROVE");
+        risk.setFindingCount(0);
+        version.setLatestRiskAssessmentId("risk-1");
+        version.setRiskStatus("COMPLETED");
+        version.setRiskLevel("LOW");
+        version.setReviewDisposition("AUTO_APPROVE");
+        version.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
+        approval.setRiskAssessmentId("risk-1");
+        approval.setApprovalPolicyVersion(CodeApprovalService.APPROVAL_POLICY_VERSION);
+        when(riskAssessmentRepository.findById("risk-1")).thenReturn(Optional.of(risk));
+
+        ResolvedCodeArtifact resolved = resolver.resolve("version-1", 7);
+
+        assertEquals("risk-1", resolved.riskAssessmentId());
+        assertEquals("LOW", resolved.riskLevel());
+
+        // A later SHADOW assessment may update the query summary, but it must
+        // not invalidate the immutable evidence bound to an existing approval.
+        version.setLatestRiskAssessmentId("risk-shadow");
+        version.setRiskStatus("RUNNING");
+        version.setRiskLevel("UNKNOWN");
+        version.setReviewDisposition(null);
+        assertEquals("risk-1", resolver.resolve("version-1", 7).riskAssessmentId());
+
+        risk.setRiskPolicyVersion("code-risk-policy-v1");
+        assertReason("RISK_EVIDENCE_STALE");
+
+        risk.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
+        risk.setDisposition("BLOCK");
+        assertReason("RISK_EVIDENCE_STALE");
     }
 
     @Test

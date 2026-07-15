@@ -43,6 +43,7 @@ public class CodeAssetImportService {
     private final CodeArtifactStorageService storageService;
     private final MinioDeleteTaskService deleteTaskService;
     private final CodeAssetAuditService auditService;
+    private final CodeRiskAssessmentService riskAssessmentService;
     private final AuthContext authContext;
     private final TransactionTemplate transactionTemplate;
 
@@ -55,6 +56,7 @@ public class CodeAssetImportService {
             CodeArtifactStorageService storageService,
             MinioDeleteTaskService deleteTaskService,
             CodeAssetAuditService auditService,
+            CodeRiskAssessmentService riskAssessmentService,
             AuthContext authContext,
             PlatformTransactionManager transactionManager
     ) {
@@ -66,6 +68,7 @@ public class CodeAssetImportService {
         this.storageService = storageService;
         this.deleteTaskService = deleteTaskService;
         this.auditService = auditService;
+        this.riskAssessmentService = riskAssessmentService;
         this.authContext = authContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(
@@ -233,6 +236,10 @@ public class CodeAssetImportService {
         run.setCreatedAt(now);
         run.setCompletedAt(now);
         validationRepository.saveAndFlush(run);
+
+        riskAssessmentService.enqueue(
+                version.getId(), run.getId(), asset.getOwnerUserId()
+        );
 
         auditService.imported(
                 asset.getId(),

@@ -41,7 +41,7 @@
 例外：
 
 - `GET /api/files/download` 成功时直接返回文件流；失败时返回 JSON。
-- V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`）成功时直接返回 DTO、列表或文件流，不包裹 legacy `ApiResponse`；失败时返回 `V2ErrorResponse` 并使用真实 HTTP 状态，详见 18.7。
+- V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`、`/api/v2/admin/code-review-tasks/**`）成功时直接返回 DTO、列表或文件流，不包裹 legacy `ApiResponse`；失败时返回 `V2ErrorResponse` 并使用真实 HTTP 状态，详见 18.7。
 - 未登录时，请求会先被拦截器拦截，HTTP 状态为 `401`，响应体是模块一 `Result` 格式，例如 `{"code":401,"message":"请先登录","data":null}`，不会进入模块二 Controller。
 - 图片流、点云流和通用下载接口成功时返回二进制流；失败时返回 JSON，前端不能固定按 JSON 解析这些接口。
 
@@ -137,10 +137,10 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 4. 文件流接口应使用 `blob` 或 `arrayBuffer` 接收。若响应 `Content-Type` 为 `application/json`，说明后端返回了错误对象，不应继续交给预览器解析。
 5. 前端保存和传递业务 ID 时要区分资产 ID 与版本 ID。训练、模型代码预览、数据集内容预览和点云预览都使用版本 ID。
 6. `previewUrl` 是受鉴权保护的相对 URL。使用 `<img>`、Three.js Loader 等不会自动附加 Axios 拦截器请求头的组件时，应先用带令牌的 `fetch`/请求库取得 `Blob` 或 `ArrayBuffer`，再交给组件解析。
-7. 列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。
+7. 一般列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。管理员代码审核队列是明确例外，其 `page` 从 `0` 开始。
 8. zip entry 路径入参可以使用 `/` 或 `\`，后端会统一规范化为 `/`；后端返回的 `path` 固定使用 `/`，作为查询参数时仍需 URL 编码，不要自行拼接。
 9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 或 `PATCH /api/v2/code-assets/{assetId}` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域编辑。
-10. ImportJob 恢复、上传会话恢复、数据集生命周期维护和 MinIO 删除任务均为后台异步流程；前端应以状态查询、编辑会话和列表聚合结果为准，不假设物理文件清理或失败恢复已经在业务接口返回时完成。
+10. ImportJob 恢复、上传会话恢复、数据集生命周期维护、代码风险扫描和 MinIO 删除任务均为后台异步流程；前端应以状态查询、编辑会话和列表聚合结果为准，不假设扫描、物理文件清理或失败恢复已经在业务接口返回时完成。
 
 登录示例：
 
@@ -1764,9 +1764,9 @@ DELETE /api/dataset-versions/{id}
 | `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
 | `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
 | `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员单独批准代码版本；要求当前制品 SHA 对应最新且通过的校验证据 |
-| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验代码包结构并刷新校验证据；不会自动批准 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验或幂等复用证据；接口本身不直接批准，真正的新证据进入风险分流 |
 
-`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。准入通过只代表结构、固定入口和 profile 元数据检查通过，不代表完成代码安全审计，也不等于管理员审批；审批必须调用独立审批接口。
+`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.7 规范化为 `/`。结构校验通过后仍需按当前 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流；静态 LOW 不是完整安全审计证明。
 
 当前唯一训练方案为 `image_text_consistency_fusion_logreg`（展示名：图文一致性基线训练），要求代码包包含固定入口 `scripts/training/train_fusion_baseline.py`，并要求训练数据集类型为 `NLP`。
 
@@ -2974,9 +2974,9 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 
 ### 18.7 V2 代码资产、工作区与版本
 
-V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` 为稳定标识。成功响应直接返回 DTO、列表或下载流；JSON 失败响应为 `V2ErrorResponse`（`success=false`、`errorCode`、`errorMessage`、`details`、`traceId`），同时返回真实 HTTP 状态和 `X-Trace-Id`，不使用 legacy `ApiResponse`。
+V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` 为稳定标识。稳定生命周期为 `CodeAsset -> CodeWorkspace -> CodeVersion -> ValidationRun -> RiskAssessment/RiskFinding -> ApprovalRecord`。成功响应直接返回 DTO、列表或下载流；JSON 失败响应为 `V2ErrorResponse`（`success=false`、`errorCode`、`errorMessage`、`details`、`traceId`），同时返回真实 HTTP 状态和 `X-Trace-Id`，不使用 legacy `ApiResponse`。
 
-普通 V2 代码资产、版本和工作区的读取与编辑均为 owner-only；跨用户访问统一隐藏为 `404 / CODE_ASSET_NOT_FOUND`。管理员身份不会获得通用源码读取权。只有审批和历史制品恢复是显式管理员能力，并且先检查管理员权限：无权限返回 `403 / CODE_APPROVAL_FORBIDDEN`。
+普通 V2 代码资产、版本和工作区的读取与编辑均为 owner-only；跨用户访问统一隐藏为 `404 / CODE_ASSET_NOT_FOUND`。管理员身份不会获得普通 owner 接口的通用源码读取权。审批、历史制品恢复和 `/api/v2/admin/code-review-tasks/**` 审核中心是显式管理员能力，并且先检查管理员权限：无权限返回 `403 / CODE_APPROVAL_FORBIDDEN`。
 
 资产接口：
 
@@ -2987,11 +2987,16 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `GET` | `/api/v2/code-assets` | 查询当前用户资产 |
 | `GET` | `/api/v2/code-assets/{assetId}` | 查询资产详情 |
 | `PATCH` | `/api/v2/code-assets/{assetId}` | 以 `assetRevision` 做资产元数据 CAS 更新 |
+| `DELETE` | `/api/v2/code-assets/{assetId}?expectedAssetRevision=...` | 软删除资产，成功为 `204` |
 | `GET` | `/api/v2/code-assets/{assetId}/versions` | 查询版本列表 |
 | `GET` | `/api/v2/code-assets/{assetId}/workspaces` | 查询打开的工作区 |
 | `POST` | `/api/v2/code-assets/{assetId}/workspaces` | 打开工作区，可传 `baseVersionId`，成功为 `201` |
 
 `trainingProfile` 在该资产还没有任何未删除代码版本时可修改；首个版本产生后，改为不同值或显式置空均返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。传入与当前值相同的 profile 是幂等 no-op。发布或导入时，`trainingProfile` 会固化到 `CodeVersion`；consumer manifest 返回该版本快照，不回读可变资产元数据。这里描述的是模块二的稳定代码消费契约；本次修复不声明训练执行器已同步改造，包括训练在内的新消费者应通过 `codeVersionId` 使用版本快照。
+
+资产删除只允许 owner 调用，并在资产行锁内核对 `expectedAssetRevision`。revision 过期返回 `409 / ASSET_REVISION_CONFLICT`；存在 `OPEN` 工作区返回 `409 / OPEN_WORKSPACE_EXISTS`；已有其他模块的持久化引用返回 `409 / CODE_ASSET_IN_USE`。删除只软删除 `code_asset`，保留 `code_version`、ZIP、校验、风险、审批和审计证据；删除后 owner 接口和新的制品解析均不可再使用该资产。删除与发布竞争时二者使用同一资产锁，只允许一个操作在其前置条件下成功。已发布版本不提供物理删除接口，继续通过 `deprecate` 或 `archive` 管理生命周期。
+
+ZIP 导入同时适用于 V2 与委托同一服务的 legacy 上传。ZIP 条目名必须可严格按 UTF-8 解码；Windows 工具写入的 `\\` 会先规范化为 `/`，最终确定性 ZIP 内也只保存 `/`。规范化后仍拒绝控制字符、绝对路径、盘符路径、UNC、`.`、`..`、空路径段、超过 1024 字符的路径、符号链接、加密 ZIP 和压缩限制违规项。`src\\train.py` 与 `src/train.py` 规范化为同一路径时返回 `422`，`details.reasonCode=DUPLICATE_PATH`；文件与目录冲突返回 `TREE_CONFLICT`。路径规范化不修改文件内容、BOM 或换行，制品 SHA-256 仍针对实际保存的完整 ZIP 字节计算。
 
 工作区接口：
 
@@ -3000,6 +3005,7 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `GET` | `/api/v2/code-workspaces/{workspaceId}` | 工作区摘要 |
 | `GET` | `/api/v2/code-workspaces/{workspaceId}/tree?prefix=...` | 虚拟目录树 |
 | `GET` | `/api/v2/code-workspaces/{workspaceId}/files/content?path=...` | UTF-8 在线内容 |
+| `GET` | `/api/v2/code-workspaces/{workspaceId}/files/metadata?path=...` | 文件元数据、原始内容哈希和工作区 revision |
 | `GET` | `/api/v2/code-workspaces/{workspaceId}/files/download?path=...` | 下载单文件 |
 | `PUT` | `/api/v2/code-workspaces/{workspaceId}/files?path=...` | 新建或覆盖文件 |
 | `POST` | `/api/v2/code-workspaces/{workspaceId}/files/move` | 移动或重命名文件 |
@@ -3009,6 +3015,8 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `POST` | `/api/v2/code-workspaces/{workspaceId}/abandon` | 放弃工作区 |
 
 代码文件只允许 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`；`languageId` 为 `python`、`json`、`yaml`、`markdown` 或 `plaintext`，仅供前端选择 Monaco 高亮器，后端不执行源码。目录是从文件路径推导出的虚拟节点。在线读取和编辑只接受 UTF-8 且最多 `1,048,576` bytes；超限返回 `413 / CODE_CONTENT_TOO_LARGE`，但文件仍可在树中列出并通过下载接口取回。`contentHash` 是原始字节的 SHA-256，不是规范化文本哈希。
+
+`files/metadata` 返回 `path/name/nodeType/extension/languageId/contentType/sizeBytes/previewable/editable/downloadable/reasonCode/contentHash/workspaceRevision/readOnly/deletable`。基础版本的大文件通过受限读取计算原始内容哈希，不经过 1 MiB 在线预览上限；因此大于 1 MiB 的文件仍不可预览或编辑，但前端可以先取 metadata 中的 `contentHash`，再按 CAS 规则安全删除。删除只写入工作区 `DELETE` 墓碑，不修改基础版本 ZIP。
 
 写、移动、删除、校验、发布和放弃请求必须使用 `expectedWorkspaceRevision` 做工作区 CAS；针对已有文件的写、移动、删除还必须携带匹配的 `expectedContentHash`，新建文件则不传内容哈希。冲突返回 `409 / CODE_ASSET_CONFLICT`，典型 reasonCode 为 `WORKSPACE_REVISION_CONFLICT`、`CONTENT_HASH_CONFLICT`、`TARGET_EXISTS` 或 `WORKSPACE_READ_ONLY`。
 
@@ -3022,17 +3030,62 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `GET` | `/api/v2/code-versions/{versionId}/files/download?path=...` | 下载单文件 |
 | `GET` | `/api/v2/code-versions/{versionId}/download` | 下载完整 ZIP |
 | `GET` | `/api/v2/code-versions/{versionId}/consumer-manifest` | 稳定消费清单 |
-| `POST` | `/api/v2/code-versions/{versionId}/validate` | 生成或刷新校验证据，不自动审批 |
+| `POST` | `/api/v2/code-versions/{versionId}/validate` | 复用或生成校验证据；等价通过证据幂等复用 |
+| `GET` | `/api/v2/code-versions/{versionId}/risk-assessment` | owner 查询当前风险结论和脱敏 findings |
 | `POST` | `/api/v2/code-versions/{versionId}/approval` | 管理员独立审批 |
 | `POST` | `/api/v2/code-versions/{versionId}/artifact-upgrade` | 管理员恢复单个历史制品 |
 | `POST` | `/api/v2/code-versions/{versionId}/deprecate` | 标记弃用 |
 | `POST` | `/api/v2/code-versions/{versionId}/archive` | 归档 |
 
-版本状态为 `READY`、`DEPRECATED`、`ARCHIVED`；校验状态为 `NOT_RUN`、`PASSED`、`FAILED`；审批状态为 `PENDING`、`APPROVED`、`REJECTED`、`REVOKED`。`validate` 和 legacy `training-check` 只生成或刷新校验证据，绝不自动改为 `APPROVED`。legacy `/api/code/version/{codeVersionId}/approve` 与 V2 `/approval` 均为管理员独立审批，并要求当前制品 SHA 对应最新且通过的校验记录。
+版本状态为 `READY`、`DEPRECATED`、`ARCHIVED`；校验状态为 `NOT_RUN`、`PASSED`、`FAILED`；审批状态为 `PENDING`、`APPROVED`、`REJECTED`、`REVOKED`。风险任务状态为 `QUEUED/RUNNING/COMPLETED/ERROR/CANCELED`，风险等级为 `LOW/MEDIUM/HIGH/UNKNOWN`，分流结论为 `AUTO_APPROVE/MANUAL_REVIEW/BLOCK`。版本 DTO 追加 `riskAssessmentId/riskStatus/riskLevel/reviewDisposition/riskPolicyVersion`，不追加任何存储路径。
 
-`consumer-manifest` 只返回 `assetId`、`versionId`、`purpose`、`runtime`、`entryScript`、`trainingType`、`trainingProfile`、`artifactSha256`、`validationRunId`、`validationPolicyVersion`、`approvalRecordId`。解析器每次消费都会实际读取对象，并精确核对 objectName、数据库 SHA-256 和数据库 size；不一致或读取失败会拒绝交付，典型 reasonCode 为 `STORAGE_REFERENCE_INVALID`、`ARTIFACT_SHA256_MISMATCH`、`ARTIFACT_SIZE_MISMATCH`、`STORAGE_READ_FAILED`。manifest 不暴露 `storagePath`、MinIO 信息或可持久化 URL。
+V2 `validate` 和 legacy `training-check` 都先读取实际对象并核对 objectName、SHA-256 和长度。若当前策略、实际对象证据、版本的 `PASSED` 摘要和最新通过的 validation run 完全一致，响应 `reused=true`，不新增 validation run、不重复排队风险扫描、不写重复审计，也不改变既有 `APPROVED`。只有制品或策略证据确实变化时才创建新校验记录；新证据会把旧审批绑定置为 `PENDING`，通过后进入新的风险分流。失败结果不会自动放行。前端对已经批准且校验策略未变化的版本应隐藏普通“准入校验”按钮，或至少增加二次确认；即使误触等价校验，后端幂等保证状态不变。
 
-`artifact-upgrade` 只处理一个 `versionId`，管理员鉴权先于资源查询。它仅接受精确匹配旧规则的 legacy 对象路径，复制到唯一的版本级 canonical 对象，按原始字节核对 SHA 和 size，在事务内更新证据并写审计，旧对象进入异步删除；失败会补偿清理新对象。成功后自动重新校验，但审批状态仍为 `PENDING`，必须再调用 `/approval`；对已经是 canonical 且证据一致的版本重试时幂等返回 `upgraded=false`。成功字段仅为 `versionId`、`artifactSha256`、`sizeBytes`、`approvalStatus`、`upgraded`、`validation`，不返回路径。失败使用 `403`、`404`、`409`、`422` 或 `503`；冲突/证据 reasonCode 包括 `ARTIFACT_UPGRADE_APPROVAL_CONFLICT`、`ARTIFACT_UPGRADE_CONFLICT`、`LEGACY_STORAGE_REFERENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_MISMATCH`、`ARTIFACT_STORAGE_EVIDENCE_INVALID`、`ARTIFACT_COPY_MISMATCH`。
+风险扫描只做有界、非执行式静态检查，不运行用户代码。当前规则检查 JSON/JSONL/YAML 语法、Python 词法结构、私钥和疑似凭据、动态执行、子进程、网络访问、原生库、危险反序列化、破坏性文件操作、运行期安装、外部依赖源、危险 YAML tag 和长编码载荷。Python 自动准入采用保守策略：只有安全导入白名单内且语法落在扫描器置信边界内的代码才有资格判为 `LOW`；高能力导入、未知导入以及超出语法置信边界的形式统一进入 `MANUAL_REVIEW`，绝不判为 `LOW`。单文件自动扫描上限为 1 MiB、单制品总扫描上限为 16 MiB、finding 最多 200；超过自动分析能力会转人工，不会视为安全。finding 只返回规则、等级、类别、文件路径、行号和安全描述，不保存/返回源码片段或检测到的密钥值。扫描前再次核对实际对象 SHA 和长度。
+
+部署模式由 `CODE_ASSET_RISK_MODE` 控制，默认 `MANUAL_ONLY`：
+
+| 模式 | 行为 |
+| --- | --- |
+| `MANUAL_ONLY` | 不运行自动扫描；生成 `UNKNOWN + MANUAL_REVIEW` 证据，由管理员审核。管理员对已批准版本显式 `rescan` 会有意生成新证据并回到 `PENDING` |
+| `SHADOW` | 后台扫描并记录 findings，但不自动批准/拒绝，也不改变已有批准；用于观察误报 |
+| `ENFORCE` | `LOW + AUTO_APPROVE` 由 `AUTO_POLICY` 自动批准；`MEDIUM/HIGH + MANUAL_REVIEW` 进入人工队列；`BLOCK` 在发布风险摘要的同一事务内先使旧 `APPROVED` 失效，再自动拒绝；扫描异常保持不可自动放行 |
+
+上传/发布/真正的新校验证据会创建风险评估。后台默认每 5 秒在分布式锁下处理，批量大小由 `CODE_ASSET_RISK_BATCH_SIZE` 控制（1–100，默认 20），`RUNNING` 超过 `CODE_ASSET_RISK_STALE_AFTER_SECONDS`（最小 60，默认 600）会回到队列。静态扫描“LOW”只表示当前策略未发现已知信号，不代表代码绝对安全。
+
+owner 风险详情接口返回当前版本 SHA 绑定的 `id/versionId/validationRunId/artifactSha256/riskPolicyVersion/scannerVersion/status/riskLevel/disposition/findingCount/reasonCode/createdAt/startedAt/completedAt/findings`。无当前风险证据或跨用户访问均按 `404 / CODE_ASSET_NOT_FOUND` 隐藏资源存在性。
+
+管理员审核中心：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v2/admin/code-review-tasks` | 分页审核队列；默认 `approvalStatus=PENDING&page=0&pageSize=20` |
+| `GET` | `/api/v2/admin/code-review-tasks/{versionId}` | 资产、版本、校验和风险证据详情 |
+| `GET` | `/api/v2/admin/code-review-tasks/{versionId}/tree?prefix=...` | 审核用只读目录树 |
+| `GET` | `/api/v2/admin/code-review-tasks/{versionId}/files/content?path=...` | 审核用只读内容，仍受 1 MiB 限制 |
+| `GET` | `/api/v2/admin/code-review-tasks/{versionId}/findings` | 当前风险 findings |
+| `POST` | `/api/v2/admin/code-review-tasks/{versionId}/rescan` | 管理员显式重扫；相同任务已在 `QUEUED/RUNNING` 时幂等返回 |
+
+列表支持 `approvalStatus=PENDING|APPROVED|REJECTED|REVOKED`、`riskLevel=LOW|MEDIUM|HIGH|UNKNOWN`、`ownerUserId`、`keyword`、ISO-8601 `submittedFrom/submittedTo`、`sortBy=SUBMITTED_AT|VERSION|RISK_LEVEL|OWNER_USER_ID`、`sortDirection=ASC|DESC`、从 0 开始的 `page` 和 1–100 的 `pageSize`。非管理员在参数绑定和资源查询前统一返回 `403`；管理员查询不存在的版本返回 `404`。管理员页面的 `rescan` 是有意创建新风险证据的高成本操作，不应作为普通上传者的“准入校验”按钮暴露。
+
+管理员审批请求为：
+
+```json
+{
+  "decision": "APPROVE",
+  "reason": "已人工确认风险调用符合该代码用途",
+  "expectedValidationRunId": "code-validation-...",
+  "expectedRiskAssessmentId": "code-risk-...",
+  "expectedArtifactSha256": "64位十六进制SHA-256",
+  "expectedPolicyVersion": "code-risk-policy-v2"
+}
+```
+
+`APPROVE` 和 `REJECT` 必须携带四个 `expected*` 字段；`expectedPolicyVersion` 指风险策略版本。证据已变化返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=APPROVAL_EVIDENCE_STALE` 或 `RISK_EVIDENCE_STALE`。批准还要求 `READY + PASSED`、最新风险评估已 `COMPLETED` 且非 `BLOCK`，并再次核对实际对象 SHA 和长度。`APPROVE` 的 reason 可选：空值按 `null` 处理，提供时会清除控制字符、把换行和制表符折叠为空格、合并连续空白、trim，并最多保存 1024 个字符；`REJECT`、`REVOKE` 的 reason 必填且使用相同清洗和上限。`REVOKE` 只允许作用于已批准版本且不要求 expected 字段。资产/版本行锁和证据 CAS 防止审核旧证据：相同证据的重复 `APPROVE` 幂等返回首次记录，因此不会用重试请求中的新 reason 覆盖原记录；证据变化或冲突决策返回 `409`。审批响应追加 `decisionSource/riskAssessmentId/approvalPolicyVersion`；自动策略记录的 `decisionSource=AUTO_POLICY`，人工为 `ADMIN`。
+
+`consumer-manifest` 返回 `assetId`、`versionId`、`purpose`、`runtime`、`entryScript`、`trainingType`、`trainingProfile`、`artifactSha256`、`validationRunId`、`validationPolicyVersion`、`approvalRecordId`，并追加 `approvalSource/riskAssessmentId/riskLevel/riskPolicyVersion`；兼容历史批准时新增字段可为空。解析器要求 `READY + PASSED + APPROVED`，核对审批、校验和风险证据绑定，并在每次消费时实际读取对象，精确核对 objectName、数据库 SHA-256 和数据库 size；不一致或读取失败会拒绝交付，典型 reasonCode 为 `STORAGE_REFERENCE_INVALID`、`ARTIFACT_SHA256_MISMATCH`、`ARTIFACT_SIZE_MISMATCH`、`STORAGE_READ_FAILED`。manifest 不暴露 `storagePath`、MinIO 信息或可持久化 URL。
+
+`artifact-upgrade` 只处理一个 `versionId`，管理员鉴权先于资源查询。它仅接受精确匹配旧规则的 legacy 对象路径，复制到唯一的版本级 canonical 对象，按原始字节核对 SHA 和 size，在事务内更新证据并写审计，旧对象进入异步删除；失败会补偿清理新对象。成功后立即重新校验并先保持 `PENDING`，随后按当前 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流：前两种需要人工决策，`ENFORCE` 允许完整低风险证据由策略自动批准。对已经是 canonical 且证据一致的版本重试时幂等返回 `upgraded=false`。成功字段仅为 `versionId`、`artifactSha256`、`sizeBytes`、`approvalStatus`、`upgraded`、`validation`，不返回路径。失败使用 `403`、`404`、`409`、`422` 或 `503`；冲突/证据 reasonCode 包括 `ARTIFACT_UPGRADE_APPROVAL_CONFLICT`、`ARTIFACT_UPGRADE_CONFLICT`、`LEGACY_STORAGE_REFERENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_MISMATCH`、`ARTIFACT_STORAGE_EVIDENCE_INVALID`、`ARTIFACT_COPY_MISMATCH`。
 
 V2 代码顶层错误码：
 

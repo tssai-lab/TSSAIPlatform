@@ -234,8 +234,12 @@ public class V2CodeVersionQueryService {
             throw validation("APPROVAL_DECISION_INVALID", "Approval decision is invalid");
         }
         try {
+            CodeApprovalService.ApprovalExpectation expectation = null;
+            if (decision != CodeApprovalService.Decision.REVOKE) {
+                expectation = approvalExpectation(request);
+            }
             CodeApprovalRecord record = approvalService.decide(
-                    versionId, decision, request.reason()
+                    versionId, decision, request.reason(), expectation
             );
             return V2CodeApprovalResult.from(record);
         } catch (CodeValidationException exception) {
@@ -407,7 +411,39 @@ public class V2CodeVersionQueryService {
     private static boolean isApprovalStateConflict(String reasonCode) {
         return "APPROVAL_TERMINAL".equals(reasonCode)
                 || "APPROVAL_STATE_INVALID".equals(reasonCode)
-                || "VERSION_NOT_READY".equals(reasonCode);
+                || "VERSION_NOT_READY".equals(reasonCode)
+                || "APPROVAL_EVIDENCE_STALE".equals(reasonCode)
+                || "RISK_EVIDENCE_STALE".equals(reasonCode);
+    }
+
+    private static CodeApprovalService.ApprovalExpectation approvalExpectation(
+            V2CodeApprovalRequest request
+    ) {
+        if (isBlank(request.expectedValidationRunId())
+                || isBlank(request.expectedRiskAssessmentId())
+                || isBlank(request.expectedArtifactSha256())
+                || isBlank(request.expectedPolicyVersion())) {
+            throw validation(
+                    "APPROVAL_EXPECTATION_REQUIRED",
+                    "Current approval evidence is required"
+            );
+        }
+        if (!SHA256.matcher(request.expectedArtifactSha256()).matches()) {
+            throw validation(
+                    "APPROVAL_EXPECTATION_INVALID",
+                    "Approval evidence is invalid"
+            );
+        }
+        return new CodeApprovalService.ApprovalExpectation(
+                request.expectedValidationRunId(),
+                request.expectedRiskAssessmentId(),
+                request.expectedArtifactSha256(),
+                request.expectedPolicyVersion()
+        );
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static CodeValidationException validation(String code, String message) {

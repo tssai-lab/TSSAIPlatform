@@ -1,12 +1,15 @@
 package com.tss.platform.service;
 
 import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeApprovalRecord;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.CodeWorkspace;
 import com.tss.platform.entity.CodeWorkspaceFileDelta;
 import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeApprovalRecordRepository;
+import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceFileDeltaRepository;
@@ -24,6 +27,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -50,6 +55,8 @@ class CodeValidationServiceTest {
     private final CodeArtifactStorageService storageService =
             mock(CodeArtifactStorageService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
+    private final CodeRiskAssessmentService riskAssessmentService =
+            mock(CodeRiskAssessmentService.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final PlatformTransactionManager transactionManager =
             mock(PlatformTransactionManager.class);
@@ -83,6 +90,7 @@ class CodeValidationServiceTest {
                 storageService,
                 assembler,
                 auditService,
+                riskAssessmentService,
                 authContext,
                 transactionManager
         );
@@ -90,7 +98,7 @@ class CodeValidationServiceTest {
         validArchive = zipService.writeDeterministic(Map.of(
                 "train.py", bytes("print('ok')\n")
         ));
-        version = version(filePolicy.sha256(validArchive));
+        version = version(filePolicy.sha256(validArchive), validArchive.length);
         stubVersionSnapshot(version, asset);
         when(storageService.read(version.getStoragePath())).thenReturn(stored(validArchive));
         when(validationRepository.saveAndFlush(any(CodeValidationRun.class)))
@@ -168,13 +176,14 @@ class CodeValidationServiceTest {
     }
 
     @Test
-    void versionSuccessPersistsLatestRunAndUpdatesPolicyWithoutApprovalSideEffect() {
+    void genuinelyNewValidationEvidenceMovesOldApprovalToPending() {
         version.setApprovalStatus(CodeApprovalStatus.APPROVED);
 
         CodeValidationResult result = service.validateVersion("version-1");
 
         assertTrue(result.passed());
-        assertEquals(CodeApprovalStatus.APPROVED, version.getApprovalStatus());
+        assertFalse(result.reused());
+        assertEquals(CodeApprovalStatus.PENDING, version.getApprovalStatus());
         assertEquals("PASSED", version.getValidationStatus());
         assertEquals(CodeArtifactAssembler.POLICY_VERSION, version.getValidationPolicyVersion());
         ArgumentCaptor<CodeValidationRun> runCaptor =
@@ -184,6 +193,7 @@ class CodeValidationServiceTest {
         assertEquals(version.getArtifactSha256(), run.getArtifactSha256());
         assertEquals("PASSED", run.getStatus());
         assertEquals(7, run.getRequestedByUserId());
+        verify(riskAssessmentService).enqueue("version-1", run.getId(), 7);
         verify(auditService).validated(
                 "asset-1", "version-1", version.getArtifactSha256(),
                 CodeArtifactAssembler.POLICY_VERSION, "VALIDATION_PASSED", 1L
@@ -199,6 +209,93 @@ class CodeValidationServiceTest {
         lockOrder.verify(assetRepository).findByIdAndDeletedFalse("asset-1");
         lockOrder.verify(assetRepository).findByIdAndDeletedFalseForUpdate("asset-1");
         lockOrder.verify(versionRepository).findByIdAndDeletedFalseForUpdate("version-1");
+    }
+
+    @Test
+    void approvedRepeatedValidationReusesEvidenceAndResolverStillConsumesArtifact() {
+        version.setApprovalStatus(CodeApprovalStatus.APPROVED);
+        version.setValidationStatus("PASSED");
+        version.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        CodeValidationRun validation = passingValidation("validation-1");
+        when(validationRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenReturn(Optional.of(validation));
+
+        CodeApprovalRecordRepository approvalRepository =
+                mock(CodeApprovalRecordRepository.class);
+        CodeApprovalRecord approval = approvedRecord("approval-1", validation.getId());
+        when(approvalRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenReturn(Optional.of(approval));
+
+        CodeValidationResult first = service.validateVersion("version-1");
+        CodeValidationResult second = service.validateVersion("version-1");
+
+        assertTrue(first.passed());
+        assertTrue(first.reused());
+        assertTrue(second.reused());
+        verify(validationRepository, never()).saveAndFlush(any());
+        verify(versionRepository, never()).saveAndFlush(any());
+        verify(riskAssessmentService, never()).enqueue(any(), any(), any());
+        verify(auditService, never()).validated(
+                any(), any(), any(), any(), any(), anyLong()
+        );
+
+        CodeArtifactResolver resolver = new CodeArtifactResolver(
+                versionRepository,
+                assetRepository,
+                validationRepository,
+                approvalRepository,
+                mock(CodeRiskAssessmentRepository.class),
+                storageService
+        );
+        ResolvedCodeArtifact resolved = resolver.resolve("version-1", 7);
+        assertEquals(validation.getId(), resolved.validationRunId());
+        assertEquals(approval.getId(), resolved.approvalRecordId());
+    }
+
+    @Test
+    void secondValidationReusesEvidenceCreatedByFirstValidation() {
+        AtomicReference<CodeValidationRun> latest = new AtomicReference<>();
+        when(validationRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenAnswer(invocation -> Optional.ofNullable(latest.get()));
+        when(validationRepository.saveAndFlush(any(CodeValidationRun.class)))
+                .thenAnswer(invocation -> {
+                    CodeValidationRun saved = invocation.getArgument(0);
+                    latest.set(saved);
+                    return saved;
+                });
+
+        CodeValidationResult first = service.validateVersion("version-1");
+        CodeValidationResult second = service.validateVersion("version-1");
+
+        assertTrue(first.passed());
+        assertFalse(first.reused());
+        assertTrue(second.passed());
+        assertTrue(second.reused());
+        verify(validationRepository, times(1)).saveAndFlush(any(CodeValidationRun.class));
+        verify(versionRepository, times(1)).saveAndFlush(version);
+        verify(auditService, times(1)).validated(
+                "asset-1", "version-1", version.getArtifactSha256(),
+                CodeArtifactAssembler.POLICY_VERSION, "VALIDATION_PASSED", 1L
+        );
+    }
+
+    @Test
+    void equivalentEvidenceCreatedWhileScanningWinsFinalLockAndIsReused() {
+        CodeValidationRun concurrent = passingValidation("validation-concurrent");
+        when(validationRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenReturn(Optional.of(concurrent));
+        when(storageService.read(version.getStoragePath())).thenAnswer(invocation -> {
+            version.setValidationStatus("PASSED");
+            version.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+            return stored(validArchive);
+        });
+
+        CodeValidationResult result = service.validateVersion("version-1");
+
+        assertTrue(result.passed());
+        assertTrue(result.reused());
+        verify(validationRepository, never()).saveAndFlush(any());
+        verify(versionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -231,9 +328,30 @@ class CodeValidationServiceTest {
     }
 
     @Test
+    void sizeMismatchCreatesFailedEvidenceAndCannotReusePassingRun() {
+        version.setValidationStatus("PASSED");
+        version.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        version.setSizeBytes((long) validArchive.length + 1);
+        when(validationRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenReturn(Optional.of(passingValidation("validation-1")));
+
+        CodeValidationResult result = service.validateVersion("version-1");
+
+        assertFalse(result.passed());
+        assertFalse(result.reused());
+        assertEquals("ARTIFACT_SIZE_MISMATCH", result.reasonCode());
+        ArgumentCaptor<CodeValidationRun> captor =
+                ArgumentCaptor.forClass(CodeValidationRun.class);
+        verify(validationRepository).saveAndFlush(captor.capture());
+        assertEquals("FAILED", captor.getValue().getStatus());
+        assertEquals("FAILED", version.getValidationStatus());
+    }
+
+    @Test
     void invalidArchivePersistsSafeFailureWithoutRawZipMessage() {
         byte[] invalid = bytes("not-a-zip users/7/private?token=secret");
         version.setArtifactSha256(filePolicy.sha256(invalid));
+        version.setSizeBytes((long) invalid.length);
         when(storageService.read(version.getStoragePath())).thenReturn(stored(invalid));
 
         CodeValidationResult result = service.validateVersion("version-1");
@@ -265,7 +383,7 @@ class CodeValidationServiceTest {
 
     @Test
     void concurrentStorageOrHashChangeBeforeFinalLockRejectsWithoutRun() {
-        CodeVersion changed = version(filePolicy.sha256(validArchive));
+        CodeVersion changed = version(filePolicy.sha256(validArchive), validArchive.length);
         changed.setStoragePath("users/7/codes/asset-1/versions/version-1/replaced.zip");
         when(versionRepository.findByIdAndDeletedFalseForUpdate("version-1"))
                 .thenReturn(Optional.of(changed));
@@ -350,7 +468,7 @@ class CodeValidationServiceTest {
         return asset;
     }
 
-    private static CodeVersion version(String sha) {
+    private static CodeVersion version(String sha, long sizeBytes) {
         CodeVersion version = new CodeVersion();
         version.setId("version-1");
         version.setAssetId("asset-1");
@@ -358,6 +476,7 @@ class CodeValidationServiceTest {
         version.setStatus("READY");
         version.setApprovalStatus(CodeApprovalStatus.PENDING);
         version.setArtifactSha256(sha);
+        version.setSizeBytes(sizeBytes);
         version.setValidationStatus("PASSED");
         version.setValidationPolicyVersion("OLD_POLICY");
         version.setStoragePath("users/7/codes/asset-1/versions/version-1/artifact.zip");
@@ -368,6 +487,31 @@ class CodeValidationServiceTest {
         version.setTrainingProfile("profile-1");
         version.setDeleted(false);
         return version;
+    }
+
+    private CodeValidationRun passingValidation(String id) {
+        CodeValidationRun run = new CodeValidationRun();
+        run.setId(id);
+        run.setVersionId(version.getId());
+        run.setArtifactSha256(version.getArtifactSha256());
+        run.setPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        run.setStatus("PASSED");
+        run.setRequestedByUserId(7);
+        run.setCreatedAt(Instant.now());
+        run.setCompletedAt(Instant.now());
+        return run;
+    }
+
+    private CodeApprovalRecord approvedRecord(String id, String validationRunId) {
+        CodeApprovalRecord record = new CodeApprovalRecord();
+        record.setId(id);
+        record.setVersionId(version.getId());
+        record.setArtifactSha256(version.getArtifactSha256());
+        record.setValidationRunId(validationRunId);
+        record.setPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        record.setDecision(CodeApprovalStatus.APPROVED);
+        record.setCreatedAt(Instant.now());
+        return record;
     }
 
     private static CodeWorkspace workspace(long revision) {

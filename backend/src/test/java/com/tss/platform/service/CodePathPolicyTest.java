@@ -18,6 +18,26 @@ class CodePathPolicyTest {
     @Test
     void normalizesWindowsSeparatorsWithoutCollapsingComponents() {
         assertEquals("src/training/train.py", policy.normalizeFilePath("src\\training\\train.py"));
+        assertEquals("src/training/train.py",
+                policy.normalizeRawArchiveFilePath("src\\training\\train.py"));
+        assertEquals("src/training",
+                policy.normalizeRawArchiveDirectoryPath("src\\training\\"));
+    }
+
+    @Test
+    void rawArchiveNormalizationStillRejectsTraversalAbsoluteAndControlPaths() {
+        for (String rawPath : List.of(
+                "..\\train.py",
+                "C:\\training\\train.py",
+                "\\\\server\\share\\train.py",
+                "src\\\u0001train.py"
+        )) {
+            CodeValidationException error = assertThrows(
+                    CodeValidationException.class,
+                    () -> policy.normalizeRawArchiveFilePath(rawPath)
+            );
+            assertEquals("INVALID_PATH", error.getReasonCode());
+        }
     }
 
     @ParameterizedTest

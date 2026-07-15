@@ -13,6 +13,7 @@ public class CodeVersionTrainingCheckDto {
     private String trainingProfile;
     private String trainingProfileDisplayName;
     private Boolean passed;
+    private Boolean reused;
     private String approvalStatus;
     private List<String> reasons;
     private Instant checkedAt;

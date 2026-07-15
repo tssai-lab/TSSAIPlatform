@@ -13,8 +13,25 @@ public record V2CodeApprovalResult(
         String artifactSha256,
         String validationRunId,
         String policyVersion,
+        String decisionSource,
+        String riskAssessmentId,
+        String approvalPolicyVersion,
         Instant createdAt
 ) {
+
+    public V2CodeApprovalResult(
+            String approvalRecordId,
+            String versionId,
+            String decision,
+            String reason,
+            String artifactSha256,
+            String validationRunId,
+            String policyVersion,
+            Instant createdAt
+    ) {
+        this(approvalRecordId, versionId, decision, reason, artifactSha256,
+                validationRunId, policyVersion, null, null, null, createdAt);
+    }
 
     public static V2CodeApprovalResult from(CodeApprovalRecord record) {
         if (record == null) {
@@ -28,6 +45,9 @@ public record V2CodeApprovalResult(
                 record.getArtifactSha256(),
                 record.getValidationRunId(),
                 record.getPolicyVersion(),
+                record.getDecisionSource(),
+                record.getRiskAssessmentId(),
+                record.getApprovalPolicyVersion(),
                 record.getCreatedAt()
         );
     }

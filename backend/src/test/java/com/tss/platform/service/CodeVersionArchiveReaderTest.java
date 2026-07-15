@@ -89,13 +89,21 @@ class CodeVersionArchiveReaderTest {
     }
 
     @Test
-    void listingRejectsAmbiguousRawCentralDirectoryNamesInsteadOfAliasingThem() throws Exception {
+    void listingNormalizesWindowsSeparatorsButRejectsOtherAmbiguousRawNames() throws Exception {
         CodeVersion version = version();
+        when(centralDirectoryReader.read(OBJECT_NAME, 4096L, 10_000)).thenReturn(List.of(
+                zipEntry("src\\train.py", "src/train.py", 0, 1, 1, 1, false)
+        ));
+        assertEquals(
+                List.of("src/train.py"),
+                reader.list(version, 7).stream().map(CodeArchiveEntry::path).toList()
+        );
+
         for (String raw : List.of(
-                "src\\train.py",
                 "src//train.py",
                 "src/./train.py",
-                "src/../train.py"
+                "src/../train.py",
+                "..\\train.py"
         )) {
             when(centralDirectoryReader.read(OBJECT_NAME, 4096L, 10_000)).thenReturn(List.of(
                     zipEntry(raw, "src/train.py", 0, 1, 1, 1, false)
@@ -145,6 +153,44 @@ class CodeVersionArchiveReaderTest {
                 raw,
                 reader.read(version(), 7, entry, CodeFilePolicy.EDITABLE_LIMIT_BYTES)
         );
+    }
+
+    @Test
+    void streamsLargeEntryHashBeyondPreviewLimitWithLengthAndCrcChecks() throws Exception {
+        byte[] raw = new byte[(int) CodeFilePolicy.EDITABLE_LIMIT_BYTES + 1];
+        java.util.Arrays.fill(raw, (byte) 'x');
+        CodeArchiveEntry entry = archiveEntry("large.txt", 0, raw, raw.length, 100L);
+        CodeVersion version = version();
+        version.setSizeBytes(entry.zipDataOffset() + entry.compressedSize());
+        when(minioService.downloadRange(OBJECT_NAME, 100L, raw.length))
+                .thenReturn(new ByteArrayInputStream(raw));
+
+        assertEquals(filePolicy.sha256(raw), reader.sha256(version, 7, entry));
+
+        CodeArchiveEntry wrongCrc = new CodeArchiveEntry(
+                entry.path(), entry.method(), entry.compressedSize(),
+                entry.uncompressedSize(), entry.crc32() + 1, entry.zipDataOffset()
+        );
+        when(minioService.downloadRange(OBJECT_NAME, 100L, raw.length))
+                .thenReturn(new ByteArrayInputStream(raw));
+        assertGenericAccess(() -> reader.sha256(version, 7, wrongCrc));
+    }
+
+    @Test
+    void streamsDeflatedEntryHashAndRejectsEarlyEof() throws Exception {
+        byte[] raw = "print('hash')\n".getBytes(StandardCharsets.UTF_8);
+        byte[] compressed = rawDeflate(raw);
+        CodeArchiveEntry entry = new CodeArchiveEntry(
+                "train.py", 8, compressed.length, raw.length, crc(raw), 200L
+        );
+        when(minioService.downloadRange(OBJECT_NAME, 200L, compressed.length))
+                .thenReturn(new ByteArrayInputStream(compressed));
+        assertEquals(filePolicy.sha256(raw), reader.sha256(version(), 7, entry));
+
+        byte[] truncated = java.util.Arrays.copyOf(compressed, compressed.length - 1);
+        when(minioService.downloadRange(OBJECT_NAME, 200L, compressed.length))
+                .thenReturn(new ByteArrayInputStream(truncated));
+        assertGenericAccess(() -> reader.sha256(version(), 7, entry));
     }
 
     @Test

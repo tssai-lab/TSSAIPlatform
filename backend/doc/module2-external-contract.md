@@ -68,7 +68,7 @@ Legacy 模块二接口主要使用 `ApiResponse<T>`：
 }
 ```
 
-调用 Legacy 接口时以前述 `success` 为准。V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`）成功时直接返回 DTO、列表或文件流，不包裹 `ApiResponse`；JSON 失败响应使用 `V2ErrorResponse`：
+调用 Legacy 接口时以前述 `success` 为准。V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`、`/api/v2/admin/code-review-tasks/**`）成功时直接返回 DTO、列表或文件流，不包裹 `ApiResponse`；JSON 失败响应使用 `V2ErrorResponse`：
 
 ```json
 {
@@ -474,28 +474,43 @@ GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs?page=1&page
 
 ```text
 CodeAsset -> CodeWorkspace（可变草稿） -> CodeVersion（不可变版本）
-          -> ValidationRun（SHA 绑定校验证据） -> ApprovalRecord（管理员审批证据）
+          -> ValidationRun（SHA 绑定校验证据）
+          -> RiskAssessment/RiskFinding（风险分流证据）
+          -> ApprovalRecord（系统策略或管理员审批证据）
 ```
 
 V2 代码资源按以下稳定路径分组：
 
 | 资源 | 稳定路径与能力 |
 | --- | --- |
-| 资产 | `POST/GET /api/v2/code-assets`、`POST /api/v2/code-assets/import`、`GET/PATCH /api/v2/code-assets/{assetId}`、版本列表和工作区列表/创建 |
-| 工作区 | `GET /api/v2/code-workspaces/{workspaceId}`、目录树、文件内容/下载/写入/移动/删除、`validate`、`publish`、`abandon` |
-| 版本 | `GET /api/v2/code-versions/{versionId}`、目录树、文件内容/下载、完整 ZIP、`consumer-manifest`、`validate`、`approval`、`artifact-upgrade`、`deprecate`、`archive` |
+| 资产 | `POST/GET /api/v2/code-assets`、`POST /api/v2/code-assets/import`、`GET/PATCH/DELETE /api/v2/code-assets/{assetId}`、版本列表和工作区列表/创建 |
+| 工作区 | `GET /api/v2/code-workspaces/{workspaceId}`、目录树、文件 metadata/内容/下载/写入/移动/删除、`validate`、`publish`、`abandon` |
+| 版本 | `GET /api/v2/code-versions/{versionId}`、目录树、文件内容/下载、完整 ZIP、`consumer-manifest`、owner 风险详情、`validate`、`approval`、`artifact-upgrade`、`deprecate`、`archive` |
+| 管理员审核 | `/api/v2/admin/code-review-tasks` 的列表、详情、目录树、内容、findings 和 `rescan` |
 
-资产、版本和工作区的普通读取与编辑都是 owner-only；跨用户访问按 `404 / CODE_ASSET_NOT_FOUND` 处理。已发布版本不可修改，继续编辑必须创建基于版本的工作区。工作区写、移动、删除、校验、发布和放弃必须使用 `expectedWorkspaceRevision` 做 CAS；已有文件的修改、移动和删除还必须携带匹配的 `expectedContentHash`，新建文件不传内容哈希，冲突为 `409 / CODE_ASSET_CONFLICT`。
+资产、版本和工作区的普通读取与编辑都是 owner-only；跨用户访问按 `404 / CODE_ASSET_NOT_FOUND` 处理。管理员审核命名空间在参数绑定和资源查询前检查管理员身份，非管理员统一返回 `403 / CODE_APPROVAL_FORBIDDEN`。已发布版本不可修改，继续编辑必须创建基于版本的工作区。工作区写、移动、删除、校验、发布和放弃必须使用 `expectedWorkspaceRevision` 做 CAS；已有文件的修改、移动和删除还必须携带匹配的 `expectedContentHash`，新建文件不传内容哈希，冲突为 `409 / CODE_ASSET_CONFLICT`。
 
-在线文件仅支持 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`。后端返回 `python`、`json`、`yaml`、`markdown` 或 `plaintext` 形式的 `languageId`，前端据此选择 Monaco Editor 高亮器；后端不返回高亮 HTML，也不执行源码。在线内容必须是 UTF-8 且原始字节不超过 `1,048,576` bytes；大文件仍可列出和下载，但内容接口返回 `413 / CODE_CONTENT_TOO_LARGE`。`contentHash` 针对原始字节计算，不规范化 BOM 或换行。
+在线文件仅支持 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`。后端返回 `python`、`json`、`yaml`、`markdown` 或 `plaintext` 形式的 `languageId`，前端据此选择 Monaco Editor 高亮器；后端不返回高亮 HTML，也不执行源码。在线内容必须是 UTF-8 且原始字节不超过 `1,048,576` bytes；大文件仍可列出和下载，但内容接口返回 `413 / CODE_CONTENT_TOO_LARGE`。`contentHash` 针对原始字节计算，不规范化 BOM 或换行。`GET .../files/metadata?path=...` 不受在线内容上限限制，返回原始内容哈希和 `workspaceRevision`，使大文件保持不可预览/编辑但仍可按 CAS 安全删除；删除在草稿中写 `DELETE` 墓碑，不修改基础 ZIP。
 
-代码版本生命周期状态为 `READY / DEPRECATED / ARCHIVED`，校验状态为 `NOT_RUN / PASSED / FAILED`，审批状态为 `PENDING / APPROVED / REJECTED / REVOKED`。校验只生成与当前制品 SHA、策略版本绑定的证据，不自动审批；审批是独立管理员动作。Legacy `/api/code/version/{codeVersionId}/training-check` 同样只校验，`/approve` 仅管理员可用，并要求当前 SHA 对应最新且通过的校验证据。
+ZIP 条目名严格按 UTF-8 解码。Windows ZIP 的反斜杠先规范化为 `/`，最终不可变 ZIP 也只保存 `/`；规范化后仍拒绝控制字符、绝对路径、盘符、UNC、`.`、`..`、空段、超长路径、符号链接、加密 ZIP 和压缩限制违规项。两个原始名称规范化成同一路径时必须以 `422 / DUPLICATE_PATH` 拒绝，不能覆盖；文件/目录冲突同样拒绝。路径规范化不修改文件内容、BOM 或换行。
 
-资产 `trainingProfile` 在还没有未删除代码版本时可改；首个版本产生后，改为不同值或置空返回 `409`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。每个版本保存发布时的 profile 快照，`consumer-manifest` 只从不可变版本返回 `assetId`、`versionId`、用途、运行时、入口脚本、训练类型、`trainingProfile`、`artifactSha256`、校验策略和审批证据，不返回 `storagePath`、MinIO 参数或下载 URL。
+代码版本生命周期状态为 `READY / DEPRECATED / ARCHIVED`，校验状态为 `NOT_RUN / PASSED / FAILED`，审批状态为 `PENDING / APPROVED / REJECTED / REVOKED`。风险任务状态为 `QUEUED / RUNNING / COMPLETED / ERROR / CANCELED`，风险等级为 `LOW / MEDIUM / HIGH / UNKNOWN`，分流为 `AUTO_APPROVE / MANUAL_REVIEW / BLOCK`。
 
-内部 `CodeArtifactResolver` 每次解析都会实际读取对象，并核对 objectName、SHA-256 和长度；数据库引用、实际 SHA 或实际长度不一致时拒绝消费。通用 `/api/files` 写入和删除接口也不能操作归一化后的 `users/{owner}/codes` 及其后代，防止绕过版本服务修改或删除制品。
+V2 `/validate` 和 Legacy `/training-check` 都核对实际对象名、SHA-256 和长度。当前策略及全部通过证据完全一致时返回 `reused=true`，不新增校验/风险/审计证据，也不改变既有审批状态；只有制品或策略证据确实变化时才产生新 validation run，并使旧审批绑定回到 `PENDING`。因此前端应在已经批准且策略未变化时隐藏普通准入校验按钮，或至少二次确认。管理员审核中心的 `/rescan` 不等于普通校验：它显式生成新的风险证据，不应暴露给普通上传者。
 
-`POST /api/v2/code-versions/{versionId}/artifact-upgrade` 是管理员对单个历史版本的恢复操作：它只接受精确符合旧规则的来源路径，复制到唯一 canonical 对象，核对实际字节、SHA 和长度后原子更新证据，并对失败上传做补偿清理。恢复成功会重新校验但保持 `PENDING`，必须再单独审批；响应不暴露新旧存储路径。已经 canonical 且证据一致的重试是幂等操作。
+风险扫描是有界的静态分析，不执行用户代码。Python 自动准入采用保守策略：只有安全导入白名单内且语法落在扫描器置信边界内的代码才有资格判为 `LOW`；高能力导入、未知导入以及超出语法置信边界的形式统一进入 `MANUAL_REVIEW`，绝不判为 `LOW`。finding 只暴露规则 ID、严重度、类别、文件路径、行号和安全描述，不包含源码片段、密钥实际值、MinIO 路径、下载地址或 Token。部署模式 `CODE_ASSET_RISK_MODE` 默认为 `MANUAL_ONLY`：该模式统一 `UNKNOWN + MANUAL_REVIEW`；`SHADOW` 执行扫描并记录但不自动决策；`ENFORCE` 中完整低风险证据可由 `AUTO_POLICY` 自动批准，中高风险转人工，阻断项在发布风险摘要的同一事务内先使旧 `APPROVED` 失效，再自动拒绝，扫描异常不得自动放行。“LOW”只表示当前策略未发现已知信号，不代表代码绝对安全。
+
+owner 通过 `GET /api/v2/code-versions/{versionId}/risk-assessment` 查看当前 SHA 绑定的风险证据和脱敏 findings。管理员审核列表默认查询 `PENDING`，支持按审批状态、风险等级、owner、关键字、提交时间筛选，以及提交时间、版本、风险等级、owner 排序；详情、目录树和内容预览均不返回存储信息，内容仍受 1 MiB 上限。
+
+人工 `APPROVE/REJECT` 请求必须携带 `expectedValidationRunId`、`expectedRiskAssessmentId`、`expectedArtifactSha256`、`expectedPolicyVersion`；证据变化返回 `409 / APPROVAL_EVIDENCE_STALE` 或 `RISK_EVIDENCE_STALE`。批准要求版本 `READY + PASSED`、风险评估已完成且非 `BLOCK`，并再次核对实际对象 SHA 和长度。`APPROVE` 的 reason 可选，提供时在清除控制字符、折叠换行/制表符和连续空白、trim 后最多保存 1024 个字符；`REJECT/REVOKE` 的 reason 必填并使用相同清洗规则。相同证据的重复批准幂等返回首次记录，不覆盖首次 reason；证据变化或冲突决策返回 `409`。审批记录区分 `decisionSource=ADMIN/AUTO_POLICY/LEGACY`，响应不暴露 reviewer 身份。
+
+资产 `trainingProfile` 在还没有未删除代码版本时可改；首个版本产生后，改为不同值或置空返回 `409`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。每个版本保存发布时的 profile 快照，`consumer-manifest` 从不可变版本返回 `assetId`、`versionId`、用途、运行时、入口脚本、训练类型、`trainingProfile`、`artifactSha256`、校验策略和审批证据，并追加 `approvalSource/riskAssessmentId/riskLevel/riskPolicyVersion`；历史数据的新增字段允许为空。它不返回 `storagePath`、MinIO 参数或下载 URL。
+
+内部 `CodeArtifactResolver` 要求 `READY + PASSED + APPROVED`，核对校验、风险与审批证据绑定，并在每次解析时实际读取对象，核对 objectName、SHA-256 和长度；数据库引用、实际 SHA 或实际长度不一致时拒绝消费。通用 `/api/files` 写入和删除接口也不能操作归一化后的 `users/{owner}/codes` 及其后代，防止绕过版本服务修改或删除制品。
+
+`DELETE /api/v2/code-assets/{assetId}?expectedAssetRevision=...` 只允许 owner，并执行资产 revision CAS。存在打开工作区返回 `OPEN_WORKSPACE_EXISTS`，存在其他模块持久化引用返回 `CODE_ASSET_IN_USE`。成功只软删除资产，保留版本、ZIP、校验、风险、审批和审计证据；删除后禁止新的解析消费。删除与发布在资产行锁上串行化，已发布版本不提供物理删除接口。
+
+`POST /api/v2/code-versions/{versionId}/artifact-upgrade` 是管理员对单个历史版本的恢复操作：它只接受精确符合旧规则的来源路径，复制到唯一 canonical 对象，核对实际字节、SHA 和长度后原子更新证据，并对失败上传做补偿清理。恢复成功会重新校验并先保持 `PENDING`，再按当前 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流；只有 `ENFORCE` 下完整的低风险证据可以由策略自动批准。响应不暴露新旧存储路径。已经 canonical 且证据一致的重试是幂等操作。
 
 ### 7.2 当前训练兼容边界
 
@@ -519,9 +534,9 @@ Legacy 代码资产路径：
 | `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
 | `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
 | `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员独立批准当前 SHA 已通过校验的版本 |
-| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 校验代码包结构并刷新校验证据；不会自动批准 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 校验或幂等复用证据；接口本身不直接批准，真正的新证据进入当前风险模式分流 |
 
-代码包准入只代表路径、扩展名、固定入口和 profile 元数据检查通过，不代表完成代码安全审计，也不等于管理员审批。
+代码包准入包含结构校验和当前静态风险策略分流，但它不执行用户代码，也不构成完整安全审计。Python 只有通过安全导入白名单和语法置信边界检查才可能判为 `LOW`；高能力或未知导入、超出置信边界的语法必须人工复核。“LOW”只表示当前规则未发现已知信号；是否需要人工审批由部署风险模式和风险结论共同决定。
 
 ### 7.3 训练任务接口
 
@@ -668,6 +683,10 @@ roleId
 - Legacy 接口按 `ApiResponse.success` 判断；V2 代码接口按真实 HTTP 状态和 `V2ErrorResponse.errorCode/details.reasonCode` 处理。
 - 训练创建时提交 `modelVersionId` 和 `datasetVersionId`。
 - 代码编辑器保存 `codeAssetId`、`workspaceId`、`codeVersionId`、workspace revision 和内容哈希；以 `languageId` 配置 Monaco Editor，不要求后端生成高亮 HTML。
+- 大文件删除先调用 workspace `files/metadata` 获取 `contentHash`，不要为删除而调用会返回 `413` 的内容接口。
+- 已批准且校验策略未变化时隐藏普通 `validate`，或至少二次确认；等价校验以后端 `reused=true` 为准，不应在前端改成待审核。
+- 管理员 `rescan` 只出现在审核中心；它会显式创建新的风险证据，不能当作普通上传页面的准入按钮。
+- 普通用户根据 `riskStatus/riskLevel/reviewDisposition` 展示扫描中、自动通过、待人工、阻断或扫描异常；管理员统一从审核队列处理待审核项。
 - 不直接拼接或持久依赖 MinIO 对象路径。
 
 ### 9.3 训练执行模块
@@ -734,7 +753,7 @@ MinIO objectName
 - 不要求其他模块直接访问 MinIO。
 - 若需要破坏性变更，应新增接口版本或新增兼容字段，保留旧字段一段时间。
 
-历史代码版本的旧批准状态不等价于当前 SHA 的有效审批证据。历史恢复必须按“单版本 `artifact-upgrade` -> 重新校验 -> 管理员单独审批”执行；恢复和校验均不得自动批准。
+历史代码版本的旧批准状态不等价于当前 SHA 的有效审批证据。历史恢复必须按“单版本 `artifact-upgrade` -> 重新校验 -> 当前风险模式分流”执行；`MANUAL_ONLY/SHADOW` 需要管理员决策，`ENFORCE` 只有完整低风险证据可由策略自动批准。
 
 ## 11. 当前内部实现，不作为外部契约
 
@@ -746,9 +765,9 @@ Legacy 接口可能继续返回兼容字段，例如 `storagePath`、`latestDraf
 
 ### 11.2 后台调度与分布式锁
 
-ImportJob 恢复、上传会话恢复、MinIO 删除任务和数据集生命周期维护均使用数据库分布式锁，锁由同一 owner 在任务结束时条件释放；如果执行实例崩溃，则依赖 `lockedUntil` 过期兜底。启动恢复路径也走对应的加锁方法，避免多实例启动时绕过调度锁。
+ImportJob 恢复、上传会话恢复、MinIO 删除任务、数据集生命周期维护和代码风险扫描均使用数据库分布式锁，锁由同一 owner 在任务结束时条件释放；如果执行实例崩溃，则依赖 `lockedUntil` 过期兜底。启动恢复路径也走对应的加锁方法，避免多实例启动时绕过调度锁。
 
-当前锁的最大持有窗口是内部实现参数：ImportJob 恢复、上传恢复和 MinIO 删除任务为 55 秒，数据集生命周期维护为 55 分钟。外部模块只应观察公开状态字段或消费清单，不应读取或修改 `scheduler_lock`、`minio_delete_task` 等内部表。
+当前锁的最大持有窗口是内部实现参数：ImportJob 恢复、上传恢复和 MinIO 删除任务为 55 秒，数据集生命周期维护为 55 分钟，代码风险扫描为 10 分钟。外部模块只应观察公开状态字段或消费清单，不应读取或修改 `scheduler_lock`、`minio_delete_task`、风险任务表等内部表。
 
 以下内容属于内部实现细节：
 
@@ -775,7 +794,9 @@ workspace 审计日志查询已经提供，但只属于模块二内部回溯能�
 READY 数据集消费清单
 不含存储路径的代码 consumer manifest
 发布时固化的 trainingProfile 与制品 SHA-256/长度证据
-与当前 SHA 和策略版本绑定的代码校验/管理员审批证据
+与当前 SHA 和策略版本绑定的代码校验、风险分流和系统/管理员审批证据
+代码资产 revision CAS 软删除与草稿大文件 metadata/delete CAS
+管理员代码审核队列、脱敏 findings、只读预览和显式 rescan
 跨 READY DatasetVersion 的 externalId 查询
 FAILED ImportJob FULL retry
 PARTIAL ImportJob INCREMENTAL retry

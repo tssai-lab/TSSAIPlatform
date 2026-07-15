@@ -123,6 +123,36 @@ public class CodeWorkspaceOverlayService {
     }
 
     /**
+     * Returns a verified raw-content hash even when the file is too large for
+     * online preview. Base-version entries are hashed as bounded streams.
+     */
+    @Transactional(readOnly = true)
+    public CodeWorkspaceFileMetadata metadata(String workspaceId, String path) {
+        String normalizedPath = pathPolicy.normalizeFilePath(path);
+        AccessScope scope = readableScope(workspaceId);
+        VerifiedMetadata metadata = verifiedMetadata(scope, normalizedPath)
+                .orElseThrow(CodeAssetAccessException::new);
+        Long currentRevision = workspaceRepository.findRevisionByIdAndDeletedFalse(workspaceId)
+                .orElseThrow(CodeAssetAccessException::new);
+        if (!Objects.equals(scope.workspace().getRevision(), currentRevision)) {
+            throw conflict(
+                    "WORKSPACE_REVISION_CONFLICT",
+                    "Code workspace changed while metadata was read"
+            );
+        }
+        return new CodeWorkspaceFileMetadata(
+                filePolicy.describeTrustedMetadata(
+                        normalizedPath,
+                        metadata.sizeBytes(),
+                        metadata.contentHash()
+                ),
+                metadata.contentHash(),
+                currentRevision,
+                !CodeWorkspace.STATUS_OPEN.equals(scope.workspace().getStatus())
+        );
+    }
+
+    /**
      * Downloads a bounded file without applying the 1 MiB online-preview limit.
      * Ownership, path, archive range, length, CRC and delta hash checks remain in force.
      */
@@ -249,9 +279,9 @@ public class CodeWorkspaceOverlayService {
     ) {
         String normalizedPath = pathPolicy.normalizeFilePath(path);
         AccessScope scope = writableScope(workspaceId, expectedRevision);
-        EffectiveFile current = effectiveFile(scope, normalizedPath)
+        VerifiedMetadata current = verifiedMetadata(scope, normalizedPath)
                 .orElseThrow(CodeAssetAccessException::new);
-        requireContentHash(Optional.of(current), expectedContentHash);
+        requireRawContentHash(Optional.of(current.contentHash()), expectedContentHash);
 
         Instant now = Instant.now();
         CodeWorkspaceFileDelta delta = deltaRepository
@@ -350,6 +380,61 @@ public class CodeWorkspaceOverlayService {
 
     private Optional<EffectiveFile> effectiveFile(AccessScope scope, String normalizedPath) {
         return effectiveFile(scope, normalizedPath, CodeFilePolicy.EDITABLE_LIMIT_BYTES);
+    }
+
+    private Optional<VerifiedMetadata> verifiedMetadata(
+            AccessScope scope,
+            String normalizedPath
+    ) {
+        Optional<CodeWorkspaceFileDelta> delta = deltaRepository.findByWorkspaceIdAndPath(
+                scope.workspace().getId(),
+                normalizedPath
+        );
+        if (delta.isPresent()) {
+            CodeWorkspaceFileDelta value = delta.get();
+            if (CodeWorkspaceFileDelta.OPERATION_DELETE.equals(value.getOperation())) {
+                return Optional.empty();
+            }
+            if (!CodeWorkspaceFileDelta.OPERATION_UPSERT.equals(value.getOperation())
+                    || value.getSizeBytes() == null
+                    || value.getSizeBytes() < 0
+                    || value.getContentHash() == null) {
+                throw new CodeAssetAccessException();
+            }
+            byte[] bytes = value.getContentBytes();
+            if (bytes == null
+                    || bytes.length != value.getSizeBytes()
+                    || !filePolicy.sha256(bytes).equals(value.getContentHash())) {
+                throw new CodeAssetAccessException();
+            }
+            return Optional.of(new VerifiedMetadata(
+                    normalizedPath,
+                    value.getSizeBytes(),
+                    value.getContentHash()
+            ));
+        }
+        if (scope.baseVersion() == null) {
+            return Optional.empty();
+        }
+        CodeArchiveEntry entry = archiveReader.list(
+                        scope.baseVersion(),
+                        scope.asset().getOwnerUserId()
+                ).stream()
+                .filter(candidate -> normalizedPath.equals(candidate.path()))
+                .findFirst()
+                .orElse(null);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new VerifiedMetadata(
+                normalizedPath,
+                entry.uncompressedSize(),
+                archiveReader.sha256(
+                        scope.baseVersion(),
+                        scope.asset().getOwnerUserId(),
+                        entry
+                )
+        ));
     }
 
     private Optional<EffectiveFile> effectiveFile(
@@ -508,6 +593,24 @@ public class CodeWorkspaceOverlayService {
         }
     }
 
+    private static void requireRawContentHash(
+            Optional<String> currentHash,
+            String expectedContentHash
+    ) {
+        String expected = expectedContentHash == null || expectedContentHash.isBlank()
+                ? null
+                : expectedContentHash;
+        if (currentHash.isEmpty()) {
+            if (expected != null) {
+                throw conflict("CONTENT_HASH_CONFLICT", "Code file content hash is stale");
+            }
+            return;
+        }
+        if (expected == null || !Objects.equals(currentHash.get(), expected)) {
+            throw conflict("CONTENT_HASH_CONFLICT", "Code file content hash is stale");
+        }
+    }
+
     private long increment(CodeWorkspace workspace, Instant now) {
         long next = workspace.getRevision() + 1;
         workspace.setRevision(next);
@@ -569,6 +672,9 @@ public class CodeWorkspaceOverlayService {
     }
 
     private record EffectiveMetadata(String path, long sizeBytes, String contentHash) {
+    }
+
+    private record VerifiedMetadata(String path, long sizeBytes, String contentHash) {
     }
 
     private record EffectiveFile(byte[] bytes, String contentHash) {

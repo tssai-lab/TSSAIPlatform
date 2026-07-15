@@ -1,5 +1,6 @@
 package com.tss.platform.entity;
 
+import com.tss.platform.model.CodeAuditActorType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -48,8 +49,11 @@ public class CodeAssetAuditLog {
     @Column(name = "action", nullable = false, length = 64)
     private String action;
 
-    @Column(name = "actor_user_id", nullable = false)
+    @Column(name = "actor_user_id")
     private Integer actorUserId;
+
+    @Column(name = "actor_type", nullable = false, length = 32)
+    private String actorType = CodeAuditActorType.USER;
 
     @Column(name = "metadata_json", columnDefinition = "TEXT")
     private String metadataJson;

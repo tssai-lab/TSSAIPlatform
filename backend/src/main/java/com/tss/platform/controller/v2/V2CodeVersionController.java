@@ -7,6 +7,7 @@ import com.tss.platform.dto.v2.V2CodeConsumerManifest;
 import com.tss.platform.dto.v2.V2CodeFileContent;
 import com.tss.platform.dto.v2.V2CodeFileNode;
 import com.tss.platform.dto.v2.V2CodeValidationResult;
+import com.tss.platform.dto.v2.V2CodeRiskAssessmentDetail;
 import com.tss.platform.dto.v2.V2CodeVersionArchiveRequest;
 import com.tss.platform.dto.v2.V2CodeVersionDeprecateRequest;
 import com.tss.platform.dto.v2.V2CodeVersionDto;
@@ -14,6 +15,7 @@ import com.tss.platform.dto.v2.V2CodeVersionValidateRequest;
 import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeArtifactUpgradeService;
 import com.tss.platform.service.V2CodeVersionQueryService;
+import com.tss.platform.service.V2CodeRiskQueryService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -37,13 +39,16 @@ public class V2CodeVersionController {
 
     private final V2CodeVersionQueryService service;
     private final CodeArtifactUpgradeService artifactUpgradeService;
+    private final V2CodeRiskQueryService riskQueryService;
 
     public V2CodeVersionController(
             V2CodeVersionQueryService service,
-            CodeArtifactUpgradeService artifactUpgradeService
+            CodeArtifactUpgradeService artifactUpgradeService,
+            V2CodeRiskQueryService riskQueryService
     ) {
         this.service = service;
         this.artifactUpgradeService = artifactUpgradeService;
+        this.riskQueryService = riskQueryService;
     }
 
     @GetMapping("/code-assets/{assetId}/versions")
@@ -96,6 +101,11 @@ public class V2CodeVersionController {
             @RequestBody(required = false) V2CodeVersionValidateRequest ignored
     ) {
         return service.validate(versionId);
+    }
+
+    @GetMapping("/code-versions/{versionId}/risk-assessment")
+    public V2CodeRiskAssessmentDetail riskAssessment(@PathVariable String versionId) {
+        return riskQueryService.get(versionId);
     }
 
     @PostMapping("/code-versions/{versionId}/approval")

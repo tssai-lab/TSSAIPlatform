@@ -11,7 +11,7 @@ Flyway repair 或重新基线化。
 
 ## 当前迁移总览
 
-当前最高迁移版本为 `V29`。V1-V29 共同构成从空数据库升级到当前源码所需结构的
+当前最高迁移版本为 `V30`。V1-V30 共同构成从空数据库升级到当前源码所需结构的
 完整历史链路，均应保留。
 
 | 版本 | 主要职责 | 当前定位 |
@@ -45,6 +45,7 @@ Flyway repair 或重新基线化。
 | V27 | ImportJob PARTIAL 和失败样本表 | 增量 retry |
 | V28 | 上传会话 DISCARDED 状态 | 草稿放弃与清理 |
 | V29 | 代码工作区、校验、审批和审计结构 | 代码资产管理基础 |
+| V30 | 代码风险评估、自动决策证据和待审核索引 | 代码风险分流基础 |
 
 部分旧约束会被后续迁移替换，但这不表示旧迁移可以删除：
 
@@ -178,11 +179,22 @@ Flyway repair 或重新基线化。
 - 创建 `code_validation_run`、`code_approval_record` 和 `code_asset_audit_log`，并通过 PostgreSQL trigger 拒绝审计日志 UPDATE/DELETE。
 - 将历史 APPROVED 状态保存为 `LEGACY_APPROVAL_IMPORTED` 记录后重置为 PENDING，要求按新流程重新校验和审批。
 
+## V30__code_risk_assessment_and_review_queue.sql
+
+建立代码静态风险评估、自动策略决策和管理员待审核队列所需的持久化基础。
+
+- 创建 `code_risk_assessment`，将扫描结果绑定到代码版本、校验记录、制品 SHA-256、风险策略和扫描器版本。
+- 创建 `code_risk_finding`，只保存规则、严重度、分类、文件位置和安全描述，不保存源码片段、凭据、存储路径或下载地址。
+- 为 `code_approval_record` 增加 `AUTO_POLICY`、`ADMIN`、`LEGACY` 决策来源，以及风险评估和审批策略证据；系统策略可以在没有用户 reviewer 的情况下自动批准或阻断。
+- 为 `code_version` 增加最新风险评估摘要，并增加 PENDING 管理员审核队列索引。
+- 为代码资产审计日志增加 `USER`、`SYSTEM` actor 类型；SYSTEM actor 不伪造用户 ID，USER actor 仍必须绑定真实用户。
+- 历史审批记录保持原决定，仅标记为 `LEGACY` 来源，不自动生成风险结果或自动批准历史 PENDING 版本。
+
 ## 维护规则
 
 - 已执行的版本化迁移只读维护，不修改文件内容或 checksum。
 - 新增迁移前先检查当前最大版本，并使用下一个可用版本号。
 - 不通过删除旧迁移来“清理”被后续迁移替换的约束。
 - 如果需要为全新部署压缩历史，应单独设计 baseline，并明确区分已有数据库和全新
-  数据库；不能直接替换现有 V1-V29 链路。
+  数据库；不能直接替换现有 V1-V30 链路。
 - 应用使用 Hibernate `validate` 时，实体字段变化必须先有对应 Flyway 迁移。

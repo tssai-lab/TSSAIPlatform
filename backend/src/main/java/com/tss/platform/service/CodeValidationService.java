@@ -36,6 +36,7 @@ public class CodeValidationService {
     private final CodeArtifactStorageService storageService;
     private final CodeArtifactAssembler assembler;
     private final CodeAssetAuditService auditService;
+    private final CodeRiskAssessmentService riskAssessmentService;
     private final AuthContext authContext;
     private final TransactionTemplate transactionTemplate;
 
@@ -48,6 +49,7 @@ public class CodeValidationService {
             CodeArtifactStorageService storageService,
             CodeArtifactAssembler assembler,
             CodeAssetAuditService auditService,
+            CodeRiskAssessmentService riskAssessmentService,
             AuthContext authContext,
             PlatformTransactionManager transactionManager
     ) {
@@ -59,6 +61,7 @@ public class CodeValidationService {
         this.storageService = storageService;
         this.assembler = assembler;
         this.auditService = auditService;
+        this.riskAssessmentService = riskAssessmentService;
         this.authContext = authContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(
@@ -108,25 +111,58 @@ public class CodeValidationService {
         if (snapshot == null) {
             throw new IllegalStateException("Code version validation transaction failed");
         }
-        CodeValidationResult observed;
+        VersionValidationObservation observation;
         try {
             StoredCodeArtifact stored = storageService.read(snapshot.storagePath());
-            observed = assembler.validate(snapshot.asset(), stored.bytes());
-            if (!stored.artifactSha256().equals(snapshot.expectedSha256())) {
+            CodeValidationResult observed = assembler.validate(snapshot.asset(), stored.bytes());
+            if (!Objects.equals(stored.objectName(), snapshot.storagePath())) {
+                observed = failed(
+                        stored.artifactSha256(),
+                        "STORAGE_REFERENCE_INVALID",
+                        "Code artifact storage reference is invalid",
+                        observed.fileCount()
+                );
+            } else if (!stored.artifactSha256().equals(snapshot.expectedSha256())) {
                 observed = failed(
                         stored.artifactSha256(),
                         "ARTIFACT_SHA256_MISMATCH",
                         "Code artifact hash does not match",
                         observed.fileCount()
                 );
+            } else if (snapshot.expectedSizeBytes() == null
+                    || snapshot.expectedSizeBytes() < 0) {
+                observed = failed(
+                        stored.artifactSha256(),
+                        "VERSION_EVIDENCE_MISSING",
+                        "Code version artifact evidence is missing",
+                        observed.fileCount()
+                );
+            } else if (stored.sizeBytes() != snapshot.expectedSizeBytes()) {
+                observed = failed(
+                        stored.artifactSha256(),
+                        "ARTIFACT_SIZE_MISMATCH",
+                        "Code artifact size does not match",
+                        observed.fileCount()
+                );
             }
+            observation = new VersionValidationObservation(
+                    observed,
+                    stored.objectName(),
+                    stored.artifactSha256(),
+                    stored.sizeBytes()
+            );
         } catch (CodeArtifactStorageException exception) {
-            observed = storageFailure(snapshot.expectedSha256());
+            observation = new VersionValidationObservation(
+                    storageFailure(snapshot.expectedSha256()),
+                    null,
+                    null,
+                    null
+            );
         }
 
-        CodeValidationResult finalObserved = observed;
+        VersionValidationObservation finalObservation = observation;
         CodeValidationResult saved = transactionTemplate.execute(status ->
-                persistVersionValidation(snapshot, finalObserved)
+                persistVersionValidation(snapshot, finalObservation)
         );
         if (saved == null) {
             throw new IllegalStateException("Code version validation transaction failed");
@@ -220,14 +256,16 @@ public class CodeValidationService {
                 version.getAssetId(),
                 version.getOwnerUserId(),
                 version.getStoragePath(),
-                expectedSha
+                expectedSha,
+                version.getSizeBytes()
         );
     }
 
     private CodeValidationResult persistVersionValidation(
             VersionSnapshot snapshot,
-            CodeValidationResult observed
+            VersionValidationObservation observation
     ) {
+        CodeValidationResult observed = observation.result();
         CodeAsset asset = assetRepository.findByIdAndDeletedFalseForUpdate(snapshot.assetId())
                 .orElseThrow(CodeAssetAccessException::new);
         if (!Objects.equals(asset.getOwnerUserId(), snapshot.ownerUserId())) {
@@ -239,8 +277,18 @@ public class CodeValidationService {
         if (!Objects.equals(locked.getAssetId(), snapshot.assetId())
                 || !Objects.equals(locked.getOwnerUserId(), snapshot.ownerUserId())
                 || !Objects.equals(locked.getStoragePath(), snapshot.storagePath())
-                || !Objects.equals(locked.getArtifactSha256(), snapshot.expectedSha256())) {
+                || !Objects.equals(locked.getArtifactSha256(), snapshot.expectedSha256())
+                || !Objects.equals(locked.getSizeBytes(), snapshot.expectedSizeBytes())) {
             throw conflict("VERSION_CHANGED", "Code version changed during validation");
+        }
+
+        if (canReuseValidationEvidence(locked, observation)) {
+            CodeValidationRun latest = validationRunRepository
+                    .findTopByVersionIdOrderByCreatedAtDescIdDesc(locked.getId())
+                    .orElse(null);
+            if (isCurrentPassingEvidence(locked, latest)) {
+                return observed.asReused();
+            }
         }
 
         Instant now = Instant.now();
@@ -259,8 +307,18 @@ public class CodeValidationService {
 
         locked.setValidationStatus(observed.status());
         locked.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        if ("APPROVED".equals(locked.getApprovalStatus())) {
+            // Only genuinely new evidence invalidates the old approval binding.
+            // Equivalent repeated validation returned above without any mutation.
+            locked.setApprovalStatus("PENDING");
+        }
         locked.setUpdatedAt(now);
         versionRepository.saveAndFlush(locked);
+        if (observed.passed()) {
+            riskAssessmentService.enqueue(
+                    locked.getId(), run.getId(), authContext.currentUserId()
+            );
+        }
         auditService.validated(
                 asset.getId(),
                 locked.getId(),
@@ -270,6 +328,32 @@ public class CodeValidationService {
                 observed.fileCount()
         );
         return observed;
+    }
+
+    private boolean canReuseValidationEvidence(
+            CodeVersion version,
+            VersionValidationObservation observation
+    ) {
+        return observation.result().passed()
+                && Objects.equals(observation.objectName(), version.getStoragePath())
+                && Objects.equals(observation.artifactSha256(), version.getArtifactSha256())
+                && version.getSizeBytes() != null
+                && version.getSizeBytes() >= 0
+                && Objects.equals(observation.sizeBytes(), version.getSizeBytes())
+                && "PASSED".equals(version.getValidationStatus())
+                && CodeArtifactAssembler.POLICY_VERSION.equals(
+                        version.getValidationPolicyVersion()
+                );
+    }
+
+    private boolean isCurrentPassingEvidence(
+            CodeVersion version,
+            CodeValidationRun run
+    ) {
+        return run != null
+                && "PASSED".equals(run.getStatus())
+                && Objects.equals(run.getArtifactSha256(), version.getArtifactSha256())
+                && CodeArtifactAssembler.POLICY_VERSION.equals(run.getPolicyVersion());
     }
 
     private CodeVersion resolveBase(CodeAsset asset, String baseVersionId) {
@@ -479,7 +563,16 @@ public class CodeValidationService {
             String assetId,
             Integer ownerUserId,
             String storagePath,
-            String expectedSha256
+            String expectedSha256,
+            Long expectedSizeBytes
+    ) {
+    }
+
+    private record VersionValidationObservation(
+            CodeValidationResult result,
+            String objectName,
+            String artifactSha256,
+            Long sizeBytes
     ) {
     }
 }

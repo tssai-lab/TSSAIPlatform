@@ -9,8 +9,28 @@ public record V2CodeValidationResult(
         String status,
         String reasonCode,
         String message,
-        int fileCount
+        int fileCount,
+        boolean reused
 ) {
+    public V2CodeValidationResult(
+            String policyVersion,
+            String artifactSha256,
+            String status,
+            String reasonCode,
+            String message,
+            int fileCount
+    ) {
+        this(
+                policyVersion,
+                artifactSha256,
+                status,
+                reasonCode,
+                message,
+                fileCount,
+                false
+        );
+    }
+
     public static V2CodeValidationResult from(CodeValidationResult result) {
         return new V2CodeValidationResult(
                 result.policyVersion(),
@@ -18,7 +38,8 @@ public record V2CodeValidationResult(
                 result.status(),
                 result.reasonCode(),
                 result.safeMessage(),
-                result.fileCount()
+                result.fileCount(),
+                result.reused()
         );
     }
 }

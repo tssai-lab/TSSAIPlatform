@@ -26,6 +26,14 @@ dataset:
     max-image-bytes: ${DATASET_PREVIEW_MAX_IMAGE_BYTES:20971520}
     max-page-size: ${DATASET_PREVIEW_MAX_PAGE_SIZE:200}
 
+code-assets:
+  risk:
+    # MANUAL_ONLY is the safe rollout default. Use SHADOW to collect findings
+    # without automatic approval, then ENFORCE after the policy is calibrated.
+    mode: ${CODE_ASSET_RISK_MODE:MANUAL_ONLY}
+    batch-size: ${CODE_ASSET_RISK_BATCH_SIZE:20}
+    stale-after-seconds: ${CODE_ASSET_RISK_STALE_AFTER_SECONDS:600}
+
 spring:
   application:
     name: tss-backend

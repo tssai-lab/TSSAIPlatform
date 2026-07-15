@@ -442,7 +442,7 @@ class CodeWorkspaceOverlayServiceTest {
     }
 
     @Test
-    void largeBaseFileIsListableButPreviewMoveAndDeleteAreRejectedWithoutRangeRead() {
+    void largeBaseFileIsListableDownloadableAndDeletableByStreamedHashCas() {
         CodeVersion base = attachBase();
         CodeArchiveEntry large = entry(
                 "large.txt", CodeFilePolicy.EDITABLE_LIMIT_BYTES + 1
@@ -460,8 +460,30 @@ class CodeWorkspaceOverlayServiceTest {
                 () -> service.content("workspace-1", "large.txt"));
         assertThrows(CodeContentTooLargeException.class,
                 () -> service.move("workspace-1", "large.txt", "moved.txt", 0L, "a".repeat(64)));
-        assertThrows(CodeContentTooLargeException.class,
-                () -> service.delete("workspace-1", "large.txt", 0L, "a".repeat(64)));
+        String rawHash = "b".repeat(64);
+        when(archiveReader.sha256(base, 7, large)).thenReturn(rawHash);
+
+        CodeWorkspaceFileMetadata metadata = service.metadata(
+                "workspace-1", "large.txt"
+        );
+
+        assertEquals(rawHash, metadata.contentHash());
+        assertEquals(CodeFilePolicy.EDITABLE_LIMIT_BYTES + 1,
+                metadata.descriptor().sizeBytes());
+        assertFalse(metadata.descriptor().previewable());
+        assertFalse(metadata.readOnly());
+
+        long revision = service.delete(
+                "workspace-1", "large.txt", 0L, rawHash
+        );
+        assertEquals(1L, revision);
+        var deleteCaptor = org.mockito.ArgumentCaptor.forClass(CodeWorkspaceFileDelta.class);
+        verify(deltaRepository).save(deleteCaptor.capture());
+        assertEquals("DELETE", deleteCaptor.getValue().getOperation());
+        assertEquals("large.txt", deleteCaptor.getValue().getPath());
+        verify(auditService).fileDeleted(
+                "asset-1", "workspace-1", 1L, rawHash
+        );
         byte[] downloadable = bytes("large but bounded");
         when(archiveReader.read(
                 base,

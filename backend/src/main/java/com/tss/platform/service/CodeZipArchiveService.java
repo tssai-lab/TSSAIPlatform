@@ -144,7 +144,7 @@ public final class CodeZipArchiveService {
                 throw validation("ZIP_SYMLINK", "Symbolic links are not allowed in code archives");
             }
             String rawEntryName = decodeRawEntryName(entry);
-            if (entry.isDirectory()) {
+            if (entry.isDirectory() || rawEntryName.endsWith("\\")) {
                 String directoryPath = pathPolicy.normalizeRawArchiveDirectoryPath(
                         rawEntryName
                 );

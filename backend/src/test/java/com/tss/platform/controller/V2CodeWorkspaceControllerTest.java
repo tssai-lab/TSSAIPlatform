@@ -7,10 +7,12 @@ import com.tss.platform.dto.v2.V2CodeFileContent;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.service.CodeContentTooLargeException;
 import com.tss.platform.service.CodeFileDescriptor;
+import com.tss.platform.service.CodeFilePolicy;
 import com.tss.platform.service.CodeValidationResult;
 import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeWorkspaceContent;
 import com.tss.platform.service.CodeWorkspaceDownload;
+import com.tss.platform.service.CodeWorkspaceFileMetadata;
 import com.tss.platform.service.CodeValidationService;
 import com.tss.platform.service.CodeWorkspaceOverlayService;
 import com.tss.platform.service.CodeWorkspacePublishService;
@@ -106,6 +108,37 @@ class V2CodeWorkspaceControllerTest {
                 .andExpect(jsonPath("$.rawBytes").doesNotExist())
                 .andExpect(jsonPath("$.storagePath").doesNotExist());
         verify(overlay).content("workspace-1", "src/train.py");
+    }
+
+    @Test
+    void exposesLargeFileHashMetadataForSafeDeleteCas() throws Exception {
+        V2CodeAssetService assetService = mock(V2CodeAssetService.class);
+        CodeWorkspaceOverlayService overlay = mock(CodeWorkspaceOverlayService.class);
+        when(assetService.requireOwnedWorkspace("workspace-1")).thenReturn(workspace());
+        CodeFileDescriptor descriptor = new CodeFileDescriptor(
+                "large.txt", "large.txt", "FILE", ".txt", "plaintext",
+                "text/plain", CodeFilePolicy.EDITABLE_LIMIT_BYTES + 1,
+                false, false, true, "FILE_TOO_LARGE", "b".repeat(64)
+        );
+        when(overlay.metadata("workspace-1", "large.txt")).thenReturn(
+                new CodeWorkspaceFileMetadata(
+                        descriptor, descriptor.contentHash(), 2L, false
+                )
+        );
+
+        mvc(assetService, overlay).perform(
+                        get("/api/v2/code-workspaces/workspace-1/files/metadata")
+                                .queryParam("path", "large.txt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("large.txt"))
+                .andExpect(jsonPath("$.sizeBytes")
+                        .value(CodeFilePolicy.EDITABLE_LIMIT_BYTES + 1))
+                .andExpect(jsonPath("$.contentHash").value("b".repeat(64)))
+                .andExpect(jsonPath("$.workspaceRevision").value(2))
+                .andExpect(jsonPath("$.previewable").value(false))
+                .andExpect(jsonPath("$.editable").value(false))
+                .andExpect(jsonPath("$.deletable").value(true))
+                .andExpect(jsonPath("$.storagePath").doesNotExist());
     }
 
     @Test

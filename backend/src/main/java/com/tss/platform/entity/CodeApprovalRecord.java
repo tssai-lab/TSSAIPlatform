@@ -1,5 +1,6 @@
 package com.tss.platform.entity;
 
+import com.tss.platform.model.CodeApprovalDecisionSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -46,6 +47,15 @@ public class CodeApprovalRecord {
 
     @Column(name = "decision", nullable = false, length = 32)
     private String decision = "PENDING";
+
+    @Column(name = "decision_source", nullable = false, length = 32)
+    private String decisionSource = CodeApprovalDecisionSource.ADMIN;
+
+    @Column(name = "risk_assessment_id", length = 64)
+    private String riskAssessmentId;
+
+    @Column(name = "approval_policy_version", length = 128)
+    private String approvalPolicyVersion;
 
     @Column(name = "reason", columnDefinition = "TEXT")
     private String reason;

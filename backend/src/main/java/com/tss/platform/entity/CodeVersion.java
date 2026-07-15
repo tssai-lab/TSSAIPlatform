@@ -73,6 +73,21 @@ public class CodeVersion {
     @Column(name = "validation_policy_version", length = 128)
     private String validationPolicyVersion;
 
+    @Column(name = "latest_risk_assessment_id", length = 64)
+    private String latestRiskAssessmentId;
+
+    @Column(name = "risk_status", length = 32)
+    private String riskStatus;
+
+    @Column(name = "risk_level", length = 32)
+    private String riskLevel;
+
+    @Column(name = "review_disposition", length = 32)
+    private String reviewDisposition;
+
+    @Column(name = "risk_policy_version", length = 128)
+    private String riskPolicyVersion;
+
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 

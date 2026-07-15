@@ -2,11 +2,14 @@ package com.tss.platform.service;
 
 import com.tss.platform.entity.CodeApprovalRecord;
 import com.tss.platform.entity.CodeAsset;
+import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.model.CodeApprovalStatus;
+import com.tss.platform.model.CodeApprovalDecisionSource;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
+import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
@@ -38,12 +41,17 @@ class CodeApprovalServiceTest {
             mock(CodeValidationRunRepository.class);
     private final CodeApprovalRecordRepository approvalRepository =
             mock(CodeApprovalRecordRepository.class);
+    private final CodeRiskAssessmentRepository riskAssessmentRepository =
+            mock(CodeRiskAssessmentRepository.class);
+    private final CodeArtifactStorageService storageService =
+            mock(CodeArtifactStorageService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
     private final AuthContext authContext = mock(AuthContext.class);
 
     private CodeApprovalService service;
     private CodeVersion version;
     private CodeValidationRun validation;
+    private CodeRiskAssessment riskAssessment;
 
     @BeforeEach
     void setUp() {
@@ -51,7 +59,9 @@ class CodeApprovalServiceTest {
                 versionRepository,
                 assetRepository,
                 validationRepository,
+                riskAssessmentRepository,
                 approvalRepository,
+                storageService,
                 auditService,
                 authContext
         );
@@ -59,6 +69,7 @@ class CodeApprovalServiceTest {
         when(authContext.currentUserId()).thenReturn(99);
         version = version();
         validation = validation("validation-1");
+        riskAssessment = riskAssessment();
         when(versionRepository.findAssetIdByIdAndDeletedFalse("version-1"))
                 .thenReturn(Optional.of("asset-1"));
         when(versionRepository.findByIdAndDeletedFalseForUpdate("version-1"))
@@ -67,6 +78,11 @@ class CodeApprovalServiceTest {
                 .thenReturn(Optional.of(asset()));
         when(validationRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
                 .thenReturn(Optional.of(validation));
+        when(riskAssessmentRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
+                .thenReturn(Optional.of(riskAssessment));
+        when(storageService.read(version.getStoragePath())).thenReturn(new StoredCodeArtifact(
+                version.getStoragePath(), new byte[]{1}, version.getArtifactSha256(), 1
+        ));
         when(approvalRepository.findTopByVersionIdOrderByCreatedAtDescIdDesc("version-1"))
                 .thenReturn(Optional.empty());
         when(approvalRepository.saveAndFlush(any(CodeApprovalRecord.class)))
@@ -136,6 +152,7 @@ class CodeApprovalServiceTest {
         assertEquals(validation.getId(), approved.getValidationRunId());
         assertEquals(CodeArtifactAssembler.POLICY_VERSION, approved.getPolicyVersion());
         assertEquals(99, approved.getReviewerUserId());
+        assertEquals("ignored", approved.getReason());
         assertNotNull(approved.getCreatedAt());
         verify(versionRepository).saveAndFlush(version);
         verify(auditService).approved(
@@ -195,6 +212,65 @@ class CodeApprovalServiceTest {
     }
 
     @Test
+    void expectedEvidenceMismatchIsRejectedBeforeWritingApproval() {
+        CodeApprovalService.ApprovalExpectation stale =
+                new CodeApprovalService.ApprovalExpectation(
+                        "old-validation", "risk-1", "a".repeat(64),
+                        CodeStaticRiskScanner.RISK_POLICY_VERSION
+                );
+
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                () -> service.decide(
+                        "version-1", CodeApprovalService.Decision.APPROVE, null, stale
+                )
+        );
+
+        assertEquals("APPROVAL_EVIDENCE_STALE", error.getReasonCode());
+        verify(approvalRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void obsoleteRiskPolicyCannotBeApprovedEvenWhenVersionSummaryMatches() {
+        riskAssessment.setRiskPolicyVersion("code-risk-policy-v1");
+        version.setRiskPolicyVersion("code-risk-policy-v1");
+
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                () -> service.decide(
+                        "version-1", CodeApprovalService.Decision.APPROVE, null
+                )
+        );
+
+        assertEquals("RISK_EVIDENCE_STALE", error.getReasonCode());
+        verify(approvalRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void automaticLowRiskApprovalHasSystemEvidenceAndNoReviewerIdentity() {
+        when(riskAssessmentRepository.findByIdAndVersionIdForUpdate("risk-1", "version-1"))
+                .thenReturn(Optional.of(riskAssessment));
+        when(validationRepository.findById("validation-1"))
+                .thenReturn(Optional.of(validation));
+
+        CodeApprovalRecord approved = service.decideAutomatically(
+                "version-1", "risk-1", true
+        );
+
+        assertEquals(CodeApprovalStatus.APPROVED, approved.getDecision());
+        assertEquals(CodeApprovalDecisionSource.AUTO_POLICY, approved.getDecisionSource());
+        assertEquals(null, approved.getReviewerUserId());
+        assertEquals("risk-1", approved.getRiskAssessmentId());
+        assertEquals(CodeApprovalService.APPROVAL_POLICY_VERSION,
+                approved.getApprovalPolicyVersion());
+        verify(auditService).automaticDecision(
+                "asset-1", "version-1", "risk-1", "AUTO_APPROVE",
+                "a".repeat(64), CodeStaticRiskScanner.RISK_POLICY_VERSION,
+                CodeApprovalDecisionSource.AUTO_POLICY
+        );
+    }
+
+    @Test
     void staleApprovedEvidenceRefreshesAgainstLatestSuccessfulRun() {
         version.setApprovalStatus(CodeApprovalStatus.APPROVED);
         CodeApprovalRecord stale = approvedRecord("approval-old", "validation-old");
@@ -236,8 +312,9 @@ class CodeApprovalServiceTest {
 
         assertEquals(CodeApprovalStatus.REJECTED, version.getApprovalStatus());
         assertEquals("unsafe reason", rejected.getReason());
-        assertEquals(null, rejected.getArtifactSha256());
-        assertEquals(null, rejected.getValidationRunId());
+        assertEquals(version.getArtifactSha256(), rejected.getArtifactSha256());
+        assertEquals(validation.getId(), rejected.getValidationRunId());
+        assertEquals("risk-1", rejected.getRiskAssessmentId());
         verify(auditService).rejected("asset-1", "version-1");
 
         assertReason("APPROVAL_TERMINAL");
@@ -297,8 +374,32 @@ class CodeApprovalServiceTest {
         version.setArtifactSha256("a".repeat(64));
         version.setValidationStatus("PASSED");
         version.setValidationPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        version.setStoragePath("users/7/codes/asset-1/versions/version-1/artifact.zip");
+        version.setSizeBytes(1L);
+        version.setLatestRiskAssessmentId("risk-1");
+        version.setRiskStatus("COMPLETED");
+        version.setRiskLevel("LOW");
+        version.setReviewDisposition("AUTO_APPROVE");
+        version.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
         version.setDeleted(false);
         return version;
+    }
+
+    private static CodeRiskAssessment riskAssessment() {
+        CodeRiskAssessment assessment = new CodeRiskAssessment();
+        assessment.setId("risk-1");
+        assessment.setVersionId("version-1");
+        assessment.setValidationRunId("validation-1");
+        assessment.setArtifactSha256("a".repeat(64));
+        assessment.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
+        assessment.setScannerVersion(CodeStaticRiskScanner.SCANNER_VERSION);
+        assessment.setStatus("COMPLETED");
+        assessment.setRiskLevel("LOW");
+        assessment.setDisposition("AUTO_APPROVE");
+        assessment.setFindingCount(0);
+        assessment.setCreatedAt(Instant.now());
+        assessment.setCompletedAt(Instant.now());
+        return assessment;
     }
 
     private static CodeValidationRun validation(String id) {
@@ -320,6 +421,8 @@ class CodeApprovalServiceTest {
         record.setArtifactSha256("a".repeat(64));
         record.setValidationRunId(validationRunId);
         record.setPolicyVersion(CodeArtifactAssembler.POLICY_VERSION);
+        record.setRiskAssessmentId("risk-1");
+        record.setApprovalPolicyVersion(CodeApprovalService.APPROVAL_POLICY_VERSION);
         record.setCreatedAt(Instant.now());
         return record;
     }

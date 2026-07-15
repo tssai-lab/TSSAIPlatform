@@ -51,6 +51,7 @@ class CodeAssetAuditServiceTest {
         assertMandatory("imported", String.class, String.class, long.class,
                 String.class, String.class);
         assertMandatory("artifactUpgraded", String.class, String.class, String.class);
+        assertMandatory("assetDeleted", String.class, long.class);
 
         service.fileUpserted(
                 "asset-1",
@@ -90,6 +91,19 @@ class CodeAssetAuditServiceTest {
         assertFalse(metadata.contains("object"));
         assertFalse(metadata.contains("bucket"));
         assertFalse(metadata.contains("url"));
+    }
+
+    @Test
+    void assetDeleteAuditContainsOnlyRevisionAndStableReasonCode() {
+        service.assetDeleted("asset-1", 4L);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(CodeAssetAuditLog.class);
+        verify(repository).save(captor.capture());
+        CodeAssetAuditLog saved = captor.getValue();
+        assertEquals("DELETE", saved.getAction());
+        assertTrue(saved.getMetadataJson().contains("\"revision\":4"));
+        assertTrue(saved.getMetadataJson().contains("\"reasonCode\":\"ASSET_DELETED\""));
+        assertFalse(saved.getMetadataJson().toLowerCase().contains("storage"));
     }
 
     @Test

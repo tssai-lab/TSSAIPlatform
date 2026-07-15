@@ -2,6 +2,7 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.v2.V2CodeFileContent;
 import com.tss.platform.dto.v2.V2CodeFileDeleteRequest;
+import com.tss.platform.dto.v2.V2CodeFileMetadata;
 import com.tss.platform.dto.v2.V2CodeFileMoveRequest;
 import com.tss.platform.dto.v2.V2CodeFileNode;
 import com.tss.platform.dto.v2.V2CodeFileUpsertRequest;
@@ -18,6 +19,7 @@ import com.tss.platform.service.CodeValidationResult;
 import com.tss.platform.service.CodeArtifactStorageException;
 import com.tss.platform.service.CodeWorkspaceContent;
 import com.tss.platform.service.CodeWorkspaceDownload;
+import com.tss.platform.service.CodeWorkspaceFileMetadata;
 import com.tss.platform.service.CodeValidationService;
 import com.tss.platform.service.CodeWorkspaceOverlayService;
 import com.tss.platform.service.CodeWorkspacePublishService;
@@ -100,6 +102,16 @@ public class V2CodeWorkspaceController {
     ) {
         V2CodeWorkspaceDto workspace = assetService.requireOwnedWorkspace(workspaceId);
         return toContent(overlayService.content(workspaceId, path), workspace.readOnly());
+    }
+
+    @GetMapping("/{workspaceId}/files/metadata")
+    public V2CodeFileMetadata metadata(
+            @PathVariable String workspaceId,
+            @RequestParam String path
+    ) {
+        V2CodeWorkspaceDto workspace = assetService.requireOwnedWorkspace(workspaceId);
+        CodeWorkspaceFileMetadata metadata = overlayService.metadata(workspaceId, path);
+        return V2CodeFileMetadata.from(metadata, workspace.readOnly());
     }
 
     @GetMapping("/{workspaceId}/files/download")
