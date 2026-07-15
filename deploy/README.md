@@ -28,9 +28,11 @@ The script creates the Linux user `tss-deployer` and grants its Kubernetes ident
 
 1. Create a GitHub personal access token with only `read:packages` for pulling the private GHCR image.
 2. Add the username and token to the `poc` GitHub Environment described below.
-3. Run the manual `Bootstrap Backend POC Secrets` workflow once.
+3. After the POC CI commit is green, push one `poc-bootstrap-*` tag that points at that commit.
 
 The workflow generates independent POC datastore credentials at runtime and writes them only to Kubernetes Secrets in `tss-poc`. It refuses to overwrite existing POC secrets.
+
+The default `main` branch and the `backend` branch do not share Git history, so this POC uses controlled tags rather than merging backend deployment files into `main`. The existing manual triggers are retained for a future repository layout with a shared default branch.
 
 ## GitHub environment setup
 
@@ -48,9 +50,20 @@ Do not put database passwords, MinIO keys or Kubernetes tokens in GitHub Actions
 
 ## Deployment and rollback
 
-1. Merge the Dockerfile and workflow changes after review.
-2. Push a clean commit to `backend`; the CI workflow tests, builds and publishes an image tagged with the commit SHA.
-3. Run `Deploy Backend POC` manually and enter that commit SHA.
-4. To roll back, run the same workflow again with the previous working image SHA.
+1. Push a clean POC commit to `ops/poc-automation`; the CI workflow tests, builds and publishes an image tagged with the commit SHA.
+2. Wait for that CI run to be green.
+3. Create and push a unique `poc-bootstrap-*` tag on that same commit. This runs the secret bootstrap once.
+4. Create and push a different unique `poc-deploy-*` tag on that same commit. This deploys the image whose tag matches the commit SHA.
+5. For a rollback, push a new `poc-deploy-*` tag that points to an earlier verified POC commit.
+
+Example commands, replacing the names with a current unique timestamp:
+
+```bash
+git tag -a poc-bootstrap-20260715-01 -m "Bootstrap isolated backend POC"
+git push origin poc-bootstrap-20260715-01
+
+git tag -a poc-deploy-20260715-01 -m "Deploy isolated backend POC"
+git push origin poc-deploy-20260715-01
+```
 
 The POC service is ClusterIP only. It does not add an external Nginx route or public port.
