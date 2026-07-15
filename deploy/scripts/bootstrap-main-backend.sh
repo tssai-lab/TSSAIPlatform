@@ -46,6 +46,8 @@ for value_name in postgres_db postgres_user postgres_password minio_user minio_p
 done
 
 install -d -m 700 "${platform_dir}/backend"
+install -d -m 750 "${platform_dir}/backend/logs"
+chown 10001:10001 "${platform_dir}/backend/logs"
 install -m 600 "$compose_overlay" "${platform_dir}/compose.backend.yml"
 
 umask 077
@@ -90,7 +92,7 @@ export TSS_BACKEND_IMAGE="$image"
 
 docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps backend
 
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   if curl --fail --silent --show-error --max-time 5 "$health_url" >/dev/null; then
     echo "Backend deployment is healthy: $image"
     exit 0
@@ -99,6 +101,8 @@ for _ in $(seq 1 30); do
 done
 
 echo "New backend did not become healthy; restoring the previous state." >&2
+echo "[backend logs before rollback]" >&2
+docker logs --tail 200 tss-backend >&2 || true
 if [[ -n $previous_image ]]; then
   export TSS_BACKEND_IMAGE="$previous_image"
   docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps backend
