@@ -63,14 +63,19 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Log Main server in to GitHub Container Registry
-        run: |
-          set +x
-          printf '%s\n%s\n' "$GHCR_USERNAME" "$GHCR_TOKEN" \
-            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-login-ghcr"
+      - name: Log GitHub runner in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ env.GHCR_USERNAME }}
+          password: ${{ env.GHCR_TOKEN }}
 
-      - name: Deploy and verify Main backend
+      - name: Transfer image and deploy Main backend
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-backend:${{ steps.image.outputs.tag }}"
-          printf '%s\n' "$image" \
-            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-deploy-backend"
+          docker pull "$image"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          set -o pipefail
+          docker save "$image" \
+            | gzip -1 \
+            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo -n /usr/local/sbin/tss-main-load-backend '$image' '$image_id'"

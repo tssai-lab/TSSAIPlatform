@@ -17,6 +17,7 @@ runtime_env="${platform_dir}/backend/.env.runtime"
 
 command -v docker >/dev/null
 command -v curl >/dev/null
+command -v gzip >/dev/null
 command -v visudo >/dev/null
 docker compose version >/dev/null
 docker inspect tss-postgres >/dev/null
@@ -64,32 +65,21 @@ TRAINING_K8S_VERIFY_ON_STARTUP=false
 EOF
 chmod 600 "$runtime_env"
 
-cat > /usr/local/sbin/tss-main-login-ghcr <<'EOF'
+cat > /usr/local/sbin/tss-main-activate-backend <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-IFS= read -r username
-IFS= read -r token
-
-if [[ ! $username =~ ^[A-Za-z0-9-]+$ || -z $token ]]; then
-  echo "Invalid registry credentials." >&2
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 ghcr.io/tssai-lab/tssai-backend:<commit-sha>" >&2
   exit 1
 fi
-
-printf '%s' "$token" | docker login ghcr.io --username "$username" --password-stdin >/dev/null
-EOF
-chmod 700 /usr/local/sbin/tss-main-login-ghcr
-
-cat > /usr/local/sbin/tss-main-deploy-backend <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
 
 platform_dir="/opt/tss-platform"
 compose_base="${platform_dir}/compose.yml"
 compose_overlay="${platform_dir}/compose.backend.yml"
 health_url="http://127.0.0.1:8080/v3/api-docs"
+image="$1"
 
-IFS= read -r image
 if [[ ! $image =~ ^ghcr\.io/tssai-lab/tssai-backend:[0-9a-f]{40}$ ]]; then
   echo "Refusing an invalid backend image reference." >&2
   exit 1
@@ -98,7 +88,6 @@ fi
 previous_image="$(docker inspect tss-backend --format '{{.Config.Image}}' 2>/dev/null || true)"
 export TSS_BACKEND_IMAGE="$image"
 
-docker compose -f "$compose_base" -f "$compose_overlay" pull backend
 docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps backend
 
 for _ in $(seq 1 30); do
@@ -118,10 +107,44 @@ else
 fi
 exit 1
 EOF
-chmod 700 /usr/local/sbin/tss-main-deploy-backend
+chmod 700 /usr/local/sbin/tss-main-activate-backend
+
+cat > /usr/local/sbin/tss-main-load-backend <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 ghcr.io/tssai-lab/tssai-backend:<commit-sha> sha256:<image-id>" >&2
+  exit 1
+fi
+
+image="$1"
+expected_image_id="$2"
+if [[ ! $image =~ ^ghcr\.io/tssai-lab/tssai-backend:[0-9a-f]{40}$ ]]; then
+  echo "Refusing an invalid backend image reference." >&2
+  exit 1
+fi
+if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Refusing an invalid image identifier." >&2
+  exit 1
+fi
+
+gzip -dc | docker load >/dev/null
+actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+if [[ $actual_image_id != "$expected_image_id" ]]; then
+  echo "Loaded image identifier does not match the GitHub runner image." >&2
+  exit 1
+fi
+
+exec /usr/local/sbin/tss-main-activate-backend "$image"
+EOF
+chmod 700 /usr/local/sbin/tss-main-load-backend
+
+rm -f /usr/local/sbin/tss-main-login-ghcr /usr/local/sbin/tss-main-deploy-backend
+docker logout ghcr.io >/dev/null 2>&1 || true
 
 cat > /etc/sudoers.d/tss-main-backend-deployer <<'EOF'
-tss-deployer ALL=(root) NOPASSWD: /usr/local/sbin/tss-main-login-ghcr, /usr/local/sbin/tss-main-deploy-backend
+tss-deployer ALL=(root) NOPASSWD: /usr/local/sbin/tss-main-load-backend *
 EOF
 chmod 440 /etc/sudoers.d/tss-main-backend-deployer
 visudo -cf /etc/sudoers.d/tss-main-backend-deployer >/dev/null
