@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - backend
+      - ops/poc-automation
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
