@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/**"
   push:
     branches:
       - backend
       - ops/poc-automation
     paths:
       - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
