@@ -31,6 +31,8 @@ import {
   fetchDatasetList,
   fetchModelList,
   fetchTaskDetail,
+  getModelVersion,
+  publishTaskModel,
   uploadCodeZip,
   uploadDataset,
 } from '@/services/platform';
@@ -76,12 +78,15 @@ type CheckState = {
   approvalStatus?: string;
 };
 
+const isCodeApproved = (status?: string) => status === 'APPROVED';
+
 const resolveDatasetVersionId = (data: any): string | undefined =>
   data?.datasetVersionId || data?.id || data?.versionId;
 
 const TaskCreate: React.FC = () => {
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get('experimentId')?.trim() || '';
+  const fromVersionId = searchParams.get('fromVersionId')?.trim() || '';
   const presetCodeVersionId = searchParams.get('codeVersionId')?.trim() || '';
   const isExperimentContinue = !!experimentId;
 
@@ -131,8 +136,30 @@ const TaskCreate: React.FC = () => {
     [modelOptions, selectedBaseModelVersionId],
   );
 
+  /** 确保已选结果模型始终出现在下拉选项中（避免列表刷新后选项被冲掉导致显示空白） */
+  const modelSelectOptions = useMemo(() => {
+    if (
+      !selectedBaseModelVersionId ||
+      modelOptions.some((item) => item.id === selectedBaseModelVersionId)
+    ) {
+      return modelOptions;
+    }
+    return [
+      {
+        id: selectedBaseModelVersionId,
+        name: `结果模型 ${selectedBaseModelVersionId.slice(0, 8)}…`,
+        version: '-',
+        type: (selectedModel?.type || 'NLP') as API.ModelItem['type'],
+      } as API.ModelItem,
+      ...modelOptions,
+    ];
+  }, [modelOptions, selectedBaseModelVersionId, selectedModel?.type]);
+
   /** 数据集类型须与已选基础模型权重一致（后端创建任务会校验） */
-  const requiredDatasetType = selectedModel?.type as DatasetType | undefined;
+  const requiredDatasetType = (
+    selectedModel ||
+    modelSelectOptions.find((item) => item.id === selectedBaseModelVersionId)
+  )?.type as DatasetType | undefined;
 
   const filteredDatasetOptions = useMemo(
     () =>
@@ -208,15 +235,158 @@ const TaskCreate: React.FC = () => {
 
   useEffect(() => {
     if (!isExperimentContinue) return;
-    fetchTaskDetail(experimentId, { skipErrorHandler: true })
-      .then((res: any) => {
-        const data = res?.data;
-        if (!data) return;
-        const baseId = data.baseModelVersionId || data.modelVersionId;
-        if (baseId) {
-          setSelectedBaseModelVersionId(baseId);
-          form.setFieldValue('baseModelVersionId', baseId);
+    let cancelled = false;
+
+    const ensureOption = (modelId: string, meta?: Partial<API.ModelItem>) => {
+      setModelOptions((prev) => {
+        if (prev.some((item) => item.id === modelId)) {
+          if (!meta) return prev;
+          return prev.map((item) =>
+            item.id === modelId
+              ? {
+                  ...item,
+                  name: meta.name || item.name,
+                  version: meta.version || item.version,
+                  type: (meta.type as API.ModelItem['type']) || item.type,
+                }
+              : item,
+          );
         }
+        return [
+          {
+            id: modelId,
+            name: meta?.name || `结果模型 ${modelId.slice(0, 8)}…`,
+            version: meta?.version || '-',
+            type: (meta?.type || 'NLP') as API.ModelItem['type'],
+          } as API.ModelItem,
+          ...prev,
+        ];
+      });
+    };
+
+    const applyModelSelection = async (modelId: string) => {
+      if (cancelled || !modelId) return;
+      setModelInputMode('select');
+      setSelectedBaseModelVersionId(modelId);
+      form.setFieldsValue({ baseModelVersionId: modelId });
+      ensureOption(modelId);
+      try {
+        const detailRes: any = await getModelVersion(modelId, {
+          skipErrorHandler: true,
+        });
+        if (cancelled) return;
+        const d = detailRes?.data;
+        if (!d) return;
+        ensureOption(modelId, {
+          name: d.name || d.fileName || '结果模型',
+          version: d.version || '-',
+          type: d.type || 'NLP',
+        });
+      } catch {
+        // keep placeholder option
+      }
+    };
+
+    const resolveProducedModelId = async (
+      data: API.TrainingExperimentVersion,
+    ): Promise<string | undefined> => {
+      if (data.producedModelVersionId) return data.producedModelVersionId;
+      try {
+        const raw = localStorage.getItem('taskCreatePrefill');
+        const prefill = raw ? JSON.parse(raw) : null;
+        if (
+          prefill?.producedModelVersionId &&
+          (!prefill.fromVersionId || prefill.fromVersionId === data.id)
+        ) {
+          return String(prefill.producedModelVersionId);
+        }
+      } catch {
+        // ignore
+      }
+      if (data.status !== 'success') return undefined;
+      try {
+        const pub = await publishTaskModel(data.id, {
+          skipErrorHandler: true,
+        });
+        const produced =
+          pub?.data?.producedModelVersionId ||
+          (pub as any)?.data?.produced_model_version_id;
+        if (produced) return String(produced);
+        if (pub && pub.success === false) {
+          message.warning(
+            pub.errorMessage || '该版本结果模型尚未发布，请手动选择权重',
+          );
+        }
+      } catch (error: any) {
+        message.warning(
+          error?.message || '自动发布结果模型失败，请手动选择权重',
+        );
+      }
+      return undefined;
+    };
+
+    const load = async () => {
+      try {
+        // 先同步读 prefill，尽快占住选择（避免列表刷新把 UI 冲空）
+        try {
+          const raw = localStorage.getItem('taskCreatePrefill');
+          const prefill = raw ? JSON.parse(raw) : null;
+          const earlyId = prefill?.producedModelVersionId as string | undefined;
+          if (
+            earlyId &&
+            (!fromVersionId ||
+              !prefill?.fromVersionId ||
+              prefill.fromVersionId === fromVersionId)
+          ) {
+            await applyModelSelection(earlyId);
+          }
+        } catch {
+          // ignore
+        }
+
+        const detailId = fromVersionId || experimentId;
+        const res: any = await fetchTaskDetail(detailId, {
+          skipErrorHandler: true,
+        });
+        if (cancelled) return;
+        let data = res?.data as API.TrainingExperimentVersion | undefined;
+        if (!data) {
+          message.warning('无法加载继续训练的源版本详情');
+          return;
+        }
+
+        // 若只传了 experimentId，尽量对齐到指定版本
+        if (!fromVersionId && data.experimentId) {
+          try {
+            const raw = localStorage.getItem('taskCreatePrefill');
+            const prefill = raw ? JSON.parse(raw) : null;
+            const wantId = prefill?.fromVersionId as string | undefined;
+            if (wantId && wantId !== data.id) {
+              const alt = await fetchTaskDetail(wantId, {
+                skipErrorHandler: true,
+              });
+              if (alt?.data) data = alt.data as API.TrainingExperimentVersion;
+            }
+          } catch {
+            // ignore prefill parse
+          }
+        }
+        if (cancelled) return;
+
+        const producedId = await resolveProducedModelId(data);
+        if (cancelled) return;
+        if (producedId) {
+          await applyModelSelection(producedId);
+        } else {
+          // 上面 early prefill 可能已选中；此处用 DOM/状态外的标记更稳，避免闭包陈旧
+          const stillEmpty = !form.getFieldValue('baseModelVersionId');
+          if (stillEmpty) {
+            message.warning(
+              '该版本暂无结果模型（producedModelVersionId），请先在详情页发布结果模型，或手动选择权重',
+            );
+          }
+        }
+
         if (data.codeVersionId) {
           setTrainingConfigMode('code');
           setSelectedCodeVersionId(data.codeVersionId);
@@ -239,11 +409,24 @@ const TaskCreate: React.FC = () => {
             JSON.stringify(data.hyperParams, null, 2),
           );
         }
-      })
-      .catch(() => {
+        if (data.versionNo != null) {
+          form.setFieldValue(
+            'remark',
+            `基于 v${data.versionNo} 结果模型继续训练`,
+          );
+        }
+      } catch {
         // ignore prefill failure
-      });
-  }, [experimentId, form, isExperimentContinue]);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+    // selectedBaseModelVersionId 仅用于 else 分支提示，不纳入依赖以免重复拉取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experimentId, form, fromVersionId, isExperimentContinue]);
 
   useEffect(() => {
     if (!presetCodeVersionId) return;
@@ -257,6 +440,14 @@ const TaskCreate: React.FC = () => {
   useEffect(() => {
     if (trainingConfigMode !== 'code' || !selectedCodeVersionId) {
       setCodeCheck({ loading: false });
+      return;
+    }
+    if (selectedCodeApprovalStatus === 'APPROVED') {
+      setCodeCheck({
+        loading: false,
+        passed: true,
+        approvalStatus: 'APPROVED',
+      });
       return;
     }
     setCodeCheck({ loading: true });
@@ -280,6 +471,7 @@ const TaskCreate: React.FC = () => {
           passed: d.passed,
           reasons: d.reasons || [],
           approvalStatus: d.approvalStatus,
+          validationStatus: d.validationStatus,
         });
         if (d.approvalStatus) {
           setSelectedCodeApprovalStatus(d.approvalStatus);
@@ -292,7 +484,7 @@ const TaskCreate: React.FC = () => {
           reasons: [error?.message || '准入校验请求失败'],
         });
       });
-  }, [selectedCodeVersionId, trainingConfigMode]);
+  }, [selectedCodeApprovalStatus, selectedCodeVersionId, trainingConfigMode]);
 
   const switchTrainingConfigMode = (mode: 'hyperParams' | 'code') => {
     setTrainingConfigMode(mode);
@@ -497,6 +689,7 @@ const TaskCreate: React.FC = () => {
         throw new Error('训练代码上传成功但未返回 codeVersionId');
       }
       setSelectedCodeVersionId(codeVersionId);
+      setSelectedCodeApprovalStatus(res?.data?.approvalStatus);
       form.setFieldValue('codeVersionId', codeVersionId);
       await reloadCodeOptions();
       message.success(`训练代码已上传，正在执行准入校验：${codeVersionId}`);
@@ -518,14 +711,25 @@ const TaskCreate: React.FC = () => {
         />
       );
     }
-    if (codeCheck.passed) {
+    if (codeCheck.passed && isCodeApproved(codeCheck.approvalStatus)) {
       return (
         <Alert
           type="success"
           showIcon
           style={{ marginTop: 12 }}
-          message="训练代码校验通过"
-          description={`approvalStatus=${codeCheck.approvalStatus || 'APPROVED'}。准入校验只代表结构与固定入口检查通过，不代表代码安全审计。`}
+          message="训练代码校验通过且已审核"
+          description={`审核状态：${codeCheck.approvalStatus}。准入校验只代表结构与固定入口检查通过，不代表代码安全审计。`}
+        />
+      );
+    }
+    if (codeCheck.passed && !isCodeApproved(codeCheck.approvalStatus)) {
+      return (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="训练代码校验通过，等待管理员审批"
+          description={`审核状态：${codeCheck.approvalStatus || 'PENDING'}。校验与审批已分离，需管理员审核通过后方可提交训练${codeCheck.validationStatus ? `；validationStatus=${codeCheck.validationStatus}` : ''}。`}
         />
       );
     }
@@ -574,6 +778,16 @@ const TaskCreate: React.FC = () => {
         ),
       });
       throw new Error('check failed');
+    }
+    if (
+      !isCodeApproved(selectedCodeApprovalStatus || codeCheck.approvalStatus)
+    ) {
+      Modal.warning({
+        title: '训练代码尚未审核通过',
+        content:
+          '当前版本已通过结构校验，但 approvalStatus 不是 APPROVED。请等待管理员在「训练代码」列表中审核，或改选已审核版本。',
+      });
+      throw new Error('approval pending');
     }
   };
 
@@ -637,6 +851,18 @@ const TaskCreate: React.FC = () => {
       Modal.error({
         title: '训练代码校验未通过',
         content: (codeCheck.reasons || ['未知原因']).join('；'),
+      });
+      setCurrentStep(2);
+      return;
+    }
+    if (
+      trainingConfigMode === 'code' &&
+      !isCodeApproved(selectedCodeApprovalStatus || codeCheck.approvalStatus)
+    ) {
+      Modal.warning({
+        title: '训练代码尚未审核通过',
+        content:
+          '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
       });
       setCurrentStep(2);
       return;
@@ -749,7 +975,7 @@ const TaskCreate: React.FC = () => {
           showIcon
           style={{ marginBottom: 16 }}
           message="基于此版本继续训练"
-          description="已尝试预填上一版本的基础模型权重、训练代码与数据集。提交后将在同一 experimentId 下创建下一版。"
+          description="已预填该版本的结果模型（producedModelVersionId）、训练代码与数据集。若结果模型尚未发布，会尝试自动发布；提交后将在同一 experimentId 下创建下一版。"
         />
       )}
       <Alert
@@ -800,21 +1026,26 @@ const TaskCreate: React.FC = () => {
               </Radio.Group>
               {modelInputMode === 'select' ? (
                 <Form.Item
-                  name="baseModelVersionId"
                   label="基础模型权重版本"
-                  extra="允许 .pt/.pth/.onnx/.pkl/.joblib/.yaml/.yml/.json/.txt/.md；禁止脚本与可执行文件"
+                  required={isExperimentContinue}
+                  extra={
+                    isExperimentContinue
+                      ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
+                      : '允许 .pt/.pth/.onnx/.pkl/.joblib/.yaml/.yml/.json/.txt/.md；禁止脚本与可执行文件'
+                  }
                 >
                   <Select
                     placeholder="请选择基础模型权重版本"
                     showSearch
+                    allowClear
                     loading={modelLoading}
                     optionFilterProp="label"
                     value={selectedBaseModelVersionId}
-                    onChange={(value: string) => {
+                    onChange={(value?: string) => {
                       setSelectedBaseModelVersionId(value);
-                      form.setFieldValue('baseModelVersionId', value);
+                      form.setFieldsValue({ baseModelVersionId: value });
                     }}
-                    options={modelOptions.map((item) => ({
+                    options={modelSelectOptions.map((item) => ({
                       value: item.id,
                       label: `${item.name} / ${item.version || 'v?'} / ${item.type} / ${item.id}`,
                     }))}
@@ -1251,7 +1482,7 @@ const TaskCreate: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                     message="训练代码文件"
-                    description="选择已通过准入校验（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行准入校验。"
+                    description="选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。"
                   />
                   <Radio.Group
                     value={codeInputMode}
@@ -1265,7 +1496,7 @@ const TaskCreate: React.FC = () => {
                     <Form.Item
                       name="codeVersionId"
                       label="训练代码版本"
-                      extra="仅展示已通过准入校验（APPROVED）且 READY 的训练代码版本"
+                      extra="仅展示已审核（APPROVED）的训练代码版本"
                     >
                       <Select
                         placeholder="请选择训练代码版本"
@@ -1408,15 +1639,27 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 3 && (
             <>
-              {trainingConfigMode === 'code' && !codeCheck.passed && (
-                <Alert
-                  type="error"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  message="训练代码校验未通过，不能用于训练"
-                  description={(codeCheck.reasons || []).join('；')}
-                />
-              )}
+              {trainingConfigMode === 'code' &&
+                (!codeCheck.passed ||
+                  !isCodeApproved(
+                    selectedCodeApprovalStatus || codeCheck.approvalStatus,
+                  )) && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message={
+                      !codeCheck.passed
+                        ? '训练代码校验未通过，不能用于训练'
+                        : '训练代码尚未审核通过，不能用于训练'
+                    }
+                    description={
+                      !codeCheck.passed
+                        ? (codeCheck.reasons || []).join('；')
+                        : `approvalStatus=${selectedCodeApprovalStatus || codeCheck.approvalStatus || 'PENDING'}，请等待管理员审核。`
+                    }
+                  />
+                )}
               <Descriptions size="small" column={1} bordered>
                 <Descriptions.Item label="配置方式">
                   {trainingConfigMode === 'hyperParams'
@@ -1484,7 +1727,13 @@ const TaskCreate: React.FC = () => {
             <Button
               type="primary"
               htmlType="button"
-              disabled={trainingConfigMode === 'code' && !codeCheck.passed}
+              disabled={
+                trainingConfigMode === 'code' &&
+                (!codeCheck.passed ||
+                  !isCodeApproved(
+                    selectedCodeApprovalStatus || codeCheck.approvalStatus,
+                  ))
+              }
               onClick={handleSubmit}
             >
               {isExperimentContinue ? '提交并创建新版本' : '提交 K8s 训练'}

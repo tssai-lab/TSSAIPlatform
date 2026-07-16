@@ -1,25 +1,18 @@
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import {
-  Button,
-  Modal,
-  message,
-  Popconfirm,
-  Space,
-  Tag,
-  Typography,
-} from 'antd';
+import { Button, message, Popconfirm, Space, Tag, Typography } from 'antd';
 import React, { useRef } from 'react';
 import type { CodeVersionListItem } from '@/services/code';
 import {
   approveCodeVersion,
-  CONSISTENCY_TRAINING_PROFILE,
-  checkCodeVersionForTraining,
-  deleteCodeVersion,
+  deleteCodeAsset,
+  downloadCodeVersionZip,
   fetchCodeVersionList,
+  getCodeUserDisplayName,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
 
 function approvalTag(status?: string) {
   if (status === 'APPROVED') {
@@ -50,9 +43,9 @@ const TrainingCodeList: React.FC = () => {
     try {
       const res = await fetchCodeVersionList(
         {
-          codeName: params.codeAssetName?.trim(),
-          current: params.current,
-          pageSize: params.pageSize,
+          ...(params.codeAssetName?.trim()
+            ? { codeName: params.codeAssetName.trim() }
+            : {}),
         },
         { skipErrorHandler: true },
       );
@@ -60,7 +53,7 @@ const TrainingCodeList: React.FC = () => {
         message.error(res?.errorMessage || '训练代码列表加载失败');
         return { data: [], success: false, total: 0 };
       }
-      let list = res?.data ?? [];
+      let list = Array.isArray(res?.data) ? res.data : [];
       const keyword = params.codeAssetName?.trim()?.toLowerCase();
       if (keyword) {
         list = list.filter((item) =>
@@ -75,56 +68,6 @@ const TrainingCodeList: React.FC = () => {
     } catch (error: any) {
       message.error(getApiErrorMessage(error, '训练代码列表加载失败'));
       return { data: [], success: false, total: 0 };
-    }
-  };
-
-  const runTrainingCheck = async (record: CodeVersionListItem) => {
-    try {
-      const res = await checkCodeVersionForTraining(
-        record.codeVersionId,
-        record.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
-        { skipErrorHandler: true },
-      );
-      if (res?.success === false) {
-        message.error(res?.errorMessage || '准入校验失败');
-        return;
-      }
-      const data = res?.data;
-      Modal.info({
-        title: data?.passed ? '准入校验通过' : '准入校验未通过',
-        width: 520,
-        content: (
-          <div>
-            <p>approvalStatus：{data?.approvalStatus || '-'}</p>
-            {(data?.reasons?.length ?? 0) > 0 && (
-              <ul style={{ paddingLeft: 20, marginBottom: 0 }}>
-                {data?.reasons?.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ),
-      });
-      actionRef.current?.reload();
-    } catch (error: any) {
-      message.error(getApiErrorMessage(error, '准入校验失败'));
-    }
-  };
-
-  const handleDelete = async (record: CodeVersionListItem) => {
-    try {
-      const res = await deleteCodeVersion(record.codeVersionId, {
-        skipErrorHandler: true,
-      });
-      if (res?.success === false) {
-        message.error(res?.errorMessage || '删除失败');
-        return;
-      }
-      message.success('训练代码版本已删除');
-      actionRef.current?.reload();
-    } catch (error: any) {
-      message.error(getApiErrorMessage(error, '删除失败'));
     }
   };
 
@@ -144,12 +87,42 @@ const TrainingCodeList: React.FC = () => {
     }
   };
 
+  const handleDelete = async (record: CodeVersionListItem) => {
+    const assetId = record.codeAssetId?.trim();
+    if (!assetId) {
+      message.error('缺少 codeAssetId，无法删除');
+      return;
+    }
+    try {
+      await deleteCodeAsset(assetId, { skipErrorHandler: true });
+      removePendingCodeVersion(record.codeVersionId);
+      message.success('已删除训练代码资产');
+      actionRef.current?.reload();
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '删除训练代码失败'));
+    }
+  };
+
+  const handleDownload = async (record: CodeVersionListItem) => {
+    try {
+      await downloadCodeVersionZip(
+        record.codeVersionId,
+        record.fileName || `${record.codeVersionId}.zip`,
+        { skipErrorHandler: true },
+      );
+      message.success('开始下载');
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '下载失败'));
+    }
+  };
+
   const columns: ProColumns<CodeVersionListItem>[] = [
     {
       title: '代码名称',
       dataIndex: 'codeAssetName',
       key: 'codeAssetName',
       ellipsis: true,
+      render: (_, record) => getCodeUserDisplayName(record),
     },
     {
       title: '文件名',
@@ -173,6 +146,22 @@ const TrainingCodeList: React.FC = () => {
       width: 110,
       hideInSearch: true,
       render: (_, record) => approvalTag(record.approvalStatus),
+    },
+    {
+      title: '校验状态',
+      dataIndex: 'validationStatus',
+      key: 'validationStatus',
+      width: 110,
+      hideInSearch: true,
+      render: (_, record) => record.validationStatus || '-',
+    },
+    {
+      title: '风险等级',
+      dataIndex: 'riskLevel',
+      key: 'riskLevel',
+      width: 100,
+      hideInSearch: true,
+      render: (_, record) => record.riskLevel || '-',
     },
     {
       title: '就绪状态',
@@ -208,14 +197,14 @@ const TrainingCodeList: React.FC = () => {
             onClick={() =>
               history.push(
                 `/task/code/detail/${encodeURIComponent(record.codeVersionId)}`,
-                { record },
+                { record, from: 'list' },
               )
             }
           >
             查看
           </Button>
-          <Button type="link" onClick={() => runTrainingCheck(record)}>
-            准入校验
+          <Button type="link" onClick={() => handleDownload(record)}>
+            下载
           </Button>
           {access.isAdmin && record.approvalStatus !== 'APPROVED' && (
             <Button
@@ -226,8 +215,11 @@ const TrainingCodeList: React.FC = () => {
             </Button>
           )}
           <Popconfirm
-            title="确认删除该训练代码版本？"
-            description="若已被训练任务引用将无法删除。"
+            title="删除训练代码资产？"
+            description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
             onConfirm={() => handleDelete(record)}
           >
             <Button type="link" danger>
@@ -242,8 +234,16 @@ const TrainingCodeList: React.FC = () => {
   return (
     <PageContainer
       title="训练代码"
-      subTitle="管理已上传的训练代码资产，供发起训练时选用"
+      subTitle="训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段"
       extra={[
+        access.isAdmin ? (
+          <Button
+            key="pending"
+            onClick={() => history.push('/task/code/pending')}
+          >
+            待审核
+          </Button>
+        ) : null,
         <Button
           key="upload"
           type="primary"

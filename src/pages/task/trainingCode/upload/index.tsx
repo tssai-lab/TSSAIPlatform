@@ -1,6 +1,6 @@
 import { UploadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
+import { history, useAccess } from '@umijs/max';
 import type { UploadFile } from 'antd';
 import {
   Alert,
@@ -17,21 +17,32 @@ import {
 } from 'antd';
 import React, { useState } from 'react';
 import {
+  approveCodeVersion,
   CONSISTENCY_TRAINING_PROFILE,
+  checkCodeVersionForTraining,
   uploadCodeZip,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import {
+  markPendingCodeApproved,
+  upsertPendingCodeVersion,
+} from '@/utils/pendingCodeVersions';
 
 const PROFILE_DISPLAY_NAME = '图文一致性基线训练';
 
 const TrainingCodeUpload: React.FC = () => {
+  const access = useAccess();
   const [form] = Form.useForm();
   const [uploading, setUploading] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [uploadResult, setUploadResult] = useState<{
     codeVersionId: string;
     approvalStatus?: string;
-    storagePath?: string;
+    validationStatus?: string;
+    validationPolicyVersion?: string;
+    artifactSha256?: string;
     fileName?: string;
+    trainingProfile?: string;
   } | null>(null);
 
   const handleUpload = async () => {
@@ -50,12 +61,13 @@ const TrainingCodeUpload: React.FC = () => {
 
     setUploading(true);
     try {
+      const trainingProfile =
+        values.trainingProfile || CONSISTENCY_TRAINING_PROFILE;
       const res = await uploadCodeZip(
         {
           file,
           codeName: values.codeName.trim(),
-          trainingProfile:
-            values.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+          trainingProfile,
           remark: values.remark?.trim(),
         },
         { skipErrorHandler: true },
@@ -72,33 +84,156 @@ const TrainingCodeUpload: React.FC = () => {
       setUploadResult({
         codeVersionId: data.codeVersionId,
         approvalStatus: data.approvalStatus,
-        storagePath: data.storagePath,
+        validationStatus: data.status,
         fileName: data.fileName,
+        trainingProfile: data.trainingProfile || trainingProfile,
       });
+      if (data.approvalStatus !== 'APPROVED') {
+        upsertPendingCodeVersion({
+          codeVersionId: data.codeVersionId,
+          codeAssetName: values.codeName.trim(),
+          fileName: data.fileName,
+          trainingProfile: data.trainingProfile || trainingProfile,
+          approvalStatus: data.approvalStatus || 'PENDING',
+          sizeBytes: data.sizeBytes,
+          source: 'upload',
+        });
+      }
       message.success(`训练代码已上传：${data.codeVersionId}`);
     } catch (error: any) {
-      message.error(getApiErrorMessage(error, '训练代码上传失败'));
+      const details =
+        error?.info?.data?.details || error?.response?.data?.details;
+      const detailText =
+        details && typeof details === 'object'
+          ? Object.entries(details)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .join('；')
+          : '';
+      const base = getApiErrorMessage(error, '训练代码上传失败');
+      message.error(detailText ? `${base}（${detailText}）` : base);
     } finally {
       setUploading(false);
     }
   };
+
+  const handleApprove = async () => {
+    if (!uploadResult?.codeVersionId) return;
+    setApproving(true);
+    try {
+      let checkResult:
+        | Awaited<ReturnType<typeof checkCodeVersionForTraining>>
+        | undefined;
+      try {
+        checkResult = await checkCodeVersionForTraining(
+          uploadResult.codeVersionId,
+          uploadResult.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+          { skipErrorHandler: true },
+        );
+      } catch {
+        // 由后续 approve 返回明确错误
+      }
+      if (checkResult?.success && checkResult.data) {
+        setUploadResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                approvalStatus:
+                  checkResult?.data?.approvalStatus || prev.approvalStatus,
+                validationStatus:
+                  checkResult?.data?.validationStatus || prev.validationStatus,
+                validationPolicyVersion:
+                  checkResult?.data?.validationPolicyVersion ||
+                  prev.validationPolicyVersion,
+                artifactSha256:
+                  checkResult?.data?.artifactSha256 || prev.artifactSha256,
+              }
+            : prev,
+        );
+      }
+      const res = await approveCodeVersion(uploadResult.codeVersionId, {
+        skipErrorHandler: true,
+      });
+      if (res?.success === false) {
+        message.error(res?.errorMessage || '审核失败');
+        return;
+      }
+      setUploadResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              approvalStatus: res?.data?.approvalStatus || 'APPROVED',
+            }
+          : prev,
+      );
+      markPendingCodeApproved(uploadResult.codeVersionId);
+      message.success(
+        `审核通过${res?.data?.decisionSource ? `（${res.data.decisionSource}）` : ''}，可在训练代码列表中查看`,
+      );
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '审核失败'));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const isApproved = uploadResult?.approvalStatus === 'APPROVED';
 
   return (
     <PageContainer
       title="上传训练代码"
       subTitle="上传 zip 训练代码包，创建 code_asset 与 code_version 记录"
       onBack={() => history.push('/task/code/list')}
+      breadcrumb={{
+        items: [
+          {
+            title: (
+              <a onClick={() => history.push('/task/code/list')}>训练代码</a>
+            ),
+          },
+          { title: '上传训练代码' },
+        ],
+      }}
     >
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
         message="上传说明"
-        description="上传后默认处于 PENDING 审核状态。可在列表页执行准入校验；管理员可审核通过后再用于发起训练。"
+        description={
+          <span>
+            zip 须包含入口脚本{' '}
+            <Typography.Text code>
+              scripts/training/train_fusion_baseline.py
+            </Typography.Text>
+            。上传接口使用 multipart 表单字段{' '}
+            <Typography.Text code>
+              file / codeName / version / trainingProfile / remark
+            </Typography.Text>
+            。上传后一般为 <Typography.Text code>PENDING</Typography.Text>
+            ，需管理员审核通过后才会出现在训练代码列表。
+          </span>
+        }
       />
 
       {uploadResult ? (
         <>
+          {!isApproved && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="当前为 PENDING，训练代码列表看不到这条记录是正常的"
+              description="请等待管理员在「待审核」中审核通过；管理员也可在本页直接点「审核通过」。"
+            />
+          )}
+          {isApproved && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="已审核通过，可在训练代码列表中查看并用于发起训练"
+            />
+          )}
           <Descriptions
             bordered
             size="small"
@@ -111,33 +246,64 @@ const TrainingCodeUpload: React.FC = () => {
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label="审核状态">
-              <Tag
-                color={
-                  uploadResult.approvalStatus === 'APPROVED'
-                    ? 'success'
-                    : 'warning'
-                }
-              >
+              <Tag color={isApproved ? 'success' : 'warning'}>
                 {uploadResult.approvalStatus || 'PENDING'}
               </Tag>
             </Descriptions.Item>
+            {uploadResult.validationStatus && (
+              <Descriptions.Item label="校验状态">
+                <Tag
+                  color={
+                    uploadResult.validationStatus === 'PASSED'
+                      ? 'success'
+                      : 'default'
+                  }
+                >
+                  {uploadResult.validationStatus}
+                </Tag>
+              </Descriptions.Item>
+            )}
             {uploadResult.fileName && (
               <Descriptions.Item label="文件名">
                 {uploadResult.fileName}
               </Descriptions.Item>
             )}
-            {uploadResult.storagePath && (
-              <Descriptions.Item label="存储路径">
-                {uploadResult.storagePath}
+            {uploadResult.validationPolicyVersion && (
+              <Descriptions.Item label="校验策略版本">
+                <Typography.Text code>
+                  {uploadResult.validationPolicyVersion}
+                </Typography.Text>
+              </Descriptions.Item>
+            )}
+            {uploadResult.artifactSha256 && (
+              <Descriptions.Item label="artifactSha256">
+                <Typography.Text code style={{ fontSize: 12 }}>
+                  {uploadResult.artifactSha256}
+                </Typography.Text>
               </Descriptions.Item>
             )}
           </Descriptions>
-          <Space>
+          <Space wrap>
+            {access.isAdmin && !isApproved && (
+              <Button
+                type="primary"
+                loading={approving}
+                onClick={handleApprove}
+              >
+                审核通过
+              </Button>
+            )}
+            {access.isAdmin && !isApproved && (
+              <Button onClick={() => history.push('/task/code/pending')}>
+                打开待审核页
+              </Button>
+            )}
             <Button onClick={() => history.push('/task/code/list')}>
               返回列表
             </Button>
             <Button
               type="primary"
+              disabled={!isApproved}
               onClick={() =>
                 history.push(
                   `/task/create?codeVersionId=${encodeURIComponent(uploadResult.codeVersionId)}`,
@@ -221,7 +387,7 @@ const TrainingCodeUpload: React.FC = () => {
                 },
               },
             ]}
-            extra="仅支持 .zip，须包含与训练方案匹配的入口脚本"
+            extra="仅支持 .zip；允许 .py/.json/.jsonl/.yaml/.yml/.txt/.md，禁止脚本执行器与二进制可执行文件；须包含 scripts/training/train_fusion_baseline.py"
           >
             <Upload accept=".zip" maxCount={1} beforeUpload={() => false}>
               <Button icon={<UploadOutlined />}>选择训练代码 zip</Button>

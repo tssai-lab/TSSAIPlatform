@@ -34,6 +34,9 @@ export const API_CONFIG = {
     TASK_DETAIL: '/task/detail',
     TASK_STOP: '/task/stop',
     TASK_DELETE: '/task/delete',
+    /** 将训练产物登记为结果模型版本 */
+    TASK_PUBLISH_MODEL: (id: string) =>
+      `/task/${encodeURIComponent(id)}/publish-model`,
 
     /** 算力资源监控 */
     RESOURCE_MONITOR_SUMMARY: '/resource-monitor/summary',
