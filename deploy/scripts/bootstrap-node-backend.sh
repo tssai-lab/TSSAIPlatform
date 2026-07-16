@@ -189,8 +189,22 @@ previous_image="$(docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Im
 export TSS_BACKEND_IMAGE="$image"
 export TSS_MLFLOW_IMAGE
 
+rollback_backend() {
+  if [[ -n $previous_image ]]; then
+    export TSS_BACKEND_IMAGE="$previous_image"
+    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend
+  else
+    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" rm -sf backend || true
+  fi
+}
+
 docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps mlflow
-docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend
+if ! docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend; then
+  echo "New backend failed to start; restoring the previous image." >&2
+  docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
+  rollback_backend
+  exit 1
+fi
 
 for _ in $(seq 1 60); do
   if curl --fail --silent --show-error --max-time 5 "$TSS_BACKEND_HEALTH_URL" >/dev/null; then
@@ -203,12 +217,7 @@ done
 echo "New backend did not become ready; restoring the previous image." >&2
 echo "[backend logs before rollback]" >&2
 docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
-if [[ -n $previous_image ]]; then
-  export TSS_BACKEND_IMAGE="$previous_image"
-  docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend
-else
-  docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" rm -sf backend || true
-fi
+rollback_backend
 exit 1
 EOF
 chmod 700 /usr/local/sbin/tss-node-activate-backend
