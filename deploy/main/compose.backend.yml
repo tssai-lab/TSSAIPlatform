@@ -1,6 +1,6 @@
 services:
   mlflow:
-    image: tss-platform-mlflow:local
+    image: ${TSS_MLFLOW_IMAGE:-tss-platform-mlflow:local}
     container_name: tss-mlflow
     restart: unless-stopped
     ports:
