@@ -135,6 +135,15 @@ declare namespace API {
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
     modelVersionId?: string;
+    baseModelVersionId?: string;
+    /** 训练成功后发布的结果模型版本 ID */
+    producedModelVersionId?: string;
+    modelPublishStatus?: string;
+    modelPublishError?: string;
+    modelPublishedAt?: string;
+    modelArtifactPath?: string;
+    modelArtifactSha256?: string;
+    modelArtifactSizeBytes?: number;
     codeVersionId?: string;
     trainingProfile?: string;
     datasetVersionId?: string;
@@ -164,6 +173,14 @@ declare namespace API {
     name?: string;
     modelVersionId?: string;
     baseModelVersionId?: string;
+    /** 训练成功后发布的结果模型版本 ID */
+    producedModelVersionId?: string;
+    modelPublishStatus?: string;
+    modelPublishError?: string;
+    modelPublishedAt?: string;
+    modelArtifactPath?: string;
+    modelArtifactSha256?: string;
+    modelArtifactSizeBytes?: number;
     codeVersionId: string;
     trainingProfile?: string;
     datasetVersionId: string;

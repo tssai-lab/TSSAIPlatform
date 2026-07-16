@@ -2,7 +2,7 @@
  * 训练后模型性能对比页
  * - 输出模型对比结果表（终值指标、排名）
  * - 多任务过程曲线对比
- * - 相同模型且相同数据集：多轮训练的性能提升曲线（原始指标 + 相对起点的提升率）
+ * - 性能提升曲线：同一训练不同版本，或同一模型+同一数据集（不要求同一资产版本）
  */
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
@@ -27,7 +27,6 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { genMockTaskMetrics, MOCK_TASKS } from '@/constants/mockData';
 import { MLFLOW_METRIC_KEYS } from '@/services/mlflow';
 import {
   fetchMlflowMetricsBulk,
@@ -71,14 +70,20 @@ type TaskMetricsData = {
   taskName: string;
   modelName: string;
   datasetName: string;
+  experimentId?: string;
+  versionNo?: number;
   runId: string;
   metrics: Record<string, { step: number; value: number }[]>;
 };
 
 type ComparableGroup = {
+  /** experiment：同一训练不同版本；modelDataset：同模型+同数据集 */
+  kind: 'experiment' | 'modelDataset';
   slug: string;
+  title: string;
   modelName: string;
   datasetName: string;
+  experimentId?: string;
   tasks: TaskMetricsData[];
 };
 
@@ -117,30 +122,87 @@ const TASK_COLORS = [
   '#9a60b4',
 ];
 
-/** 可对比组键：模型名 + 数据集名 同时一致（同一架构换数据集不应混在同一提升曲线组） */
-function comparableGroupKey(r: TaskMetricsData): string {
+/** 同模型同数据集组键（按名称，不按 modelVersionId / datasetVersionId） */
+function modelDatasetGroupKey(r: TaskMetricsData): string {
   const m = (r.modelName || '_unknown').trim();
   const d = (r.datasetName || '_unknown').trim();
   return `${m}\x1E${d}`;
 }
 
 /** ref / echarts 实例用的短键，避免特殊字符问题 */
-function comparableGroupSlug(modelName: string, datasetName: string): string {
-  return `${modelName}|||${datasetName}`
-    .replace(/\s+/g, '_')
-    .replace(/[^\w\u4e00-\u9fa5_-]/g, '_');
+function safeSlug(raw: string): string {
+  return raw.replace(/\s+/g, '_').replace(/[^\w\u4e00-\u9fa5_-]/g, '_');
 }
 
-/** 演示数据：补齐 modelName */
-function withTaskMeta(
-  row: ReturnType<typeof genMockTaskMetrics>,
-  t: API.TaskItem,
-): TaskMetricsData {
-  return {
-    ...row,
-    modelName: t.modelName || '-',
-    datasetName: t.datasetName || '-',
-  };
+function taskIdSetKey(tasks: TaskMetricsData[]): string {
+  return [...tasks.map((t) => String(t.taskId))].sort().join(',');
+}
+
+function sortTasksForCurve(tasks: TaskMetricsData[]): TaskMetricsData[] {
+  return [...tasks].sort((a, b) => {
+    const va = a.versionNo;
+    const vb = b.versionNo;
+    if (va != null && vb != null && va !== vb) return va - vb;
+    return String(a.taskName).localeCompare(String(b.taskName));
+  });
+}
+
+/** 性能提升分组：同一 experimentId，或同模型名+同数据集名（不要求资产版本一致） */
+function buildImprovementGroups(data: TaskMetricsData[]): ComparableGroup[] {
+  const groups: ComparableGroup[] = [];
+  const expMemberSets = new Set<string>();
+
+  const byExp = new Map<string, TaskMetricsData[]>();
+  for (const r of data) {
+    const expId = (r.experimentId || '').trim();
+    if (!expId) continue;
+    if (!byExp.has(expId)) byExp.set(expId, []);
+    byExp.get(expId)?.push(r);
+  }
+  for (const [expId, list] of byExp) {
+    if (list.length < 2) continue;
+    const tasks = sortTasksForCurve(list);
+    expMemberSets.add(taskIdSetKey(tasks));
+    const head = tasks[0];
+    groups.push({
+      kind: 'experiment',
+      slug: safeSlug(`exp_${expId}`),
+      title: `同一训练 · ${expId}`,
+      modelName: head?.modelName || '-',
+      datasetName: head?.datasetName || '-',
+      experimentId: expId,
+      tasks,
+    });
+  }
+
+  const byMd = new Map<string, TaskMetricsData[]>();
+  for (const r of data) {
+    const m = (r.modelName || '').trim();
+    const d = (r.datasetName || '').trim();
+    // 名称缺失或仅为占位时不参与「同模型同数据集」分组
+    if (!m || !d || m === '-' || d === '-') continue;
+    const k = modelDatasetGroupKey(r);
+    if (!byMd.has(k)) byMd.set(k, []);
+    byMd.get(k)?.push(r);
+  }
+  for (const [, list] of byMd) {
+    if (list.length < 2) continue;
+    const tasks = sortTasksForCurve(list);
+    // 与某个「同一训练」组完全重合则跳过，避免重复展示
+    if (expMemberSets.has(taskIdSetKey(tasks))) continue;
+    const head = tasks[0];
+    if (!head) continue;
+    groups.push({
+      kind: 'modelDataset',
+      slug: safeSlug(`${head.modelName}|||${head.datasetName}`),
+      title: `同模型同数据集 · ${head.modelName} / ${head.datasetName}`,
+      modelName: head.modelName,
+      datasetName: head.datasetName,
+      tasks,
+    });
+  }
+
+  return groups;
 }
 
 /** 任务列表接口：兼容 { data: TaskItem[] } 与 { data: { data, total } } */
@@ -171,18 +233,6 @@ function experimentVersionToTaskRow(d: any, hint?: API.TaskItem): API.TaskItem {
         : hint?.datasetName,
     experimentId: d.experimentId,
     versionNo: d.versionNo,
-  };
-}
-
-function placeholderTaskRow(id: string, hint?: API.TaskItem): API.TaskItem {
-  return {
-    id,
-    name: `训练版本 ${String(id).slice(0, 8)}…`,
-    createTime: '',
-    status: 'pending',
-    progress: 0,
-    modelName: hint?.modelName || '-',
-    datasetName: hint?.datasetName || '-',
   };
 }
 
@@ -242,43 +292,25 @@ const TaskCompare: React.FC = () => {
               skipErrorHandler: true,
             });
             const vers: any[] = vr?.data ?? [];
-            const list: API.TaskItem[] = vers.length
-              ? vers.map((d) => experimentVersionToTaskRow(d))
-              : [
-                  experimentVersionToTaskRow({
-                    id: `${expId}-v1`,
-                    experimentId: expId,
-                    versionNo: 1,
-                    name: `实验 ${expId} · 第 1 版`,
-                    status: 'success',
-                  }),
-                  experimentVersionToTaskRow({
-                    id: `${expId}-v2`,
-                    experimentId: expId,
-                    versionNo: 2,
-                    name: `实验 ${expId} · 第 2 版`,
-                    status: 'success',
-                  }),
-                  experimentVersionToTaskRow({
-                    id: `${expId}-v3`,
-                    experimentId: expId,
-                    versionNo: 3,
-                    name: `实验 ${expId} · 第 3 版`,
-                    status: 'success',
-                  }),
-                ];
+            const list: API.TaskItem[] = vers.map((d) =>
+              experimentVersionToTaskRow(d),
+            );
             // 确保从详情页带入的所有版本 id 都可在对比页被选中
             const want = idsFromUrl;
+            const hint = list.find((t) => t.modelName && t.datasetName);
             const missing = want.filter(
               (id) => !list.some((t) => String(t.id) === String(id)),
             );
             for (const id of missing) {
-              list.unshift(
-                placeholderTaskRow(
-                  id,
-                  list.find((t) => t.modelName && t.datasetName),
-                ),
-              );
+              try {
+                const dr = await fetchTaskDetail(id, {
+                  skipErrorHandler: true,
+                });
+                const d: any = (dr as any)?.data;
+                if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
+              } catch {
+                // 详情失败则跳过，不造虚拟行
+              }
             }
             setTaskList(
               await enrichTaskItemsWithDisplayNames(list, {
@@ -287,53 +319,14 @@ const TaskCompare: React.FC = () => {
             );
             return;
           } catch {
-            const list: API.TaskItem[] = [
-              experimentVersionToTaskRow({
-                id: `${expId}-v1`,
-                experimentId: expId,
-                versionNo: 1,
-                name: `实验 ${expId} · 第 1 版`,
-                status: 'success',
-              }),
-              experimentVersionToTaskRow({
-                id: `${expId}-v2`,
-                experimentId: expId,
-                versionNo: 2,
-                name: `实验 ${expId} · 第 2 版`,
-                status: 'success',
-              }),
-              experimentVersionToTaskRow({
-                id: `${expId}-v3`,
-                experimentId: expId,
-                versionNo: 3,
-                name: `实验 ${expId} · 第 3 版`,
-                status: 'success',
-              }),
-            ];
-            const want = idsFromUrl;
-            const missing = want.filter(
-              (id) => !list.some((t) => String(t.id) === String(id)),
-            );
-            for (const id of missing) {
-              list.unshift(
-                placeholderTaskRow(
-                  id,
-                  list.find((t) => t.modelName && t.datasetName),
-                ),
-              );
-            }
-            setTaskList(
-              await enrichTaskItemsWithDisplayNames(list, {
-                skipErrorHandler: true,
-              }),
-            );
+            message.error('加载实验版本失败');
+            setTaskList([]);
             return;
           }
         }
 
         const res = await fetchTaskList({ current: 1, pageSize: 200 });
-        let list = normalizeTaskListResponse(res);
-        if (!list.length) list = [...MOCK_TASKS];
+        const list = normalizeTaskListResponse(res);
 
         const want = idsFromUrl;
         const hint = list.find((t) => t.modelName && t.datasetName);
@@ -346,8 +339,7 @@ const TaskCompare: React.FC = () => {
             const d: any = (dr as any)?.data;
             if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
           } catch {
-            // 后端不可用/超时时也要保证 URL 带入的 id 可被选中并展示演示对比
-            list.unshift(placeholderTaskRow(id, hint));
+            // 详情失败则跳过，不造虚拟行
           }
         }
 
@@ -357,19 +349,8 @@ const TaskCompare: React.FC = () => {
           }),
         );
       } catch {
-        // 后端不可用/超时：仍要保证 URL 带入的 id 能展示并可对比
-        const hint = MOCK_TASKS.find((t) => t.modelName && t.datasetName);
-        const placeholders = idsFromUrl.map((id) =>
-          placeholderTaskRow(id, hint),
-        );
-        setTaskList(
-          await enrichTaskItemsWithDisplayNames(
-            [...placeholders, ...MOCK_TASKS],
-            {
-              skipErrorHandler: true,
-            },
-          ),
-        );
+        message.error('加载训练任务列表失败');
+        setTaskList([]);
       } finally {
         setLoading(false);
       }
@@ -386,7 +367,94 @@ const TaskCompare: React.FC = () => {
     history.push(`/task/compare?experimentId=${encodeURIComponent(expId)}`);
   };
 
-  /** 从任务详情带 ?ids= 进入：预选行并自动加载演示曲线（依赖 taskList 就绪） */
+  const loadCompareData = useCallback(
+    async (overrideIds?: string[]) => {
+      const ids = (overrideIds ?? (selectedRowKeys as string[])).map(String);
+      if (ids.length === 0) {
+        message.warning('请先选择至少一个任务');
+        return;
+      }
+      setMetricsLoading(true);
+      try {
+        const idSet = new Set(ids);
+        const selectedTasks = taskList.filter((t) => idSet.has(String(t.id)));
+        const details: TaskWithRunId[] = [];
+        for (const id of ids) {
+          try {
+            const res = await fetchTaskDetail(id, { skipErrorHandler: true });
+            const d = (res?.data || {}) as TaskWithRunId;
+            d.runId = d.runId || (res?.data as any)?.run_id;
+            if (!d.id) d.id = id;
+            if (!d.name) {
+              d.name =
+                selectedTasks.find((t) => String(t.id) === id)?.name || id;
+            }
+            details.push(d);
+          } catch {
+            // 详情失败则跳过该任务
+          }
+        }
+        const byId = new Map(selectedTasks.map((t) => [String(t.id), t]));
+        const withRunId = details.filter((d) => d.runId);
+        if (withRunId.length === 0) {
+          setMetricsData([]);
+          message.warning('所选任务均无 Run ID，无法拉取 MLflow 指标');
+          return;
+        }
+        if (withRunId.length < ids.length) {
+          message.info(
+            `部分任务无详情或 Run ID，已跳过；共 ${withRunId.length} 个任务拉取指标`,
+          );
+        }
+
+        const results: TaskMetricsData[] = [];
+        let failed = 0;
+        for (const t of withRunId) {
+          const meta = byId.get(String(t.id)) || t;
+          try {
+            const runId = t.runId;
+            if (!runId) continue;
+            const metrics = await fetchMlflowMetricsBulk(
+              runId,
+              MLFLOW_METRIC_KEYS as unknown as string[],
+            );
+            results.push({
+              taskId: t.id,
+              taskName: t.name || meta.name,
+              modelName: meta.modelName || t.modelName || '-',
+              datasetName: meta.datasetName || t.datasetName || '-',
+              experimentId:
+                (t as API.TaskItem).experimentId ||
+                (meta as API.TaskItem).experimentId,
+              versionNo:
+                (t as API.TaskItem).versionNo ??
+                (meta as API.TaskItem).versionNo,
+              runId,
+              metrics,
+            });
+          } catch {
+            failed += 1;
+          }
+        }
+        setMetricsData(results);
+        if (!results.length) {
+          message.error('未能获取任何任务的训练指标');
+        } else if (failed > 0) {
+          message.warning(
+            `已加载 ${results.length} 个任务；另有 ${failed} 个指标拉取失败已跳过`,
+          );
+        }
+      } catch {
+        setMetricsData([]);
+        message.error('加载对比数据失败');
+      } finally {
+        setMetricsLoading(false);
+      }
+    },
+    [selectedRowKeys, taskList],
+  );
+
+  /** 从任务详情带 ?ids= 进入：预选行并自动拉取真实指标 */
   const lastAppliedIdsRef = useRef<string>('');
   useEffect(() => {
     if (loading || taskList.length === 0) return;
@@ -406,134 +474,9 @@ const TaskCompare: React.FC = () => {
     setSelectedRowKeys(valid);
     lastAppliedIdsRef.current = key;
     if (valid.length >= 2) {
-      const selectedTasks = taskList.filter((t) =>
-        valid.includes(String(t.id)),
-      );
-      const demo = selectedTasks.map((t, i) =>
-        withTaskMeta(genMockTaskMetrics(String(t.id), t.name, i), t),
-      );
-      setMetricsData(demo);
-      message.success(`已从详情带入 ${demo.length} 条任务并加载演示曲线`);
+      void loadCompareData(valid);
     }
-  }, [loading, taskList, idsFromUrl]);
-
-  const loadCompareData = useCallback(async () => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('请先选择至少一个任务');
-      return;
-    }
-    setMetricsLoading(true);
-    try {
-      const ids = selectedRowKeys as string[];
-      const idSet = new Set(ids);
-      const selectedTasks = taskList.filter((t) => idSet.has(String(t.id)));
-      const details: TaskWithRunId[] = [];
-      for (const id of ids) {
-        try {
-          const res = await fetchTaskDetail(id, { skipErrorHandler: true });
-          const d = (res?.data || {}) as TaskWithRunId;
-          d.runId = d.runId || (res?.data as any)?.run_id;
-          details.push(d);
-        } catch {
-          // 详情失败也继续：后续会回退演示曲线
-          details.push({ id } as TaskWithRunId);
-        }
-      }
-      const byId = new Map(selectedTasks.map((t) => [String(t.id), t]));
-      const withRunId = details.filter((d) => d.runId);
-      if (withRunId.length === 0) {
-        const base = selectedTasks.length
-          ? selectedTasks
-          : ids.map((id) =>
-              placeholderTaskRow(
-                id,
-                taskList.find((t) => t.modelName && t.datasetName),
-              ),
-            );
-        const demo = base.map((t, i) =>
-          withTaskMeta(genMockTaskMetrics(String(t.id), t.name, i), t),
-        );
-        setMetricsData(demo);
-        message.info('当前环境无法获取训练指标，已加载演示数据');
-        setMetricsLoading(false);
-        return;
-      }
-      if (withRunId.length < details.length) {
-        message.info(
-          `部分任务无 Run ID，已跳过；共 ${withRunId.length} 个任务拉取指标`,
-        );
-      }
-
-      const results: TaskMetricsData[] = [];
-      let idx = 0;
-      for (const t of withRunId) {
-        const meta = byId.get(String(t.id)) || t;
-        try {
-          const runId = t.runId;
-          if (!runId) continue;
-          const metrics = await fetchMlflowMetricsBulk(
-            runId,
-            MLFLOW_METRIC_KEYS as unknown as string[],
-          );
-          results.push({
-            taskId: t.id,
-            taskName: t.name,
-            modelName: meta.modelName || '-',
-            datasetName: meta.datasetName || '-',
-            runId,
-            metrics,
-          });
-        } catch {
-          results.push(
-            withTaskMeta(
-              genMockTaskMetrics(t.id, t.name, idx),
-              meta as API.TaskItem,
-            ),
-          );
-        }
-        idx += 1;
-      }
-      setMetricsData(results);
-    } catch (_e: any) {
-      const base =
-        (selectedRowKeys as string[]).map((id) =>
-          placeholderTaskRow(
-            id,
-            taskList.find((t) => t.modelName && t.datasetName),
-          ),
-        ) || [];
-      const demo = base.map((t, i) =>
-        withTaskMeta(genMockTaskMetrics(String(t.id), t.name, i), t),
-      );
-      setMetricsData(demo);
-      message.info('接口超时，已回退为演示数据');
-    } finally {
-      setMetricsLoading(false);
-    }
-  }, [selectedRowKeys, taskList]);
-
-  const loadDemoData = useCallback(() => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('请先选择至少一个任务');
-      return;
-    }
-    const ids = selectedRowKeys as string[];
-    const idSet = new Set(ids.map(String));
-    const selectedTasks = taskList.filter((t) => idSet.has(String(t.id)));
-    const base = selectedTasks.length
-      ? selectedTasks
-      : ids.map((id) =>
-          placeholderTaskRow(
-            id,
-            taskList.find((t) => t.modelName && t.datasetName),
-          ),
-        );
-    const demo = base.map((t, i) =>
-      withTaskMeta(genMockTaskMetrics(String(t.id), t.name, i), t),
-    );
-    setMetricsData(demo);
-    message.success(`已加载 ${demo.length} 个任务的演示数据`);
-  }, [selectedRowKeys, taskList]);
+  }, [loading, taskList, idsFromUrl, loadCompareData]);
 
   const comparisonRows = useMemo(() => {
     if (!metricsData.length) return [];
@@ -558,28 +501,10 @@ const TaskCompare: React.FC = () => {
     return sorted.map((row, i) => ({ ...row, rank: i + 1 }));
   }, [metricsData]);
 
-  const sameModelGroups = useMemo((): ComparableGroup[] => {
-    const map = new Map<string, TaskMetricsData[]>();
-    for (const r of metricsData) {
-      const k = comparableGroupKey(r);
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)?.push(r);
-    }
-    return [...map.entries()]
-      .filter(([, list]) => list.length >= 2)
-      .flatMap(([, tasks]) => {
-        const head = tasks[0];
-        if (!head) return [];
-        return [
-          {
-            slug: comparableGroupSlug(head.modelName, head.datasetName),
-            modelName: head.modelName,
-            datasetName: head.datasetName,
-            tasks,
-          },
-        ];
-      });
-  }, [metricsData]);
+  const sameModelGroups = useMemo(
+    (): ComparableGroup[] => buildImprovementGroups(metricsData),
+    [metricsData],
+  );
 
   // 多任务过程曲线
   useEffect(() => {
@@ -814,7 +739,7 @@ const TaskCompare: React.FC = () => {
   return (
     <PageContainer
       title="模型性能对比"
-      subTitle="选择训练完成后的任务，对比模型终值指标、过程曲线；同一模型且同一数据集的多轮训练可查看性能提升曲线"
+      subTitle="选择训练完成后的任务，对比终值指标与过程曲线；同一训练的不同版本，或同一模型+同一数据集的多条任务，可查看性能提升曲线"
       onBack={() => history.push('/task/list')}
       extra={
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
@@ -834,17 +759,6 @@ const TaskCompare: React.FC = () => {
             loading={loading}
           >
             加载版本
-          </Button>
-          <Button
-            onClick={() => {
-              const demo = `exp-demo-ui-${Date.now().toString(16).slice(-6)}`;
-              setExperimentIdInput(demo);
-              history.push(
-                `/task/compare?experimentId=${encodeURIComponent(demo)}`,
-              );
-            }}
-          >
-            一键演示
           </Button>
           <Button
             onClick={() => {
@@ -941,8 +855,8 @@ const TaskCompare: React.FC = () => {
         )}
         <Divider style={{ margin: '12px 0' }} />
         <div style={{ color: '#8c8c8c', fontSize: 12 }}>
-          对比池只保存版本/训练的 ID（本地存储）。进入对比页时会自动补全这些 ID
-          对应的行，并在后端不可用时回退为演示曲线。
+          对比池只保存版本/训练的 ID（本地存储）。进入对比页时会尽量补全这些 ID
+          对应的行，并拉取真实 MLflow 指标。
         </div>
       </Card>
       <Card title="选择训练任务" style={{ marginBottom: 16 }}>
@@ -959,21 +873,16 @@ const TaskCompare: React.FC = () => {
           <Space wrap>
             <Button
               type="primary"
-              onClick={loadCompareData}
+              onClick={() => void loadCompareData()}
               loading={metricsLoading}
               disabled={selectedRowKeys.length === 0}
             >
               加载对比数据
             </Button>
-            <Button
-              onClick={loadDemoData}
-              disabled={selectedRowKeys.length === 0}
-            >
-              使用演示数据
-            </Button>
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              已选 {selectedRowKeys.length} 个任务。性能提升曲线仅对「同一模型 +
-              同一数据集」下 ≥2 条任务生效
+              已选 {selectedRowKeys.length}{' '}
+              个任务。性能提升曲线适用于：同一训练不同版本，或同一模型+同一数据集（不要求资产版本一致）且
+              ≥2 条
             </span>
           </Space>
         </div>
@@ -1002,16 +911,15 @@ const TaskCompare: React.FC = () => {
       {metricsData.length > 0 && sameModelGroups.length === 0 && (
         <Card style={{ marginBottom: 16 }}>
           <div style={{ color: '#8c8c8c' }}>
-            未形成「同一模型 + 同一数据集」且条数 ≥2
-            的分组。请选多条模型与数据集均相同的任务（演示：三条 YOLOv8 +
-            COCO；或两条 YOLOv8 + CIFAR-10）。
+            未形成性能提升分组。请选择同一训练（同一
+            experimentId）的不同版本，或模型名与数据集名均相同的多条任务（不要求同一资产版本）。
           </div>
         </Card>
       )}
 
       {metricsData.length > 0 && sameModelGroups.length > 0 && (
         <Card
-          title="同模型同数据集 · 性能提升曲线"
+          title="性能提升曲线"
           style={{ marginBottom: 16 }}
           extra={
             <Space>
@@ -1029,20 +937,33 @@ const TaskCompare: React.FC = () => {
           }
         >
           <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 16 }}>
-            下列分组要求「模型名称」与「数据集名称」均一致，且至少 2
-            条任务。左图为指标随 Step
+            分组条件：① 同一训练不同版本；② 或同一模型名 + 同一数据集名（不要求
+            model/dataset 版本 ID 一致）。左图为指标随 Step
             变化；右图为相对该次训练起点的提升幅度（%）。
           </div>
           {sameModelGroups.map((group) => {
-            const { slug, modelName, datasetName } = group;
+            const { slug, title, kind, modelName, datasetName } = group;
             const rawKey = `same_raw_${slug}`;
             const impKey = `same_imp_${slug}`;
             return (
               <div key={slug} style={{ marginBottom: 32 }}>
                 <div style={{ fontWeight: 600, marginBottom: 12 }}>
-                  模型：{modelName}
-                  <span style={{ margin: '0 8px', color: '#d9d9d9' }}>|</span>
-                  数据集：{datasetName}
+                  {title}
+                  {kind === 'experiment' &&
+                    (modelName !== '-' || datasetName !== '-') && (
+                      <span
+                        style={{
+                          marginLeft: 12,
+                          fontWeight: 400,
+                          color: '#8c8c8c',
+                          fontSize: 13,
+                        }}
+                      >
+                        {modelName !== '-' ? `模型 ${modelName}` : ''}
+                        {modelName !== '-' && datasetName !== '-' ? ' · ' : ''}
+                        {datasetName !== '-' ? `数据集 ${datasetName}` : ''}
+                      </span>
+                    )}
                 </div>
                 <div
                   style={{
@@ -1148,8 +1069,8 @@ const TaskCompare: React.FC = () => {
 
       {metricsData.length > 0 && (
         <div style={{ marginTop: 16, color: '#8c8c8c', fontSize: 12 }}>
-          提示：真实数据来自
-          MLflow；演示数据用于本地预览。「性能提升」分组依据为任务中的模型名与数据集名均一致（与仅用模型名区分）。
+          提示：对比数据来自
+          MLflow。「性能提升」适用于同一训练不同版本，或同一模型名+同一数据集名（不要求资产版本一致）。
         </div>
       )}
     </PageContainer>

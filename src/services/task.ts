@@ -205,3 +205,18 @@ export async function deleteTask(id: string, options?: { [key: string]: any }) {
     },
   );
 }
+
+/** 将训练产物发布为结果模型版本，返回更新后的实验版本（含 producedModelVersionId） */
+export async function publishTaskModel(
+  id: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success: boolean;
+    data: API.TrainingExperimentVersion;
+    errorMessage?: string;
+  }>(API_CONFIG.ENDPOINTS.TASK_PUBLISH_MODEL(id), {
+    method: 'POST',
+    ...(options || {}),
+  });
+}

@@ -31,12 +31,15 @@ import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import TrainingStatusBanner from '@/components/TrainingStatusBanner';
+import { getModelDetail } from '@/services/model';
 import {
   downloadObject,
   fetchTaskDetail,
   getExperimentVersion,
+  getModelVersion,
   listExperimentVersions,
   publishTrainingModel,
+  publishTaskModel,
   triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
@@ -45,8 +48,10 @@ import {
   formatDurationBetween,
 } from '@/utils/formatDateTime';
 import {
+  getCodeVersionDisplayLabel,
   getDatasetVersionDisplayLabel,
   getModelVersionDisplayLabel,
+  preloadCodeVersionDisplayNames,
   preloadDatasetVersionDisplayNames,
   preloadTaskVersionDisplayNames,
 } from '@/utils/taskDisplayNames';
@@ -87,6 +92,11 @@ type TaskDetailInfo = API.TaskItem & {
   hyperParams?: Record<string, any>;
   codeVersionId?: string;
   trainingProfile?: string;
+  producedModelVersionId?: string;
+  modelArtifactPath?: string;
+  modelArtifactSizeBytes?: number;
+  modelPublishStatus?: string;
+  modelPublishError?: string;
 };
 
 function _shortId(v?: string, keep = 10) {
@@ -135,7 +145,8 @@ function renderHyperParamsCell(hp: unknown) {
   if (!hasMeaningfulHyperParams(hp)) {
     return '-';
   }
-  const obj = normalizeHyperParams(hp)!;
+  const obj = normalizeHyperParams(hp);
+  if (!obj) return '-';
   const epochs = obj.epochs ?? obj.num_epochs;
   const batch = obj.batch_size ?? obj.batch;
   const lr = obj.learning_rate ?? obj.lr0;
@@ -162,7 +173,8 @@ function renderHyperParamsDetail(hp: unknown) {
   if (!hasMeaningfulHyperParams(hp)) {
     return '-';
   }
-  const obj = normalizeHyperParams(hp)!;
+  const obj = normalizeHyperParams(hp);
+  if (!obj) return '-';
   const epochs = obj.epochs ?? obj.num_epochs;
   const batch = obj.batch_size ?? obj.batch;
   const lr = obj.learning_rate ?? obj.lr0;
@@ -195,13 +207,19 @@ function saveContinueTrainingPrefill(record: API.TrainingExperimentVersion) {
   localStorage.setItem(
     'taskCreatePrefill',
     JSON.stringify({
-      modelVersionId: record.modelVersionId,
+      fromVersionId: record.id,
+      experimentId: record.experimentId,
+      /** 继续训练应加载此版本的结果模型，而非输入基础权重 */
+      producedModelVersionId: record.producedModelVersionId,
+      baseModelVersionId: record.producedModelVersionId,
+      modelVersionId: record.producedModelVersionId,
       datasetVersionId: record.datasetVersionId,
       codeVersionId: record.codeVersionId,
       hyperParams: JSON.stringify(record.hyperParams ?? {}, null, 2),
       remark: record.remark
         ? `基于 v${record.versionNo}：${record.remark}`
         : `基于 v${record.versionNo} 继续训练`,
+      versionNo: record.versionNo,
     }),
   );
 }
@@ -223,7 +241,9 @@ function mapVersionToTaskDetail(
 ): TaskDetailInfo {
   return {
     ...data,
+    name: data.name || `训练 · 第 ${data.versionNo ?? '?'} 版`,
     createTime: data.createTime || data.createdAt || '',
+    progress: data.progress ?? 0,
     runId: data.runId || (data as any).run_id,
   };
 }
@@ -382,7 +402,23 @@ const TaskDetail: React.FC = () => {
   const [remarkForm] = Form.useForm();
   /** 同一实验下多版本对比：勾选版本记录 id */
   const [compareVersionKeys, setCompareVersionKeys] = useState<React.Key[]>([]);
-  const [, setDisplayNamesReady] = useState(0);
+  const [displayNamesReady, setDisplayNamesReady] = useState(0);
+
+  const renderCodeVersionCell = useCallback(
+    (codeVersionId?: string) => {
+      const id = codeVersionId?.trim();
+      if (!id) return '-';
+      const label = getCodeVersionDisplayLabel(id);
+      return (
+        <Tooltip title={label !== id ? id : undefined}>
+          <span style={{ wordBreak: 'break-all', whiteSpace: 'normal' }}>
+            {label}
+          </span>
+        </Tooltip>
+      );
+    },
+    [displayNamesReady],
+  );
 
   const runId = taskInfo?.runId || manualRunId;
   const experimentId = taskInfo?.experimentId;
@@ -420,10 +456,19 @@ const TaskDetail: React.FC = () => {
           setTaskInfo(data);
           setLoadError('');
           await preloadTaskVersionDisplayNames(
-            data.modelVersionId,
+            data.modelVersionId || (data as TaskDetailInfo).baseModelVersionId,
             data.datasetVersionId,
+            (data as TaskDetailInfo).codeVersionId,
             { skipErrorHandler: true },
           );
+          if ((data as TaskDetailInfo).producedModelVersionId) {
+            await preloadTaskVersionDisplayNames(
+              (data as TaskDetailInfo).producedModelVersionId,
+              undefined,
+              undefined,
+              { skipErrorHandler: true },
+            );
+          }
           setDisplayNamesReady((t) => t + 1);
         } else {
           setTaskInfo(null);
@@ -486,6 +531,10 @@ const TaskDetail: React.FC = () => {
           ),
           { skipErrorHandler: true },
         );
+        await preloadCodeVersionDisplayNames(
+          list.map((item: API.TrainingExperimentVersion) => item.codeVersionId),
+          { skipErrorHandler: true },
+        );
         setDisplayNamesReady((t) => t + 1);
       })
       .catch(() => setVersions([]));
@@ -502,14 +551,14 @@ const TaskDetail: React.FC = () => {
     }
   };
 
-  const handleContinueSameExperiment = (
+  const handleContinueSameExperiment = async (
     record?: API.TrainingExperimentVersion,
   ) => {
     if (!experimentId) {
       message.warning('缺少 experimentId');
       return;
     }
-    const base =
+    let base =
       record ||
       versions.find((v) => v.id === taskInfo?.id) ||
       versions[versions.length - 1];
@@ -517,9 +566,45 @@ const TaskDetail: React.FC = () => {
       message.warning('暂无可用版本配置');
       return;
     }
+
+    // 继续训练需要结果模型：没有则先尝试发布
+    if (!base.producedModelVersionId && base.status === 'success') {
+      const hide = message.loading('正在发布该版本结果模型…', 0);
+      try {
+        const res = await publishTaskModel(base.id, {
+          skipErrorHandler: true,
+        });
+        hide();
+        if (res?.data?.producedModelVersionId) {
+          base = { ...base, ...res.data };
+          const baseId = base.id;
+          setVersions((prev) =>
+            prev.map((v) => (v.id === baseId ? { ...v, ...res.data } : v)),
+          );
+          if (taskInfo?.id === base.id) {
+            setTaskInfo((prev) => (prev ? { ...prev, ...res.data } : prev));
+          }
+        } else {
+          message.warning(
+            res?.errorMessage ||
+              '该版本尚无结果模型，进入创建页后请手动选择或先发布结果模型',
+          );
+        }
+      } catch (error: any) {
+        hide();
+        message.warning(
+          error?.message || '自动发布结果模型失败，进入创建页后请手动选择权重',
+        );
+      }
+    } else if (!base.producedModelVersionId) {
+      message.warning(
+        '该版本尚无结果模型（需训练成功后发布），进入创建页后请手动选择权重',
+      );
+    }
+
     saveContinueTrainingPrefill(base);
     history.push(
-      `/task/create?experimentId=${encodeURIComponent(experimentId)}`,
+      `/task/create?experimentId=${encodeURIComponent(experimentId)}&fromVersionId=${encodeURIComponent(base.id)}`,
     );
   };
 
@@ -588,7 +673,10 @@ const TaskDetail: React.FC = () => {
       await updateExperimentHyperParams(
         expId,
         remarkBase.versionNo,
-        { hyperParams: remarkBase.hyperParams, remark: values.remark },
+        {
+          hyperParams: remarkBase.hyperParams ?? {},
+          remark: values.remark,
+        },
         { skipErrorHandler: true },
       );
       message.success('已更新备注');
@@ -671,10 +759,10 @@ const TaskDetail: React.FC = () => {
     {
       title: '版本',
       dataIndex: 'versionNo',
-      width: 70,
+      width: 100,
       render: (v, record) => (
-        <Space>
-          {`第 ${v} 版`}
+        <Space size={4} style={{ whiteSpace: 'nowrap' }}>
+          {`v${v}`}
           {record.id === taskInfo.id ? <Tag color="blue">当前</Tag> : null}
         </Space>
       ),
@@ -682,12 +770,8 @@ const TaskDetail: React.FC = () => {
     {
       title: '训练代码版本',
       dataIndex: 'codeVersionId',
-      ellipsis: true,
-      render: (v: any) => (
-        <Tooltip title={v || ''}>
-          <span>{v || '-'}</span>
-        </Tooltip>
-      ),
+      render: (v: any) =>
+        renderCodeVersionCell(v != null ? String(v) : undefined),
     },
     {
       title: '数据集版本',
@@ -867,13 +951,61 @@ const TaskDetail: React.FC = () => {
               )}
             </Tooltip>
           </Descriptions.Item>
+          <Descriptions.Item label="结果模型">
+            {(taskInfo as TaskDetailInfo).producedModelVersionId ? (
+              <Tooltip
+                title={(taskInfo as TaskDetailInfo).producedModelVersionId}
+              >
+                {getModelVersionDisplayLabel(
+                  (taskInfo as TaskDetailInfo).producedModelVersionId,
+                )}
+              </Tooltip>
+            ) : (
+              <Space wrap>
+                <Typography.Text type="secondary">
+                  {(taskInfo as TaskDetailInfo).modelPublishStatus
+                    ? `未就绪（${(taskInfo as TaskDetailInfo).modelPublishStatus}）`
+                    : '未发布'}
+                </Typography.Text>
+                {taskInfo.status === 'success' && (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0 }}
+                    onClick={async () => {
+                      try {
+                        const res = await publishTaskModel(taskInfo.id, {
+                          skipErrorHandler: true,
+                        });
+                        if (
+                          !res?.success &&
+                          !res?.data?.producedModelVersionId
+                        ) {
+                          message.error(
+                            res?.errorMessage || '发布结果模型失败',
+                          );
+                          return;
+                        }
+                        message.success('结果模型已发布');
+                        await loadTaskDetail(false);
+                      } catch (error: any) {
+                        message.error(error?.message || '发布结果模型失败');
+                      }
+                    }}
+                  >
+                    发布结果模型
+                  </Button>
+                )}
+              </Space>
+            )}
+          </Descriptions.Item>
           <Descriptions.Item label="数据集版本">
             <Tooltip title={taskInfo.datasetVersionId || ''}>
               {getDatasetVersionDisplayLabel(taskInfo.datasetVersionId)}
             </Tooltip>
           </Descriptions.Item>
           <Descriptions.Item label="训练代码版本" span={2}>
-            {(taskInfo as TaskDetailInfo).codeVersionId || '-'}
+            {renderCodeVersionCell((taskInfo as TaskDetailInfo).codeVersionId)}
           </Descriptions.Item>
           {(taskInfo as TaskDetailInfo).trainingProfile && (
             <Descriptions.Item label="训练方案" span={2}>
@@ -1076,6 +1208,7 @@ const TaskDetail: React.FC = () => {
           size="small"
           pagination={false}
           dataSource={versions}
+          scroll={{ x: 1080 }}
           rowClassName={(record) =>
             record.id === taskInfo.id ? 'ant-table-row-selected' : ''
           }
@@ -1086,7 +1219,7 @@ const TaskDetail: React.FC = () => {
             {
               title: '版本',
               dataIndex: 'versionNo',
-              width: 80,
+              width: 90,
               render: (v, record) => (
                 <Space size={4}>
                   {`v${v}`}
@@ -1107,16 +1240,15 @@ const TaskDetail: React.FC = () => {
             {
               title: '训练代码版本',
               dataIndex: 'codeVersionId',
+              width: 160,
               ellipsis: true,
-              render: (v: any) => (
-                <Tooltip title={v || ''}>
-                  <span>{v || '-'}</span>
-                </Tooltip>
-              ),
+              render: (v: any) =>
+                renderCodeVersionCell(v != null ? String(v) : undefined),
             },
             {
               title: '数据集版本',
               dataIndex: 'datasetVersionId',
+              width: 160,
               ellipsis: true,
               render: (v: any) => (
                 <Tooltip title={v || ''}>
@@ -1129,47 +1261,47 @@ const TaskDetail: React.FC = () => {
             {
               title: '超参数',
               dataIndex: 'hyperParams',
+              width: 140,
               ellipsis: true,
               render: (hp: any) => renderHyperParamsCell(hp),
             },
             {
               title: '备注',
               dataIndex: 'remark',
-              width: 140,
+              width: 120,
               ellipsis: true,
               render: (v: any) => v || '-',
             },
             {
               title: '时间',
               dataIndex: 'createdAt',
-              width: 170,
+              width: 160,
               render: (v: string) => formatDisplayDateTime(v),
             },
             {
               title: '操作',
               key: 'action',
-              width: 240,
+              width: 168,
               fixed: 'right',
               render: (_: any, record: API.TrainingExperimentVersion) => (
                 <Space size={0} wrap={false}>
                   <Button
                     type="link"
-                    style={{ paddingLeft: 0 }}
+                    size="small"
+                    style={{ paddingInline: 4 }}
                     onClick={() => handleTraceVersion(record.id)}
                   >
-                    {record.id === taskInfo.id ? '当前追溯' : '追溯到此版本'}
-                  </Button>
-                  <Button
-                    type="link"
-                    style={{ paddingInline: 4 }}
-                    onClick={() => handleContinueSameExperiment(record)}
-                  >
-                    基于此版本继续训练
+                    {record.id === taskInfo.id ? '当前追溯' : '追溯'}
                   </Button>
                   <Dropdown
                     trigger={['click']}
                     menu={{
                       items: [
+                        {
+                          key: 'continue',
+                          label: '基于此版本继续训练',
+                          onClick: () => handleContinueSameExperiment(record),
+                        },
                         {
                           key: 'remark',
                           label: '修改备注',
@@ -1191,7 +1323,14 @@ const TaskDetail: React.FC = () => {
                       ],
                     }}
                   >
-                    <Button type="text" size="small" icon={<MoreOutlined />} />
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ paddingInline: 4 }}
+                    >
+                      更多
+                      <MoreOutlined />
+                    </Button>
                   </Dropdown>
                 </Space>
               ),
@@ -1244,6 +1383,7 @@ const TaskDetail: React.FC = () => {
           columns={compareVersionColumns}
           dataSource={versions}
           pagination={false}
+          scroll={{ x: 900 }}
           locale={{ emptyText: '暂无版本记录' }}
           rowSelection={{
             type: 'checkbox',
@@ -1334,50 +1474,268 @@ const TaskDetail: React.FC = () => {
 
       <Card title="训练产物" style={{ marginBottom: 16 }}>
         <TrainingArtifactsList
+          taskId={taskInfo.id}
+          taskStatus={taskInfo.status}
           outputPath={taskInfo.outputPath}
           logPath={taskInfo.logPath}
           files={taskInfo.files}
+          producedModelVersionId={
+            (taskInfo as TaskDetailInfo).producedModelVersionId
+          }
+          modelArtifactPath={(taskInfo as TaskDetailInfo).modelArtifactPath}
+          modelArtifactSizeBytes={
+            (taskInfo as TaskDetailInfo).modelArtifactSizeBytes
+          }
+          modelPublishStatus={(taskInfo as TaskDetailInfo).modelPublishStatus}
+          onPublished={() => loadTaskDetail(false)}
         />
       </Card>
     </PageContainer>
   );
 };
 
+type ArtifactListItem = {
+  key: string;
+  name: string;
+  desc: string;
+  objectName?: string;
+  kind?: 'resultModel' | 'file';
+  producedModelVersionId?: string;
+};
+
+function formatArtifactSize(sizeBytes?: number) {
+  if (sizeBytes == null || Number.isNaN(sizeBytes)) return '';
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = sizeBytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(2)} ${units[i]}`;
+}
+
+function fileNameFromObjectName(objectName?: string) {
+  if (!objectName) return undefined;
+  const parts = objectName.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || undefined;
+}
+
 const TrainingArtifactsList: React.FC<{
+  taskId: string;
+  taskStatus?: string;
   outputPath?: string;
   logPath?: string;
   files?: { name: string; desc: string; objectName?: string }[];
-}> = ({ outputPath, logPath, files }) => {
+  producedModelVersionId?: string;
+  modelArtifactPath?: string;
+  modelArtifactSizeBytes?: number;
+  modelPublishStatus?: string;
+  onPublished?: () => void;
+}> = ({
+  taskId,
+  taskStatus,
+  outputPath,
+  logPath,
+  files,
+  producedModelVersionId,
+  modelArtifactPath,
+  modelArtifactSizeBytes,
+  modelPublishStatus,
+  onPublished,
+}) => {
   const [downloadingKey, setDownloadingKey] = useState<string>();
+  const [publishing, setPublishing] = useState(false);
+
+  const resultModelItem = useMemo((): ArtifactListItem | null => {
+    const sizeText = formatArtifactSize(modelArtifactSizeBytes);
+    if (producedModelVersionId || modelArtifactPath) {
+      const objectName = modelArtifactPath
+        ? minioPathToObjectName(modelArtifactPath)
+        : undefined;
+      return {
+        key: 'result-model',
+        name: '结果模型',
+        desc: [
+          producedModelVersionId
+            ? `producedModelVersionId: ${producedModelVersionId}`
+            : null,
+          objectName ? `path: ${objectName}` : modelArtifactPath || null,
+          sizeText ? `size: ${sizeText}` : null,
+          modelPublishStatus ? `status: ${modelPublishStatus}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        objectName,
+        kind: 'resultModel',
+        producedModelVersionId,
+      };
+    }
+    if (taskStatus === 'success') {
+      return {
+        key: 'result-model',
+        name: '结果模型',
+        desc: modelPublishStatus
+          ? `尚未可下载（${modelPublishStatus}）`
+          : '训练已成功，尚未发布为模型版本',
+        kind: 'resultModel',
+      };
+    }
+    return null;
+  }, [
+    modelArtifactPath,
+    modelArtifactSizeBytes,
+    modelPublishStatus,
+    producedModelVersionId,
+    taskStatus,
+  ]);
+
   const consistencyItems = useMemo(
     () => buildConsistencyArtifactItems(outputPath, logPath),
     [outputPath, logPath],
   );
   const legacyItems = useMemo(() => {
-    const list: { name: string; desc: string; objectName?: string }[] = [
-      ...(files || []),
-    ];
+    const list: ArtifactListItem[] = (files || []).map((f, i) => ({
+      key: `file-${i}-${f.name}`,
+      name: f.name,
+      desc: f.desc,
+      objectName: f.objectName,
+      kind: 'file' as const,
+    }));
     if (logPath) {
       list.push({
+        key: 'train-log',
         name: 'train.log',
         desc: logPath,
         objectName: minioPathToObjectName(logPath),
+        kind: 'file',
       });
     }
     if (outputPath) {
       const outputObjectName = minioPathToObjectName(outputPath);
       list.push({
+        key: 'output-dir',
         name: '训练输出目录',
         desc: outputPath,
         objectName: isLikelyDirectoryPath(outputPath)
           ? undefined
           : outputObjectName,
+        kind: 'file',
       });
     }
     return list;
   }, [files, logPath, outputPath]);
 
-  const items = consistencyItems.length ? consistencyItems : legacyItems;
+  const fileItems = consistencyItems.length
+    ? consistencyItems.map((item, i) => ({
+        key: `c-${i}-${item.name}`,
+        name: item.name,
+        desc: item.desc,
+        objectName: item.objectName,
+        kind: 'file' as const,
+      }))
+    : legacyItems;
+
+  const items: ArtifactListItem[] = [
+    ...(resultModelItem ? [resultModelItem] : []),
+    ...fileItems,
+  ];
+
+  const resolveResultModelDownload = async (): Promise<{
+    objectName: string;
+    fileName: string;
+  } | null> => {
+    if (modelArtifactPath) {
+      const objectName = minioPathToObjectName(modelArtifactPath);
+      if (objectName) {
+        return {
+          objectName,
+          fileName: fileNameFromObjectName(objectName) || 'result-model.bin',
+        };
+      }
+    }
+    if (!producedModelVersionId) return null;
+    try {
+      const verRes: any = await getModelVersion(producedModelVersionId, {
+        skipErrorHandler: true,
+      });
+      const ver = verRes?.data;
+      if (ver?.storagePath) {
+        return {
+          objectName: minioPathToObjectName(ver.storagePath) || ver.storagePath,
+          fileName:
+            ver.fileName ||
+            fileNameFromObjectName(ver.storagePath) ||
+            'result-model.zip',
+        };
+      }
+    } catch {
+      // fall through
+    }
+    try {
+      const detailRes: any = await getModelDetail(producedModelVersionId, {
+        skipErrorHandler: true,
+      });
+      const d = detailRes?.data;
+      if (d?.storagePath) {
+        return {
+          objectName: minioPathToObjectName(d.storagePath) || d.storagePath,
+          fileName:
+            d.fileName ||
+            fileNameFromObjectName(d.storagePath) ||
+            'result-model.zip',
+        };
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
+  const handleDownload = async (item: ArtifactListItem) => {
+    const downloadKey = item.key;
+    setDownloadingKey(downloadKey);
+    try {
+      if (item.kind === 'resultModel') {
+        const resolved = await resolveResultModelDownload();
+        if (!resolved) {
+          message.warning('结果模型文件路径不可用，请先发布结果模型后再试');
+          return;
+        }
+        const blob = await downloadObject(resolved.objectName);
+        triggerBlobDownload(blob, resolved.fileName);
+        return;
+      }
+      if (!item.objectName) {
+        message.warning('该产物暂无下载路径');
+        return;
+      }
+      const blob = await downloadObject(item.objectName);
+      triggerBlobDownload(blob, item.name);
+    } catch (error: any) {
+      message.error(await errorMessageFromDownloadError(error));
+    } finally {
+      setDownloadingKey(undefined);
+    }
+  };
+
+  const handlePublish = async () => {
+    setPublishing(true);
+    try {
+      const res = await publishTaskModel(taskId, { skipErrorHandler: true });
+      if (!res?.success && !res?.data?.producedModelVersionId) {
+        message.error(res?.errorMessage || '发布结果模型失败');
+        return;
+      }
+      message.success('结果模型已发布');
+      onPublished?.();
+    } catch (error: any) {
+      message.error(error?.message || '发布结果模型失败');
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   if (!items.length) {
     return (
@@ -1385,7 +1743,7 @@ const TrainingArtifactsList: React.FC<{
         type="info"
         showIcon
         message="暂无训练产物"
-        description="任务完成后，产物文件（fusion_model.pkl、metrics.json、predictions、train.log 等）将在此展示。"
+        description="任务完成后，结果模型与产物文件（fusion_model.pkl、metrics.json、predictions、train.log 等）将在此展示。"
       />
     );
   }
@@ -1394,49 +1752,82 @@ const TrainingArtifactsList: React.FC<{
     <List
       size="small"
       dataSource={items}
-      renderItem={(item) => (
-        <List.Item
-          actions={
-            item.objectName
-              ? [
-                  <Button
-                    type="link"
-                    key="download"
-                    loading={downloadingKey === item.objectName}
-                    onClick={async () => {
-                      if (!item.objectName) return;
-                      setDownloadingKey(item.objectName);
-                      try {
-                        const blob = await downloadObject(item.objectName);
-                        triggerBlobDownload(blob, item.name);
-                      } catch (error: any) {
-                        message.error(
-                          await errorMessageFromDownloadError(error),
-                        );
-                      } finally {
-                        setDownloadingKey(undefined);
-                      }
-                    }}
-                  >
-                    下载
-                  </Button>,
-                ]
-              : undefined
-          }
-        >
-          <List.Item.Meta
-            title={item.name}
-            description={
-              <Typography.Text
-                copyable
-                style={{ fontFamily: 'monospace', fontSize: 12 }}
-              >
-                {item.desc}
-              </Typography.Text>
-            }
-          />
-        </List.Item>
-      )}
+      renderItem={(item) => {
+        const canDownload =
+          item.kind === 'resultModel'
+            ? Boolean(producedModelVersionId || modelArtifactPath)
+            : Boolean(item.objectName);
+        const actions: React.ReactNode[] = [];
+        if (canDownload) {
+          actions.push(
+            <Button
+              type="link"
+              key="download"
+              loading={downloadingKey === item.key}
+              onClick={() => void handleDownload(item)}
+            >
+              下载
+            </Button>,
+          );
+        }
+        if (
+          item.kind === 'resultModel' &&
+          !producedModelVersionId &&
+          taskStatus === 'success'
+        ) {
+          actions.push(
+            <Button
+              type="link"
+              key="publish"
+              loading={publishing}
+              onClick={() => void handlePublish()}
+            >
+              发布结果模型
+            </Button>,
+          );
+        }
+        if (item.kind === 'resultModel' && producedModelVersionId) {
+          actions.push(
+            <Button
+              type="link"
+              key="open"
+              onClick={() =>
+                history.push(
+                  `/model/detail/${encodeURIComponent(producedModelVersionId)}`,
+                )
+              }
+            >
+              查看模型
+            </Button>,
+          );
+        }
+        return (
+          <List.Item actions={actions.length ? actions : undefined}>
+            <List.Item.Meta
+              title={
+                <Space>
+                  {item.name}
+                  {item.kind === 'resultModel' && (
+                    <Tag color={producedModelVersionId ? 'green' : 'default'}>
+                      {producedModelVersionId ? '已发布' : '结果模型'}
+                    </Tag>
+                  )}
+                </Space>
+              }
+              description={
+                <Typography.Text
+                  copyable={Boolean(
+                    item.producedModelVersionId || item.objectName || item.desc,
+                  )}
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                >
+                  {item.desc}
+                </Typography.Text>
+              }
+            />
+          </List.Item>
+        );
+      }}
     />
   );
 };

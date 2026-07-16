@@ -1,3 +1,4 @@
+import { fetchCodeVersionList, getCodeVersionDetail } from '@/services/code';
 import { getDatasetAsset, getDatasetVersion } from '@/services/dataset';
 import { getModelDetail } from '@/services/model';
 
@@ -6,8 +7,14 @@ export type VersionDisplayInfo = {
   version?: string;
 };
 
+export type CodeVersionDisplayInfo = {
+  fileName: string;
+};
+
 const modelDisplayCache = new Map<string, VersionDisplayInfo>();
 const datasetDisplayCache = new Map<string, VersionDisplayInfo>();
+const codeDisplayCache = new Map<string, CodeVersionDisplayInfo>();
+const codeDisplayResolved = new Set<string>();
 
 function isVersionId(value?: string) {
   return !!value && /^(model-ver-|dataset-ver-)/i.test(value);
@@ -90,6 +97,69 @@ async function resolveDatasetVersionDisplay(
   return undefined;
 }
 
+function pickCodeZipFileName(data?: {
+  fileName?: string;
+  codeAssetName?: string;
+}): string | undefined {
+  const fileName = data?.fileName?.trim();
+  if (!fileName) return undefined;
+  const assetName = data?.codeAssetName?.trim();
+  // 仅当 fileName 与资产名称相同且不像 zip 文件名时，视为无效回退
+  if (
+    assetName &&
+    fileName === assetName &&
+    !/\.(zip|tar|gz|tgz)$/i.test(fileName)
+  ) {
+    return undefined;
+  }
+  return fileName;
+}
+
+async function resolveCodeVersionDisplay(
+  codeVersionId: string,
+  options?: { [key: string]: unknown },
+): Promise<CodeVersionDisplayInfo | undefined> {
+  const cached = codeDisplayCache.get(codeVersionId);
+  if (cached) return cached;
+
+  try {
+    const res = await getCodeVersionDetail(codeVersionId, {
+      skipErrorHandler: true,
+      ...options,
+    });
+    const fileName = pickCodeZipFileName(res?.data);
+    if (fileName) {
+      const info: CodeVersionDisplayInfo = { fileName };
+      codeDisplayCache.set(codeVersionId, info);
+      codeDisplayResolved.add(codeVersionId);
+      return info;
+    }
+  } catch {
+    // 尝试列表接口
+  }
+
+  try {
+    const listRes = await fetchCodeVersionList(
+      { pageSize: 500 },
+      { skipErrorHandler: true, ...options },
+    );
+    const item = listRes?.data?.find(
+      (row) => row.codeVersionId === codeVersionId,
+    );
+    const fileName = pickCodeZipFileName(item);
+    if (fileName) {
+      const info: CodeVersionDisplayInfo = { fileName };
+      codeDisplayCache.set(codeVersionId, info);
+      codeDisplayResolved.add(codeVersionId);
+      return info;
+    }
+  } catch {
+    // 忽略单条解析失败
+  }
+  codeDisplayResolved.add(codeVersionId);
+  return undefined;
+}
+
 /** 根据版本 ID 批量解析用户填写的模型/数据集名称 */
 export async function enrichTaskItemsWithDisplayNames<T extends API.TaskItem>(
   items: T[],
@@ -160,10 +230,20 @@ export function getDatasetVersionDisplayLabel(
   );
 }
 
+/** 展示上传的训练代码 zip 文件名（不用 codeAssetName 作为首选） */
+export function getCodeVersionDisplayLabel(codeVersionId?: string): string {
+  if (!codeVersionId) return '-';
+  const info = codeDisplayCache.get(codeVersionId);
+  if (info?.fileName) return info.fileName;
+  if (codeDisplayResolved.has(codeVersionId)) return codeVersionId;
+  return '加载中…';
+}
+
 /** 预加载指定版本 ID 的展示名称（详情页单条使用） */
 export async function preloadTaskVersionDisplayNames(
   modelVersionId?: string,
   datasetVersionId?: string,
+  codeVersionId?: string,
   options?: { [key: string]: unknown },
 ) {
   await Promise.all([
@@ -172,6 +252,9 @@ export async function preloadTaskVersionDisplayNames(
       : Promise.resolve(undefined),
     datasetVersionId
       ? resolveDatasetVersionDisplay(datasetVersionId, options)
+      : Promise.resolve(undefined),
+    codeVersionId
+      ? resolveCodeVersionDisplay(codeVersionId, options)
       : Promise.resolve(undefined),
   ]);
 }
@@ -191,4 +274,19 @@ export async function preloadDatasetVersionDisplayNames(
   await Promise.all(
     unique.map((id) => resolveDatasetVersionDisplay(id, options)),
   );
+}
+
+/** 批量预加载训练代码版本展示名称（版本历史表等） */
+export async function preloadCodeVersionDisplayNames(
+  codeVersionIds: string[],
+  options?: { [key: string]: unknown },
+) {
+  const unique = [
+    ...new Set(
+      codeVersionIds.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      ),
+    ),
+  ];
+  await Promise.all(unique.map((id) => resolveCodeVersionDisplay(id, options)));
 }
