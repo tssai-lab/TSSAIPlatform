@@ -2,10 +2,10 @@
 set -euo pipefail
 
 PLATFORM_URL="${PLATFORM_URL:-http://127.0.0.1:8080}"
-INFERENCE_URL="${INFERENCE_URL:-http://127.0.0.1:8081}"
 MODEL_PT="${MODEL_PT:-}"
 TEST_IMAGE="${TEST_IMAGE:-}"
 TRAIN_TIMEOUT_SECONDS="${TRAIN_TIMEOUT_SECONDS:-300}"
+INFERENCE_TIMEOUT_SECONDS="${INFERENCE_TIMEOUT_SECONDS:-180}"
 POLL_SECONDS="${POLL_SECONDS:-2}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-false}"
 RUN_INFERENCE="${RUN_INFERENCE:-false}"
@@ -104,9 +104,6 @@ upload_chunks() {
 
 echo "[1/7] Checking platform service"
 curl -sS "${PLATFORM_URL}/api/user/current-user" >/dev/null
-if [[ "${RUN_INFERENCE}" == "true" ]]; then
-  curl -fsS "${INFERENCE_URL}/actuator/health" >/dev/null
-fi
 
 USERNAME="cpu$(date +%s)"
 PASSWORD="CpuDemo_123"
@@ -288,53 +285,99 @@ TRAIN_OUTPUT="$(json_get "${TRAIN_DETAIL}" "data.outputPath")"
 TRAIN_METRICS="$(json_get "${TRAIN_DETAIL}" "data.metrics")"
 
 if [[ "${RUN_INFERENCE}" == "true" ]]; then
-  echo "[optional] Binding experiment to built-in CPU runtime model"
-  DEPLOY_RESPONSE="$(curl -fsS -X POST \
-    "${INFERENCE_URL}/api/inference/deployments" \
-    -H "X-User-Id: ${USER_ID}" \
+  echo "[optional] Preparing and uploading integrated inference script"
+  mkdir -p "${WORKDIR}/inference-script"
+  cat >"${WORKDIR}/inference-script/infer.py" <<'PY'
+import json
+import os
+from pathlib import Path
+
+model_dir = Path(os.environ["MODEL_DIR"])
+input_path = Path(os.environ["INPUT_PATH"])
+output_dir = Path(os.environ["OUTPUT_DIR"])
+output_dir.mkdir(parents=True, exist_ok=True)
+
+model_files = [path for path in model_dir.rglob("*") if path.is_file()]
+input_files = (
+    [path for path in input_path.rglob("*") if path.is_file()]
+    if input_path.is_dir()
+    else [input_path]
+)
+result = {
+    "smoke": "passed",
+    "modelFileCount": len(model_files),
+    "inputFileCount": len(input_files),
+}
+(output_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+PY
+  (
+    cd "${WORKDIR}/inference-script"
+    jar cfM "${WORKDIR}/cpu-inference-script.zip" infer.py
+  )
+
+  SCRIPT_UPLOAD="$(curl -fsS -X POST \
+    "${PLATFORM_URL}/api/inference/scripts/upload" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -F "file=@${WORKDIR}/cpu-inference-script.zip" \
+    -F "scriptName=CPU Inference Smoke ${USERNAME}" \
+    -F "version=v1" \
+    -F "runtime=PYTHON3" \
+    -F "entryFile=infer.py" \
+    -F 'paramsSchemaJson={"type":"object"}' \
+    -F "remark=Integrated inference closed-loop smoke test")"
+  require_api_success "${SCRIPT_UPLOAD}" "Upload inference script"
+  SCRIPT_VERSION_ID="$(json_get "${SCRIPT_UPLOAD}" "data.scriptVersionId")"
+
+  echo "[optional] Creating integrated Kubernetes inference task"
+  INFERENCE_CREATE="$(curl -fsS -X POST \
+    "${PLATFORM_URL}/api/inference/tasks" \
+    -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{
-      \"experimentId\":\"${EXPERIMENT_ID}\",
-      \"versionNo\":${VERSION_NO},
-      \"runtimeModelId\":\"yolov8n\",
-      \"modality\":\"CV\",
-      \"inferenceTask\":\"OBJECT_DETECTION\"
+      \"name\":\"CPU Inference Smoke ${USERNAME}\",
+      \"modelVersionId\":\"${MODEL_VERSION_ID}\",
+      \"scriptVersionId\":\"${SCRIPT_VERSION_ID}\",
+      \"inputMode\":\"DATASET_VERSION\",
+      \"datasetVersionId\":\"${DATASET_VERSION_ID}\",
+      \"params\":{\"smoke\":true},
+      \"remark\":\"Integrated inference closed-loop smoke test\"
     }")"
-  require_api_success "${DEPLOY_RESPONSE}" "Create inference deployment"
-  DEPLOY_STATUS="$(json_get "${DEPLOY_RESPONSE}" "data.status")"
-  if [[ "${DEPLOY_STATUS}" != "AVAILABLE" ]]; then
-    echo "Deployment is not available:" >&2
-    echo "${DEPLOY_RESPONSE}" >&2
+  require_api_success "${INFERENCE_CREATE}" "Create inference task"
+  INFERENCE_TASK_ID="$(json_get "${INFERENCE_CREATE}" "data.id")"
+
+  inference_deadline=$((SECONDS + INFERENCE_TIMEOUT_SECONDS))
+  INFERENCE_STATUS=""
+  INFERENCE_DETAIL=""
+  while (( SECONDS < inference_deadline )); do
+    INFERENCE_DETAIL="$(curl -fsS \
+      "${PLATFORM_URL}/api/inference/tasks/${INFERENCE_TASK_ID}" \
+      -H "Authorization: Bearer ${TOKEN}")"
+    require_api_success "${INFERENCE_DETAIL}" "Read inference task"
+    INFERENCE_STATUS="$(json_get "${INFERENCE_DETAIL}" "data.status")"
+    INFERENCE_PROGRESS="$(json_get "${INFERENCE_DETAIL}" "data.progress")"
+    echo "Inference status=${INFERENCE_STATUS}, progress=${INFERENCE_PROGRESS}%"
+    if [[ "${INFERENCE_STATUS}" == "success" || "${INFERENCE_STATUS}" == "failed" ]]; then
+      break
+    fi
+    sleep "${POLL_SECONDS}"
+  done
+
+  if [[ "${INFERENCE_STATUS}" != "success" ]]; then
+    echo "Inference did not succeed:" >&2
+    echo "${INFERENCE_DETAIL}" >&2
     exit 1
   fi
 
-  INFERENCE_INPUT="${TEST_IMAGE:-${WORKDIR}/dataset/images/sample.png}"
-  echo "[optional] Uploading inference image and predicting"
-  UPLOAD_RESPONSE="$(curl -fsS -X POST \
-    "${INFERENCE_URL}/api/inference/test-files" \
-    -H "X-User-Id: ${USER_ID}" \
-    -F "file=@${INFERENCE_INPUT}")"
-  require_api_success "${UPLOAD_RESPONSE}" "Upload inference image"
-  INPUT_OBJECT="$(json_get "${UPLOAD_RESPONSE}" "data.objectName")"
-
-  PREDICT_RESPONSE="$(curl -fsS -X POST \
-    "${INFERENCE_URL}/api/inference/predict/cv" \
-    -H "X-User-Id: ${USER_ID}" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"sourceType\":\"TRAINING_OUTPUT\",
-      \"experimentId\":\"${EXPERIMENT_ID}\",
-      \"versionNo\":${VERSION_NO},
-      \"inputObjectName\":\"${INPUT_OBJECT}\",
-      \"params\":{\"confidence\":0.25,\"topK\":20}
-    }")"
-  require_api_success "${PREDICT_RESPONSE}" "Run CV inference"
-  INFERENCE_RECORD_ID="$(json_get "${PREDICT_RESPONSE}" "data.recordId")"
-
-  RECORDS_RESPONSE="$(curl -fsS \
-    "${INFERENCE_URL}/api/inference/records" \
-    -H "X-User-Id: ${USER_ID}")"
-  require_api_success "${RECORDS_RESPONSE}" "Read inference records"
+  INFERENCE_RESULT="$(curl -fsS \
+    "${PLATFORM_URL}/api/inference/tasks/${INFERENCE_TASK_ID}/result" \
+    -H "Authorization: Bearer ${TOKEN}")"
+  require_api_success "${INFERENCE_RESULT}" "Read inference result"
+  INFERENCE_SMOKE="$(json_get "${INFERENCE_RESULT}" "data.result.smoke")"
+  if [[ "${INFERENCE_SMOKE}" != "passed" ]]; then
+    echo "Inference result did not contain the expected smoke marker:" >&2
+    echo "${INFERENCE_RESULT}" >&2
+    exit 1
+  fi
 fi
 
 echo
@@ -349,10 +392,8 @@ echo "Training status: ${TRAIN_STATUS}"
 echo "Training output: ${TRAIN_OUTPUT}"
 echo "Training metrics: ${TRAIN_METRICS}"
 if [[ "${RUN_INFERENCE}" == "true" ]]; then
-  echo "Deployment status: ${DEPLOY_STATUS}"
-  echo "Inference record: ${INFERENCE_RECORD_ID}"
-  echo
-  echo "IMPORTANT:"
-  echo "The optional deployment is bound to the built-in runtime model 'yolov8n'."
-  echo "The current inference service does not load the training output local-regressor.json."
+  echo "Inference script version: ${SCRIPT_VERSION_ID}"
+  echo "Inference task: ${INFERENCE_TASK_ID}"
+  echo "Inference status: ${INFERENCE_STATUS}"
+  echo "Inference result marker: ${INFERENCE_SMOKE}"
 fi

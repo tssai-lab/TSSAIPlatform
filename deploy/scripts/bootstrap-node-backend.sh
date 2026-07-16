@@ -257,7 +257,8 @@ if [[ ${TSS_REMOVE_LEGACY_HELPERS:-false} == true ]]; then
     /usr/local/sbin/tss-main-login-ghcr \
     /usr/local/sbin/tss-main-deploy-backend \
     /usr/local/sbin/tss-main-load-backend \
-    /usr/local/sbin/tss-main-activate-backend
+    /usr/local/sbin/tss-main-activate-backend \
+    /etc/sudoers.d/tss-main-backend-deployer
 fi
 
 cat > /etc/sudoers.d/tss-node-backend-deployer <<EOF
