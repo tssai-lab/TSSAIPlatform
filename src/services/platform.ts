@@ -138,6 +138,7 @@ export {
   updateExperimentHyperParams,
   createExperimentVersion,
   stopTask,
+  publishTrainingModel,
   deleteTask,
 } from './task';
 

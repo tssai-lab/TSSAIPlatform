@@ -9,7 +9,9 @@ import {
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProCard, ProTable } from '@ant-design/pro-components';
+import { useSearchParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Descriptions,
   Drawer,
@@ -49,12 +51,21 @@ const { TextArea } = Input;
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   pending: { color: 'default', text: '待提交' },
-  queued: { color: 'warning', text: '排队中' },
-  running: { color: 'processing', text: '运行中' },
-  success: { color: 'success', text: '成功' },
+  queued: { color: 'warning', text: '调度中' },
+  running: { color: 'processing', text: '推理中' },
+  success: { color: 'success', text: '已完成' },
   failed: { color: 'error', text: '失败' },
   stopped: { color: 'default', text: '已停止' },
 };
+
+function optionLabel(
+  options: { label: string; value: string }[],
+  value?: string | null,
+) {
+  if (!value) return '-';
+  const found = options.find((item) => item.value === value);
+  return found ? found.label : value;
+}
 
 function statusTag(status?: string) {
   const item = STATUS_MAP[status || ''] || {
@@ -97,9 +108,16 @@ function shortId(value?: string) {
 }
 
 const InferenceWorkbench: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [taskForm] = Form.useForm();
   const [scriptForm] = Form.useForm();
   const actionRef = useRef<ActionType | undefined>(undefined);
+  const prefillAppliedRef = useRef(false);
+
+  const sourceModelVersionId = searchParams.get('modelVersionId') || '';
+  const sourceTrainingId = searchParams.get('trainingId') || '';
+  const sourceDatasetVersionId = searchParams.get('datasetVersionId') || '';
+  const sourceTrainingProfile = searchParams.get('trainingProfile') || '';
 
   const [modelOptions, setModelOptions] = useState<any[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<any[]>([]);
@@ -182,6 +200,34 @@ const InferenceWorkbench: React.FC = () => {
   useEffect(() => {
     reloadAssets();
   }, []);
+
+  useEffect(() => {
+    if (prefillAppliedRef.current || !sourceModelVersionId) return;
+    if (loadingAssets || modelOptions.length === 0) return;
+    const values: Record<string, unknown> = {
+      modelVersionId: sourceModelVersionId,
+      name: sourceTrainingId ? `推理-${sourceTrainingId}` : '训练模型推理',
+    };
+    if (sourceDatasetVersionId) {
+      values.inputMode = 'DATASET_VERSION';
+      values.datasetVersionId = sourceDatasetVersionId;
+      values.paramsJson = JSON.stringify(
+        { inputKind: 'dataset', split: 'test' },
+        null,
+        2,
+      );
+      setInputMode('DATASET_VERSION');
+    }
+    taskForm.setFieldsValue(values);
+    prefillAppliedRef.current = true;
+  }, [
+    loadingAssets,
+    modelOptions.length,
+    sourceDatasetVersionId,
+    sourceModelVersionId,
+    sourceTrainingId,
+    taskForm,
+  ]);
 
   const handleUploadScript = async () => {
     const values = await scriptForm.validateFields();
@@ -422,6 +468,20 @@ const InferenceWorkbench: React.FC = () => {
             colSpan={{ xs: 24, md: 9 }}
             style={{ minHeight: 620 }}
           >
+            {sourceTrainingId && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="已从训练任务带入推理模型"
+                description={
+                  sourceTrainingProfile ===
+                  'image_text_consistency_fusion_logreg'
+                    ? '模型和测试数据集已自动选择。请选择兼容的融合模型推理脚本后即可执行。'
+                    : '模型已自动选择，请确认推理脚本和输入数据与该模型兼容。'
+                }
+              />
+            )}
             <Form
               form={taskForm}
               layout="vertical"
@@ -517,7 +577,7 @@ const InferenceWorkbench: React.FC = () => {
               )}
               <Form.Item
                 name="paramsJson"
-                label="推理参数 JSON"
+                label="脚本参数"
                 rules={[
                   {
                     validator: async (_, value) => {
@@ -711,16 +771,19 @@ const InferenceWorkbench: React.FC = () => {
               <Descriptions.Item label="任务名称">
                 {selectedTask.name}
               </Descriptions.Item>
-              <Descriptions.Item label="模型版本">
-                {selectedTask.modelVersionId}
+              <Descriptions.Item label="推理模型">
+                {optionLabel(modelSelectOptions, selectedTask.modelVersionId)}
               </Descriptions.Item>
-              <Descriptions.Item label="脚本版本">
-                {selectedTask.scriptVersionId}
+              <Descriptions.Item label="推理脚本">
+                {optionLabel(scriptSelectOptions, selectedTask.scriptVersionId)}
               </Descriptions.Item>
               <Descriptions.Item label="输入">
                 {selectedTask.inputMode === 'DATASET_VERSION'
-                  ? selectedTask.datasetVersionId
-                  : selectedTask.inputObjectName}
+                  ? optionLabel(
+                      datasetSelectOptions,
+                      selectedTask.datasetVersionId,
+                    )
+                  : selectedTask.inputObjectName || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="进度">
                 <Progress

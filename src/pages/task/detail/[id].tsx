@@ -36,6 +36,7 @@ import {
   fetchTaskDetail,
   getExperimentVersion,
   listExperimentVersions,
+  publishTrainingModel,
   triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
@@ -262,6 +263,7 @@ const CONSISTENCY_METRIC_KEYS = [
 
 const CONSISTENCY_ARTIFACT_FILES = [
   'fusion_model.pkl',
+  'fusion_model.zip',
   'metrics.json',
   'val_predictions.csv',
   'test_predictions.csv',
@@ -374,6 +376,7 @@ const TaskDetail: React.FC = () => {
   const [versions, setVersions] = useState<API.TrainingExperimentVersion[]>([]);
   const [remarkModalOpen, setRemarkModalOpen] = useState(false);
   const [remarkModalLoading, setRemarkModalLoading] = useState(false);
+  const [publishingModel, setPublishingModel] = useState(false);
   const [remarkBase, setRemarkBase] =
     useState<API.TrainingExperimentVersion | null>(null);
   const [remarkForm] = Form.useForm();
@@ -456,12 +459,17 @@ const TaskDetail: React.FC = () => {
   }, [loading, experimentId]);
 
   useEffect(() => {
-    if (!id || !isActiveTaskStatus(taskInfo?.status)) return;
+    const modelPublishing = ['PENDING', 'PUBLISHING'].includes(
+      taskInfo?.modelPublishStatus || '',
+    );
+    if (!id || (!isActiveTaskStatus(taskInfo?.status) && !modelPublishing)) {
+      return;
+    }
     const timer = window.setInterval(() => {
       loadTaskDetail(false);
     }, TASK_STATUS_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [id, loadTaskDetail, taskInfo?.status]);
+  }, [id, loadTaskDetail, taskInfo?.modelPublishStatus, taskInfo?.status]);
 
   useEffect(() => {
     if (!experimentId) {
@@ -529,6 +537,35 @@ const TaskDetail: React.FC = () => {
       return;
     }
     history.push(`/task/detail/${encodeURIComponent(experimentId)}`);
+  };
+
+  const handlePublishModel = async () => {
+    if (!taskInfo?.id) return;
+    setPublishingModel(true);
+    try {
+      await publishTrainingModel(taskInfo.id, { skipErrorHandler: true });
+      message.success('模型已进入发布队列');
+      await loadTaskDetail(false);
+    } catch (error: any) {
+      message.error(error?.errorMessage || error?.message || '发布模型失败');
+    } finally {
+      setPublishingModel(false);
+    }
+  };
+
+  const handleUseProducedModel = () => {
+    if (!taskInfo?.producedModelVersionId) return;
+    const query = new URLSearchParams({
+      modelVersionId: taskInfo.producedModelVersionId,
+      trainingId: taskInfo.id,
+    });
+    if (taskInfo.datasetVersionId) {
+      query.set('datasetVersionId', taskInfo.datasetVersionId);
+    }
+    if (taskInfo.trainingProfile) {
+      query.set('trainingProfile', taskInfo.trainingProfile);
+    }
+    history.push(`/inference/workbench?${query.toString()}`);
   };
 
   const openUpdateRemark = (record: API.TrainingExperimentVersion) => {
@@ -914,6 +951,97 @@ const TaskDetail: React.FC = () => {
           )}
         </Descriptions>
       </Card>
+
+      {taskInfo.status === 'success' && taskInfo.trainingProfile && (
+        <Card title="训练模型发布" style={{ marginBottom: 16 }}>
+          <Descriptions column={2} style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="发布状态">
+              <Tag
+                color={
+                  taskInfo.modelPublishStatus === 'PUBLISHED'
+                    ? 'success'
+                    : taskInfo.modelPublishStatus === 'FAILED'
+                      ? 'error'
+                      : taskInfo.modelPublishStatus
+                        ? 'processing'
+                        : 'default'
+                }
+              >
+                {taskInfo.modelPublishStatus === 'PUBLISHED'
+                  ? '已发布'
+                  : taskInfo.modelPublishStatus === 'PUBLISHING'
+                    ? '正在发布'
+                    : taskInfo.modelPublishStatus === 'PENDING'
+                      ? '等待发布'
+                      : taskInfo.modelPublishStatus === 'FAILED'
+                        ? '发布失败'
+                        : '尚未发布'}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="推理模型版本">
+              <Typography.Text copyable={!!taskInfo.producedModelVersionId}>
+                {taskInfo.producedModelVersionId || '-'}
+              </Typography.Text>
+            </Descriptions.Item>
+            {taskInfo.modelPublishedAt && (
+              <Descriptions.Item label="发布时间">
+                {taskInfo.modelPublishedAt}
+              </Descriptions.Item>
+            )}
+            {taskInfo.modelArtifactSha256 && (
+              <Descriptions.Item label="模型摘要">
+                <Tooltip title={taskInfo.modelArtifactSha256}>
+                  <Typography.Text code>
+                    {taskInfo.modelArtifactSha256.slice(0, 16)}…
+                  </Typography.Text>
+                </Tooltip>
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+
+          {taskInfo.modelPublishError && (
+            <Alert
+              type="error"
+              showIcon
+              message="模型发布失败"
+              description={taskInfo.modelPublishError}
+              style={{ marginBottom: 12 }}
+            />
+          )}
+
+          <Space wrap>
+            {taskInfo.modelPublishStatus === 'PUBLISHED' &&
+              taskInfo.producedModelVersionId && (
+                <Button type="primary" onClick={handleUseProducedModel}>
+                  使用此模型推理
+                </Button>
+              )}
+            {(!taskInfo.modelPublishStatus ||
+              taskInfo.modelPublishStatus === 'FAILED') && (
+              <Button loading={publishingModel} onClick={handlePublishModel}>
+                {taskInfo.modelPublishStatus === 'FAILED'
+                  ? '重新发布模型'
+                  : '发布为模型'}
+              </Button>
+            )}
+            {['PENDING', 'PUBLISHING'].includes(
+              taskInfo.modelPublishStatus || '',
+            ) && (
+              <Typography.Text type="secondary">
+                页面会自动刷新发布状态
+              </Typography.Text>
+            )}
+          </Space>
+
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="推理输入说明"
+            description="该融合模型使用特征 JSONL 或对应数据集推理，不能直接输入原始图片；进入推理页后请选择兼容的融合模型推理脚本。"
+          />
+        </Card>
+      )}
 
       <Card
         id="version-history"

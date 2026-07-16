@@ -143,6 +143,13 @@ declare namespace API {
     runId?: string;
     logPath?: string;
     outputPath?: string;
+    producedModelVersionId?: string;
+    modelPublishStatus?: 'PENDING' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED';
+    modelPublishError?: string;
+    modelPublishedAt?: string;
+    modelArtifactPath?: string;
+    modelArtifactSha256?: string;
+    modelArtifactSizeBytes?: number;
     errorMessage?: string;
     startedAt?: string;
     finishedAt?: string;
@@ -167,6 +174,13 @@ declare namespace API {
     runId?: string;
     logPath?: string;
     outputPath?: string;
+    producedModelVersionId?: string;
+    modelPublishStatus?: 'PENDING' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED';
+    modelPublishError?: string;
+    modelPublishedAt?: string;
+    modelArtifactPath?: string;
+    modelArtifactSha256?: string;
+    modelArtifactSizeBytes?: number;
     errorMessage?: string;
     startedAt?: string;
     finishedAt?: string;

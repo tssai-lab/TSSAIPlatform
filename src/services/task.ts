@@ -179,6 +179,21 @@ export async function stopTask(id: string, options?: { [key: string]: any }) {
   );
 }
 
+/** 将成功训练的核心产物发布为标准模型版本；重复调用保持幂等 */
+export async function publishTrainingModel(
+  id: string,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    success: boolean;
+    data: API.TrainingExperimentVersion;
+    errorMessage?: string;
+  }>(`/task/${encodeURIComponent(id)}/publish-model`, {
+    method: 'POST',
+    ...(options || {}),
+  });
+}
+
 /** 删除任务 */
 export async function deleteTask(id: string, options?: { [key: string]: any }) {
   return request<{ success: boolean; data: any; errorMessage?: string }>(
