@@ -1,4 +1,20 @@
 services:
+  mlflow:
+    image: tss-platform-mlflow:local
+    container_name: tss-mlflow
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./mlflow-data:/mlflow
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
   backend:
     image: ${TSS_BACKEND_IMAGE:?TSS_BACKEND_IMAGE must be set}
     container_name: tss-backend
@@ -7,6 +23,9 @@ services:
       - ./backend/.env.runtime
     volumes:
       - ./backend/logs:/app/logs
+      - ./k8s:/opt/tss-platform/k8s:ro
+      - ./.tools/bin/kubectl:/opt/tss-platform/.tools/bin/kubectl:ro
+      - ./backend/scripts/k8s:/opt/tss-platform/backend/scripts/k8s:ro
     restart: unless-stopped
     cpus: 1.0
     mem_limit: 1536m

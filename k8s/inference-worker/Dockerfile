@@ -1,4 +1,5 @@
-FROM tss/yolo-trainer-cpu:latest
+ARG INFERENCE_BASE_IMAGE=tss/yolo-trainer-cpu:latest
+FROM ${INFERENCE_BASE_IMAGE}
 
 WORKDIR /app
 

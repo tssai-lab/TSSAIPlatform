@@ -18,11 +18,25 @@ runtime_env="${platform_dir}/backend/.env.runtime"
 command -v docker >/dev/null
 command -v curl >/dev/null
 command -v gzip >/dev/null
+command -v openssl >/dev/null
 command -v visudo >/dev/null
 docker compose version >/dev/null
 docker inspect tss-postgres >/dev/null
 docker inspect tss-minio >/dev/null
+docker image inspect tss-platform-mlflow:local >/dev/null
+docker image inspect tss-training-worker:local >/dev/null
+docker image inspect tss-inference-worker-main-cpu:local >/dev/null
 id tss-deployer >/dev/null
+
+for required_path in \
+  "${platform_dir}/k8s/.kube/config" \
+  "${platform_dir}/.tools/bin/kubectl" \
+  "${platform_dir}/backend/scripts/k8s/verify-local-kind.sh"; do
+  if [[ ! -e $required_path ]]; then
+    echo "Required Main training runtime path is missing: $required_path" >&2
+    exit 1
+  fi
+done
 
 get_container_env() {
   local container="$1"
@@ -51,6 +65,14 @@ chown 10001:10001 "${platform_dir}/backend/logs"
 install -m 600 "$compose_overlay" "${platform_dir}/compose.backend.yml"
 
 umask 077
+callback_token="$(
+  awk -F= '$1 == "TRAINING_K8S_INTERNAL_CALLBACK_TOKEN" { print substr($0, index($0, "=") + 1); exit }' \
+    "$runtime_env" 2>/dev/null || true
+)"
+if [[ -z $callback_token ]]; then
+  callback_token="$(openssl rand -hex 32)"
+fi
+
 cat > "$runtime_env" <<EOF
 SERVER_ADDRESS=127.0.0.1
 SPRING_PROFILES_ACTIVE=default
@@ -61,9 +83,25 @@ MINIO_ENDPOINT=http://127.0.0.1:9010
 MINIO_ACCESS_KEY=${minio_user}
 MINIO_SECRET_KEY=${minio_password}
 MINIO_BUCKET=models
-TRAINING_MLFLOW_ENABLED=false
-TRAINING_K8S_ENABLED=false
-TRAINING_K8S_VERIFY_ON_STARTUP=false
+TRAINING_MLFLOW_ENABLED=true
+TRAINING_MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+TRAINING_MLFLOW_EXPERIMENT_NAME=tss-training
+TRAINING_K8S_ENABLED=true
+TRAINING_K8S_AUTO_CREATE=false
+TRAINING_K8S_VERIFY_ON_STARTUP=true
+TRAINING_K8S_FALLBACK_TO_LOCAL=false
+TRAINING_K8S_PROJECT_ROOT=/opt/tss-platform
+TRAINING_K8S_KUBECONFIG=/opt/tss-platform/k8s/.kube/config
+TRAINING_K8S_KUBECTL_PATH=/opt/tss-platform/.tools/bin/kubectl
+TRAINING_K8S_VERIFY_SCRIPT=/opt/tss-platform/backend/scripts/k8s/verify-local-kind.sh
+TRAINING_K8S_WORKER_IMAGE=tss-training-worker:local
+TRAINING_K8S_WORKER_IMAGE_PULL_POLICY=IfNotPresent
+TRAINING_K8S_BACKEND_SERVICE_URL=http://tss-backend:8080
+TRAINING_K8S_MINIO_SERVICE_URL=http://tss-minio:9000
+TRAINING_K8S_MLFLOW_SERVICE_URL=http://tss-mlflow:5000
+TRAINING_K8S_INTERNAL_CALLBACK_TOKEN=${callback_token}
+INFERENCE_KUBERNETES_WORKER_IMAGE=tss-inference-worker-main-cpu:local
+INFERENCE_KUBERNETES_WORKER_IMAGE_PULL_POLICY=IfNotPresent
 EOF
 chmod 600 "$runtime_env"
 
@@ -90,6 +128,7 @@ fi
 previous_image="$(docker inspect tss-backend --format '{{.Config.Image}}' 2>/dev/null || true)"
 export TSS_BACKEND_IMAGE="$image"
 
+docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps mlflow
 docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps backend
 
 for _ in $(seq 1 60); do

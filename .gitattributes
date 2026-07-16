@@ -1,6 +1,11 @@
 /.github/workflows/*.yml text eol=lf
 /backend/.dockerignore text eol=lf
 /backend/Dockerfile text eol=lf
+/backend/**/*.sh text eol=lf
 /deploy/**/*.sh text eol=lf
 /deploy/**/*.yml text eol=lf
 /deploy/**/*.yaml text eol=lf
+/deploy/**/Dockerfile text eol=lf
+/k8s/**/*.yml text eol=lf
+/k8s/**/*.yaml text eol=lf
+/k8s/**/Dockerfile text eol=lf

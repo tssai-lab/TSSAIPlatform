@@ -7,6 +7,9 @@ KIND="${KIND:-${TOOLS_DIR}/kind}"
 KUBECTL="${KUBECTL:-${TOOLS_DIR}/kubectl}"
 CLUSTER_NAME="${CLUSTER_NAME:-tss-training}"
 KUBECONFIG_PATH="${KUBECONFIG_PATH:-${ROOT_DIR}/k8s/.kube/config}"
+BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-8080}"
+MINIO_HOST_PORT="${MINIO_HOST_PORT:-9010}"
+MLFLOW_HOST_PORT="${MLFLOW_HOST_PORT:-5000}"
 
 require_executable() {
   local executable="$1"
@@ -53,7 +56,11 @@ if [[ -z "${HOST_GATEWAY}" ]]; then
   exit 1
 fi
 
-sed "s/__HOST_GATEWAY__/${HOST_GATEWAY}/g" \
+sed \
+  -e "s/__HOST_GATEWAY__/${HOST_GATEWAY}/g" \
+  -e "s/__BACKEND_HOST_PORT__/${BACKEND_HOST_PORT}/g" \
+  -e "s/__MINIO_HOST_PORT__/${MINIO_HOST_PORT}/g" \
+  -e "s/__MLFLOW_HOST_PORT__/${MLFLOW_HOST_PORT}/g" \
   "${ROOT_DIR}/k8s/local/host-services.template.yaml" \
   | "${KUBECTL}" apply -f -
 
@@ -64,7 +71,7 @@ echo "Host gateway: ${HOST_GATEWAY}"
 "${KUBECTL}" get resourcequota,limitrange,service -n tss-training
 
 WORKER_BUILD_SCRIPT="${ROOT_DIR}/k8s/training-worker/build-and-load.sh"
-if [[ -x "${WORKER_BUILD_SCRIPT}" ]]; then
+if [[ "${SKIP_WORKER_BUILD:-false}" != "true" && -x "${WORKER_BUILD_SCRIPT}" ]]; then
   echo "构建并加载训练 Worker 镜像..."
   CLUSTER_NAME="${CLUSTER_NAME}" KIND="${KIND}" \
     TRAINING_WORKER_IMAGE="${TRAINING_WORKER_IMAGE:-tss-training-worker:local}" \

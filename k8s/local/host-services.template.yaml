@@ -20,7 +20,7 @@ addressType: IPv4
 ports:
   - name: http
     protocol: TCP
-    port: 8080
+    port: __BACKEND_HOST_PORT__
 endpoints:
   - addresses:
       - "__HOST_GATEWAY__"
@@ -47,7 +47,7 @@ addressType: IPv4
 ports:
   - name: api
     protocol: TCP
-    port: 9010
+    port: __MINIO_HOST_PORT__
 endpoints:
   - addresses:
       - "__HOST_GATEWAY__"
@@ -74,7 +74,7 @@ addressType: IPv4
 ports:
   - name: http
     protocol: TCP
-    port: 5000
+    port: __MLFLOW_HOST_PORT__
 endpoints:
   - addresses:
       - "__HOST_GATEWAY__"

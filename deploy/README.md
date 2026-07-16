@@ -68,10 +68,23 @@ git push origin poc-deploy-20260715-01
 
 The POC service is ClusterIP only. It does not add an external Nginx route or public port.
 
-## Main server single-machine validation
+## Main server runtime
 
-When the existing Main server backend is intentionally empty, `deploy/main/compose.backend.yml` can start the backend directly in `/opt/tss-platform` while reusing the existing Docker PostgreSQL and MinIO containers. This is a real server deployment, but it is still a single-machine validation and is not highly available.
+Main reuses its existing Docker PostgreSQL and MinIO containers. The backend and MLflow bind only to loopback. Training and inference jobs run in an isolated single-node kind cluster, so they are not scheduled onto the existing `k8s-node1` machine.
 
-Before enabling it, create a logical PostgreSQL backup and a MinIO archive. Then run `bootstrap-main-backend.sh` as root, pointing it at `compose.backend.yml`. The bootstrap writes server-only runtime credentials and grants `tss-deployer` permission to run exactly two root-owned scripts: GHCR login and the backend deployment.
+Run the training runtime bootstrap once as root from a clean repository checkout:
 
-After the matching CI commit is green, push a unique `main-deploy-*` tag on that commit. GitHub Actions pulls the immutable image on its hosted runner, streams it through SSH to Main, and then updates only the `tss-backend` container. This avoids relying on a direct large-file download from GHCR to Main. The deployment waits for `http://127.0.0.1:8080/v3/api-docs`; if the new container does not become healthy, it restores the previous backend image or removes the failed initial container.
+```bash
+bash deploy/scripts/bootstrap-main-training-runtime.sh /path/to/TSSAIPlatform
+bash deploy/scripts/bootstrap-main-backend.sh deploy/main/compose.backend.yml
+/usr/local/sbin/tss-main-activate-backend \
+  ghcr.io/tssai-lab/tssai-backend:<40-character-commit-sha>
+```
+
+The runtime bootstrap downloads checksum-pinned `kind` and `kubectl` binaries, builds MLflow and both worker images on Main, creates the kind cluster, loads the images, and verifies Pod access to the backend, MinIO and MLflow. It is idempotent and uses Docker build cache on later runs.
+
+The Main inference image is a CPU image for the fusion/scikit-learn and OpenCV workflow. It does not include PyTorch or Ultralytics. A separate, versioned worker image is required before enabling YOLO inference on Main.
+
+After the one-time bootstrap, every push to `backend-ops` runs backend tests, publishes an immutable GHCR image and calls the reusable Main deployment workflow. The GitHub runner streams the image through SSH, and Main replaces only `tss-backend`. The deployment waits for `http://127.0.0.1:8080/v3/api-docs`; if the new container does not become healthy, it restores the previous image.
+
+PostgreSQL and MinIO data remain local to Main. Code rollback does not automatically roll back database data. Backup, cross-node replication and failover are separate follow-up work.
