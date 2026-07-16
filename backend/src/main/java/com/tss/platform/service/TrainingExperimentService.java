@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.tss.platform.dto.CreateExperimentVersionRequest;
 import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
+import com.tss.platform.dto.TrainingModelArtifactDto;
 import com.tss.platform.dto.UpdateHyperParamsRequest;
 import com.tss.platform.dto.UpdateTrainingResultRequest;
 import com.tss.platform.entity.CodeAsset;
@@ -277,7 +278,7 @@ public class TrainingExperimentService {
         }
         trainingExecutorRouter.stop(version.getId());
         version.setStatus("stopped");
-        version.setProgress(progressOf("stopped"));
+        version.setProgress(currentProgress(version));
         version.setFinishedAt(Instant.now());
         version.setUpdatedAt(Instant.now());
         return toDto(repo.save(version));
@@ -291,7 +292,7 @@ public class TrainingExperimentService {
         requireExperimentAccess(version);
         String normalizedStatus = normalizeStatus(status);
         version.setStatus(normalizedStatus);
-        version.setProgress(progressOf(normalizedStatus));
+        version.setProgress(nextProgress(version, normalizedStatus, null));
         version.setUpdatedAt(Instant.now());
         return toDto(repo.save(version));
     }
@@ -331,9 +332,46 @@ public class TrainingExperimentService {
         TrainingExperimentVersion version = repo.findById(trainingId)
                 .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
         if (TERMINAL_STATUSES.contains(version.getStatus())) {
+            if ("success".equals(version.getStatus())
+                    && req != null
+                    && "success".equalsIgnoreCase(blankToNull(req.getStatus()) == null ? "" : req.getStatus().trim())
+                    && version.getProducedModelVersionId() == null) {
+                applyModelArtifact(version, req.getModelArtifact());
+                prepareModelPublish(version, req.getModelArtifact() != null);
+                version.setUpdatedAt(Instant.now());
+                return toDto(repo.save(version));
+            }
             return toDto(version);
         }
         applyResult(version, req);
+        return toDto(repo.save(version));
+    }
+
+    @Transactional
+    public TrainingExperimentVersionDto requestModelPublish(String trainingId) {
+        TrainingExperimentVersion version = repo.findById(trainingId)
+                .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
+        requireExperimentAccess(version);
+        if (!"success".equals(version.getStatus())) {
+            throw new IllegalArgumentException("只有已完成的训练任务可以发布模型");
+        }
+        TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(version.getTrainingProfile())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "当前训练方案不支持自动发布模型: " + version.getTrainingProfile()
+                ));
+        if (version.getProducedModelVersionId() != null) {
+            version.setModelPublishStatus(TrainingModelPublishService.STATUS_PUBLISHED);
+            version.setModelPublishError(null);
+            return toDto(repo.save(version));
+        }
+        if (!TrainingModelPublishService.STATUS_PUBLISHING.equals(version.getModelPublishStatus())) {
+            version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
+            version.setModelPublishError(null);
+        }
+        if (version.getModelArtifactPath() == null || version.getModelArtifactPath().isBlank()) {
+            version.setModelArtifactPath(defaultModelArchivePath(version.getId(), spec));
+        }
+        version.setUpdatedAt(Instant.now());
         return toDto(repo.save(version));
     }
 
@@ -373,6 +411,13 @@ public class TrainingExperimentService {
         dto.setMlflowTrackingUri(version.getMlflowTrackingUri());
         dto.setLogPath(version.getLogPath());
         dto.setOutputPath(version.getOutputPath());
+        dto.setProducedModelVersionId(version.getProducedModelVersionId());
+        dto.setModelPublishStatus(version.getModelPublishStatus());
+        dto.setModelPublishError(version.getModelPublishError());
+        dto.setModelPublishedAt(version.getModelPublishedAt());
+        dto.setModelArtifactPath(version.getModelArtifactPath());
+        dto.setModelArtifactSha256(version.getModelArtifactSha256());
+        dto.setModelArtifactSizeBytes(version.getModelArtifactSizeBytes());
         dto.setErrorMessage(version.getErrorMessage());
         dto.setStartedAt(version.getStartedAt());
         dto.setFinishedAt(version.getFinishedAt());
@@ -429,10 +474,9 @@ public class TrainingExperimentService {
         if (nextStatus != null) {
             version.setStatus(nextStatus);
         }
-        if (req.getProgress() != null) {
-            version.setProgress(validateProgress(req.getProgress()));
-        } else if (req.getStatus() != null && !req.getStatus().isBlank()) {
-            version.setProgress(progressOf(nextStatus));
+        if (req.getProgress() != null
+                || (req.getStatus() != null && !req.getStatus().isBlank())) {
+            version.setProgress(nextProgress(version, nextStatus, req.getProgress()));
         }
         if (req.getMetrics() != null) {
             version.setMetricsJson(toResultJson(req.getMetrics(), "metrics must be valid JSON"));
@@ -452,6 +496,10 @@ public class TrainingExperimentService {
         if (req.getOutputPath() != null) {
             version.setOutputPath(blankToNull(req.getOutputPath()));
         }
+        applyModelArtifact(version, req.getModelArtifact());
+        if ("success".equals(nextStatus)) {
+            prepareModelPublish(version, false);
+        }
         if (req.getErrorMessage() != null) {
             version.setErrorMessage(blankToNull(req.getErrorMessage()));
         }
@@ -465,6 +513,58 @@ public class TrainingExperimentService {
             version.setRemark(req.getRemark());
         }
         version.setUpdatedAt(Instant.now());
+    }
+
+    private void applyModelArtifact(
+            TrainingExperimentVersion version,
+            TrainingModelArtifactDto artifact
+    ) {
+        if (artifact == null) {
+            return;
+        }
+        String objectName = blankToNull(artifact.getObjectName());
+        if (objectName != null) {
+            version.setModelArtifactPath(objectName);
+        }
+        String sha256 = blankToNull(artifact.getSha256());
+        if (sha256 != null) {
+            version.setModelArtifactSha256(sha256.toLowerCase(Locale.ROOT));
+        }
+        if (artifact.getSizeBytes() != null && artifact.getSizeBytes() > 0) {
+            version.setModelArtifactSizeBytes(artifact.getSizeBytes());
+        }
+    }
+
+    private void prepareModelPublish(
+            TrainingExperimentVersion version,
+            boolean allowRetryAfterArtifactCallback
+    ) {
+        if (version.getProducedModelVersionId() != null) {
+            version.setModelPublishStatus(TrainingModelPublishService.STATUS_PUBLISHED);
+            version.setModelPublishError(null);
+            return;
+        }
+        TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(version.getTrainingProfile())
+                .orElse(null);
+        if (spec == null) {
+            return;
+        }
+        if (version.getModelArtifactPath() == null || version.getModelArtifactPath().isBlank()) {
+            version.setModelArtifactPath(defaultModelArchivePath(version.getId(), spec));
+        }
+        if (version.getModelPublishStatus() == null
+                || (allowRetryAfterArtifactCallback
+                    && TrainingModelPublishService.STATUS_FAILED.equals(version.getModelPublishStatus()))) {
+            version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
+            version.setModelPublishError(null);
+        }
+    }
+
+    private String defaultModelArchivePath(
+            String trainingId,
+            TrainingProfileRegistry.ProfileSpec spec
+    ) {
+        return "training-results/" + trainingId + "/artifacts/" + spec.producedModelArchiveName();
     }
 
     private String toResultJson(Object value, String errorMessage) {
@@ -505,6 +605,24 @@ public class TrainingExperimentService {
             return 0;
         }
         return 0;
+    }
+
+    private int currentProgress(TrainingExperimentVersion version) {
+        return version.getProgress() == null ? 0 : version.getProgress();
+    }
+
+    private int nextProgress(
+            TrainingExperimentVersion version,
+            String status,
+            Integer reportedProgress
+    ) {
+        if ("success".equals(status)) {
+            return 100;
+        }
+        int candidate = reportedProgress == null
+                ? progressOf(status)
+                : validateProgress(reportedProgress);
+        return Math.max(currentProgress(version), candidate);
     }
 
     private void startTrainingAfterCommit(String trainingId) {

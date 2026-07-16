@@ -80,6 +80,27 @@ public class TrainingExperimentVersion {
     @Column(name = "output_path", length = 1024)
     private String outputPath;
 
+    @Column(name = "produced_model_version_id", length = 64)
+    private String producedModelVersionId;
+
+    @Column(name = "model_publish_status", length = 32)
+    private String modelPublishStatus;
+
+    @Column(name = "model_publish_error", columnDefinition = "TEXT")
+    private String modelPublishError;
+
+    @Column(name = "model_published_at")
+    private Instant modelPublishedAt;
+
+    @Column(name = "model_artifact_path", length = 1024)
+    private String modelArtifactPath;
+
+    @Column(name = "model_artifact_sha256", length = 64)
+    private String modelArtifactSha256;
+
+    @Column(name = "model_artifact_size_bytes")
+    private Long modelArtifactSizeBytes;
+
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 

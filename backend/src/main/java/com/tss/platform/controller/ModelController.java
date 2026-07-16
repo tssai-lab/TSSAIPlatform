@@ -195,7 +195,8 @@ public class ModelController {
             return ApiResponse.fail("model version parent asset not found or deleted: " + ver.getAssetId());
         }
         Integer ownerUserId = ver.getOwnerUserId() != null ? ver.getOwnerUserId() : asset.getOwnerUserId();
-        if (trainingRepo.countByModelVersionId(id) > 0) {
+        if (trainingRepo.countByModelVersionId(id) > 0
+                || trainingRepo.countByProducedModelVersionId(id) > 0) {
             log.warn("Reject model delete because version is referenced by training experiments: id={}", id);
             return ApiResponse.fail("model version is referenced by training experiments");
         }

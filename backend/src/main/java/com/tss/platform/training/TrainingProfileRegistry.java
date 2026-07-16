@@ -55,11 +55,16 @@ public final class TrainingProfileRegistry {
                     "outputs/fusion_baseline_logreg",
                     List.of(
                             "fusion_model.pkl",
+                            "fusion_model.zip",
                             "metrics.json",
                             "val_predictions.csv",
                             "test_predictions.csv"
                     ),
-                    "NLP"
+                    "NLP",
+                    "NLP",
+                    "fusion_model.pkl",
+                    "fusion_model.zip",
+                    "SKLEARN_PICKLE_ZIP"
             ));
         }
         return Optional.empty();
@@ -72,7 +77,11 @@ public final class TrainingProfileRegistry {
             String metricsRelativePath,
             String outputRelativeDir,
             List<String> artifactFiles,
-            String requiredDatasetType
+            String requiredDatasetType,
+            String outputTaskType,
+            String producedModelFileName,
+            String producedModelArchiveName,
+            String producedModelFormat
     ) {
     }
 }

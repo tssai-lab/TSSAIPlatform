@@ -57,6 +57,15 @@ public class TrainingTaskController {
         }
     }
 
+    @PostMapping("/{id}/publish-model")
+    public ApiResponse<TrainingExperimentVersionDto> publishModel(@PathVariable String id) {
+        try {
+            return ApiResponse.ok(service.requestModelPublish(id));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
     @PostMapping("/result")
     public ApiResponse<TrainingExperimentVersionDto> updateResult(
             @RequestParam String id,
