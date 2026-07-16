@@ -1,6 +1,12 @@
 name: Deploy Main Backend Validation
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Commit SHA image tag produced by Backend CI and Image
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       image_tag:
@@ -43,10 +49,10 @@ jobs:
       - name: Resolve immutable image tag
         id: image
         env:
-          MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
+          REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            image_tag="$MANUAL_IMAGE_TAG"
+          if [[ -n "$REQUESTED_IMAGE_TAG" ]]; then
+            image_tag="$REQUESTED_IMAGE_TAG"
           else
             image_tag="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           fi
