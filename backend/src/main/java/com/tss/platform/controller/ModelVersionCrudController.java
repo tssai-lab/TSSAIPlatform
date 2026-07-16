@@ -223,7 +223,8 @@ public class ModelVersionCrudController {
             return ApiResponse.fail("model version parent asset not found or deleted: " + version.getAssetId());
         }
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
-        if (trainingRepo.countByModelVersionId(id) > 0) {
+        if (trainingRepo.countByModelVersionId(id) > 0
+                || trainingRepo.countByProducedModelVersionId(id) > 0) {
             log.warn("Reject model version delete because it is referenced by training experiments: id={}", id);
             return ApiResponse.fail("model version is referenced by training experiments");
         }
@@ -311,4 +312,3 @@ public class ModelVersionCrudController {
         }
     }
 }
-

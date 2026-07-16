@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
+import com.tss.platform.service.TrainingModelPublishService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -152,6 +153,16 @@ public class KubernetesTrainingJobMonitor {
             version.setStatus("success");
             version.setProgress(100);
             version.setFinishedAt(Instant.now());
+            if (version.getProducedModelVersionId() == null
+                    && version.getModelPublishStatus() == null) {
+                TrainingProfileRegistry.specOf(version.getTrainingProfile()).ifPresent(spec -> {
+                    version.setModelArtifactPath(
+                            "training-results/" + version.getId() + "/artifacts/"
+                                    + spec.producedModelArchiveName()
+                    );
+                    version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
+                });
+            }
             version.setUpdatedAt(Instant.now());
             repository.save(version);
             LOG.info("训练任务因 K8s Job 成功而同步为 success: id={}", trainingId);
@@ -164,7 +175,7 @@ public class KubernetesTrainingJobMonitor {
                 return;
             }
             version.setStatus("failed");
-            version.setProgress(0);
+            version.setProgress(version.getProgress() == null ? 0 : version.getProgress());
             version.setErrorMessage(errorMessage);
             version.setFinishedAt(Instant.now());
             version.setUpdatedAt(Instant.now());

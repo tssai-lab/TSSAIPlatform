@@ -84,8 +84,8 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
-    void flywayAppliesEveryVersionFromV1ThroughV30() throws SQLException {
-        List<String> expectedVersions = IntStream.rangeClosed(1, 30)
+    void flywayAppliesEveryVersionFromV1ThroughV31() throws SQLException {
+        List<String> expectedVersions = IntStream.rangeClosed(1, 31)
                 .mapToObj(Integer::toString)
                 .toList();
         List<String> installedVersions = queryStrings("""
@@ -96,7 +96,7 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("30", installedVersions.get(installedVersions.size() - 1));
+        assertEquals("31", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",

@@ -14,6 +14,7 @@ public class UpdateTrainingResultRequest {
     private String mlflowTrackingUri;
     private String logPath;
     private String outputPath;
+    private TrainingModelArtifactDto modelArtifact;
     private String errorMessage;
     private Instant startedAt;
     private Instant finishedAt;

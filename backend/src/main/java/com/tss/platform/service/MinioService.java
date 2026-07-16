@@ -1,6 +1,9 @@
 package com.tss.platform.service;
 
 import com.tss.platform.config.MinioConfig;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
+import io.minio.errors.ErrorResponseException;
 import io.minio.GetObjectArgs;
 import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
@@ -116,6 +119,35 @@ public class MinioService {
         );
     }
 
+    public boolean objectExists(String objectName) throws Exception {
+        try {
+            stat(objectName);
+            return true;
+        } catch (ErrorResponseException e) {
+            String code = e.errorResponse() == null ? null : e.errorResponse().code();
+            if ("NoSuchKey".equals(code) || "NoSuchObject".equals(code) || "NotFound".equals(code)) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    public void copyObject(String sourceObjectName, String targetObjectName) throws Exception {
+        if (sourceObjectName == null || sourceObjectName.isBlank()) {
+            throw new IllegalArgumentException("sourceObjectName 不能为空");
+        }
+        if (targetObjectName == null || targetObjectName.isBlank()) {
+            throw new IllegalArgumentException("targetObjectName 不能为空");
+        }
+        minioClient.copyObject(
+                CopyObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(targetObjectName)
+                        .source(CopySource.builder().bucket(bucket).object(sourceObjectName).build())
+                        .build()
+        );
+    }
+
     public void deleteObject(String objectName) throws Exception {
         deleteObject(bucket, objectName);
     }
@@ -153,4 +185,3 @@ public class MinioService {
         return names;
     }
 }
-

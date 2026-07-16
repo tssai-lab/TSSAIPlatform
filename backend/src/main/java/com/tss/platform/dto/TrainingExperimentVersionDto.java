@@ -26,6 +26,13 @@ public class TrainingExperimentVersionDto {
     private String mlflowTrackingUri;
     private String logPath;
     private String outputPath;
+    private String producedModelVersionId;
+    private String modelPublishStatus;
+    private String modelPublishError;
+    private Instant modelPublishedAt;
+    private String modelArtifactPath;
+    private String modelArtifactSha256;
+    private Long modelArtifactSizeBytes;
     private String errorMessage;
     private Instant startedAt;
     private Instant finishedAt;

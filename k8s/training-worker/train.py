@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -41,8 +42,12 @@ PROFILES = {
         ],
         "metrics_path": "outputs/fusion_baseline_logreg/metrics.json",
         "output_dir": "outputs/fusion_baseline_logreg",
+        "model_file": "fusion_model.pkl",
+        "model_archive": "fusion_model.zip",
+        "model_format": "SKLEARN_PICKLE_ZIP",
         "artifact_files": [
             "fusion_model.pkl",
+            "fusion_model.zip",
             "metrics.json",
             "val_predictions.csv",
             "test_predictions.csv",
@@ -63,6 +68,7 @@ MLFLOW_METRIC_KEYS = [
     "roc_auc",
 ]
 MLFLOW_METRIC_SPLITS = ["train", "val", "test"]
+LAST_REPORTED_PROGRESS = 0
 
 
 class MlflowLogger:
@@ -233,13 +239,23 @@ def callback(
     mlflow_run_id=None,
     mlflow_experiment_id=None,
     mlflow_tracking_uri=None,
+    model_artifact=None,
 ) -> None:
+    global LAST_REPORTED_PROGRESS
+
     url = env("BACKEND_CALLBACK_URL")
     token = env("INTERNAL_CALLBACK_TOKEN")
     if not url:
         log("BACKEND_CALLBACK_URL 未设置，跳过回调")
         return
-    payload: dict = {"status": status, "progress": progress}
+    normalized_progress = max(0, min(100, int(progress)))
+    if status == "success":
+        normalized_progress = 100
+    else:
+        normalized_progress = max(LAST_REPORTED_PROGRESS, normalized_progress)
+    LAST_REPORTED_PROGRESS = normalized_progress
+
+    payload: dict = {"status": status, "progress": normalized_progress}
     if metrics is not None:
         payload["metrics"] = metrics
     if error_message:
@@ -254,6 +270,8 @@ def callback(
         payload["mlflowExperimentId"] = mlflow_experiment_id
     if mlflow_tracking_uri:
         payload["mlflowTrackingUri"] = mlflow_tracking_uri
+    if model_artifact is not None:
+        payload["modelArtifact"] = model_artifact
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -275,6 +293,17 @@ def parse_endpoint(endpoint: str) -> tuple[str, bool]:
     if "/" in endpoint:
         endpoint = endpoint.split("/", 1)[0]
     return endpoint, secure
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while True:
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def download_object(client: Minio, bucket: str, object_name: str) -> bytes:
@@ -427,6 +456,13 @@ def run_profile_training(
         "hyperParams": env("HYPER_PARAMS_JSON"),
         "fixedCommand": " ".join(command),
     })
+    callback(
+        "running",
+        50,
+        mlflow_run_id=mlflow_logger.run_id,
+        mlflow_experiment_id=mlflow_logger.experiment_id,
+        mlflow_tracking_uri=mlflow_logger.tracking_uri,
+    )
 
     log(f"执行固定 profile 命令: {' '.join(command)}")
     proc = subprocess.run(
@@ -450,12 +486,21 @@ def run_profile_training(
 
     raw_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     metrics = flatten_metrics(raw_metrics)
+    callback("running", 90)
 
     # 写入 MLflow metrics（从 metrics.json 解析 train/val/test × accuracy/.../roc_auc）
     mlflow_logger.log_metrics_from_file(metrics_path)
 
     output_prefix = f"training-results/{training_id}/artifacts"
     output_dir = WORKSPACE / profile["output_dir"]
+    model_file = output_dir / profile["model_file"]
+    if not model_file.exists() or not model_file.is_file():
+        raise FileNotFoundError(f"缺少训练模型文件: {model_file}")
+    model_archive = output_dir / profile["model_archive"]
+    with zipfile.ZipFile(model_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(model_file, arcname=profile["model_file"])
+    model_sha256 = sha256_file(model_file)
+
     uploaded = []
     for file_name in profile["artifact_files"]:
         local_file = output_dir / file_name
@@ -466,8 +511,11 @@ def run_profile_training(
         content_type = "application/json" if file_name.endswith(".json") else "application/octet-stream"
         if file_name.endswith(".csv"):
             content_type = "text/csv"
+        elif file_name.endswith(".zip"):
+            content_type = "application/zip"
         upload_file(client, bucket, object_name, local_file, content_type)
         uploaded.append(object_name)
+    callback("running", 95)
 
     log_object = f"training-results/{training_id}/train.log"
     log_text = "\n".join([
@@ -498,6 +546,14 @@ def run_profile_training(
         mlflow_run_id=mlflow_logger.run_id,
         mlflow_experiment_id=mlflow_logger.experiment_id,
         mlflow_tracking_uri=mlflow_logger.tracking_uri,
+        model_artifact={
+            "fileName": profile["model_archive"],
+            "objectName": f"{output_prefix}/{profile['model_archive']}",
+            "modelFileName": profile["model_file"],
+            "format": profile["model_format"],
+            "sha256": model_sha256,
+            "sizeBytes": model_archive.stat().st_size,
+        },
     )
 
 
@@ -526,7 +582,7 @@ def main() -> None:
     except Exception as e:
         log(f"训练失败: {e}")
         mlflow_logger.finish(success=False)
-        callback("failed", 0, error_message=str(e))
+        callback("failed", LAST_REPORTED_PROGRESS, error_message=str(e))
         sys.exit(1)
 
 

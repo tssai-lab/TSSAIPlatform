@@ -114,7 +114,9 @@ public class ModelAssetCrudController {
         ModelAsset asset = existing.get();
         List<ModelVersion> versions = versionRepo.findByAssetId(id);
         List<String> versionIds = versions.stream().map(ModelVersion::getId).toList();
-        if (!versionIds.isEmpty() && trainingRepo.countByModelVersionIdIn(versionIds) > 0) {
+        if (!versionIds.isEmpty()
+                && (trainingRepo.countByModelVersionIdIn(versionIds) > 0
+                    || trainingRepo.countByProducedModelVersionIdIn(versionIds) > 0)) {
             log.warn("Reject model asset delete because versions are referenced by training experiments: id={}", id);
             return ApiResponse.fail("model asset has versions referenced by training experiments");
         }
@@ -174,4 +176,3 @@ public class ModelAssetCrudController {
         return ApiResponse.ok(result);
     }
 }
-
