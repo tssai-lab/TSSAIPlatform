@@ -7,6 +7,7 @@
   "scripts": {
     "analyze": "cross-env ANALYZE=1 max build",
     "biome:lint": "npx @biomejs/biome lint",
+    "prebuild": "node scripts/copy-swagger-ui.cjs",
     "build": "max build",
     "deploy": "npm run build && npm run gh-pages",
     "dev": "npm run start:dev",
@@ -85,6 +86,7 @@
     "jest-environment-jsdom": "^29.7.0",
     "lint-staged": "^16.1.2",
     "mockjs": "^1.1.0",
+    "swagger-ui-dist": "^5.17.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3",
     "umi-presets-pro": "^2.0.3",

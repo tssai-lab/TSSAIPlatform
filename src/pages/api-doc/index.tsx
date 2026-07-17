@@ -251,11 +251,9 @@ function useSwaggerTheme(ready: boolean) {
 
 // ==================== CDN Swagger UI 组件 ====================
 
-/** Swagger UI CDN 地址（与 swagger-ui-react@5.32.8 内部版本匹配） */
-const SWAGGER_CDN_CSS =
-  'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css';
-const SWAGGER_CDN_JS =
-  'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js';
+/** Swagger UI 静态资源路径（构建时从 node_modules 复制到 public/） */
+const SWAGGER_CSS = '/swagger-ui/swagger-ui.css';
+const SWAGGER_JS = '/swagger-ui/swagger-ui-bundle.js';
 const SWAGGER_CONTAINER_ID = 'swagger-ui-cdn-container';
 
 /** 全局标记，避免重复加载 CDN 脚本 */
@@ -277,7 +275,7 @@ function loadSwaggerUICDN(): Promise<void> {
       const link = document.createElement('link');
       link.id = cssId;
       link.rel = 'stylesheet';
-      link.href = SWAGGER_CDN_CSS;
+      link.href = SWAGGER_CSS;
       document.head.appendChild(link);
     }
 
@@ -286,7 +284,7 @@ function loadSwaggerUICDN(): Promise<void> {
     if (!document.getElementById(scriptId)) {
       const script = document.createElement('script');
       script.id = scriptId;
-      script.src = SWAGGER_CDN_JS;
+      script.src = SWAGGER_JS;
       script.crossOrigin = 'anonymous';
       script.onload = () => resolve();
       script.onerror = () => {
