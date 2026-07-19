@@ -5,11 +5,11 @@ import {
   Alert,
   Button,
   Drawer,
+  Dropdown,
   Form,
   Input,
   Modal,
   message,
-  Popconfirm,
   Space,
   Table,
   Tag,
@@ -27,6 +27,7 @@ import {
   upgradeCodeArtifact,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import type { PendingCodeVersionRecord } from '@/utils/pendingCodeVersions';
 import {
   listPendingCodeVersions,
@@ -118,23 +119,18 @@ const TrainingCodePending: React.FC = () => {
     }
 
     const merged = new Map<string, PendingCodeVersionRecord>();
-    [...remote, ...local].forEach((item) => {
+    // 远端优先补全 fileName 等字段，本地登记可覆盖审批状态
+    [...local, ...remote].forEach((item) => {
       if (!item.codeVersionId) return;
       const prev = merged.get(item.codeVersionId);
       merged.set(item.codeVersionId, {
         ...prev,
         ...item,
+        fileName: item.fileName?.trim() || prev?.fileName,
+        codeAssetName: item.codeAssetName?.trim() || prev?.codeAssetName,
+        trainingProfile: item.trainingProfile?.trim() || prev?.trainingProfile,
         approvalStatus:
-          item.source === 'manual' || item.source === 'upload'
-            ? item.approvalStatus || 'PENDING'
-            : prev?.approvalStatus || item.approvalStatus || 'PENDING',
-      });
-    });
-    local.forEach((item) => {
-      merged.set(item.codeVersionId, {
-        ...merged.get(item.codeVersionId),
-        ...item,
-        approvalStatus: 'PENDING',
+          item.approvalStatus || prev?.approvalStatus || 'PENDING',
       });
     });
 
@@ -303,7 +299,7 @@ const TrainingCodePending: React.FC = () => {
       dataIndex: 'uploadedAt',
       width: 180,
       hideInSearch: true,
-      render: (_, r) => r.uploadedAt || '-',
+      render: (_, r) => formatDisplayDateTime(r.uploadedAt),
     },
     {
       title: 'codeVersionId',
@@ -319,10 +315,11 @@ const TrainingCodePending: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 360,
+      width: 220,
+      fixed: 'right',
       hideInSearch: true,
       render: (_, record) => (
-        <Space size={0} wrap>
+        <Space size={0} style={{ whiteSpace: 'nowrap' }}>
           <Button
             type="link"
             style={{ paddingLeft: 0 }}
@@ -333,23 +330,6 @@ const TrainingCodePending: React.FC = () => {
           <Button type="link" danger onClick={() => openReject(record)}>
             拒绝
           </Button>
-          <Button type="link" onClick={() => handleOpenFindings(record)}>
-            Findings
-          </Button>
-          <Popconfirm
-            title="触发风险重扫？"
-            description="会生成新风险证据，已批准版本可能回到 PENDING。"
-            onConfirm={() => handleRescan(record)}
-          >
-            <Button type="link">重扫</Button>
-          </Popconfirm>
-          <Popconfirm
-            title="执行制品升级？"
-            description="仅用于历史路径迁移，成功后需重新校验/审核。"
-            onConfirm={() => handleUpgrade(record)}
-          >
-            <Button type="link">制品升级</Button>
-          </Popconfirm>
           <Button
             type="link"
             onClick={() =>
@@ -361,6 +341,43 @@ const TrainingCodePending: React.FC = () => {
           >
             查看
           </Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'findings',
+                  label: 'Findings',
+                  onClick: () => handleOpenFindings(record),
+                },
+                {
+                  key: 'rescan',
+                  label: '重扫',
+                  onClick: () => {
+                    Modal.confirm({
+                      title: '触发风险重扫？',
+                      content: '会生成新风险证据，已批准版本可能回到 PENDING。',
+                      okText: '重扫',
+                      onOk: () => handleRescan(record),
+                    });
+                  },
+                },
+                {
+                  key: 'upgrade',
+                  label: '制品升级',
+                  onClick: () => {
+                    Modal.confirm({
+                      title: '执行制品升级？',
+                      content: '仅用于历史路径迁移，成功后需重新校验/审核。',
+                      okText: '升级',
+                      onOk: () => handleUpgrade(record),
+                    });
+                  },
+                },
+              ],
+            }}
+          >
+            <Button type="link">更多</Button>
+          </Dropdown>
         </Space>
       ),
     },

@@ -115,6 +115,7 @@ export {
   getCodeVersionDetail,
   getCodeUserDisplayName,
   saveCodeVersionFileAndPublish,
+  publishCodeWorkspaceDraft,
   deleteCodeAsset,
   downloadCodeVersionZip,
   updateCodeAssetMeta,

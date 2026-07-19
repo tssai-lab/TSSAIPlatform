@@ -215,10 +215,37 @@ export async function fetchPendingCodeReviewTasks(
     options,
   );
   const items = Array.isArray(payload?.items) ? payload.items : [];
+  const mapped = items.map(mapAdminReviewTaskToListItem);
+  // 审核列表 DTO 常不含 fileName / trainingProfile，用版本详情补全
+  const enriched = await Promise.all(
+    mapped.map(async (item) => {
+      if (item.fileName?.trim() && item.trainingProfile?.trim()) {
+        return item;
+      }
+      try {
+        const detail = await getV2CodeVersion(item.codeVersionId, {
+          skipErrorHandler: true,
+          ...(options || {}),
+        });
+        const legacy = mapV2CodeVersionToLegacy(detail);
+        return {
+          ...item,
+          fileName: item.fileName?.trim() || legacy.fileName || '',
+          trainingProfile:
+            item.trainingProfile?.trim() || legacy.trainingProfile || '',
+          codeAssetName:
+            item.codeAssetName?.trim() || legacy.codeAssetName || '',
+          codeName: item.codeName || legacy.codeName,
+        };
+      } catch {
+        return item;
+      }
+    }),
+  );
   return {
     success: true,
-    data: items.map(mapAdminReviewTaskToListItem),
-    total: payload?.totalElements ?? items.length,
+    data: enriched,
+    total: payload?.totalElements ?? enriched.length,
   };
 }
 
@@ -981,11 +1008,28 @@ function suggestNextCodeVersionLabel(current?: string): string {
   return `${v}-edit`;
 }
 
-function isOpenWorkspace(ws?: { status?: string; readOnly?: boolean }) {
+function isOpenWorkspace(ws?: {
+  status?: string;
+  readOnly?: boolean;
+  closedAt?: string;
+  closedVersionId?: string;
+}) {
   if (!ws) return false;
   if (ws.readOnly) return false;
+  // 已关闭 / 已发布的工作区不应再当作草稿
+  if (ws.closedAt || ws.closedVersionId) return false;
   const status = String(ws.status || '').toUpperCase();
-  return !status || status === 'OPEN';
+  if (
+    status === 'CLOSED' ||
+    status === 'ABANDONED' ||
+    status === 'PUBLISHED' ||
+    status === 'COMMITTED'
+  ) {
+    return false;
+  }
+  // 无 status 时保守视为打开（兼容旧接口）；有 status 则仅 OPEN/ACTIVE
+  if (!status) return true;
+  return status === 'OPEN' || status === 'ACTIVE';
 }
 
 async function ensureEditableCodeWorkspace(
@@ -1161,6 +1205,78 @@ export async function saveCodeVersionFileAndPublish(
   } catch (error: any) {
     const msg = await errorMessageFromV2(error);
     const err = new Error(msg || '保存训练代码失败');
+    (err as any).cause = error;
+    throw err;
+  }
+}
+
+/**
+ * 将已有工作区草稿直接发布为新版本（用于仅增删改文件、未改当前预览内容的场景）。
+ */
+export async function publishCodeWorkspaceDraft(
+  params: {
+    codeAssetId: string;
+    baseVersionId: string;
+    currentVersionLabel?: string;
+    nextVersionLabel?: string;
+  },
+  options?: { [key: string]: any },
+): Promise<{ success: true; data: SaveCodeVersionFileResult }> {
+  const assetId = params.codeAssetId?.trim();
+  const baseVersionId = params.baseVersionId?.trim();
+  if (!assetId || !baseVersionId) {
+    throw new Error('缺少 codeAssetId / baseVersionId，无法发布');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const workspace = await ensureEditableCodeWorkspace(
+      assetId,
+      baseVersionId,
+      opts,
+    );
+    const workspaceId = workspace.id;
+    if (!workspaceId) {
+      throw new Error('未能打开代码编辑工作区');
+    }
+    const refreshed = await getV2CodeWorkspace(workspaceId, opts).catch(
+      () => undefined,
+    );
+    const publishRevision = refreshed?.revision ?? workspace.revision;
+    if (publishRevision == null) {
+      throw new Error('缺少 workspaceRevision，无法发布');
+    }
+    const nextVersion =
+      params.nextVersionLabel?.trim() ||
+      suggestNextCodeVersionLabel(params.currentVersionLabel);
+    const published = await publishV2CodeWorkspace(
+      workspaceId,
+      {
+        expectedWorkspaceRevision: publishRevision,
+        version: nextVersion,
+      },
+      opts,
+    );
+    const publishedVersionId =
+      published?.versionId ||
+      published?.codeVersionId ||
+      published?.id ||
+      '';
+    if (!publishedVersionId) {
+      throw new Error('发布成功但未返回新版本 ID');
+    }
+    return {
+      success: true,
+      data: {
+        workspaceId,
+        publishedVersionId,
+        publishedVersion:
+          published?.versionLabel || published?.version || nextVersion,
+        path: '',
+      },
+    };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    const err = new Error(msg || '发布工作区草稿失败');
     (err as any).cause = error;
     throw err;
   }
