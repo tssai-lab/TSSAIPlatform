@@ -49,6 +49,7 @@ import {
   listCodeAssetVersions,
   moveCodeWorkspaceFile,
   previewCodeEditableFile,
+  publishCodeWorkspaceDraft,
   saveCodeVersionFileAndPublish,
   updateCodeAssetMeta,
 } from '@/services/platform';
@@ -132,6 +133,8 @@ const TrainingCodeDetail: React.FC = () => {
   const [renameFileOpen, setRenameFileOpen] = useState(false);
   const [assetVersions, setAssetVersions] = useState<CodeVersionListItem[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
+  /** 是否存在打开中的工作区草稿（含文件增删改） */
+  const [workspaceDraftOpen, setWorkspaceDraftOpen] = useState(false);
 
   const [editNameForm] = Form.useForm<EditNameFormValues>();
   const [newFileForm] = Form.useForm<NewFileFormValues>();
@@ -229,6 +232,9 @@ const TrainingCodeDetail: React.FC = () => {
       const files = res?.data?.codeFiles ?? [];
       setCodeFiles(files);
       setFilesLoadError(res?.data?.loadError);
+      setWorkspaceDraftOpen(
+        Boolean((res?.data as { fromWorkspace?: boolean })?.fromWorkspace),
+      );
       if (res?.data?.codeFilePath && res?.data?.codeContent) {
         setSelectedPath(res.data.codeFilePath);
         setPreviewFileName(res.data.codeFileName || res.data.codeFilePath);
@@ -245,6 +251,7 @@ const TrainingCodeDetail: React.FC = () => {
       setCodeFiles([]);
       setSelectedPath(undefined);
       setPreviewContent('');
+      setWorkspaceDraftOpen(false);
       setFilesLoadError(getApiErrorMessage(error, '代码文件列表加载失败'));
     } finally {
       setFilesLoading(false);
@@ -278,6 +285,8 @@ const TrainingCodeDetail: React.FC = () => {
   };
 
   const previewDirty = previewContent !== originalPreviewContent;
+  /** 有工作区草稿或未保存内容修改时，才可点「保存并发布 / 放弃工作区」 */
+  const hasDraft = workspaceDraftOpen || previewDirty;
 
   const handleSaveAndPublish = useCallback(
     (contentOverride?: string) => {
@@ -287,7 +296,9 @@ const TrainingCodeDetail: React.FC = () => {
         typeof contentOverride === 'string'
           ? contentOverride !== originalPreviewContent
           : previewDirty;
-      if (!selectedPath || !dirty) return;
+      const publishFile = Boolean(selectedPath && dirty);
+      const publishDraftOnly = !publishFile && workspaceDraftOpen;
+      if (!publishFile && !publishDraftOnly) return;
       const assetId = meta?.codeAssetId?.trim();
       if (!assetId) {
         message.error('缺少 codeAssetId，无法保存（请刷新后重试）');
@@ -298,12 +309,17 @@ const TrainingCodeDetail: React.FC = () => {
         content: (
           <div>
             <p>
-              当前代码版本不可变。保存会把修改写入工作区，并发布为同一代码资产下的
+              当前代码版本不可变。保存会把工作区修改发布为同一代码资产下的
               <strong>新版本</strong>。
             </p>
             <p style={{ color: '#8c8c8c', marginBottom: 0 }}>
-              文件：{selectedPath}
-              {meta?.version ? `（基于 ${meta.version}）` : ''}
+              {publishFile
+                ? `文件：${selectedPath}${
+                    meta?.version ? `（基于 ${meta.version}）` : ''
+                  }`
+                : `将发布当前工作区草稿${
+                    meta?.version ? `（基于 ${meta.version}）` : ''
+                  }`}
             </p>
           </div>
         ),
@@ -312,22 +328,34 @@ const TrainingCodeDetail: React.FC = () => {
         onOk: async () => {
           setSaving(true);
           try {
-            const res = await saveCodeVersionFileAndPublish(
-              {
-                codeAssetId: assetId,
-                baseVersionId: codeVersionId,
-                path: selectedPath,
-                content,
-                currentVersionLabel: meta?.version,
-              },
-              { skipErrorHandler: true },
-            );
+            const res = publishFile
+              ? await saveCodeVersionFileAndPublish(
+                  {
+                    codeAssetId: assetId,
+                    baseVersionId: codeVersionId,
+                    path: selectedPath!,
+                    content,
+                    currentVersionLabel: meta?.version,
+                  },
+                  { skipErrorHandler: true },
+                )
+              : await publishCodeWorkspaceDraft(
+                  {
+                    codeAssetId: assetId,
+                    baseVersionId: codeVersionId,
+                    currentVersionLabel: meta?.version,
+                  },
+                  { skipErrorHandler: true },
+                );
             const newId = res.data.publishedVersionId;
             message.success(
               `已发布新版本 ${res.data.publishedVersion || ''}`.trim(),
             );
-            setPreviewContent(content);
-            setOriginalPreviewContent(content);
+            if (publishFile) {
+              setPreviewContent(content);
+              setOriginalPreviewContent(content);
+            }
+            setWorkspaceDraftOpen(false);
             history.replace(
               `/task/code/detail/${encodeURIComponent(newId)}`,
               locationState?.from ? { from: locationState.from } : undefined,
@@ -350,6 +378,7 @@ const TrainingCodeDetail: React.FC = () => {
       previewContent,
       previewDirty,
       selectedPath,
+      workspaceDraftOpen,
     ],
   );
 
@@ -438,21 +467,35 @@ const TrainingCodeDetail: React.FC = () => {
     }
     setAbandoning(true);
     try {
-      const res = await abandonCodeWorkspace(codeAssetId, {
-        skipErrorHandler: true,
-      });
-      if (res?.data?.abandoned) {
-        message.success('已放弃工作区草稿');
-      } else {
-        message.info('当前无打开的工作区草稿');
+      if (workspaceDraftOpen) {
+        const res = await abandonCodeWorkspace(codeAssetId, {
+          skipErrorHandler: true,
+        });
+        if (res?.data?.abandoned) {
+          message.success('已放弃工作区草稿');
+        } else {
+          message.info('当前无打开的工作区草稿');
+        }
+        setWorkspaceDraftOpen(false);
+        await loadFiles();
+        return;
       }
-      await loadFiles();
+      if (previewContent !== originalPreviewContent) {
+        setPreviewContent(originalPreviewContent);
+        message.success('已放弃未保存的内容修改');
+      }
     } catch (error: any) {
       message.error(getApiErrorMessage(error, '放弃工作区失败'));
     } finally {
       setAbandoning(false);
     }
-  }, [codeAssetId, loadFiles]);
+  }, [
+    codeAssetId,
+    loadFiles,
+    originalPreviewContent,
+    previewContent,
+    workspaceDraftOpen,
+  ]);
 
   const handleDeleteAsset = useCallback(async () => {
     const assetId = meta?.codeAssetId?.trim();
@@ -492,6 +535,7 @@ const TrainingCodeDetail: React.FC = () => {
         { skipErrorHandler: true },
       );
       message.success('文件已写入工作区草稿，需「保存并发布」才会成为新版本');
+      setWorkspaceDraftOpen(true);
       setNewFileOpen(false);
       newFileForm.resetFields();
       await loadFiles();
@@ -525,6 +569,7 @@ const TrainingCodeDetail: React.FC = () => {
       message.success(
         '文件已重命名（工作区草稿），需「保存并发布」才会成为新版本',
       );
+      setWorkspaceDraftOpen(true);
       setRenameFileOpen(false);
       renameFileForm.resetFields();
       setSelectedPath(targetPath);
@@ -561,6 +606,7 @@ const TrainingCodeDetail: React.FC = () => {
         { skipErrorHandler: true },
       );
       message.success('文件已从工作区草稿删除，需「保存并发布」才会成为新版本');
+      setWorkspaceDraftOpen(true);
       setSelectedPath(undefined);
       setPreviewContent('');
       setPreviewFileName('');
@@ -702,64 +748,82 @@ const TrainingCodeDetail: React.FC = () => {
       breadcrumb={{ items: breadcrumbItems }}
       extra={
         codeAssetId ? (
-          <Space wrap>
-            <Button
-              icon={<DownloadOutlined />}
-              loading={downloading}
-              onClick={handleDownloadZip}
-            >
-              下载 ZIP
-            </Button>
-            <Button icon={<EditOutlined />} onClick={handleOpenEditName}>
-              编辑名称
-            </Button>
-            <Popconfirm
-              title="弃用该代码版本？"
-              description="弃用后该版本不可再用于新训练，但历史记录仍保留。"
-              okText="弃用"
-              cancelText="取消"
-              okButtonProps={{ danger: true, loading: deprecating }}
-              onConfirm={handleDeprecate}
-            >
-              <Button danger loading={deprecating}>
-                弃用
+          <div style={{ maxWidth: 640 }}>
+            <Space wrap style={{ justifyContent: 'flex-end', width: '100%' }}>
+              <Button
+                icon={<DownloadOutlined />}
+                loading={downloading}
+                onClick={handleDownloadZip}
+              >
+                下载 ZIP
               </Button>
-            </Popconfirm>
-            <Popconfirm
-              title="归档该代码版本？"
-              description="归档后版本将从常规列表隐藏，仍可查看历史。"
-              okText="归档"
-              cancelText="取消"
-              okButtonProps={{ loading: archiving }}
-              onConfirm={handleArchive}
-            >
-              <Button loading={archiving}>归档</Button>
-            </Popconfirm>
-            <Popconfirm
-              title="放弃工作区草稿？"
-              description="将丢弃当前打开的工作区中未发布的修改（含新建/删除/重命名）。"
-              okText="放弃"
-              cancelText="取消"
-              okButtonProps={{ danger: true, loading: abandoning }}
-              onConfirm={handleAbandonWorkspace}
-            >
-              <Button danger loading={abandoning}>
-                放弃工作区
+              <Button icon={<EditOutlined />} onClick={handleOpenEditName}>
+                编辑名称
               </Button>
-            </Popconfirm>
-            <Popconfirm
-              title="删除训练代码资产？"
-              description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
-              okText="删除"
-              cancelText="取消"
-              okButtonProps={{ danger: true, loading: deleting }}
-              onConfirm={handleDeleteAsset}
+              <Popconfirm
+                title="弃用该代码版本？"
+                description="弃用后该版本不可再用于新训练，但历史记录仍保留。"
+                okText="弃用"
+                cancelText="取消"
+                okButtonProps={{ danger: true, loading: deprecating }}
+                onConfirm={handleDeprecate}
+              >
+                <Button danger loading={deprecating}>
+                  弃用
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title="归档该代码版本？"
+                description="归档后版本将从常规列表隐藏，仍可查看历史。"
+                okText="归档"
+                cancelText="取消"
+                okButtonProps={{ loading: archiving }}
+                onConfirm={handleArchive}
+              >
+                <Button loading={archiving}>归档</Button>
+              </Popconfirm>
+              <Popconfirm
+                title="删除训练代码资产？"
+                description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
+                okText="删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true, loading: deleting }}
+                onConfirm={handleDeleteAsset}
+              >
+                <Button danger loading={deleting}>
+                  删除资产
+                </Button>
+              </Popconfirm>
+            </Space>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: '#8c8c8c',
+                lineHeight: 1.7,
+                textAlign: 'right',
+              }}
             >
-              <Button danger loading={deleting}>
-                删除资产
-              </Button>
-            </Popconfirm>
-          </Space>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  弃用
+                </Typography.Text>
+                ：仅针对当前版本，标记后不可再用于新训练，详情与历史仍可查看。
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  归档
+                </Typography.Text>
+                ：仅针对当前版本，从常规列表中收起，需要时可继续打开历史详情。
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  删除资产
+                </Typography.Text>
+                ：删除整个代码资产（含其下全部版本）；若已被训练引用或存在打开中的工作区会失败。
+              </div>
+            </div>
+          </div>
         ) : undefined
       }
     >
@@ -931,6 +995,70 @@ const TrainingCodeDetail: React.FC = () => {
             </Card>
           ) : null}
 
+          {codeAssetId ? (
+            <div style={{ marginBottom: 12 }}>
+              <Space wrap>
+                <Button
+                  type={hasDraft ? 'primary' : 'default'}
+                  icon={<SaveOutlined />}
+                  loading={saving}
+                  disabled={!hasDraft}
+                  onClick={() => handleSaveAndPublish()}
+                  style={
+                    hasDraft
+                      ? undefined
+                      : { color: 'rgba(0,0,0,0.25)', borderColor: '#d9d9d9' }
+                  }
+                >
+                  保存并发布
+                </Button>
+                <Popconfirm
+                  title="放弃工作区草稿？"
+                  description="将丢弃未发布的文件增删改与内容修改，恢复为当前版本基线。"
+                  okText="放弃"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true, loading: abandoning }}
+                  disabled={!hasDraft}
+                  onConfirm={handleAbandonWorkspace}
+                >
+                  {/* span：避免 disabled 按钮被 Popconfirm 包住后样式/点击异常 */}
+                  <span>
+                    <Button
+                      danger={hasDraft}
+                      loading={abandoning}
+                      disabled={!hasDraft}
+                      style={
+                        hasDraft
+                          ? undefined
+                          : {
+                              color: 'rgba(0,0,0,0.25)',
+                              borderColor: '#d9d9d9',
+                              background: '#f5f5f5',
+                            }
+                      }
+                    >
+                      放弃工作区
+                    </Button>
+                  </span>
+                </Popconfirm>
+              </Space>
+              {hasDraft ? (
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 12,
+                    color: '#ad6800',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {workspaceDraftOpen
+                    ? '当前为未发布的工作区草稿（含增删改与内容修改），正式生效需「保存并发布」。'
+                    : '当前文件有未发布的内容修改，正式生效需「保存并发布」。'}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <Row gutter={16}>
             <Col xs={24} lg={8}>
               <Card
@@ -959,7 +1087,7 @@ const TrainingCodeDetail: React.FC = () => {
                       </Button>
                       <Popconfirm
                         title="从工作区草稿删除该文件？"
-                        description="删除后需「保存并发布」才会成为新版本；也可「放弃工作区」恢复。"
+                        description="删除后需「保存并发布」才会成为新版本；也可通过上方「放弃工作区」恢复。"
                         okText="删除"
                         cancelText="取消"
                         okButtonProps={{ danger: true }}
@@ -1064,7 +1192,7 @@ const TrainingCodeDetail: React.FC = () => {
                     <Alert
                       type="info"
                       showIcon
-                      message="可在此编辑源码。代码版本不可变：编辑后点击「保存并发布」会生成新版本。新建/删除/重命名会写入工作区草稿，同样需「保存并发布」才成为新版本；也可通过顶部「放弃工作区」丢弃草稿。"
+                      message="可在此编辑源码。修改后使用上方「保存并发布」生成新版本；不想保留草稿时用「放弃工作区」。"
                       style={{ marginBottom: 12 }}
                     />
                     <CodeEditor
@@ -1075,16 +1203,6 @@ const TrainingCodeDetail: React.FC = () => {
                       maxHeight="520px"
                     />
                     <Space wrap style={{ marginTop: 12 }}>
-                      <Button
-                        type="primary"
-                        size="small"
-                        icon={<SaveOutlined />}
-                        loading={saving}
-                        disabled={!previewDirty}
-                        onClick={() => handleSaveAndPublish()}
-                      >
-                        保存并发布
-                      </Button>
                       <Button
                         size="small"
                         icon={<CopyOutlined />}
@@ -1162,8 +1280,16 @@ const TrainingCodeDetail: React.FC = () => {
           >
             <Input placeholder="例如 src/train.py" />
           </Form.Item>
-          <Form.Item name="content" label="初始内容（可选）">
-            <Input.TextArea rows={6} placeholder="留空则创建空文件" />
+          <Form.Item
+            name="content"
+            label="代码内容"
+            extra="可选。填写该文件的源码正文；留空则创建空文件。"
+          >
+            <Input.TextArea
+              rows={8}
+              placeholder="在此粘贴或输入文件源码，例如 Python / Shell 脚本内容"
+              style={{ fontFamily: 'monospace', fontSize: 13 }}
+            />
           </Form.Item>
         </Form>
       </Modal>
