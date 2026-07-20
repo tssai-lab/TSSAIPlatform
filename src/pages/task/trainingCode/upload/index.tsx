@@ -16,8 +16,10 @@ import {
   Upload,
 } from 'antd';
 import React, { useState } from 'react';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import {
   approveCodeVersion,
+  autoApproveCodeVersionIfEnabled,
   CONSISTENCY_TRAINING_PROFILE,
   checkCodeVersionForTraining,
   uploadCodeZip,
@@ -88,6 +90,52 @@ const TrainingCodeUpload: React.FC = () => {
         fileName: data.fileName,
         trainingProfile: data.trainingProfile || trainingProfile,
       });
+
+      if (
+        isTrainingCodeAutoApproveEnabled() &&
+        data.approvalStatus !== 'APPROVED'
+      ) {
+        try {
+          const approved = await autoApproveCodeVersionIfEnabled(
+            data.codeVersionId,
+            {
+              trainingProfile: data.trainingProfile || trainingProfile,
+              skipErrorHandler: true,
+            },
+          );
+          setUploadResult((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  approvalStatus: approved?.approvalStatus || 'APPROVED',
+                }
+              : prev,
+          );
+          markPendingCodeApproved(data.codeVersionId);
+          message.success(
+            `训练代码已上传并自动审核通过：${data.codeVersionId}`,
+          );
+          return;
+        } catch (approveError: any) {
+          upsertPendingCodeVersion({
+            codeVersionId: data.codeVersionId,
+            codeAssetName: values.codeName.trim(),
+            fileName: data.fileName,
+            trainingProfile: data.trainingProfile || trainingProfile,
+            approvalStatus: data.approvalStatus || 'PENDING',
+            sizeBytes: data.sizeBytes,
+            source: 'upload',
+          });
+          message.warning(
+            getApiErrorMessage(
+              approveError,
+              '上传成功，但自动审核失败，请到待审核页处理',
+            ),
+          );
+          return;
+        }
+      }
+
       if (data.approvalStatus !== 'APPROVED') {
         upsertPendingCodeVersion({
           codeVersionId: data.codeVersionId,
@@ -200,18 +248,29 @@ const TrainingCodeUpload: React.FC = () => {
         style={{ marginBottom: 16 }}
         message="上传说明"
         description={
-          <span>
-            zip 须包含入口脚本{' '}
-            <Typography.Text code>
-              scripts/training/train_fusion_baseline.py
-            </Typography.Text>
-            。上传接口使用 multipart 表单字段{' '}
-            <Typography.Text code>
-              file / codeName / version / trainingProfile / remark
-            </Typography.Text>
-            。上传后一般为 <Typography.Text code>PENDING</Typography.Text>
-            ，需管理员审核通过后才会出现在训练代码列表。
-          </span>
+          isTrainingCodeAutoApproveEnabled() ? (
+            <span>
+              zip 须包含入口脚本{' '}
+              <Typography.Text code>
+                scripts/training/train_fusion_baseline.py
+              </Typography.Text>
+              。当前为<strong>自动审核</strong>
+              ：上传成功后会自动审核通过，可直接在训练代码列表中使用。管理员审核入口仍保留，需要时可改回人工审核。
+            </span>
+          ) : (
+            <span>
+              zip 须包含入口脚本{' '}
+              <Typography.Text code>
+                scripts/training/train_fusion_baseline.py
+              </Typography.Text>
+              。上传接口使用 multipart 表单字段{' '}
+              <Typography.Text code>
+                file / codeName / version / trainingProfile / remark
+              </Typography.Text>
+              。上传后一般为 <Typography.Text code>PENDING</Typography.Text>
+              ，需管理员审核通过后才会出现在训练代码列表。
+            </span>
+          )
         }
       />
 
@@ -222,8 +281,16 @@ const TrainingCodeUpload: React.FC = () => {
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
-              message="当前为 PENDING，训练代码列表看不到这条记录是正常的"
-              description="请等待管理员在「待审核」中审核通过；管理员也可在本页直接点「审核通过」。"
+              message={
+                isTrainingCodeAutoApproveEnabled()
+                  ? '仍为 PENDING：自动审核可能失败'
+                  : '当前为 PENDING，训练代码列表看不到这条记录是正常的'
+              }
+              description={
+                isTrainingCodeAutoApproveEnabled()
+                  ? '请管理员在「待审核」中处理，或在本页点击「审核通过」。'
+                  : '请等待管理员在「待审核」中审核通过；管理员也可在本页直接点「审核通过」。'
+              }
             />
           )}
           {isApproved && (
@@ -231,7 +298,11 @@ const TrainingCodeUpload: React.FC = () => {
               type="success"
               showIcon
               style={{ marginBottom: 16 }}
-              message="已审核通过，可在训练代码列表中查看并用于发起训练"
+              message={
+                isTrainingCodeAutoApproveEnabled()
+                  ? '已自动审核通过，可在训练代码列表中查看并用于发起训练'
+                  : '已审核通过，可在训练代码列表中查看并用于发起训练'
+              }
             />
           )}
           <Descriptions

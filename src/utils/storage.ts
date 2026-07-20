@@ -27,4 +27,6 @@ export const storage = {
 export const STORAGE_KEYS = {
   TOKEN: 'token',
   USER_INFO: 'USER_INFO',
+  /** 训练代码管理员审核开关（与系统配置同步的前端缓存） */
+  TRAINING_CODE_REVIEW_CONFIG: 'TRAINING_CODE_REVIEW_CONFIG',
 };

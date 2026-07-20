@@ -3,6 +3,7 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
 import { Button, message, Popconfirm, Space, Tag, Typography } from 'antd';
 import React, { useRef } from 'react';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import type { CodeVersionListItem } from '@/services/code';
 import {
   approveCodeVersion,
@@ -234,9 +235,13 @@ const TrainingCodeList: React.FC = () => {
   return (
     <PageContainer
       title="训练代码"
-      subTitle="训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段"
+      subTitle={
+        isTrainingCodeAutoApproveEnabled()
+          ? '当前为自动审核：上传/发布后默认通过，可直接用于发起训练（READY + APPROVED）'
+          : '训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段'
+      }
       extra={[
-        access.isAdmin ? (
+        access.isAdmin && !isTrainingCodeAutoApproveEnabled() ? (
           <Button
             key="pending"
             onClick={() => history.push('/task/code/pending')}

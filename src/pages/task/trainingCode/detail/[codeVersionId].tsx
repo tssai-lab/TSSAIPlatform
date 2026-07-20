@@ -19,7 +19,6 @@ import {
   Empty,
   Form,
   Input,
-  List,
   Modal,
   message,
   Popconfirm,
@@ -28,12 +27,14 @@ import {
   Spin,
   Table,
   Tag,
+  Tree,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodeEditor from '@/components/CodeEditor';
 import CodePreview from '@/components/CodePreview';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import type { CodeVersionDetail, CodeVersionListItem } from '@/services/code';
 import { getCodeUserDisplayName } from '@/services/code';
 import {
@@ -54,8 +55,15 @@ import {
   updateCodeAssetMeta,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import {
+  buildCodeFileTreeData,
+  collectCodeFileTreeExpandedKeys,
+} from '@/utils/codeFileTree';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
-import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
+import {
+  removePendingCodeVersion,
+  upsertPendingCodeVersion,
+} from '@/utils/pendingCodeVersions';
 
 function approvalTag(status?: string) {
   if (status === 'APPROVED') {
@@ -115,6 +123,7 @@ const TrainingCodeDetail: React.FC = () => {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [codeFiles, setCodeFiles] = useState<API.ModelCodeFile[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>();
+  const [expandedFileKeys, setExpandedFileKeys] = useState<React.Key[]>([]);
   const [previewContent, setPreviewContent] = useState('');
   const [originalPreviewContent, setOriginalPreviewContent] = useState('');
   const [previewFileName, setPreviewFileName] = useState('');
@@ -356,6 +365,16 @@ const TrainingCodeDetail: React.FC = () => {
               setOriginalPreviewContent(content);
             }
             setWorkspaceDraftOpen(false);
+            if (!isTrainingCodeAutoApproveEnabled()) {
+              upsertPendingCodeVersion({
+                codeVersionId: newId,
+                codeAssetName: getCodeUserDisplayName(meta ?? undefined),
+                fileName: meta?.fileName,
+                trainingProfile: meta?.trainingProfile,
+                approvalStatus: 'PENDING',
+                source: 'publish',
+              });
+            }
             history.replace(
               `/task/code/detail/${encodeURIComponent(newId)}`,
               locationState?.from ? { from: locationState.from } : undefined,
@@ -372,8 +391,7 @@ const TrainingCodeDetail: React.FC = () => {
     [
       codeVersionId,
       locationState?.from,
-      meta?.codeAssetId,
-      meta?.version,
+      meta,
       originalPreviewContent,
       previewContent,
       previewDirty,
@@ -661,6 +679,19 @@ const TrainingCodeDetail: React.FC = () => {
     items.push({ title: title || '训练代码详情' });
     return items;
   }, [fromPending, title]);
+
+  const fileTreeData = useMemo(
+    () => buildCodeFileTreeData(codeFiles),
+    [codeFiles],
+  );
+  const fileTreeExpandedKeys = useMemo(
+    () => collectCodeFileTreeExpandedKeys(fileTreeData),
+    [fileTreeData],
+  );
+
+  useEffect(() => {
+    setExpandedFileKeys(fileTreeExpandedKeys);
+  }, [fileTreeExpandedKeys]);
 
   const versionColumns: ColumnsType<CodeVersionListItem> = useMemo(
     () => [
@@ -1062,7 +1093,7 @@ const TrainingCodeDetail: React.FC = () => {
           <Row gutter={16}>
             <Col xs={24} lg={8}>
               <Card
-                title="代码文件"
+                title="代码目录"
                 style={{ marginBottom: 16 }}
                 extra={
                   codeAssetId ? (
@@ -1116,45 +1147,29 @@ const TrainingCodeDetail: React.FC = () => {
               >
                 {filesLoading ? (
                   <div style={{ textAlign: 'center', padding: 48 }}>
-                    <Spin tip="加载文件列表…" />
+                    <Spin tip="加载目录树…" />
                   </div>
-                ) : codeFiles.length ? (
-                  <List
-                    size="small"
-                    dataSource={codeFiles}
-                    rowKey={(item) => item.path}
-                    renderItem={(item) => {
-                      const path = item.path;
-                      const active = path === selectedPath;
-                      return (
-                        <List.Item
-                          style={{
-                            cursor: 'pointer',
-                            background: active ? '#e6f4ff' : undefined,
-                            borderRadius: 4,
-                            paddingInline: 8,
-                          }}
-                          onClick={() => handleSelectFile(path)}
-                        >
-                          <List.Item.Meta
-                            title={
-                              <Typography.Text
-                                ellipsis
-                                style={{ maxWidth: '100%', fontSize: 13 }}
-                              >
-                                {item.fileName || item.name || path}
-                              </Typography.Text>
-                            }
-                            description={
-                              <span style={{ fontSize: 12, color: '#999' }}>
-                                {formatBytes(item.sizeBytes ?? item.size)}
-                              </span>
-                            }
-                          />
-                        </List.Item>
-                      );
+                ) : fileTreeData.length ? (
+                  <div
+                    style={{
+                      maxHeight: 560,
+                      overflow: 'auto',
+                      paddingRight: 4,
                     }}
-                  />
+                  >
+                    <Tree.DirectoryTree
+                      treeData={fileTreeData}
+                      selectedKeys={selectedPath ? [selectedPath] : []}
+                      expandedKeys={expandedFileKeys}
+                      onExpand={(keys) => setExpandedFileKeys(keys)}
+                      expandAction="click"
+                      onSelect={(keys, info) => {
+                        if (!info.node.isLeaf) return;
+                        const path = String(keys[0] || '');
+                        if (path) handleSelectFile(path);
+                      }}
+                    />
+                  </div>
                 ) : (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}

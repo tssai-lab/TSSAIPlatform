@@ -107,6 +107,7 @@ export {
 export {
   uploadCodeZip,
   approveCodeVersion,
+  autoApproveCodeVersionIfEnabled,
   rejectCodeVersion,
   decideCodeVersion,
   fetchCodeVersionList,
@@ -177,6 +178,7 @@ export {
   rescanAdminCodeReviewTask,
   buildV2ApprovalRequest,
   hasV2ApprovalEvidence,
+  fetchAllV2CodeTreeFiles,
   flattenV2CodeTree,
   mapAdminReviewTaskToListItem,
   mapV2CodeVersionToLegacy,

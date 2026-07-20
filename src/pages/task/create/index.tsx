@@ -21,8 +21,10 @@ import {
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import type { AnnotationFormat, DatasetType } from '@/services/dataset';
 import {
+  autoApproveCodeVersionIfEnabled,
   CONSISTENCY_TRAINING_PROFILE,
   checkCodeVersionForTraining,
   createExperimentVersion,
@@ -688,11 +690,37 @@ const TaskCreate: React.FC = () => {
       if (!codeVersionId) {
         throw new Error('训练代码上传成功但未返回 codeVersionId');
       }
+      let approvalStatus = res?.data?.approvalStatus;
+      if (isTrainingCodeAutoApproveEnabled() && approvalStatus !== 'APPROVED') {
+        try {
+          const approved = await autoApproveCodeVersionIfEnabled(
+            codeVersionId,
+            {
+              trainingProfile: CONSISTENCY_TRAINING_PROFILE,
+              skipErrorHandler: true,
+            },
+          );
+          approvalStatus = approved?.approvalStatus || 'APPROVED';
+          message.success(`训练代码已上传并自动审核通过：${codeVersionId}`);
+        } catch (approveError: any) {
+          message.warning(
+            getApiErrorMessage(
+              approveError,
+              '上传成功，但自动审核失败，请到训练代码待审核页处理或改选已审核版本',
+            ),
+          );
+        }
+      } else {
+        message.success(
+          approvalStatus === 'APPROVED'
+            ? `训练代码已上传：${codeVersionId}`
+            : `训练代码已上传，正在执行准入校验：${codeVersionId}`,
+        );
+      }
       setSelectedCodeVersionId(codeVersionId);
-      setSelectedCodeApprovalStatus(res?.data?.approvalStatus);
+      setSelectedCodeApprovalStatus(approvalStatus);
       form.setFieldValue('codeVersionId', codeVersionId);
       await reloadCodeOptions();
-      message.success(`训练代码已上传，正在执行准入校验：${codeVersionId}`);
       setCodeInputMode('select');
     } finally {
       setCodeUploading(false);
@@ -728,8 +756,16 @@ const TaskCreate: React.FC = () => {
           type="warning"
           showIcon
           style={{ marginTop: 12 }}
-          message="训练代码校验通过，等待管理员审批"
-          description={`审核状态：${codeCheck.approvalStatus || 'PENDING'}。校验与审批已分离，需管理员审核通过后方可提交训练${codeCheck.validationStatus ? `；validationStatus=${codeCheck.validationStatus}` : ''}。`}
+          message={
+            isTrainingCodeAutoApproveEnabled()
+              ? '训练代码校验通过，但尚未审核通过'
+              : '训练代码校验通过，等待管理员审批'
+          }
+          description={
+            isTrainingCodeAutoApproveEnabled()
+              ? `审核状态：${codeCheck.approvalStatus || 'PENDING'}。当前系统为自动审核模式，可刷新后重试，或到训练代码页处理。`
+              : `审核状态：${codeCheck.approvalStatus || 'PENDING'}。校验与审批已分离，需管理员审核通过后方可提交训练${codeCheck.validationStatus ? `；validationStatus=${codeCheck.validationStatus}` : ''}。`
+          }
         />
       );
     }
@@ -784,8 +820,9 @@ const TaskCreate: React.FC = () => {
     ) {
       Modal.warning({
         title: '训练代码尚未审核通过',
-        content:
-          '当前版本已通过结构校验，但 approvalStatus 不是 APPROVED。请等待管理员在「训练代码」列表中审核，或改选已审核版本。',
+        content: isTrainingCodeAutoApproveEnabled()
+          ? '当前版本尚未 APPROVED。自动审核可能失败，请刷新后重试，或到训练代码页处理。'
+          : '当前版本已通过结构校验，但 approvalStatus 不是 APPROVED。请等待管理员在「训练代码」列表中审核，或改选已审核版本。',
       });
       throw new Error('approval pending');
     }
@@ -861,8 +898,9 @@ const TaskCreate: React.FC = () => {
     ) {
       Modal.warning({
         title: '训练代码尚未审核通过',
-        content:
-          '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
+        content: isTrainingCodeAutoApproveEnabled()
+          ? '自动审核可能失败，请回到训练配置步骤刷新后重试，或改选已 APPROVED 的版本。'
+          : '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
       });
       setCurrentStep(2);
       return;
@@ -1482,7 +1520,11 @@ const TaskCreate: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                     message="训练代码文件"
-                    description="选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。"
+                    description={
+                      isTrainingCodeAutoApproveEnabled()
+                        ? '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行准入校验，并在管理员审核关闭时自动审核通过。'
+                        : '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。'
+                    }
                   />
                   <Radio.Group
                     value={codeInputMode}

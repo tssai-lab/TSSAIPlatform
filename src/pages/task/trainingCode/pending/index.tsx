@@ -16,6 +16,7 @@ import {
   Typography,
 } from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import {
   approveCodeVersion,
   CONSISTENCY_TRAINING_PROFILE,
@@ -390,7 +391,11 @@ const TrainingCodePending: React.FC = () => {
   return (
     <PageContainer
       title="训练代码待审核"
-      subTitle="处理 PENDING 版本：通过 / 拒绝 / Findings / 重扫 / 制品升级"
+      subTitle={
+        isTrainingCodeAutoApproveEnabled()
+          ? '当前默认自动审核；本页保留通过/拒绝/Findings/重扫/制品升级，供运维与异常兜底'
+          : '处理 PENDING 版本：通过 / 拒绝 / Findings / 重扫 / 制品升级'
+      }
       breadcrumb={{
         items: [
           {
@@ -415,12 +420,26 @@ const TrainingCodePending: React.FC = () => {
       ]}
     >
       <Alert
-        type="info"
+        type={isTrainingCodeAutoApproveEnabled() ? 'warning' : 'info'}
         showIcon
         style={{ marginBottom: 16 }}
         message="说明"
         description={
           <span>
+            {isTrainingCodeAutoApproveEnabled() ? (
+              <>
+                当前系统配置中「训练代码管理员审核」为关闭：日常上传/发布会自动审核通过。
+                本页仍保留完整人工审核与运维能力；若要启用强制人工审核，请到{' '}
+                <a onClick={() => history.push('/system/config')}>
+                  系统管理 · 系统配置
+                </a>{' '}
+                打开该开关。{' '}
+              </>
+            ) : (
+              <>
+                当前已开启「训练代码管理员审核」，新上传/发布的版本需在本页人工处理。{' '}
+              </>
+            )}
             待审列表优先走管理员 V2 审核队列；「拒绝」需填写原因并携带审批证据。
             「重扫 / 制品升级」为运维操作。当前管理员：
             {initialState?.currentUser?.name ||
