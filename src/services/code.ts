@@ -2,10 +2,13 @@
  * 代码资产上传 Service
  */
 import { request } from '@umijs/max';
+import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
+import { upsertPendingCodeVersion } from '@/utils/pendingCodeVersions';
 import {
   approveV2CodeVersion,
   buildV2ApprovalRequest,
   extractV2FileText,
+  fetchAllV2CodeTreeFiles,
   flattenV2CodeTree,
   getAdminCodeReviewTaskDetail,
   getV2CodeConsumerManifest,
@@ -331,6 +334,41 @@ export async function approveCodeVersion(
   return decideCodeVersion(codeVersionId, 'APPROVE', options);
 }
 
+/**
+ * 自动审核通过（管理员审核开关关闭时生效）。
+ * 开启管理员审核后为 no-op，人工审核路径保持不变。
+ */
+export async function autoApproveCodeVersionIfEnabled(
+  codeVersionId: string,
+  options?: { [key: string]: any } & { trainingProfile?: string },
+): Promise<CodeVersionApprovalResult | undefined> {
+  if (!isTrainingCodeAutoApproveEnabled()) return undefined;
+  const id = codeVersionId?.trim();
+  if (!id) return undefined;
+
+  const { trainingProfile, ...rest } = options || {};
+  const opts = { skipErrorHandler: true, ...rest };
+  const profile = trainingProfile?.trim();
+  if (profile) {
+    try {
+      await checkCodeVersionForTraining(id, profile, opts);
+    } catch {
+      // 校验失败时仍尝试审批，由审批接口返回明确错误
+    }
+  }
+
+  const res = await approveCodeVersion(id, opts);
+  if (res?.success === false) {
+    throw new Error(res?.errorMessage || '自动审核通过失败');
+  }
+  return (
+    res?.data || {
+      codeVersionId: id,
+      approvalStatus: 'APPROVED',
+    }
+  );
+}
+
 /** 管理员拒绝训练代码版本（reason 必填） */
 export async function rejectCodeVersion(
   codeVersionId: string,
@@ -638,13 +676,32 @@ export async function getCodeVersionDetail(
   }
 }
 
-function mapV2TreeFiles(tree: unknown): API.ModelCodeFile[] {
-  return flattenV2CodeTree(tree).map((item) => ({
+function mapV2TreeFileEntries(
+  files: Array<{
+    path: string;
+    fileName: string;
+    sizeBytes?: number;
+    languageId?: string;
+  }>,
+): API.ModelCodeFile[] {
+  return files.map((item) => ({
     path: item.path,
     fileName: item.fileName,
     sizeBytes: item.sizeBytes,
     languageId: item.languageId,
   })) as API.ModelCodeFile[];
+}
+
+function mapV2TreeFiles(tree: unknown): API.ModelCodeFile[] {
+  return mapV2TreeFileEntries(flattenV2CodeTree(tree));
+}
+
+async function fetchV2CodeFilesFromTree(
+  fetchTree: (prefix?: string) => Promise<unknown>,
+  options?: { [key: string]: any },
+): Promise<API.ModelCodeFile[]> {
+  const files = await fetchAllV2CodeTreeFiles(fetchTree, options);
+  return mapV2TreeFileEntries(files);
 }
 
 function codePreviewErrorMessage(error: any, fallback: string): string {
@@ -674,8 +731,11 @@ export async function listCodeVersionFiles(
   codeVersionId: string,
   options?: { [key: string]: any },
 ) {
-  const tree = await getV2CodeVersionTree(codeVersionId, undefined, options);
-  return { success: true, data: mapV2TreeFiles(tree) };
+  const data = await fetchV2CodeFilesFromTree(
+    (prefix) => getV2CodeVersionTree(codeVersionId, prefix, options),
+    options,
+  );
+  return { success: true, data };
 }
 
 /**
@@ -769,8 +829,11 @@ export async function fetchCodeEditablePreview(
         ? listed.find((ws) => isOpenWorkspace(ws) && ws.id)
         : undefined;
       if (openWs?.id) {
-        const tree = await getV2CodeWorkspaceTree(openWs.id, undefined, opts);
-        const codeFiles = mapV2TreeFiles(tree);
+        const workspaceId = openWs.id;
+        const codeFiles = await fetchV2CodeFilesFromTree(
+          (prefix) => getV2CodeWorkspaceTree(workspaceId, prefix, opts),
+          opts,
+        );
         let codeContent: string | undefined;
         let codeFileName: string | undefined;
         let codeFilePath: string | undefined;
@@ -1193,6 +1256,21 @@ export async function saveCodeVersionFileAndPublish(
       throw new Error('发布成功但未返回新版本 ID');
     }
 
+    try {
+      await autoApproveCodeVersionIfEnabled(publishedVersionId, opts);
+    } catch {
+      // 发布已成功；自动审核失败时保留 PENDING，可走人工待审
+    }
+
+    if (!isTrainingCodeAutoApproveEnabled()) {
+      // 人工审核模式：立刻写入待审本地队列，避免管理员只能等后端审核任务延迟出现
+      upsertPendingCodeVersion({
+        codeVersionId: publishedVersionId,
+        approvalStatus: 'PENDING',
+        source: 'publish',
+      });
+    }
+
     return {
       success: true,
       data: {
@@ -1263,6 +1341,18 @@ export async function publishCodeWorkspaceDraft(
       '';
     if (!publishedVersionId) {
       throw new Error('发布成功但未返回新版本 ID');
+    }
+    try {
+      await autoApproveCodeVersionIfEnabled(publishedVersionId, opts);
+    } catch {
+      // 发布已成功；自动审核失败时保留 PENDING，可走人工待审
+    }
+    if (!isTrainingCodeAutoApproveEnabled()) {
+      upsertPendingCodeVersion({
+        codeVersionId: publishedVersionId,
+        approvalStatus: 'PENDING',
+        source: 'publish',
+      });
     }
     return {
       success: true,

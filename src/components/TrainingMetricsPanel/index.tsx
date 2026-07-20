@@ -30,9 +30,11 @@ import {
   isActiveTaskStatus,
   METRIC_LABELS,
   METRICS_POLL_INTERVAL_MS,
+  METRICS_POST_FINISH_POLL_TIMES,
   type MetricsDataMap,
   TRAINING_MLFLOW_METRIC_KEYS,
 } from '@/utils/trainingMetrics';
+import { isTrainingTerminal } from '@/utils/trainingStatusDisplay';
 
 const CHART_STYLE_STORAGE_KEY = 'taskMetricsChartStyle';
 
@@ -77,7 +79,18 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   );
 
   const isActive = isActiveTaskStatus(taskStatus);
-  const shouldPoll = !!runId && autoRefresh && isActive;
+  const hasAnyMetricPoints = useMemo(
+    () =>
+      Object.values(metricsData).some(
+        (points) => Array.isArray(points) && points.length > 0,
+      ),
+    [metricsData],
+  );
+  // 训练中持续刷新；结束后若指标仍空，再补拉一段时间（MLflow 落盘可能稍晚）
+  const shouldPoll =
+    !!runId &&
+    autoRefresh &&
+    (isActive || (isTrainingTerminal(taskStatus) && !hasAnyMetricPoints));
 
   const availableMetrics = useMemo(
     () => getAvailableMetricKeys(metricsData),
@@ -128,11 +141,23 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
 
   useEffect(() => {
     if (!shouldPoll) return;
+    // 结束后只补拉有限次数，避免 success 后无限请求
+    if (isActive) {
+      const timer = window.setInterval(() => {
+        loadMetrics(true);
+      }, METRICS_POLL_INTERVAL_MS);
+      return () => window.clearInterval(timer);
+    }
+    let left = METRICS_POST_FINISH_POLL_TIMES;
     const timer = window.setInterval(() => {
+      left -= 1;
       loadMetrics(true);
+      if (left <= 0) {
+        window.clearInterval(timer);
+      }
     }, METRICS_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [shouldPoll, loadMetrics]);
+  }, [shouldPoll, isActive, loadMetrics]);
 
   useEffect(() => {
     if (!availableMetrics.length) return;

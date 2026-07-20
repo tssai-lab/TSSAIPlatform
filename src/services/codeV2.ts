@@ -349,6 +349,12 @@ function isDirNode(node: V2CodeTreeNode): boolean {
   return false;
 }
 
+function resolveV2TreeNodePath(node: V2CodeTreeNode, parentPrefix = ''): string {
+  const name = node.fileName || node.name || '';
+  const rawPath = node.path || (parentPrefix ? `${parentPrefix}/${name}` : name);
+  return String(rawPath).replace(/^\/+/, '').replace(/\\/g, '/');
+}
+
 /** 展平 V2 目录树为可预览文件列表（过滤目录） */
 export function flattenV2CodeTree(
   payload: unknown,
@@ -370,8 +376,7 @@ export function flattenV2CodeTree(
   const walk = (list: V2CodeTreeNode[], prefix: string) => {
     list.forEach((node) => {
       const name = node.fileName || node.name || '';
-      const rawPath = node.path || (prefix ? `${prefix}/${name}` : name);
-      const path = String(rawPath).replace(/^\/+/, '').replace(/\\/g, '/');
+      const path = resolveV2TreeNodePath(node, prefix) || name;
       if (!path) return;
       if (isDirNode(node)) {
         if (Array.isArray(node.children) && node.children.length) {
@@ -393,6 +398,93 @@ export function flattenV2CodeTree(
 
   walk(nodes, parentPath);
   return out.filter((item) => !!item.path);
+}
+
+export type V2CodeTreeFileEntry = {
+  path: string;
+  fileName: string;
+  sizeBytes?: number;
+  languageId?: string;
+};
+
+/**
+ * 递归拉取完整文件列表。
+ * 兼容后端 /tree 仅返回单层、目录节点无 children 的情况（通过 prefix 逐层请求）。
+ */
+export async function fetchAllV2CodeTreeFiles(
+  fetchTree: (prefix?: string) => Promise<unknown>,
+  options?: { maxDepth?: number },
+): Promise<V2CodeTreeFileEntry[]> {
+  const maxDepth = options?.maxDepth ?? 24;
+  const visitedPrefixes = new Set<string>();
+  const filesByPath = new Map<string, V2CodeTreeFileEntry>();
+
+  const addFiles = (entries: V2CodeTreeFileEntry[]) => {
+    entries.forEach((entry) => {
+      if (entry.path) filesByPath.set(entry.path, entry);
+    });
+  };
+
+  const loadPrefix = async (prefix: string, depth: number) => {
+    const normPrefix = prefix.replace(/^\/+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
+    const visitKey = normPrefix || '__root__';
+    if (visitedPrefixes.has(visitKey) || depth > maxDepth) return;
+    visitedPrefixes.add(visitKey);
+
+    let payload: unknown;
+    try {
+      payload = await fetchTree(normPrefix || undefined);
+    } catch {
+      return;
+    }
+
+    if (
+      Array.isArray(payload) &&
+      payload.length > 0 &&
+      typeof payload[0] === 'string'
+    ) {
+      addFiles(flattenV2CodeTree(payload));
+      return;
+    }
+
+    const nodes = unwrapList(payload);
+    for (const node of nodes) {
+      const path = resolveV2TreeNodePath(node, normPrefix);
+      if (!path) continue;
+
+      if (isDirNode(node)) {
+        if (Array.isArray(node.children) && node.children.length > 0) {
+          addFiles(flattenV2CodeTree({ children: node.children }));
+          for (const child of node.children) {
+            const childPath = resolveV2TreeNodePath(child, path);
+            if (
+              childPath &&
+              isDirNode(child) &&
+              (!child.children || child.children.length === 0)
+            ) {
+              await loadPrefix(childPath, depth + 1);
+            }
+          }
+        } else {
+          await loadPrefix(path, depth + 1);
+        }
+        continue;
+      }
+
+      const fileName = node.fileName || node.name || path.split('/').pop() || path;
+      filesByPath.set(path, {
+        path,
+        fileName,
+        sizeBytes: node.sizeBytes ?? node.size,
+        languageId: node.languageId,
+      });
+    }
+  };
+
+  await loadPrefix('', 0);
+  return Array.from(filesByPath.values()).sort((a, b) =>
+    a.path.localeCompare(b.path, 'zh-CN'),
+  );
 }
 
 function pickUserCodeName(detail: V2CodeVersion): string | undefined {

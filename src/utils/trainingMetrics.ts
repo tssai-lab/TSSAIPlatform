@@ -234,3 +234,7 @@ export const ACTIVE_TASK_STATUSES = new Set(['pending', 'queued', 'running']);
 export function isActiveTaskStatus(status?: string) {
   return !!status && ACTIVE_TASK_STATUSES.has(status);
 }
+
+/** 训练结束后后端可能稍晚才回写 runId / 指标，前端再补拉一段时间 */
+export const TASK_POST_FINISH_POLL_TIMES = 8;
+export const METRICS_POST_FINISH_POLL_TIMES = 8;

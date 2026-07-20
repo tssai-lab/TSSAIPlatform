@@ -7,6 +7,12 @@ import { SYSTEM_API_CONFIG } from '@/constants/system';
 
 export interface SystemConfig {
   enableAuditLog: boolean;
+  /**
+   * 训练代码管理员审核。
+   * - false（默认）：上传/发布后自动审核通过
+   * - true：需管理员在待审核页人工通过/拒绝
+   */
+  enableTrainingCodeAdminReview?: boolean;
 }
 
 /** 获取系统配置 GET /api/system/config/get */

@@ -38,8 +38,8 @@ import {
   getExperimentVersion,
   getModelVersion,
   listExperimentVersions,
-  publishTrainingModel,
   publishTaskModel,
+  publishTrainingModel,
   triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
@@ -57,6 +57,7 @@ import {
 } from '@/utils/taskDisplayNames';
 import {
   isActiveTaskStatus,
+  TASK_POST_FINISH_POLL_TIMES,
   TASK_STATUS_POLL_INTERVAL_MS,
 } from '@/utils/trainingMetrics';
 import {
@@ -507,14 +508,37 @@ const TaskDetail: React.FC = () => {
     const modelPublishing = ['PENDING', 'PUBLISHING'].includes(
       taskInfo?.modelPublishStatus || '',
     );
-    if (!id || (!isActiveTaskStatus(taskInfo?.status) && !modelPublishing)) {
-      return;
+    if (!id) return;
+
+    // 训练中 / 发布中：持续刷新
+    if (isActiveTaskStatus(taskInfo?.status) || modelPublishing) {
+      const timer = window.setInterval(() => {
+        loadTaskDetail(false);
+      }, TASK_STATUS_POLL_INTERVAL_MS);
+      return () => window.clearInterval(timer);
     }
-    const timer = window.setInterval(() => {
-      loadTaskDetail(false);
-    }, TASK_STATUS_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [id, loadTaskDetail, taskInfo?.modelPublishStatus, taskInfo?.status]);
+
+    // 刚结束时后端常晚一点才回写 runId，再补拉几轮避免曲线空白
+    if (isTrainingTerminal(taskInfo?.status) && !taskInfo?.runId) {
+      let left = TASK_POST_FINISH_POLL_TIMES;
+      const timer = window.setInterval(() => {
+        left -= 1;
+        loadTaskDetail(false);
+        if (left <= 0) {
+          window.clearInterval(timer);
+        }
+      }, TASK_STATUS_POLL_INTERVAL_MS);
+      return () => window.clearInterval(timer);
+    }
+
+    return undefined;
+  }, [
+    id,
+    loadTaskDetail,
+    taskInfo?.modelPublishStatus,
+    taskInfo?.runId,
+    taskInfo?.status,
+  ]);
 
   useEffect(() => {
     if (!experimentId) {

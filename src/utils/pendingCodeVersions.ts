@@ -17,7 +17,7 @@ export type PendingCodeVersionRecord = {
   storagePath?: string;
   sizeBytes?: number;
   uploadedAt?: string;
-  source?: 'upload' | 'manual' | 'api';
+  source?: 'upload' | 'manual' | 'api' | 'publish';
 };
 
 const STORAGE_KEY = 'tssai.pendingCodeVersions';

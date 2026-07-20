@@ -6,6 +6,7 @@ import { history, Link } from '@umijs/max';
 import { App, message, notification } from 'antd';
 import React from 'react';
 import { AvatarDropdown, AvatarName, Question } from '@/components';
+import { syncTrainingCodeReviewConfigFromServer } from '@/constants/trainingCode';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
@@ -63,6 +64,8 @@ export async function getInitialState(): Promise<{
     ].includes(location.pathname)
   ) {
     const currentUser = await fetchUserInfo();
+    // 登录后同步系统配置中的训练代码审核开关（失败不影响进入系统）
+    await syncTrainingCodeReviewConfigFromServer().catch(() => undefined);
     return {
       fetchUserInfo,
       currentUser,
