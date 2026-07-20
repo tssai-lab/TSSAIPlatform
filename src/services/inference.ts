@@ -208,6 +208,47 @@ export async function stopInferenceTask(id: string, options?: { [key: string]: u
   );
 }
 
+export type DeleteInferenceTaskResult = {
+  id: string;
+  deleted: boolean;
+  minioDeleteQueued?: boolean;
+  queuedObjectCount?: number;
+};
+
+export async function deleteInferenceTask(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: DeleteInferenceTaskResult }>(
+    `/inference/tasks/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
+}
+
+export type DeleteInferenceScriptResult = {
+  id: string;
+  assetId: string;
+  deleted: boolean;
+  assetDeleted?: boolean;
+  minioDeleteQueued?: boolean;
+};
+
+export async function deleteInferenceScript(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: DeleteInferenceScriptResult }>(
+    `/inference/scripts/${encodeURIComponent(versionId)}`,
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
+}
+
 export async function getInferenceTaskResult(
   id: string,
   options?: { [key: string]: unknown },
