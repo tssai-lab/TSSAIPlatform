@@ -32,6 +32,8 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createInferenceTask,
+  deleteInferenceScript,
+  deleteInferenceTask,
   downloadObject,
   fetchDatasetList,
   fetchModelList,
@@ -336,6 +338,33 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
+  const handleDeleteTask = async (task: InferenceTask) => {
+    try {
+      await deleteInferenceTask(task.id, { skipErrorHandler: true });
+      message.success('推理任务已删除');
+      if (selectedTask?.id === task.id) {
+        setSelectedTask(undefined);
+        setDrawerOpen(false);
+      }
+      actionRef.current?.reload();
+    } catch (error: any) {
+      message.error(error?.message || '删除推理任务失败');
+    }
+  };
+
+  const handleDeleteScript = async (script: InferenceScriptVersion) => {
+    try {
+      await deleteInferenceScript(script.id, { skipErrorHandler: true });
+      message.success('推理脚本版本已删除');
+      if (taskForm.getFieldValue('scriptVersionId') === script.id) {
+        taskForm.setFieldValue('scriptVersionId', undefined);
+      }
+      await reloadAssets();
+    } catch (error: any) {
+      message.error(error?.message || '删除推理脚本失败');
+    }
+  };
+
   const downloadByObjectName = async (objectName: string, filename: string) => {
     if (!objectName) {
       message.warning('暂无可下载文件');
@@ -415,32 +444,53 @@ const InferenceWorkbench: React.FC = () => {
       key: 'action',
       hideInSearch: true,
       fixed: 'right',
-      width: 190,
-      render: (_, record) => (
-        <Space size={4}>
-          <Button
-            type="link"
-            icon={<FileSearchOutlined />}
-            onClick={() => {
-              setSelectedTask(record);
-              setDrawerOpen(true);
-            }}
-          >
-            结果
-          </Button>
-          {['pending', 'queued', 'running'].includes(record.status) && (
-            <Popconfirm
-              title="停止推理任务"
-              description="确认停止当前任务吗？"
-              onConfirm={() => handleStopTask(record)}
+      width: 250,
+      render: (_, record) => {
+        const isActive = ['pending', 'queued', 'running'].includes(
+          record.status,
+        );
+        return (
+          <Space size={4}>
+            <Button
+              type="link"
+              icon={<FileSearchOutlined />}
+              onClick={() => {
+                setSelectedTask(record);
+                setDrawerOpen(true);
+              }}
             >
-              <Button danger type="link" icon={<StopOutlined />}>
-                停止
+              结果
+            </Button>
+            {isActive && (
+              <Popconfirm
+                title="停止推理任务"
+                description="确认停止当前任务吗？"
+                onConfirm={() => handleStopTask(record)}
+              >
+                <Button danger type="link" icon={<StopOutlined />}>
+                  停止
+                </Button>
+              </Popconfirm>
+            )}
+            <Popconfirm
+              title="删除推理任务"
+              description={
+                isActive
+                  ? '删除会停止正在执行的推理任务，确认删除吗？'
+                  : '确认删除该推理任务吗？'
+              }
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => handleDeleteTask(record)}
+            >
+              <Button danger type="link">
+                删除
               </Button>
             </Popconfirm>
-          )}
-        </Space>
-      ),
+          </Space>
+        );
+      },
     },
   ];
 
@@ -689,6 +739,25 @@ const InferenceWorkbench: React.FC = () => {
                 dataIndex: 'createdAt',
                 valueType: 'dateTime',
                 width: 170,
+              },
+              {
+                title: '操作',
+                key: 'action',
+                width: 100,
+                render: (_, record) => (
+                  <Popconfirm
+                    title="删除推理脚本版本"
+                    description="确认删除该脚本版本吗？若已被推理任务引用将无法删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => handleDeleteScript(record)}
+                  >
+                    <Button danger type="link">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                ),
               },
             ]}
           />
