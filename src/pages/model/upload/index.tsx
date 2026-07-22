@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
+import { MODEL_TYPE_OPTIONS } from '@/constants/model';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import {
   fetchModelAssetDetail,
@@ -281,10 +282,11 @@ const ModelUpload: React.FC = () => {
           <Select
             placeholder="请选择类型"
             disabled={isNewVersionUpload || prefillLoading}
-          >
-            <Select.Option value="CV">CV</Select.Option>
-            <Select.Option value="NLP">NLP</Select.Option>
-          </Select>
+            options={MODEL_TYPE_OPTIONS.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))}
+          />
         </Form.Item>
         <Form.Item
           name="remark"
