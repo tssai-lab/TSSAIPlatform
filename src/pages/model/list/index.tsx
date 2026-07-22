@@ -4,6 +4,7 @@ import { history } from '@umijs/max';
 import { Button, message, Popconfirm, Space } from 'antd';
 import React from 'react';
 import { MOCK_MODELS } from '@/constants/mockData';
+import { MODEL_TYPE_VALUE_ENUM } from '@/constants/model';
 import {
   deleteModelAsset,
   deleteModelVersion,
@@ -62,11 +63,7 @@ const ModelList: React.FC = () => {
       dataIndex: 'type',
       key: 'type',
       width: 88,
-      valueEnum: {
-        CV: { text: 'CV' },
-        NLP: { text: 'NLP' },
-        POINT_CLOUD: { text: '点云' },
-      },
+      valueEnum: MODEL_TYPE_VALUE_ENUM,
     },
     {
       title: '上传时间',
