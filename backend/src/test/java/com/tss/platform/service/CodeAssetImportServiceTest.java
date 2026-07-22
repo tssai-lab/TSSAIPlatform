@@ -9,6 +9,8 @@ import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingProfileRegistry;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
+import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
@@ -54,6 +57,7 @@ class CodeAssetImportServiceTest {
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
     private final CodeRiskAssessmentService riskAssessmentService =
             mock(CodeRiskAssessmentService.class);
+    private final TrainingPlanRegistry trainingPlanRegistry = mock(TrainingPlanRegistry.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final PlatformTransactionManager transactionManager =
             mock(PlatformTransactionManager.class);
@@ -85,6 +89,12 @@ class CodeAssetImportServiceTest {
         when(storageService.read(anyString())).thenAnswer(invocation -> stored(
                 invocation.getArgument(0), uploadedBytes.get()
         ));
+        when(trainingPlanRegistry.requireEnabled(anyString(), org.mockito.ArgumentMatchers.isNull()))
+                .thenReturn(new TrainingPlanDefinition(
+                        "tss.training.plan/v1", "test-plan", "v1", "Test", null, true, null,
+                        List.of(), new TrainingPlanDefinition.Execution("python", "train.py", List.of()),
+                        null, List.of(), List.of(), null, null
+                ));
 
         CodeArtifactAssembler assembler = new CodeArtifactAssembler(
                 storageService, zipService, new CodePathPolicy(), filePolicy
@@ -99,6 +109,7 @@ class CodeAssetImportServiceTest {
                 deleteTaskService,
                 auditService,
                 riskAssessmentService,
+                trainingPlanRegistry,
                 authContext,
                 transactionManager
         );

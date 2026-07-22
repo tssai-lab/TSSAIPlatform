@@ -887,12 +887,27 @@ public class ModelUploadService {
 
     private void validateModelFileName(String fileName) {
         String lower = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
-        if (!lower.endsWith(".zip")) {
+        if (!(lower.endsWith(".zip")
+                || lower.endsWith(".safetensors")
+                || lower.endsWith(".pt")
+                || lower.endsWith(".pth")
+                || lower.endsWith(".ckpt")
+                || lower.endsWith(".onnx"))) {
             throw new IllegalArgumentException("模型文件仅支持 zip 压缩包");
         }
     }
 
     private void validateModelObjectFormat(String objectName) throws Exception {
+        String lower = objectName == null ? "" : objectName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".zip")) {
+            StatObjectResponse stat = minioClient.statObject(
+                    StatObjectArgs.builder().bucket(bucket).object(objectName).build()
+            );
+            if (stat.size() <= 0 || stat.size() > ModelWeightZipValidator.MAX_SINGLE_FILE_BYTES) {
+                throw new IllegalArgumentException("model weight file size is invalid");
+            }
+            return;
+        }
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         );

@@ -1,13 +1,7 @@
 package com.tss.platform.training;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
-import com.tss.platform.entity.CodeVersion;
-import com.tss.platform.entity.DatasetVersion;
-import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
-import com.tss.platform.repository.CodeVersionRepository;
-import com.tss.platform.repository.DatasetVersionRepository;
-import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
+/** Submits one immutable RunSpec as one Kubernetes Job/Pod. */
 @Component
 public class KubernetesTrainingExecutor implements TrainingExecutor {
 
@@ -31,9 +26,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
     private final TrainingExperimentVersionRepository repository;
-    private final CodeVersionRepository codeVersionRepository;
-    private final DatasetVersionRepository datasetVersionRepository;
-    private final ModelVersionRepository modelVersionRepository;
     private final KubernetesJobManifestBuilder manifestBuilder;
     private final ShellCommandRunner shellCommandRunner;
     private final TransactionTemplate transactionTemplate;
@@ -51,9 +43,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingKubernetesProperties properties,
             TrainingEnvironmentService environmentService,
             TrainingExperimentVersionRepository repository,
-            CodeVersionRepository codeVersionRepository,
-            DatasetVersionRepository datasetVersionRepository,
-            ModelVersionRepository modelVersionRepository,
             KubernetesJobManifestBuilder manifestBuilder,
             ShellCommandRunner shellCommandRunner,
             TransactionTemplate transactionTemplate
@@ -61,9 +50,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
         this.properties = properties;
         this.environmentService = environmentService;
         this.repository = repository;
-        this.codeVersionRepository = codeVersionRepository;
-        this.datasetVersionRepository = datasetVersionRepository;
-        this.modelVersionRepository = modelVersionRepository;
         this.manifestBuilder = manifestBuilder;
         this.shellCommandRunner = shellCommandRunner;
         this.transactionTemplate = transactionTemplate;
@@ -91,79 +77,41 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
         String jobName = KubernetesJobNaming.jobNameForTraining(trainingId);
         Path kubeconfig = environmentService.resolveKubeconfig();
         List<String> deleteCmd = environmentService.kubectlCommand(
-                kubeconfig,
-                "delete", "job", jobName,
-                "-n", properties.getNamespace(),
-                "--ignore-not-found"
+                kubeconfig, "delete", "job", jobName, "-n", properties.getNamespace(), "--ignore-not-found"
         );
         ShellCommandRunner.CommandResult result = shellCommandRunner.run(
-                deleteCmd,
-                environmentService.resolveProjectRoot(),
-                60
+                deleteCmd, environmentService.resolveProjectRoot(), 60
         );
         if (!result.success()) {
-            LOG.warn("删除 K8s Job 失败: trainingId={}, error={}", trainingId, result.errorMessage());
-        } else {
-            LOG.info("已删除 K8s Job: {}", jobName);
+            LOG.warn("Failed to delete K8s Job: trainingId={}, error={}", trainingId, result.errorMessage());
         }
     }
 
     private void submitJob(String trainingId) {
         try {
             TrainingExperimentVersion task = repository.findById(trainingId)
-                    .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
-            if (task.getTrainingProfile() == null || task.getTrainingProfile().isBlank()) {
-                throw new IllegalStateException("当前 K8s 训练仅支持带 trainingProfile 的任务");
-            }
-            TrainingProfileRegistry.requireSupported(task.getTrainingProfile());
-
-            CodeVersion codeVersion = codeVersionRepository.findByIdAndDeletedFalse(task.getCodeVersionId())
-                    .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + task.getCodeVersionId()));
-            DatasetVersion datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
-                    .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在"));
-            if (task.getModelVersionId() == null || task.getModelVersionId().isBlank()) {
-                throw new IllegalStateException("基础模型权重版本不能为空");
-            }
-            ModelVersion modelVersion = modelVersionRepository.findByIdAndDeletedFalse(task.getModelVersionId())
-                    .orElseThrow(() -> new IllegalArgumentException("基础模型权重版本不存在: " + task.getModelVersionId()));
-
-            String yaml = manifestBuilder.buildJobYaml(
-                    task,
-                    modelVersion,
-                    codeVersion,
-                    datasetVersion,
-                    minioAccessKey,
-                    minioSecretKey,
-                    minioBucket
-            );
-
+                    .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
+            String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket);
             Path kubeconfig = environmentService.resolveKubeconfig();
             List<String> applyCmd = environmentService.kubectlCommand(kubeconfig, "apply", "-f", "-");
             ShellCommandRunner.CommandResult result = runWithStdin(
-                    applyCmd,
-                    environmentService.resolveProjectRoot(),
-                    yaml,
-                    120
+                    applyCmd, environmentService.resolveProjectRoot(), yaml, 120
             );
             if (!result.success()) {
-                throw new IllegalStateException("提交 K8s Job 失败: " + result.errorMessage() + "\n" + result.output());
+                throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + result.output());
             }
             updateStatus(trainingId, "queued", 0, null);
-            LOG.info("K8s 训练 Job 已提交: trainingId={}, profile={}, job={}",
-                    trainingId, task.getTrainingProfile(), KubernetesJobNaming.jobNameForTraining(trainingId));
+            LOG.info("K8s training Job submitted: trainingId={}, plan={}, job={}",
+                    trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
         } catch (Exception e) {
-            LOG.error("K8s 训练 Job 提交失败: trainingId={}", trainingId, e);
+            LOG.error("K8s training Job submission failed: trainingId={}", trainingId, e);
             updateStatus(trainingId, "failed", 0, e.getMessage());
         }
     }
 
     private ShellCommandRunner.CommandResult runWithStdin(
-            List<String> command,
-            Path workingDirectory,
-            String stdinContent,
-            int timeoutSeconds
+            List<String> command, Path workingDirectory, String stdinContent, int timeoutSeconds
     ) {
-        LOG.info("执行 kubectl apply: {}", command);
         ProcessBuilder builder = new ProcessBuilder(command);
         if (workingDirectory != null) {
             builder.directory(workingDirectory.toFile());
@@ -184,13 +132,12 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             boolean finished = process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return ShellCommandRunner.CommandResult.failed(-1, output.toString(), "kubectl apply 超时");
+                return ShellCommandRunner.CommandResult.failed(-1, output.toString(), "kubectl apply timed out");
             }
             int exitCode = process.exitValue();
-            if (exitCode == 0) {
-                return ShellCommandRunner.CommandResult.success(output.toString());
-            }
-            return ShellCommandRunner.CommandResult.failed(exitCode, output.toString(), "kubectl apply 失败 exit=" + exitCode);
+            return exitCode == 0
+                    ? ShellCommandRunner.CommandResult.success(output.toString())
+                    : ShellCommandRunner.CommandResult.failed(exitCode, output.toString(), "kubectl apply failed exit=" + exitCode);
         } catch (Exception e) {
             return ShellCommandRunner.CommandResult.failed(-1, "", e.getMessage());
         }
@@ -199,8 +146,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     private void updateStatus(String trainingId, String status, int progress, String errorMessage) {
         transactionTemplate.executeWithoutResult(tx -> repository.findById(trainingId).ifPresent(version -> {
             if (TERMINAL_STATUSES.contains(version.getStatus())) {
-                LOG.info("忽略终态训练任务的状态更新: trainingId={}, current={}, requested={}",
-                        trainingId, version.getStatus(), status);
                 return;
             }
             version.setStatus(status);

@@ -53,6 +53,9 @@ public class DatasetVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "artifact_sha256", length = 64)
+    private String artifactSha256;
+
     @Column(name = "file_count")
     private Long fileCount;
 

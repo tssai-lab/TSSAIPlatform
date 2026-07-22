@@ -1,0 +1,18 @@
+# Shared GPU training runtime. Custom project dependencies are baked into a derived image,
+# never installed inside an active training Pod.
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+WORKDIR /app
+
+RUN useradd -r -u 10001 -m worker \
+    && mkdir -p /workspace/job \
+    && chown -R worker:worker /workspace
+
+COPY requirements-runtime.txt .
+RUN pip install --no-cache-dir -r requirements-runtime.txt
+
+COPY --chmod=0644 train.py .
+
+USER 10001
+
+ENTRYPOINT ["python", "/app/train.py"]

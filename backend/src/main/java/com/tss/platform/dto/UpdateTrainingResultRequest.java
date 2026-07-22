@@ -15,6 +15,10 @@ public class UpdateTrainingResultRequest {
     private String logPath;
     private String outputPath;
     private TrainingModelArtifactDto modelArtifact;
+    private Object trainingOutput;
+    private String trainingOutputSha256;
+    private String trainingOutputObjectName;
+    private Long trainingOutputSizeBytes;
     private String errorMessage;
     private Instant startedAt;
     private Instant finishedAt;

@@ -9,6 +9,8 @@ import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.training.plan.TrainingPlanRegistry;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.TrainingProfileRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +46,7 @@ public class CodeAssetImportService {
     private final MinioDeleteTaskService deleteTaskService;
     private final CodeAssetAuditService auditService;
     private final CodeRiskAssessmentService riskAssessmentService;
+    private final TrainingPlanRegistry trainingPlanRegistry;
     private final AuthContext authContext;
     private final TransactionTemplate transactionTemplate;
 
@@ -57,6 +60,7 @@ public class CodeAssetImportService {
             MinioDeleteTaskService deleteTaskService,
             CodeAssetAuditService auditService,
             CodeRiskAssessmentService riskAssessmentService,
+            TrainingPlanRegistry trainingPlanRegistry,
             AuthContext authContext,
             PlatformTransactionManager transactionManager
     ) {
@@ -69,6 +73,7 @@ public class CodeAssetImportService {
         this.deleteTaskService = deleteTaskService;
         this.auditService = auditService;
         this.riskAssessmentService = riskAssessmentService;
+        this.trainingPlanRegistry = trainingPlanRegistry;
         this.authContext = authContext;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(
@@ -97,7 +102,9 @@ public class CodeAssetImportService {
                 trainingProfile,
                 null,
                 null,
-                null,
+                TrainingProfileRegistry.specOf(trainingProfile)
+                        .map(TrainingProfileRegistry.ProfileSpec::requiredEntryScript)
+                        .orElse(null),
                 null,
                 remark
         ));
@@ -303,14 +310,16 @@ public class CodeAssetImportService {
         String trainingProfile = required(
                 command.trainingProfile(), 128, "Training profile is required"
         );
-        TrainingProfileRegistry.requireSupported(trainingProfile);
+        TrainingPlanDefinition plan = trainingPlanRegistry.requireEnabled(trainingProfile, null);
+        String configuredEntrypoint = optional(command.entryScript(), 1024);
+        String planEntrypoint = plan.execution().entrypoint();
         return new NormalizedImport(
                 name,
                 version,
                 trainingProfile,
                 optional(command.purpose(), 1024),
                 optional(command.runtime(), 128),
-                optional(command.entryScript(), 1024),
+                configuredEntrypoint == null ? planEntrypoint : configuredEntrypoint,
                 optional(command.trainingType(), 128),
                 optional(command.remark(), 1024),
                 fileName

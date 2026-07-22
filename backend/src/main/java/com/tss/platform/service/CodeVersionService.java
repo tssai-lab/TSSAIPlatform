@@ -10,7 +10,7 @@ import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
-import com.tss.platform.training.TrainingProfileRegistry;
+import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -28,6 +28,7 @@ public class CodeVersionService {
     private final CodeValidationService validationService;
     private final CodeApprovalService approvalService;
     private final CodeArtifactResolver artifactResolver;
+    private final TrainingPlanRegistry trainingPlanRegistry;
 
     public CodeVersionService(
             CodeVersionRepository codeVersionRepository,
@@ -35,7 +36,8 @@ public class CodeVersionService {
             AuthContext authContext,
             CodeValidationService validationService,
             CodeApprovalService approvalService,
-            CodeArtifactResolver artifactResolver
+            CodeArtifactResolver artifactResolver,
+            TrainingPlanRegistry trainingPlanRegistry
     ) {
         this.codeVersionRepository = codeVersionRepository;
         this.codeAssetRepository = codeAssetRepository;
@@ -43,6 +45,7 @@ public class CodeVersionService {
         this.validationService = validationService;
         this.approvalService = approvalService;
         this.artifactResolver = artifactResolver;
+        this.trainingPlanRegistry = trainingPlanRegistry;
     }
 
     public CodeVersionApprovalDto approve(String codeVersionId) {
@@ -107,14 +110,14 @@ public class CodeVersionService {
         return items;
     }
 
-    public void requireApprovedForTraining(String codeVersionId) {
+    public ResolvedCodeArtifact requireApprovedForTraining(String codeVersionId) {
         String versionId = requireVersionId(codeVersionId);
         Integer currentUserId = authContext.currentUserId();
         if (currentUserId == null) {
             throw new IllegalArgumentException("训练代码版本不存在或无权限");
         }
         try {
-            artifactResolver.resolve(versionId, currentUserId);
+            return artifactResolver.resolve(versionId, currentUserId);
         } catch (CodeAssetAccessException exception) {
             throw new IllegalArgumentException("训练代码版本不存在或无权限");
         } catch (CodeValidationException exception) {
@@ -144,16 +147,19 @@ public class CodeVersionService {
                     ? "VALIDATION_FAILED"
                     : validation.reasonCode());
         }
-        if (!TrainingProfileRegistry.isSupported(profile)) {
-            reasons.add("TRAINING_PROFILE_UNSUPPORTED");
-        } else if (version.getTrainingProfile() == null
+        try {
+            trainingPlanRegistry.requireEnabled(profile, null);
+        } catch (IllegalArgumentException exception) {
+            reasons.add("TRAINING_PLAN_UNSUPPORTED");
+        }
+        if (version.getTrainingProfile() == null
                 || !profile.equals(version.getTrainingProfile().trim())) {
             reasons.add("TRAINING_PROFILE_MISMATCH");
         }
         return CodeVersionTrainingCheckDto.builder()
                 .codeVersionId(versionId)
                 .trainingProfile(profile)
-                .trainingProfileDisplayName(TrainingProfileRegistry.displayNameOf(profile))
+                .trainingProfileDisplayName(profile)
                 .passed(reasons.isEmpty())
                 .reused(validation.reused())
                 .approvalStatus(version.getApprovalStatus())

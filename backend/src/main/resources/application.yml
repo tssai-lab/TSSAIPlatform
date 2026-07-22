@@ -28,9 +28,9 @@ dataset:
 
 code-assets:
   risk:
-    # MANUAL_ONLY is the safe rollout default. Use SHADOW to collect findings
-    # without automatic approval, then ENFORCE after the policy is calibrated.
-    mode: ${CODE_ASSET_RISK_MODE:MANUAL_ONLY}
+    # Low-risk code is automatically approved after static scanning. High-risk
+    # code is still blocked instead of creating an administrator review queue.
+    mode: ${CODE_ASSET_RISK_MODE:ENFORCE}
     batch-size: ${CODE_ASSET_RISK_BATCH_SIZE:20}
     stale-after-seconds: ${CODE_ASSET_RISK_STALE_AFTER_SECONDS:600}
 
@@ -113,6 +113,11 @@ training:
     verify-script: ${TRAINING_K8S_VERIFY_SCRIPT:backend/scripts/k8s/verify-local-kind.sh}
     worker-image: ${TRAINING_K8S_WORKER_IMAGE:tss-training-worker:local}
     worker-image-pull-policy: ${TRAINING_K8S_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
+    runtime-image-build-enabled: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_ENABLED:false}
+    runtime-image-repository: ${TRAINING_K8S_RUNTIME_IMAGE_REPOSITORY:}
+    runtime-image-docker-path: ${TRAINING_K8S_RUNTIME_IMAGE_DOCKER_PATH:docker}
+    runtime-image-build-directory: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_DIRECTORY:/tmp/tss-runtime-image-builds}
+    runtime-image-build-timeout-seconds: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_TIMEOUT_SECONDS:1800}
     backend-service-url: ${TRAINING_K8S_BACKEND_SERVICE_URL:http://tss-backend:8080}
     minio-service-url: ${TRAINING_K8S_MINIO_SERVICE_URL:http://tss-minio:9000}
     mlflow-service-url: ${TRAINING_K8S_MLFLOW_SERVICE_URL:http://tss-mlflow:5000}

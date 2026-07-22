@@ -4,6 +4,8 @@ import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.service.TrainingModelPublishService;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
+import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -25,6 +27,7 @@ public class KubernetesTrainingJobMonitor {
     private final TrainingEnvironmentService environmentService;
     private final TrainingExperimentVersionRepository repository;
     private final ShellCommandRunner shellCommandRunner;
+    private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
 
     public KubernetesTrainingJobMonitor(
@@ -32,12 +35,14 @@ public class KubernetesTrainingJobMonitor {
             TrainingEnvironmentService environmentService,
             TrainingExperimentVersionRepository repository,
             ShellCommandRunner shellCommandRunner,
+            TrainingRunSpecCodec runSpecCodec,
             TransactionTemplate transactionTemplate
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
         this.repository = repository;
         this.shellCommandRunner = shellCommandRunner;
+        this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -155,13 +160,25 @@ public class KubernetesTrainingJobMonitor {
             version.setFinishedAt(Instant.now());
             if (version.getProducedModelVersionId() == null
                     && version.getModelPublishStatus() == null) {
-                TrainingProfileRegistry.specOf(version.getTrainingProfile()).ifPresent(spec -> {
+                if (version.getRunSpecJson() != null && !version.getRunSpecJson().isBlank()) {
+                    String modelPath = runSpecCodec.decode(version).outputs().artifacts().stream()
+                            .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
+                            .map(TrainingPlanDefinition.Artifact::path)
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalStateException("RunSpec has no publishable model artifact"));
                     version.setModelArtifactPath(
-                            "training-results/" + version.getId() + "/artifacts/"
-                                    + spec.producedModelArchiveName()
+                            "training-results/" + version.getId() + "/artifacts/" + modelPath
                     );
                     version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
-                });
+                } else {
+                    TrainingProfileRegistry.specOf(version.getTrainingProfile()).ifPresent(spec -> {
+                        version.setModelArtifactPath(
+                                "training-results/" + version.getId() + "/artifacts/"
+                                        + spec.producedModelArchiveName()
+                        );
+                        version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
+                    });
+                }
             }
             version.setUpdatedAt(Instant.now());
             repository.save(version);

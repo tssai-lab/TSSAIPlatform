@@ -7,6 +7,9 @@ import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.training.TrainingProfileRegistry;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
+import com.tss.platform.training.plan.TrainingRunSpec;
+import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import io.minio.StatObjectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +51,8 @@ public class TrainingModelPublishService {
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
     private final MinioService minioService;
+    private final ArtifactDigestService artifactDigestService;
+    private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
 
     public TrainingModelPublishService(
@@ -55,12 +60,16 @@ public class TrainingModelPublishService {
             ModelAssetRepository modelAssetRepo,
             ModelVersionRepository modelVersionRepo,
             MinioService minioService,
+            ArtifactDigestService artifactDigestService,
+            TrainingRunSpecCodec runSpecCodec,
             PlatformTransactionManager transactionManager
     ) {
         this.trainingRepo = trainingRepo;
         this.modelAssetRepo = modelAssetRepo;
         this.modelVersionRepo = modelVersionRepo;
         this.minioService = minioService;
+        this.artifactDigestService = artifactDigestService;
+        this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -112,6 +121,10 @@ public class TrainingModelPublishService {
         if (snapshot == null || !STATUS_PUBLISHING.equals(snapshot.getModelPublishStatus())) {
             return;
         }
+        if (snapshot.getRunSpecJson() != null && !snapshot.getRunSpecJson().isBlank()) {
+            publishRunSpecClaimed(snapshot);
+            return;
+        }
         TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(snapshot.getTrainingProfile())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "训练方案不支持自动发布模型: " + snapshot.getTrainingProfile()
@@ -156,6 +169,150 @@ public class TrainingModelPublishService {
                 modelVersionId,
                 targetPath
         );
+    }
+
+    private void publishRunSpecClaimed(TrainingExperimentVersion snapshot) throws Exception {
+        TrainingRunSpec runSpec = runSpecCodec.decode(snapshot);
+        TrainingPlanDefinition.Artifact contract = runSpec.outputs().artifacts().stream()
+                .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("RunSpec has no publishable model artifact"));
+        String expectedSource = artifactPrefix(snapshot.getId()) + contract.path();
+        String sourcePath = normalizeObjectName(snapshot.getModelArtifactPath());
+        if (sourcePath == null) {
+            sourcePath = expectedSource;
+        }
+        if (!expectedSource.equals(sourcePath)) {
+            throw new IllegalArgumentException("training model artifact path does not match RunSpec");
+        }
+        long sourceSize = snapshot.getModelArtifactSizeBytes() == null
+                ? minioService.stat(sourcePath).size()
+                : snapshot.getModelArtifactSizeBytes();
+        ArtifactDigestService.DigestResult source = artifactDigestService.digest(sourcePath, sourceSize);
+        String expectedDigest = normalizeSha256(snapshot.getModelArtifactSha256());
+        if (expectedDigest != null && !expectedDigest.equals(source.sha256())) {
+            throw new IllegalArgumentException("training model artifact SHA-256 mismatch");
+        }
+
+        String assetId = deterministicId("model-asset-train-", snapshot.getExperimentId());
+        String modelVersionId = deterministicId("model-ver-train-", snapshot.getId());
+        String versionName = "v" + snapshot.getVersionNo();
+        String fileName = leafName(contract.path());
+        String targetPath = "users/" + snapshot.getOwnerUserId()
+                + "/models/" + assetId + "/" + versionName + "/" + fileName;
+        if (minioService.objectExists(targetPath)) {
+            ArtifactDigestService.DigestResult existing = artifactDigestService.digest(
+                    targetPath, minioService.stat(targetPath).size()
+            );
+            if (!existing.sha256().equals(source.sha256())) {
+                throw new IllegalStateException("published model object exists with another SHA-256");
+            }
+        } else {
+            minioService.copyObject(sourcePath, targetPath);
+        }
+        long targetSize = minioService.stat(targetPath).size();
+        ArtifactDigestService.DigestResult target = artifactDigestService.digest(targetPath, targetSize);
+        if (!target.sha256().equals(source.sha256())) {
+            throw new IllegalStateException("published model artifact SHA-256 mismatch");
+        }
+        String taskType = modelVersionRepo.findById(snapshot.getModelVersionId())
+                .flatMap(version -> modelAssetRepo.findById(version.getAssetId()))
+                .map(ModelAsset::getType)
+                .filter(type -> type != null && !type.isBlank())
+                .orElseThrow(() -> new IllegalArgumentException("input model task type is unavailable"));
+        transactionTemplate.executeWithoutResult(status -> persistPublishedRunSpecModel(
+                snapshot.getId(), runSpec, contract, source, assetId, modelVersionId,
+                versionName, targetPath, targetSize, fileName, taskType
+        ));
+    }
+
+    private void persistPublishedRunSpecModel(
+            String trainingId,
+            TrainingRunSpec runSpec,
+            TrainingPlanDefinition.Artifact contract,
+            ArtifactDigestService.DigestResult artifact,
+            String assetId,
+            String modelVersionId,
+            String versionName,
+            String targetPath,
+            long targetSize,
+            String fileName,
+            String taskType
+    ) {
+        TrainingExperimentVersion training = trainingRepo.findById(trainingId)
+                .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
+        if (training.getProducedModelVersionId() != null) {
+            return;
+        }
+        if (!STATUS_PUBLISHING.equals(training.getModelPublishStatus())) {
+            throw new IllegalStateException("training model publish state changed");
+        }
+        Instant now = Instant.now();
+        ModelAsset asset = modelAssetRepo.findById(assetId).orElse(null);
+        if (asset == null) {
+            asset = new ModelAsset();
+            asset.setId(assetId);
+            asset.setName(limit(defaultModelName(training), 255));
+            asset.setType(taskType);
+            asset.setRemark(limit("published from training " + training.getExperimentId(), 1024));
+            asset.setOwnerUserId(training.getOwnerUserId());
+            asset.setCreatedAt(now);
+            asset.setUpdatedAt(now);
+            asset.setDeleted(false);
+            modelAssetRepo.saveAndFlush(asset);
+        } else if (Boolean.TRUE.equals(asset.getDeleted())
+                || !Objects.equals(asset.getOwnerUserId(), training.getOwnerUserId())) {
+            throw new IllegalStateException("published model asset does not match the training owner");
+        }
+
+        ModelVersion modelVersion = modelVersionRepo.findById(modelVersionId).orElse(null);
+        if (modelVersion == null) {
+            if (modelVersionRepo.existsByAssetIdAndVersion(assetId, versionName)) {
+                throw new IllegalStateException("published model version already exists: " + versionName);
+            }
+            modelVersion = new ModelVersion();
+            modelVersion.setId(modelVersionId);
+            modelVersion.setAssetId(assetId);
+            modelVersion.setVersion(versionName);
+            modelVersion.setFileName(fileName);
+            modelVersion.setStoragePath(targetPath);
+            modelVersion.setSizeBytes(targetSize);
+            modelVersion.setArtifactSha256(artifact.sha256());
+            modelVersion.setDescription(limit("published from RunSpec training " + trainingId + ", format=" + contract.format(), 2048));
+            modelVersion.setChangeLog("plan=" + runSpec.plan().id() + ", datasetVersionId="
+                    + training.getDatasetVersionId() + ", codeVersionId=" + training.getCodeVersionId()
+                    + ", sha256=" + artifact.sha256());
+            modelVersion.setStatus("READY");
+            modelVersion.setPublishedAt(now);
+            modelVersion.setCreatedBy(training.getOwnerUserId());
+            modelVersion.setOwnerUserId(training.getOwnerUserId());
+            modelVersion.setCreatedAt(now);
+            modelVersion.setDeleted(false);
+            modelVersionRepo.saveAndFlush(modelVersion);
+        } else if (Boolean.TRUE.equals(modelVersion.getDeleted())
+                || !Objects.equals(modelVersion.getAssetId(), assetId)
+                || !Objects.equals(modelVersion.getStoragePath(), targetPath)
+                || !Objects.equals(modelVersion.getArtifactSha256(), artifact.sha256())) {
+            throw new IllegalStateException("published model version does not match the training artifact");
+        }
+        training.setProducedModelVersionId(modelVersionId);
+        training.setModelPublishStatus(STATUS_PUBLISHED);
+        training.setModelPublishError(null);
+        training.setModelPublishedAt(now);
+        training.setModelArtifactPath(artifactPrefix(trainingId) + contract.path());
+        training.setModelArtifactSha256(artifact.sha256());
+        training.setModelArtifactSizeBytes(artifact.sizeBytes());
+        training.setUpdatedAt(now);
+        trainingRepo.saveAndFlush(training);
+    }
+
+    private String leafName(String path) {
+        int slash = path == null ? -1 : path.lastIndexOf('/');
+        String leaf = slash >= 0 ? path.substring(slash + 1) : path;
+        if (leaf == null || leaf.isBlank() || ".".equals(leaf) || "..".equals(leaf)) {
+            throw new IllegalArgumentException("RunSpec model artifact file name is invalid");
+        }
+        return leaf;
     }
 
     private PublishedArtifact ensureTrainingArchive(
