@@ -70,4 +70,11 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
             @Param("message") String message,
             @Param("now") Instant now
     );
+
+    // resource-monitor queue queries
+    List<TrainingExperimentVersion> findByServerIpAndStatus(String serverIp, String status);
+
+    List<TrainingExperimentVersion> findByServerIpAndStatusIn(String serverIp, List<String> statuses);
+
+    List<TrainingExperimentVersion> findByServerIpNotNullAndStatusIn(List<String> statuses);
 }
