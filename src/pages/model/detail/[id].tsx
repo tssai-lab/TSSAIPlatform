@@ -5,6 +5,7 @@ import {
   Alert,
   Button,
   Card,
+  Col,
   Descriptions,
   Empty,
   Form,
@@ -12,15 +13,18 @@ import {
   Modal,
   message,
   Popconfirm,
+  Row,
   Select,
   Space,
   Spin,
   Table,
   Tag,
   Tooltip,
+  Tree,
   Typography,
 } from 'antd';
-import React, { useCallback, useEffect, useState } from 'react';
+import type { Key } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodePreview from '@/components/CodePreview';
 import { MODEL_TYPE_COLORS, MODEL_TYPE_OPTIONS } from '@/constants/model';
 import { resolveModelVersionId } from '@/services/model';
@@ -31,8 +35,13 @@ import {
   fetchModelVersionCodePreview,
   getDownloadUrl,
   getModelVersion,
+  previewModelCode,
   updateModelAsset,
 } from '@/services/platform';
+import {
+  buildCodeFileTreeData,
+  collectCodeFileTreeExpandedKeys,
+} from '@/utils/codeFileTree';
 
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -45,6 +54,9 @@ const ModelDetail: React.FC = () => {
     null,
   );
   const [codePreviewVisible, setCodePreviewVisible] = useState(false);
+  const [selectedCodePath, setSelectedCodePath] = useState<string>();
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [expandedFileKeys, setExpandedFileKeys] = useState<Key[]>([]);
 
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [assetModalLoading, setAssetModalLoading] = useState(false);
@@ -100,14 +112,69 @@ const ModelDetail: React.FC = () => {
   useEffect(() => {
     if (!selectedVersionId) {
       setVersionCode(null);
+      setSelectedCodePath(undefined);
+      setExpandedFileKeys([]);
       return;
     }
     setCodeLoading(true);
+    setSelectedCodePath(undefined);
     fetchModelVersionCodePreview(selectedVersionId, { skipErrorHandler: true })
-      .then((res) => setVersionCode(res?.data ?? null))
-      .catch(() => setVersionCode(null))
+      .then((res) => {
+        const data = res?.data ?? null;
+        setVersionCode(data);
+        const firstPath = data?.codeFilePath || data?.codeFiles?.[0]?.path;
+        setSelectedCodePath(firstPath);
+      })
+      .catch(() => {
+        setVersionCode(null);
+        setSelectedCodePath(undefined);
+      })
       .finally(() => setCodeLoading(false));
   }, [selectedVersionId]);
+
+  const codeFiles = versionCode?.codeFiles ?? [];
+  const fileTreeData = useMemo(
+    () => buildCodeFileTreeData(codeFiles),
+    [codeFiles],
+  );
+  const defaultExpandedKeys = useMemo(
+    () => collectCodeFileTreeExpandedKeys(fileTreeData),
+    [fileTreeData],
+  );
+
+  useEffect(() => {
+    setExpandedFileKeys(defaultExpandedKeys);
+  }, [defaultExpandedKeys]);
+
+  const handleSelectCodeFile = async (path: string) => {
+    if (!selectedVersionId || !path) return;
+    if (path === selectedCodePath && versionCode?.codeContent) {
+      setSelectedCodePath(path);
+      return;
+    }
+    setSelectedCodePath(path);
+    setPreviewLoading(true);
+    try {
+      const previewRes = await previewModelCode(selectedVersionId, path, {
+        skipErrorHandler: true,
+      });
+      const preview = previewRes?.data;
+      setVersionCode((prev) =>
+        prev
+          ? {
+              ...prev,
+              codeContent: preview?.content,
+              codeFileName: preview?.fileName || path.split('/').pop() || path,
+              codeFilePath: preview?.path || path,
+            }
+          : prev,
+      );
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '预览该文件失败');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const handleDeleteAsset = async () => {
     if (!id) return;
@@ -408,52 +475,103 @@ const ModelDetail: React.FC = () => {
             <Spin tip="加载代码…" />
           </div>
         )}
-        {selectedVersionId && !codeLoading && versionCode?.codeContent && (
-          <>
-            <Descriptions size="small" column={1} style={{ marginBottom: 12 }}>
-              <Descriptions.Item label="预览文件">
-                {versionCode.codeFileName || versionCode.codeFilePath || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label="存储路径">
-                <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                  {versionCode.storagePath || '-'}
-                </span>
-              </Descriptions.Item>
-            </Descriptions>
-            <pre
-              style={{
-                background: '#f5f5f5',
-                border: '1px solid #d9d9d9',
-                borderRadius: 6,
-                padding: 16,
-                maxHeight: 400,
-                overflow: 'auto',
-                margin: 0,
-                fontFamily: 'Courier New, monospace',
-                fontSize: 13,
-                lineHeight: 1.6,
-              }}
-            >
-              {versionCode.codeContent}
-            </pre>
-            <Space style={{ marginTop: 12 }}>
-              <Button
-                type="primary"
-                size="small"
-                icon={<CodeOutlined />}
-                onClick={() => setCodePreviewVisible(true)}
+        {selectedVersionId && !codeLoading && fileTreeData.length > 0 && (
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Typography.Text
+                type="secondary"
+                style={{ display: 'block', marginBottom: 8 }}
               >
-                弹窗查看
-              </Button>
-            </Space>
-          </>
+                包内可预览文件（{codeFiles.length}）
+              </Typography.Text>
+              <div
+                style={{
+                  maxHeight: 420,
+                  overflow: 'auto',
+                  border: '1px solid #f0f0f0',
+                  borderRadius: 6,
+                  padding: 8,
+                }}
+              >
+                <Tree.DirectoryTree
+                  treeData={fileTreeData}
+                  selectedKeys={selectedCodePath ? [selectedCodePath] : []}
+                  expandedKeys={expandedFileKeys}
+                  onExpand={(keys) => setExpandedFileKeys(keys)}
+                  expandAction="click"
+                  onSelect={(keys, info) => {
+                    if (!info.node.isLeaf) return;
+                    const path = String(keys[0] || '');
+                    if (path) void handleSelectCodeFile(path);
+                  }}
+                />
+              </div>
+            </Col>
+            <Col xs={24} md={16}>
+              {previewLoading ? (
+                <div style={{ textAlign: 'center', padding: 48 }}>
+                  <Spin tip="加载文件内容…" />
+                </div>
+              ) : versionCode?.codeContent ? (
+                <>
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    style={{ marginBottom: 12 }}
+                  >
+                    <Descriptions.Item label="预览文件">
+                      {versionCode.codeFileName ||
+                        versionCode.codeFilePath ||
+                        '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="存储路径">
+                      <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                        {versionCode.storagePath || '-'}
+                      </span>
+                    </Descriptions.Item>
+                  </Descriptions>
+                  <pre
+                    style={{
+                      background: '#f5f5f5',
+                      border: '1px solid #d9d9d9',
+                      borderRadius: 6,
+                      padding: 16,
+                      maxHeight: 400,
+                      overflow: 'auto',
+                      margin: 0,
+                      fontFamily: 'Courier New, monospace',
+                      fontSize: 13,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {versionCode.codeContent}
+                  </pre>
+                  <Space style={{ marginTop: 12 }}>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<CodeOutlined />}
+                      onClick={() => setCodePreviewVisible(true)}
+                    >
+                      弹窗查看
+                    </Button>
+                  </Space>
+                </>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="请从左侧文件树选择文件预览"
+                />
+              )}
+            </Col>
+          </Row>
         )}
-        {selectedVersionId && !codeLoading && !versionCode?.codeContent && (
+        {selectedVersionId && !codeLoading && fileTreeData.length === 0 && (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               selectedVersion?.storagePath
-                ? '当前版本包中没有可预览的代码文件'
+                ? '当前版本包中没有可预览的代码/文本文件（权重等二进制不会出现在此列表）'
                 : '该版本尚未绑定模型文件，请先上传'
             }
           />

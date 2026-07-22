@@ -10,6 +10,8 @@ export {
   fetchModelDetail,
   fetchModelAssetDetail,
   fetchModelVersionCodePreview,
+  listModelCodeFiles,
+  previewModelCode,
   modelUploadInit,
   modelUploadChunk,
   modelUploadProgress,
