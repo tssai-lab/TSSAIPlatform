@@ -199,6 +199,7 @@ const ModelUpload: React.FC = () => {
       await modelUploadComplete(
         {
           uploadId,
+          ...(assetId ? { assetId } : {}),
           modelName: values.modelName,
           version: values.version.trim(),
           type: values.type,

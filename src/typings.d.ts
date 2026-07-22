@@ -70,6 +70,8 @@ declare namespace API {
 
   type ModelUploadCompleteParams = {
     uploadId: string;
+    /** 已有资产时传入：仅新增版本，不创建新资产 */
+    assetId?: string;
     modelName: string;
     version: string;
     type: string;
