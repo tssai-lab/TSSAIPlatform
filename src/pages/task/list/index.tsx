@@ -32,7 +32,7 @@ import {
  * 调用 Services 层接口，适配 ProTable 的 request 格式
  */
 const TaskList: React.FC = () => {
-  const actionRef = useRef<ActionType>();
+  const actionRef = useRef<ActionType | null>(null);
   const [loadError, setLoadError] = useState('');
 
   const fetchTaskList = async (params: any) => {
@@ -186,7 +186,7 @@ const TaskList: React.FC = () => {
                         label: '追溯历史版本',
                         onClick: () =>
                           history.push(
-                            `/task/detail/${encodeURIComponent(record.experimentId)}#version-history`,
+                            `/task/detail/${encodeURIComponent(record.experimentId || '')}#version-history`,
                           ),
                       },
                     ]

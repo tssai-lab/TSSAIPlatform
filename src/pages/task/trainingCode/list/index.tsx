@@ -34,7 +34,7 @@ function statusTag(status?: string) {
 
 const TrainingCodeList: React.FC = () => {
   const access = useAccess();
-  const actionRef = useRef<ActionType>();
+  const actionRef = useRef<ActionType | null>(null);
 
   const requestList = async (params: {
     codeAssetName?: string;

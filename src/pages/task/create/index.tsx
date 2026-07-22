@@ -33,11 +33,13 @@ import {
   fetchDatasetList,
   fetchModelList,
   fetchTaskDetail,
+  fetchTrainingPlans,
   getModelVersion,
   publishTaskModel,
   uploadCodeZip,
   uploadDataset,
 } from '@/services/platform';
+import type { TrainingPlan } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
   DATASET_VERSION_DESC_PLACEHOLDER,
@@ -78,6 +80,7 @@ type CheckState = {
   passed?: boolean;
   reasons?: string[];
   approvalStatus?: string;
+  validationStatus?: string;
 };
 
 const isCodeApproved = (status?: string) => status === 'APPROVED';
@@ -98,6 +101,8 @@ const TaskCreate: React.FC = () => {
   const [modelOptions, setModelOptions] = useState<API.ModelItem[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<API.DatasetItem[]>([]);
   const [codeOptions, setCodeOptions] = useState<any[]>([]);
+  const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
+  const [selectedTrainingPlanId, setSelectedTrainingPlanId] = useState<string>();
 
   const [modelLoading, setModelLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
@@ -128,10 +133,10 @@ const TaskCreate: React.FC = () => {
   const [codeUploading, setCodeUploading] = useState(false);
 
   const [codeCheck, setCodeCheck] = useState<CheckState>({ loading: false });
-  /** 训练配置与代码二选一：超参数 JSON 或训练代码 */
+  /** 通用训练默认执行上传代码；旧版内置训练仍可选择兼容模式。 */
   const [trainingConfigMode, setTrainingConfigMode] = useState<
     'hyperParams' | 'code'
-  >('hyperParams');
+  >('code');
 
   const selectedModel = useMemo(
     () => modelOptions.find((item) => item.id === selectedBaseModelVersionId),
@@ -157,20 +162,50 @@ const TaskCreate: React.FC = () => {
     ];
   }, [modelOptions, selectedBaseModelVersionId, selectedModel?.type]);
 
-  /** 数据集类型须与已选基础模型权重一致（后端创建任务会校验） */
-  const requiredDatasetType = (
-    selectedModel ||
-    modelSelectOptions.find((item) => item.id === selectedBaseModelVersionId)
-  )?.type as DatasetType | undefined;
+  const selectedTrainingPlan = useMemo(
+    () => trainingPlans.find((plan) => plan.id === selectedTrainingPlanId),
+    [selectedTrainingPlanId, trainingPlans],
+  );
 
-  const filteredDatasetOptions = useMemo(
-    () =>
-      datasetOptions.filter((d: API.DatasetItem) => {
-        if (!d.versionId) return false;
-        if (!requiredDatasetType) return d.type !== 'MULTIMODAL';
-        return d.type === requiredDatasetType;
-      }),
-    [datasetOptions, requiredDatasetType],
+  const filteredModelSelectOptions = useMemo(() => {
+    const allowed = selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
+    if (trainingConfigMode !== 'code' || !allowed.length) return modelSelectOptions;
+    return modelSelectOptions.filter((model) => allowed.includes(model.type));
+  }, [modelSelectOptions, selectedTrainingPlan, trainingConfigMode]);
+
+  /** 单一数据集类型的训练方案以方案声明为准；旧方案继续沿用模型类型约束。 */
+  const planDatasetTypes = selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
+  const requiredDatasetType = (
+    trainingConfigMode === 'code' && planDatasetTypes.length === 1
+      ? planDatasetTypes[0]
+      : (
+          selectedModel ||
+          modelSelectOptions.find((item) => item.id === selectedBaseModelVersionId)
+        )?.type
+  ) as DatasetType | undefined;
+
+  const filteredDatasetOptions = useMemo(() => {
+    const planTypes = selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
+    return datasetOptions.filter((d: API.DatasetItem) => {
+      if (!d.versionId) return false;
+      if (trainingConfigMode === 'code' && planTypes.length && !planTypes.includes(d.type)) {
+        return false;
+      }
+      if (!requiredDatasetType) return d.type !== 'MULTIMODAL';
+      return d.type === requiredDatasetType;
+    });
+  }, [datasetOptions, requiredDatasetType, selectedTrainingPlan, trainingConfigMode]);
+
+  const filteredCodeOptions = useMemo(
+    () => codeOptions.filter((code) =>
+      trainingConfigMode !== 'code' || !selectedTrainingPlanId
+        || code.trainingProfile === selectedTrainingPlanId),
+    [codeOptions, selectedTrainingPlanId, trainingConfigMode],
+  );
+
+  const resourceProfiles = useMemo(
+    () => selectedTrainingPlan?.runtimes.flatMap((runtime) => runtime.resourceProfiles) ?? [],
+    [selectedTrainingPlan],
   );
 
   useEffect(() => {
@@ -219,12 +254,31 @@ const TaskCreate: React.FC = () => {
   useEffect(() => {
     reloadModelOptions();
     reloadCodeOptions();
+    fetchTrainingPlans({ skipErrorHandler: true })
+      .then((res) => {
+        const plans = (res?.data ?? []).filter((plan) => plan.enabled);
+        setTrainingPlans(plans);
+        const defaultPlan =
+          plans.find((plan) => plan.id === CONSISTENCY_TRAINING_PROFILE) ?? plans[0];
+        if (!defaultPlan) {
+          message.error('没有可用训练方案，请检查后端 training-plans 配置');
+          return;
+        }
+        setSelectedTrainingPlanId(defaultPlan.id);
+        form.setFieldsValue({
+          trainingProfile: defaultPlan.id,
+          planId: defaultPlan.id,
+          planVersion: defaultPlan.version,
+          trainingMode: defaultPlan.trainingModes[0],
+          resourceProfileId: defaultPlan.runtimes[0]?.resourceProfiles[0]?.id,
+        });
+      })
+      .catch((error: any) => message.error(error?.message || '训练方案加载失败'));
     setDatasetLoading(true);
     fetchDatasetList({ pageSize: 100 })
       .then((res) => {
         const list = (res?.data ?? []).filter(
-          (item: API.DatasetItem) =>
-            item.type !== 'MULTIMODAL' && item.versionId,
+          (item: API.DatasetItem) => item.versionId,
         );
         setDatasetOptions(list ?? []);
       })
@@ -395,6 +449,16 @@ const TaskCreate: React.FC = () => {
           setSelectedCodeApprovalStatus('APPROVED');
           form.setFieldValue('codeVersionId', data.codeVersionId);
         }
+        if (data.trainingPlanId) {
+          setSelectedTrainingPlanId(data.trainingPlanId);
+          form.setFieldsValue({
+            trainingProfile: data.trainingPlanId,
+            planId: data.trainingPlanId,
+            planVersion: data.trainingPlanVersion,
+            trainingMode: data.trainingMode,
+            resourceProfileId: data.resourceProfileId,
+          });
+        }
         if (data.datasetVersionId) {
           setSelectedDatasetVersionId(data.datasetVersionId);
           form.setFieldValue('datasetVersionId', data.datasetVersionId);
@@ -455,7 +519,7 @@ const TaskCreate: React.FC = () => {
     setCodeCheck({ loading: true });
     checkCodeVersionForTraining(
       selectedCodeVersionId,
-      CONSISTENCY_TRAINING_PROFILE,
+      selectedTrainingPlanId || CONSISTENCY_TRAINING_PROFILE,
       { skipErrorHandler: true },
     )
       .then((res: any) => {
@@ -486,7 +550,7 @@ const TaskCreate: React.FC = () => {
           reasons: [error?.message || '准入校验请求失败'],
         });
       });
-  }, [selectedCodeApprovalStatus, selectedCodeVersionId, trainingConfigMode]);
+  }, [selectedCodeApprovalStatus, selectedCodeVersionId, selectedTrainingPlanId, trainingConfigMode]);
 
   const switchTrainingConfigMode = (mode: 'hyperParams' | 'code') => {
     setTrainingConfigMode(mode);
@@ -495,6 +559,19 @@ const TaskCreate: React.FC = () => {
       setSelectedCodeApprovalStatus(undefined);
       form.setFieldValue('codeVersionId', undefined);
       setCodeCheck({ loading: false });
+      form.setFieldValue('trainingProfile', CONSISTENCY_TRAINING_PROFILE);
+      return;
+    }
+    const plan = selectedTrainingPlan ?? trainingPlans[0];
+    if (plan) {
+      setSelectedTrainingPlanId(plan.id);
+      form.setFieldsValue({
+        trainingProfile: plan.id,
+        planId: plan.id,
+        planVersion: plan.version,
+        trainingMode: plan.trainingModes[0],
+        resourceProfileId: plan.runtimes[0]?.resourceProfiles[0]?.id,
+      });
     }
   };
 
@@ -513,7 +590,7 @@ const TaskCreate: React.FC = () => {
   }) => {
     const file = values.file?.[0]?.originFileObj as File | undefined;
     if (!file) {
-      throw new Error('请选择模型权重 zip 文件');
+      throw new Error('请选择基础模型权重文件');
     }
 
     setModelUploading(true);
@@ -652,7 +729,7 @@ const TaskCreate: React.FC = () => {
       form.setFieldValue('datasetVersionId', versionId);
       const listRes = await fetchDatasetList({ pageSize: 100 });
       const list = (listRes?.data ?? []).filter(
-        (item: API.DatasetItem) => item.type !== 'MULTIMODAL' && item.versionId,
+        (item: API.DatasetItem) => item.versionId,
       );
       setDatasetOptions(list ?? []);
       message.success(`数据集上传成功：${versionId}`);
@@ -678,7 +755,7 @@ const TaskCreate: React.FC = () => {
         {
           file,
           codeName: values.codeName,
-          trainingProfile: CONSISTENCY_TRAINING_PROFILE,
+          trainingProfile: selectedTrainingPlanId || CONSISTENCY_TRAINING_PROFILE,
           remark: values.remark?.trim() || 'task/create 页面上传',
         },
         { skipErrorHandler: true },
@@ -696,7 +773,7 @@ const TaskCreate: React.FC = () => {
           const approved = await autoApproveCodeVersionIfEnabled(
             codeVersionId,
             {
-              trainingProfile: CONSISTENCY_TRAINING_PROFILE,
+              trainingProfile: selectedTrainingPlanId || CONSISTENCY_TRAINING_PROFILE,
               skipErrorHandler: true,
             },
           );
@@ -787,7 +864,10 @@ const TaskCreate: React.FC = () => {
   };
 
   const validateConfigSection = async () => {
-    await form.validateFields(['trainingProfile', 'hyperParams']);
+    const fields = trainingConfigMode === 'code'
+      ? ['trainingProfile', 'trainingMode', 'resourceProfileId', 'hyperParams']
+      : ['trainingProfile', 'hyperParams'];
+    await form.validateFields(fields);
   };
 
   const validateCodeSection = async () => {
@@ -830,11 +910,8 @@ const TaskCreate: React.FC = () => {
 
   const validateStep2 = async () => {
     await form.validateFields(['trainingProfile']);
-    if (trainingConfigMode === 'hyperParams') {
-      await validateConfigSection();
-      return;
-    }
-    await validateCodeSection();
+    await validateConfigSection();
+    if (trainingConfigMode === 'code') await validateCodeSection();
   };
 
   const validateStep = async (step: number) => {
@@ -842,6 +919,17 @@ const TaskCreate: React.FC = () => {
       if (!selectedBaseModelVersionId) {
         message.error('请选择或上传基础模型权重');
         throw new Error('missing model');
+      }
+      const model = modelSelectOptions.find((item) => item.id === selectedBaseModelVersionId);
+      const allowedModelTypes = selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
+      if (
+        trainingConfigMode === 'code'
+        && model
+        && allowedModelTypes.length
+        && !allowedModelTypes.includes(model.type)
+      ) {
+        message.error(`当前训练方案不支持 ${model.type} 类型模型`);
+        throw new Error('model type is incompatible with training plan');
       }
       return;
     }
@@ -862,6 +950,16 @@ const TaskCreate: React.FC = () => {
           `数据集类型（${dataset.type}）须与基础模型类型（${requiredDatasetType}）一致`,
         );
         throw new Error('type mismatch');
+      }
+      const allowedDatasetTypes = selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
+      if (
+        trainingConfigMode === 'code'
+        && dataset
+        && allowedDatasetTypes.length
+        && !allowedDatasetTypes.includes(dataset.type)
+      ) {
+        message.error(`当前训练方案不支持 ${dataset.type} 类型数据集`);
+        throw new Error('dataset type is incompatible with training plan');
       }
       return;
     }
@@ -916,14 +1014,12 @@ const TaskCreate: React.FC = () => {
     }
     const values = form.getFieldsValue(true);
     let hyperParams: Record<string, unknown> = {};
-    if (trainingConfigMode === 'hyperParams') {
-      try {
-        hyperParams = JSON.parse(values.hyperParams || '{}');
-      } catch {
-        message.error('hyperParams JSON 格式不正确');
-        setCurrentStep(2);
-        return;
-      }
+    try {
+      hyperParams = JSON.parse(values.hyperParams || '{}');
+    } catch {
+      message.error('hyperParams JSON 格式不正确');
+      setCurrentStep(2);
+      return;
     }
 
     try {
@@ -933,12 +1029,16 @@ const TaskCreate: React.FC = () => {
         baseModelVersionId: selectedBaseModelVersionId,
         datasetVersionId: selectedDatasetVersionId,
         remark: values.remark,
+        hyperParams,
         ...(trainingConfigMode === 'code'
           ? {
               codeVersionId: selectedCodeVersionId,
-              hyperParams: {} as Record<string, unknown>,
+              planId: selectedTrainingPlanId || values.trainingProfile,
+              planVersion: selectedTrainingPlan?.version || values.planVersion,
+              trainingMode: values.trainingMode,
+              resourceProfileId: values.resourceProfileId,
             }
-          : { hyperParams }),
+          : {}),
       };
       if (isExperimentContinue) {
         const res: any = await createExperimentVersion(experimentId, payload, {
@@ -952,25 +1052,13 @@ const TaskCreate: React.FC = () => {
           `已在实验 ${experimentId} 下创建 v${data?.versionNo ?? '?'}`,
         );
       } else {
-        const taskPayload =
-          trainingConfigMode === 'code' && selectedCodeVersionId
-            ? {
-                name: values.name,
-                baseModelVersionId: selectedBaseModelVersionId,
-                datasetVersionId: selectedDatasetVersionId,
-                codeVersionId: selectedCodeVersionId,
-                hyperParams: {} as Record<string, unknown>,
-                remark: values.remark,
-                trainingProfile: CONSISTENCY_TRAINING_PROFILE,
-              }
-            : {
-                name: values.name,
-                baseModelVersionId: selectedBaseModelVersionId,
-                datasetVersionId: selectedDatasetVersionId,
-                hyperParams,
-                remark: values.remark,
-                trainingProfile: CONSISTENCY_TRAINING_PROFILE,
-              };
+        const taskPayload = {
+          ...payload,
+          trainingProfile:
+            trainingConfigMode === 'code'
+              ? selectedTrainingPlanId || values.trainingProfile
+              : CONSISTENCY_TRAINING_PROFILE,
+        };
         const res: any = await createTask(taskPayload, {
           skipErrorHandler: true,
         });
@@ -998,7 +1086,7 @@ const TaskCreate: React.FC = () => {
   return (
     <PageContainer
       title={isExperimentContinue ? '基于此版本继续训练' : '发起训练'}
-      subTitle="选择或上传基础模型权重、训练数据集与训练代码，通过 Kubernetes 提交固定训练方案"
+      subTitle="选择基础模型、数据集和训练代码，由训练方案组合后提交 Kubernetes Job"
       onBack={() =>
         history.push(
           isExperimentContinue
@@ -1023,12 +1111,12 @@ const TaskCreate: React.FC = () => {
         message="三类资产拆分（推荐流程）"
         description={
           <span>
-            「代码模型包」为过渡方案，新流程拆分为：
+            平台将训练输入拆分为：
             <strong>基础模型权重</strong>
             （model_asset/model_version）、<strong>训练数据集</strong>、
             <strong>训练代码</strong>（codeVersionId + training-check）。
-            当前训练方案 image_text_consistency_fusion_logreg 不自动加载权重，但
-            Worker 仍会下载并解压到 /workspace/job/model。
+            创建任务时，训练方案会校验三类资产格式并生成不可变运行规格；Worker
+            会分别挂载到 /workspace/job/model、/workspace/job/data、/workspace/job/code。
           </span>
         }
       />
@@ -1083,7 +1171,7 @@ const TaskCreate: React.FC = () => {
                       setSelectedBaseModelVersionId(value);
                       form.setFieldsValue({ baseModelVersionId: value });
                     }}
-                    options={modelSelectOptions.map((item) => ({
+                    options={filteredModelSelectOptions.map((item) => ({
                       value: item.id,
                       label: `${item.name} / ${item.version || 'v?'} / ${item.type} / ${item.id}`,
                     }))}
@@ -1144,19 +1232,19 @@ const TaskCreate: React.FC = () => {
                     label="权重 ZIP"
                     valuePropName="fileList"
                     getValueFromEvent={(e) => e?.fileList}
-                    rules={[{ required: true, message: '请选择 zip 文件' }]}
-                    extra={`与「上传模型」相同：仅支持 .zip，最大 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB`}
+                    rules={[{ required: true, message: '请选择模型权重文件' }]}
+                    extra={`支持 .zip、.safetensors、.pt、.pth、.ckpt、.onnx，最大 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB`}
                   >
                     <Upload.Dragger
                       maxCount={1}
                       beforeUpload={() => false}
-                      accept=".zip"
+                      accept={UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.join(',')}
                     >
                       <p className="ant-upload-drag-icon">
                         <InboxOutlined />
                       </p>
                       <p className="ant-upload-text">
-                        点击或拖拽上传模型权重 zip
+                        点击或拖拽上传模型权重文件
                       </p>
                     </Upload.Dragger>
                   </Form.Item>
@@ -1447,8 +1535,8 @@ const TaskCreate: React.FC = () => {
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="训练配置与代码（二选一）"
-                description="请填写 hyperParams（JSON）或选择/上传训练代码，二者不可同时提交。"
+                message="通用训练配置"
+                description="通用训练需要同时选择训练方案、填写参数并选择已审核训练代码；旧版内置训练仅用于兼容现有演示。"
               />
               <Form.Item name="name" label="任务名称（可选）">
                 <Input placeholder="例如：fusion-k8s-train" />
@@ -1457,28 +1545,58 @@ const TaskCreate: React.FC = () => {
                 name="trainingProfile"
                 label="训练方案"
                 rules={[{ required: true, message: '训练方案不能为空' }]}
-                extra={
-                  <span>
-                    当前唯一方案：{PROFILE_DISPLAY_NAME}
-                    <Typography.Text
-                      type="secondary"
-                      style={{ marginLeft: 8, fontSize: 12 }}
-                    >
-                      （内部 ID：{CONSISTENCY_TRAINING_PROFILE}）
-                    </Typography.Text>
-                  </span>
-                }
+                extra="训练方案决定模型、数据集、代码入口、运行镜像、输出物和资源规格。"
               >
                 <Select
-                  disabled
-                  options={[
-                    {
-                      value: CONSISTENCY_TRAINING_PROFILE,
-                      label: PROFILE_DISPLAY_NAME,
-                    },
-                  ]}
+                  loading={!trainingPlans.length}
+                  disabled={trainingConfigMode !== 'code'}
+                  onChange={(value: string) => {
+                    const plan = trainingPlans.find((item) => item.id === value);
+                    setSelectedTrainingPlanId(value);
+                    setSelectedBaseModelVersionId(undefined);
+                    setSelectedDatasetVersionId(undefined);
+                    setSelectedCodeVersionId(undefined);
+                    setSelectedCodeApprovalStatus(undefined);
+                    setCodeCheck({ loading: false });
+                    form.setFieldsValue({
+                      baseModelVersionId: undefined,
+                      datasetVersionId: undefined,
+                      codeVersionId: undefined,
+                      planId: value,
+                      planVersion: plan?.version,
+                      trainingMode: plan?.trainingModes?.[0],
+                      resourceProfileId: plan?.runtimes?.[0]?.resourceProfiles?.[0]?.id,
+                      hyperParams: '{}',
+                    });
+                  }}
+                  options={trainingPlans.map((plan) => ({
+                    value: plan.id,
+                    label: `${plan.displayName} (${plan.id})`,
+                  }))}
                 />
               </Form.Item>
+              {trainingConfigMode === 'code' && (
+                <>
+                  <Form.Item
+                    name="trainingMode"
+                    label="训练类型"
+                    rules={[{ required: true, message: '请选择训练类型' }]}
+                  >
+                    <Select options={(selectedTrainingPlan?.trainingModes ?? []).map((mode) => ({ value: mode, label: mode }))} />
+                  </Form.Item>
+                  <Form.Item
+                    name="resourceProfileId"
+                    label="计算资源规格"
+                    extra="任务提交后等待训练容器启动时显示为“调度中”。"
+                    rules={[{ required: true, message: '请选择计算资源规格' }]}
+                  >
+                    <Select options={resourceProfiles.map((profile) => ({
+                      value: profile.id,
+                      label: `${profile.id} / GPU ${profile.gpuCount}`,
+                    }))} />
+                  </Form.Item>
+                </>
+              )}
               <Form.Item name="remark" label="备注（可选）">
                 <Input placeholder="例如：create-page k8s test" />
               </Form.Item>
@@ -1488,8 +1606,8 @@ const TaskCreate: React.FC = () => {
                 onChange={(e) => switchTrainingConfigMode(e.target.value)}
                 style={{ marginBottom: 16 }}
               >
-                <Radio.Button value="hyperParams">超参数配置</Radio.Button>
-                <Radio.Button value="code">训练代码</Radio.Button>
+                <Radio.Button value="code">通用训练代码（推荐）</Radio.Button>
+                <Radio.Button value="hyperParams">兼容旧版内置训练</Radio.Button>
               </Radio.Group>
 
               {trainingConfigMode === 'hyperParams' ? (
@@ -1515,6 +1633,26 @@ const TaskCreate: React.FC = () => {
                 </Form.Item>
               ) : (
                 <>
+                  <Form.Item
+                    name="hyperParams"
+                    label="训练参数（JSON）"
+                    extra="参数由训练方案校验后写入运行规格，并传入训练程序。"
+                    rules={[
+                      { required: true, message: '请输入训练参数 JSON' },
+                      {
+                        validator: async (_: any, value: string) => {
+                          try {
+                            JSON.parse(value || '{}');
+                            return Promise.resolve();
+                          } catch {
+                            return Promise.reject(new Error('JSON 格式不正确'));
+                          }
+                        },
+                      },
+                    ]}
+                  >
+                    <Input.TextArea rows={6} />
+                  </Form.Item>
                   <Alert
                     type="info"
                     showIcon
@@ -1551,7 +1689,7 @@ const TaskCreate: React.FC = () => {
                           setSelectedCodeApprovalStatus('APPROVED');
                           form.setFieldValue('codeVersionId', value);
                         }}
-                        options={codeOptions.map((item: any) => ({
+                        options={filteredCodeOptions.map((item: any) => ({
                           value: item.codeVersionId,
                           label: `${item.codeAssetName} / ${item.codeVersionId}`,
                         }))}
@@ -1709,12 +1847,16 @@ const TaskCreate: React.FC = () => {
                     : '训练代码'}
                 </Descriptions.Item>
                 <Descriptions.Item label="训练方案">
-                  {PROFILE_DISPLAY_NAME}
+                  {trainingConfigMode === 'code'
+                    ? selectedTrainingPlan?.displayName || selectedTrainingPlanId || '-'
+                    : PROFILE_DISPLAY_NAME}
                   <Typography.Text
                     type="secondary"
                     style={{ marginLeft: 8, fontSize: 12 }}
                   >
-                    （{CONSISTENCY_TRAINING_PROFILE}）
+                    （{trainingConfigMode === 'code'
+                      ? selectedTrainingPlanId || '-'
+                      : CONSISTENCY_TRAINING_PROFILE}）
                   </Typography.Text>
                 </Descriptions.Item>
                 <Descriptions.Item label="baseModelVersionId">
@@ -1727,28 +1869,26 @@ const TaskCreate: React.FC = () => {
                     {selectedDatasetVersionId || '-'}
                   </Typography.Text>
                 </Descriptions.Item>
-                {trainingConfigMode === 'code' ? (
+                {trainingConfigMode === 'code' && (
                   <Descriptions.Item label="codeVersionId">
                     <Typography.Text copyable code>
                       {selectedCodeVersionId || '-'}
                     </Typography.Text>
                   </Descriptions.Item>
-                ) : (
-                  <Descriptions.Item label="hyperParams">
-                    <code>{form.getFieldValue('hyperParams') || '{}'}</code>
-                  </Descriptions.Item>
                 )}
+                <Descriptions.Item label="hyperParams">
+                  <code>{form.getFieldValue('hyperParams') || '{}'}</code>
+                </Descriptions.Item>
                 <Descriptions.Item label="执行方式">
                   Kubernetes Job
                 </Descriptions.Item>
-                <Descriptions.Item label="Worker 固定命令">
-                  <Typography.Paragraph copyable style={{ marginBottom: 0 }}>
-                    python scripts/training/train_fusion_baseline.py --data-dir
-                    data --model logreg --out-dir outputs/fusion_baseline_logreg
-                  </Typography.Paragraph>
+                <Descriptions.Item label="运行规格">
+                  {trainingConfigMode === 'code'
+                    ? `${form.getFieldValue('trainingMode') || '-'} / ${form.getFieldValue('resourceProfileId') || '-'}`
+                    : '旧版内置训练'}
                 </Descriptions.Item>
                 <Descriptions.Item label="模型权重目录">
-                  /workspace/job/model（下载解压，当前方案不自动加载）
+                  /workspace/job/model（是否加载由训练方案和训练代码决定）
                 </Descriptions.Item>
               </Descriptions>
             </>

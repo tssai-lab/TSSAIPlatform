@@ -214,8 +214,8 @@ export function getMockRelatedTasksForDetail(
     const mn = normalizeModelNameForMatch(modelName);
     matched = MOCK_TASKS.filter(
       (t) =>
-        normalizeModelNameForMatch(t.modelName) === mn &&
-        t.datasetName.trim() === ds,
+        normalizeModelNameForMatch(t.modelName ?? '') === mn &&
+        (t.datasetName ?? '').trim() === ds,
     );
   }
   return [...matched].sort((a, b) =>

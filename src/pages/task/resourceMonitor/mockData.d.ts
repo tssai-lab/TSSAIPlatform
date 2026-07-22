@@ -1,0 +1,9 @@
+export const mockFetchResourceSummary: (...args: any[]) => any;
+export const mockFetchResourceServers: (...args: any[]) => any;
+export const mockFetchResourceServerDetail: (...args: any[]) => any;
+export const mockFetchResourceMetrics: (...args: any[]) => any;
+export const mockCreateResourceServer: (...args: any[]) => any;
+export const mockDeleteResourceServer: (...args: any[]) => any;
+export const mockReorderResourceQueueTask: (...args: any[]) => any;
+export const mockUpdateResourceQueuePriority: (...args: any[]) => any;
+export const mockCancelResourceQueueTask: (...args: any[]) => any;

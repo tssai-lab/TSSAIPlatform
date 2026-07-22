@@ -270,7 +270,11 @@ const DatasetDetail: React.FC = () => {
     }
   };
 
-  const handleDownload = (storagePath?: string) => {
+  const handleDownload = (versionId?: string, storagePath?: string) => {
+    if (versionId) {
+      window.open(`/api/dataset-versions/${encodeURIComponent(versionId)}/download`, '_blank');
+      return;
+    }
     if (!storagePath) {
       message.warning('当前版本没有可下载文件');
       return;
@@ -710,7 +714,12 @@ const DatasetDetail: React.FC = () => {
           </Button>
           <Button
             onClick={() =>
-              handleDownload(datasetInfo.latestVersion?.storagePath)
+              handleDownload(
+                datasetInfo.latestVersion
+                  ? resolveDatasetVersionId(datasetInfo.latestVersion, datasetInfo.id)
+                  : undefined,
+                datasetInfo.latestVersion?.storagePath,
+              )
             }
           >
             下载最新版本
@@ -1003,7 +1012,12 @@ const DatasetDetail: React.FC = () => {
                     )}
                     <Button
                       type="link"
-                      onClick={() => handleDownload(record.storagePath)}
+                      onClick={() =>
+                        handleDownload(
+                          resolveDatasetVersionId(record, datasetInfo.id),
+                          record.storagePath,
+                        )
+                      }
                     >
                       下载
                     </Button>

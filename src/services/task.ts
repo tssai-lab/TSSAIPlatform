@@ -55,6 +55,10 @@ export async function createTask(
     codeVersionId?: string;
     datasetVersionId: string;
     trainingProfile?: string;
+    planId?: string;
+    planVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     hyperParams?: Record<string, unknown> | string;
     remark?: string;
   },
@@ -151,6 +155,10 @@ export async function createExperimentVersion(
     modelVersionId?: string;
     codeVersionId?: string;
     datasetVersionId?: string;
+    planId?: string;
+    planVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     hyperParams?: Record<string, unknown> | string;
     remark?: string;
   },
