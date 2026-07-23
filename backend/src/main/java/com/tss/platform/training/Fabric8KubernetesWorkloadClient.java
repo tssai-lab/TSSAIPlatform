@@ -40,7 +40,8 @@ public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient
     @Override
     public boolean deleteTrainingJob(String namespace, String jobName) {
         try (KubernetesClient client = openConfiguredClient()) {
-            return client.batch().v1().jobs().inNamespace(namespace).withName(jobName).delete();
+            var deletedResources = client.batch().v1().jobs().inNamespace(namespace).withName(jobName).delete();
+            return deletedResources != null && !deletedResources.isEmpty();
         }
     }
 
