@@ -9,11 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Instant;
-import java.util.List;
 import java.util.Set;
 
 /** Submits one immutable RunSpec as one Kubernetes Job/Pod. */
@@ -27,7 +23,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     private final TrainingEnvironmentService environmentService;
     private final TrainingExperimentVersionRepository repository;
     private final KubernetesJobManifestBuilder manifestBuilder;
-    private final ShellCommandRunner shellCommandRunner;
+    private final KubernetesWorkloadClient workloadClient;
     private final TransactionTemplate transactionTemplate;
 
     @Value("${minio.access-key:}")
@@ -44,14 +40,14 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingEnvironmentService environmentService,
             TrainingExperimentVersionRepository repository,
             KubernetesJobManifestBuilder manifestBuilder,
-            ShellCommandRunner shellCommandRunner,
+            KubernetesWorkloadClient workloadClient,
             TransactionTemplate transactionTemplate
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
         this.repository = repository;
         this.manifestBuilder = manifestBuilder;
-        this.shellCommandRunner = shellCommandRunner;
+        this.workloadClient = workloadClient;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -75,15 +71,10 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     @Override
     public void stop(String trainingId) {
         String jobName = KubernetesJobNaming.jobNameForTraining(trainingId);
-        Path kubeconfig = environmentService.resolveKubeconfig();
-        List<String> deleteCmd = environmentService.kubectlCommand(
-                kubeconfig, "delete", "job", jobName, "-n", properties.getNamespace(), "--ignore-not-found"
-        );
-        ShellCommandRunner.CommandResult result = shellCommandRunner.run(
-                deleteCmd, environmentService.resolveProjectRoot(), 60
-        );
-        if (!result.success()) {
-            LOG.warn("Failed to delete K8s Job: trainingId={}, error={}", trainingId, result.errorMessage());
+        try {
+            workloadClient.deleteTrainingJob(properties.getNamespace(), jobName);
+        } catch (Exception e) {
+            LOG.warn("Failed to delete K8s Job: trainingId={}, job={}", trainingId, jobName, e);
         }
     }
 
@@ -92,54 +83,13 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             TrainingExperimentVersion task = repository.findById(trainingId)
                     .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
             String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket);
-            Path kubeconfig = environmentService.resolveKubeconfig();
-            List<String> applyCmd = environmentService.kubectlCommand(kubeconfig, "apply", "-f", "-");
-            ShellCommandRunner.CommandResult result = runWithStdin(
-                    applyCmd, environmentService.resolveProjectRoot(), yaml, 120
-            );
-            if (!result.success()) {
-                throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + result.output());
-            }
+            workloadClient.applyTrainingJob(properties.getNamespace(), yaml);
             updateStatus(trainingId, "queued", 0, null);
             LOG.info("K8s training Job submitted: trainingId={}, plan={}, job={}",
                     trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
         } catch (Exception e) {
             LOG.error("K8s training Job submission failed: trainingId={}", trainingId, e);
             updateStatus(trainingId, "failed", 0, e.getMessage());
-        }
-    }
-
-    private ShellCommandRunner.CommandResult runWithStdin(
-            List<String> command, Path workingDirectory, String stdinContent, int timeoutSeconds
-    ) {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        if (workingDirectory != null) {
-            builder.directory(workingDirectory.toFile());
-        }
-        builder.redirectErrorStream(true);
-        try {
-            Process process = builder.start();
-            try (OutputStream outputStream = process.getOutputStream()) {
-                outputStream.write(stdinContent.getBytes(StandardCharsets.UTF_8));
-            }
-            StringBuilder output = new StringBuilder();
-            try (var reader = process.inputReader(StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append('\n');
-                }
-            }
-            boolean finished = process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return ShellCommandRunner.CommandResult.failed(-1, output.toString(), "kubectl apply timed out");
-            }
-            int exitCode = process.exitValue();
-            return exitCode == 0
-                    ? ShellCommandRunner.CommandResult.success(output.toString())
-                    : ShellCommandRunner.CommandResult.failed(exitCode, output.toString(), "kubectl apply failed exit=" + exitCode);
-        } catch (Exception e) {
-            return ShellCommandRunner.CommandResult.failed(-1, "", e.getMessage());
         }
     }
 
