@@ -140,6 +140,8 @@ const ModelUpload: React.FC = () => {
     const requestOpts = { skipErrorHandler: true } as const;
 
     try {
+      // 后端要求 commitInfo 非空；与公网一致，用备注作为 Commit/版本说明
+      const commitInfo = String(values.remark ?? '').trim();
       const fileFingerprint = buildModelFileFingerprint(
         file,
         values.modelName,
@@ -151,6 +153,7 @@ const ModelUpload: React.FC = () => {
           fileName: file.name,
           fileSize: file.size,
           fileFingerprint,
+          commitInfo,
         },
         requestOpts,
       );
@@ -203,7 +206,8 @@ const ModelUpload: React.FC = () => {
           modelName: values.modelName,
           version: values.version.trim(),
           type: values.type,
-          remark: values.remark,
+          remark: commitInfo,
+          commitInfo,
         },
         requestOpts,
       );

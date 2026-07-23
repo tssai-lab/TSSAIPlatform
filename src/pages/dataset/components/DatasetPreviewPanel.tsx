@@ -24,6 +24,14 @@ import {
   fetchDatasetPreviewFiles,
   getDatasetPreviewImage,
 } from '@/services/datasetPreview';
+import {
+  type ConsumerManifestSample,
+  fetchConsumerManifest,
+  fetchMultimodalDataPreview,
+  fetchMultimodalSampleDetail,
+  fetchMultimodalSamples,
+  type MultimodalSampleDataItem,
+} from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import TableEllipsisCell from './TableEllipsisCell';
 
@@ -80,6 +88,115 @@ function getContentFallbackVisiblePageNumbers(
 
 function getFileLabel(file: DatasetPreviewFileItem): string {
   return file.path || file.fileName;
+}
+
+function extensionOf(name?: string): string | undefined {
+  if (!name) return undefined;
+  const i = name.lastIndexOf('.');
+  if (i < 0) return undefined;
+  return name.slice(i + 1).toLowerCase();
+}
+
+function kindFromSampleData(
+  item: MultimodalSampleDataItem,
+): DatasetPreviewFileKind {
+  if (item.dataType === 'IMAGE') return DatasetPreviewFileKind.IMAGE;
+  if (item.dataType === 'TEXT') {
+    const ext = extensionOf(item.fileName);
+    if (ext === 'csv' || ext === 'tsv') return DatasetPreviewFileKind.TABLE;
+    return DatasetPreviewFileKind.TEXT;
+  }
+  const ext = extensionOf(item.fileName);
+  if (
+    ext &&
+    ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'webp', 'tif', 'tiff'].includes(ext)
+  ) {
+    return DatasetPreviewFileKind.IMAGE;
+  }
+  if (
+    ext &&
+    ['txt', 'json', 'jsonl', 'xml', 'md', 'yaml', 'yml'].includes(ext)
+  ) {
+    return DatasetPreviewFileKind.TEXT;
+  }
+  if (ext === 'csv' || ext === 'tsv') return DatasetPreviewFileKind.TABLE;
+  return DatasetPreviewFileKind.UNSUPPORTED;
+}
+
+function mapSampleDataToPreviewFile(
+  item: MultimodalSampleDataItem,
+  sample: { externalId?: string; sampleIndex?: number },
+): DatasetPreviewFileItem {
+  const kind = kindFromSampleData(item);
+  const fileName =
+    item.fileName || sample.externalId || item.sampleDataId || 'file';
+  const path = sample.externalId
+    ? `${sample.externalId}/${fileName}`
+    : fileName;
+  return {
+    path,
+    fileName,
+    extension: extensionOf(fileName) || item.format,
+    kind,
+    sizeBytes: item.sizeBytes ?? null,
+    previewAllowed:
+      kind === DatasetPreviewFileKind.IMAGE ||
+      kind === DatasetPreviewFileKind.TEXT ||
+      kind === DatasetPreviewFileKind.TABLE,
+    previewUrl: item.previewUrl,
+    sampleDataId: item.sampleDataId,
+    source: 'sample',
+  };
+}
+
+function flattenManifestSamples(
+  samples: ConsumerManifestSample[],
+): DatasetPreviewFileItem[] {
+  const files: DatasetPreviewFileItem[] = [];
+  for (const sample of samples) {
+    for (const data of sample.data ?? []) {
+      files.push(mapSampleDataToPreviewFile(data, sample));
+    }
+  }
+  return files;
+}
+
+function unwrapConsumerManifestPage(raw: unknown): {
+  datasetVersionId?: string;
+  type?: string;
+  versionLabel?: string;
+  page?: number;
+  pageSize?: number;
+  totalSamples: number;
+  samples: ConsumerManifestSample[];
+} | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const page =
+    obj.samples != null
+      ? obj
+      : obj.data && typeof obj.data === 'object'
+        ? (obj.data as Record<string, unknown>)
+        : null;
+  if (!page) return null;
+  const samples = Array.isArray(page.samples)
+    ? (page.samples as ConsumerManifestSample[])
+    : [];
+  const totalSamples =
+    typeof page.totalSamples === 'number' ? page.totalSamples : samples.length;
+  return {
+    datasetVersionId:
+      typeof page.datasetVersionId === 'string'
+        ? page.datasetVersionId
+        : undefined,
+    type: typeof page.type === 'string' ? page.type : undefined,
+    versionLabel:
+      typeof page.versionLabel === 'string' ? page.versionLabel : undefined,
+    page: typeof page.page === 'number' ? page.page : undefined,
+    pageSize: typeof page.pageSize === 'number' ? page.pageSize : undefined,
+    totalSamples,
+    samples,
+  };
 }
 
 function isJsonlFile(file: DatasetPreviewFileItem): boolean {
@@ -239,11 +356,17 @@ export type DatasetPreviewPanelProps = {
   versionId?: string;
   /** 嵌入详情页时使用较小高度 */
   compact?: boolean;
+  /**
+   * 仅工作区发布版本（含 APPEND）为 true：优先样本清单。
+   * 独立整包上传版本保持 false，直接扫该版本主包 ZIP，避免各版内容串台。
+   */
+  preferSamples?: boolean;
 };
 
 const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   versionId,
   compact = false,
+  preferSamples = false,
 }) => {
   const listScrollY = compact ? 320 : 480;
   const contentMaxHeight = compact ? '45vh' : '65vh';
@@ -253,6 +376,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   const [files, setFiles] = useState<DatasetPreviewFileItem[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
+  const [listSource, setListSource] = useState<'sample' | 'zip'>('zip');
   const [keyword, setKeyword] = useState('');
   const [kindFilter, setKindFilter] = useState<
     DatasetPreviewFileKind | undefined
@@ -272,6 +396,8 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const imageUrlRef = useRef<string | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const filesAbortRef = useRef<AbortController | null>(null);
+  const loadSeqRef = useRef(0);
 
   const revokeImageUrl = useCallback(() => {
     if (imageUrlRef.current) {
@@ -283,6 +409,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const resetPreviewState = useCallback(() => {
     loadAbortRef.current?.abort();
+    filesAbortRef.current?.abort();
     revokeImageUrl();
     setSelected(null);
     setPreviewError(null);
@@ -295,15 +422,17 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     setFiles([]);
     setFileTotal(0);
     setFilesError(null);
+    setListSource('zip');
   }, [revokeImageUrl]);
 
   useEffect(() => {
     resetPreviewState();
-  }, [versionId, resetPreviewState]);
+  }, [versionId, preferSamples, resetPreviewState]);
 
   useEffect(() => {
     return () => {
       loadAbortRef.current?.abort();
+      filesAbortRef.current?.abort();
       revokeImageUrl();
     };
   }, [revokeImageUrl]);
@@ -319,9 +448,131 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       setFileTotal(0);
       return;
     }
+
+    const seq = ++loadSeqRef.current;
+    filesAbortRef.current?.abort();
+    const controller = new AbortController();
+    filesAbortRef.current = controller;
+    const isStale = () =>
+      controller.signal.aborted || seq !== loadSeqRef.current;
+
     setFilesLoading(true);
     setFilesError(null);
     try {
+      if (preferSamples) {
+        try {
+          const raw = await fetchConsumerManifest(
+            versionId,
+            { page: filePage, pageSize: filePageSize },
+            { skipErrorHandler: true, signal: controller.signal },
+          );
+          if (isStale()) return;
+          const page = unwrapConsumerManifestPage(raw);
+          const mapped = flattenManifestSamples(page?.samples ?? []);
+          if (page && (page.totalSamples > 0 || mapped.length > 0)) {
+            let nextFiles = mapped;
+            const kw = keyword.trim().toLowerCase();
+            if (kw) {
+              nextFiles = nextFiles.filter((f) =>
+                getFileLabel(f).toLowerCase().includes(kw),
+              );
+            }
+            if (kindFilter) {
+              nextFiles = nextFiles.filter((f) => f.kind === kindFilter);
+            }
+            if (isStale()) return;
+            setListSource('sample');
+            setMeta({
+              datasetVersionId: page.datasetVersionId || versionId,
+              type: (page.type as 'CV' | 'NLP') || 'CV',
+              fileName: page.versionLabel
+                ? `版本 ${page.versionLabel}`
+                : '样本清单',
+              sourceArchive: true,
+              page: page.page ?? filePage,
+              pageSize: page.pageSize ?? filePageSize,
+              total: page.totalSamples || nextFiles.length,
+              files: nextFiles,
+            });
+            setFiles(nextFiles);
+            setFileTotal(page.totalSamples || nextFiles.length);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+
+        try {
+          const samplesRes = await fetchMultimodalSamples(
+            versionId,
+            { page: filePage, pageSize: Math.min(filePageSize, 20) },
+            { skipErrorHandler: true, signal: controller.signal },
+          );
+          if (isStale()) return;
+          const pageData = samplesRes?.data;
+          const summaries = pageData?.data ?? [];
+          if ((pageData?.total ?? 0) > 0 || summaries.length > 0) {
+            const details = await Promise.all(
+              summaries.map(async (sample) => {
+                try {
+                  const detailRes = await fetchMultimodalSampleDetail(
+                    sample.sampleId,
+                    { skipErrorHandler: true, signal: controller.signal },
+                  );
+                  return detailRes?.data;
+                } catch {
+                  return null;
+                }
+              }),
+            );
+            if (isStale()) return;
+            let nextFiles: DatasetPreviewFileItem[] = [];
+            details.forEach((detail, index) => {
+              const sample = summaries[index];
+              if (!detail?.data?.length) {
+                nextFiles.push({
+                  path: sample.externalId || sample.sampleId,
+                  fileName: sample.externalId || sample.sampleId,
+                  kind: DatasetPreviewFileKind.UNSUPPORTED,
+                  previewAllowed: false,
+                  message: '无数据项',
+                  source: 'sample',
+                });
+                return;
+              }
+              detail.data.forEach((item) => {
+                nextFiles.push(mapSampleDataToPreviewFile(item, sample));
+              });
+            });
+            const kw = keyword.trim().toLowerCase();
+            if (kw) {
+              nextFiles = nextFiles.filter((f) =>
+                getFileLabel(f).toLowerCase().includes(kw),
+              );
+            }
+            if (kindFilter) {
+              nextFiles = nextFiles.filter((f) => f.kind === kindFilter);
+            }
+            setListSource('sample');
+            setMeta({
+              datasetVersionId: versionId,
+              type: 'CV',
+              fileName: '样本清单',
+              sourceArchive: true,
+              page: pageData?.page ?? filePage,
+              pageSize: pageData?.pageSize ?? filePageSize,
+              total: pageData?.total ?? nextFiles.length,
+              files: nextFiles,
+            });
+            setFiles(nextFiles);
+            setFileTotal(pageData?.total ?? nextFiles.length);
+            return;
+          }
+        } catch {
+          // fall through to zip
+        }
+      }
+
       const data = await fetchDatasetPreviewFiles(
         versionId,
         {
@@ -330,20 +581,25 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
           keyword: keyword.trim() || undefined,
           kind: kindFilter,
         },
-        { skipErrorHandler: true },
+        { skipErrorHandler: true, signal: controller.signal },
       );
+      if (isStale()) return;
+      setListSource('zip');
       setMeta(data);
       setFiles(data.files ?? []);
       setFileTotal(data.total ?? 0);
     } catch (e: unknown) {
+      if (isStale() || (e as Error)?.name === 'AbortError') return;
       setFilesError(getApiErrorMessage(e));
       setMeta(null);
       setFiles([]);
       setFileTotal(0);
     } finally {
-      setFilesLoading(false);
+      if (!isStale()) {
+        setFilesLoading(false);
+      }
     }
-  }, [versionId, filePage, filePageSize, keyword, kindFilter]);
+  }, [versionId, preferSamples, filePage, filePageSize, keyword, kindFilter]);
 
   useEffect(() => {
     loadFiles();
@@ -356,6 +612,32 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       pageSize: number,
       signal: AbortSignal,
     ) => {
+      if (file.sampleDataId) {
+        const blob = await fetchMultimodalDataPreview(file.sampleDataId, {
+          skipErrorHandler: true,
+          signal,
+        });
+        if (signal.aborted) return;
+        const text = await blob.text();
+        const lines = text.split('\n');
+        const start = Math.max(0, (page - 1) * pageSize);
+        const slice = lines.slice(start, start + pageSize);
+        setContentData({
+          path: file.path,
+          fileName: file.fileName,
+          extension: file.extension,
+          contentType: 'TEXT',
+          content: slice.join('\n'),
+          page,
+          pageSize,
+          pageable: true,
+          total: lines.length,
+          totalPages: Math.max(1, Math.ceil(lines.length / pageSize)),
+        });
+        setContentPage(page);
+        setContentPageSize(pageSize);
+        return;
+      }
       const data = await fetchDatasetPreviewContent(
         versionId as string,
         {
@@ -374,14 +656,15 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   const loadImagePreview = useCallback(
     async (file: DatasetPreviewFileItem, signal: AbortSignal) => {
-      const blob = await getDatasetPreviewImage(
-        versionId as string,
-        file.path,
-        {
-          skipErrorHandler: true,
-          signal,
-        },
-      );
+      const blob = file.sampleDataId
+        ? await fetchMultimodalDataPreview(file.sampleDataId, {
+            skipErrorHandler: true,
+            signal,
+          })
+        : await getDatasetPreviewImage(versionId as string, file.path, {
+            skipErrorHandler: true,
+            signal,
+          });
       revokeImageUrl();
       const url = URL.createObjectURL(blob);
       imageUrlRef.current = url;
@@ -550,7 +833,9 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   }
 
   const metaHint = meta
-    ? `${meta.type} · ${meta.fileName}${meta.sourceArchive ? '（压缩包）' : ''}`
+    ? `${meta.type} · ${meta.fileName}${meta.sourceArchive ? '（压缩包）' : ''} · ${
+        listSource === 'sample' ? '本版本样本' : '主包 ZIP'
+      } · ${meta.datasetVersionId || versionId}`
     : null;
 
   return (

@@ -42,6 +42,7 @@ import {
   buildCodeFileTreeData,
   collectCodeFileTreeExpandedKeys,
 } from '@/utils/codeFileTree';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -235,6 +236,24 @@ const ModelDetail: React.FC = () => {
     }
   };
 
+  const handleStartTraining = (versionId?: string) => {
+    const id = versionId || selectedVersionId;
+    if (!id) {
+      message.warning('请先在版本列表中选中要用于训练的模型版本');
+      return;
+    }
+    if (!assetInfo?.id) {
+      message.warning('模型资产信息未加载完成');
+      return;
+    }
+    const params = new URLSearchParams({
+      baseModelVersionId: id,
+      from: 'model',
+      assetId: assetInfo.id,
+    });
+    history.push(`/task/create?${params.toString()}`);
+  };
+
   const selectedVersion = assetInfo?.versions.find(
     (v) => v.id === selectedVersionId,
   );
@@ -270,8 +289,12 @@ const ModelDetail: React.FC = () => {
       onBack={() => history.push('/model/list')}
       extra={
         <Space>
-          <Button type="primary" onClick={() => history.push('/task/create')}>
-            创建 K8s 训练任务
+          <Button
+            type="primary"
+            disabled={!selectedVersionId}
+            onClick={() => handleStartTraining()}
+          >
+            用此版本发起训练
           </Button>
           <Button
             onClick={() =>
@@ -299,29 +322,24 @@ const ModelDetail: React.FC = () => {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="模型版本 vs 训练实验版本"
+        message="模型版本与训练"
         description={
           <>
             <strong>模型版本</strong>
             ：上传
-            zip（代码或预训练权重）时填写版本号自动创建，用于资产归档与代码预览。
+            zip（预训练权重等）时填写版本号自动创建，用于资产归档与文件预览。
             <br />
-            <strong>训练任务</strong>
-            ：K8s 训练请在
-            <Typography.Link onClick={() => history.push('/task/create')}>
-              创建 K8s 训练任务
-            </Typography.Link>
-            页选择或上传<strong>代码模型包</strong>与数据包。
+            <strong>发起训练</strong>
+            ：在下方选中某一版本后，点击「用此版本发起训练」，会带上该版本进入创建页（作为基础模型权重）。训练代码与数据集请在创建页另行选择或上传。
             <br />
-            <strong>训练实验版本</strong>
-            ：在某次训练结果上继续调参、再训练，请在「训练任务详情」使用
+            <strong>继续调参训练</strong>
+            ：若要在某次训练结果上继续，请到「训练任务详情」使用
             <Typography.Link onClick={() => history.push('/task/list')}>
               基于此版本继续训练
             </Typography.Link>
-            ，系统会按 experimentId
-            记录每次迭代的超参与数据集关联（合同约定的版本管理）。
+            。
             <br />
-            如需新增模型文件版本，请使用右上角「上传新版本」并填写新的版本号，无需手动创建空记录。
+            如需新增模型文件版本，请使用右上角「上传新版本」并填写新的版本号。
           </>
         }
       />
@@ -407,11 +425,12 @@ const ModelDetail: React.FC = () => {
               dataIndex: 'createdAt',
               key: 'createdAt',
               width: 180,
+              render: (value?: string) => formatDisplayDateTime(value),
             },
             {
               title: '操作',
               key: 'action',
-              width: 200,
+              width: 280,
               fixed: 'right',
               align: 'left',
               render: (_, record: API.ModelVersionDetail) => (
@@ -426,6 +445,12 @@ const ModelDetail: React.FC = () => {
                     onClick={() => setSelectedVersionId(record.id)}
                   >
                     选中
+                  </Button>
+                  <Button
+                    type="link"
+                    onClick={() => handleStartTraining(record.id)}
+                  >
+                    发起训练
                   </Button>
                   <Button
                     type="link"
@@ -450,8 +475,8 @@ const ModelDetail: React.FC = () => {
           type="secondary"
           style={{ display: 'block', marginTop: 8 }}
         >
-          每个版本对应一次上传的 zip 文件；K8s 训练请在「创建 K8s
-          训练任务」页选择代码模型版本，不再使用 modelVersionId。
+          每个版本对应一次上传的 zip
+          文件。选中版本后可用「用此版本发起训练」；行内「发起训练」会直接带上该行版本。
         </Typography.Text>
       </Card>
 

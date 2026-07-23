@@ -90,7 +90,14 @@ const TaskCreate: React.FC = () => {
   const experimentId = searchParams.get('experimentId')?.trim() || '';
   const fromVersionId = searchParams.get('fromVersionId')?.trim() || '';
   const presetCodeVersionId = searchParams.get('codeVersionId')?.trim() || '';
+  const presetBaseModelVersionId =
+    searchParams.get('baseModelVersionId')?.trim() ||
+    searchParams.get('modelVersionId')?.trim() ||
+    '';
+  const fromSource = searchParams.get('from')?.trim() || '';
+  const fromModelAssetId = searchParams.get('assetId')?.trim() || '';
   const isExperimentContinue = !!experimentId;
+  const backFromModelDetail = fromSource === 'model' && !!fromModelAssetId;
 
   const [form] = Form.useForm();
   const [currentStep, setCurrentStep] = useState(0);
@@ -440,6 +447,62 @@ const TaskCreate: React.FC = () => {
   }, [form, presetCodeVersionId]);
 
   useEffect(() => {
+    if (!presetBaseModelVersionId || isExperimentContinue) return;
+    let cancelled = false;
+
+    const ensureOption = (modelId: string, meta?: Partial<API.ModelItem>) => {
+      setModelOptions((prev) => {
+        if (prev.some((item) => item.id === modelId)) {
+          if (!meta) return prev;
+          return prev.map((item) =>
+            item.id === modelId
+              ? {
+                  ...item,
+                  name: meta.name || item.name,
+                  version: meta.version || item.version,
+                  type: (meta.type as API.ModelItem['type']) || item.type,
+                }
+              : item,
+          );
+        }
+        return [
+          {
+            id: modelId,
+            name: meta?.name || `模型 ${modelId.slice(0, 8)}…`,
+            version: meta?.version || '-',
+            type: (meta?.type || 'NLP') as API.ModelItem['type'],
+          } as API.ModelItem,
+          ...prev,
+        ];
+      });
+    };
+
+    setModelInputMode('select');
+    setSelectedBaseModelVersionId(presetBaseModelVersionId);
+    form.setFieldsValue({ baseModelVersionId: presetBaseModelVersionId });
+    ensureOption(presetBaseModelVersionId);
+
+    void getModelVersion(presetBaseModelVersionId, { skipErrorHandler: true })
+      .then((detailRes: any) => {
+        if (cancelled) return;
+        const d = detailRes?.data;
+        if (!d) return;
+        ensureOption(presetBaseModelVersionId, {
+          name: d.name || d.fileName || '基础模型权重',
+          version: d.version || '-',
+          type: d.type || 'NLP',
+        });
+      })
+      .catch(() => {
+        // keep placeholder option
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form, isExperimentContinue, presetBaseModelVersionId]);
+
+  useEffect(() => {
     if (trainingConfigMode !== 'code' || !selectedCodeVersionId) {
       setCodeCheck({ loading: false });
       return;
@@ -605,6 +668,7 @@ const TaskCreate: React.FC = () => {
           name,
           version,
           datasetType,
+          datasetType === 'CV' ? annotationFormat : undefined,
         );
         res = await uploadDataset(
           {
@@ -999,13 +1063,22 @@ const TaskCreate: React.FC = () => {
     <PageContainer
       title={isExperimentContinue ? '基于此版本继续训练' : '发起训练'}
       subTitle="选择或上传基础模型权重、训练数据集与训练代码，通过 Kubernetes 提交固定训练方案"
-      onBack={() =>
-        history.push(
-          isExperimentContinue
-            ? `/task/detail/${encodeURIComponent(experimentId)}`
-            : '/task/list',
-        )
-      }
+      onBack={() => {
+        if (isExperimentContinue) {
+          history.push(`/task/detail/${encodeURIComponent(experimentId)}`);
+          return;
+        }
+        if (backFromModelDetail) {
+          const q = presetBaseModelVersionId
+            ? `?versionId=${encodeURIComponent(presetBaseModelVersionId)}`
+            : '';
+          history.push(
+            `/model/detail/${encodeURIComponent(fromModelAssetId)}${q}`,
+          );
+          return;
+        }
+        history.push('/task/list');
+      }}
     >
       {isExperimentContinue && (
         <Alert

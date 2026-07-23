@@ -24,6 +24,9 @@ export function buildDatasetFileFingerprint(
   datasetName: string,
   version: string,
   type: string,
+  /** 变更标注格式须换指纹，否则会复用旧 upload 会话（仍按旧 annotationFormat 合并校验） */
+  annotationFormat?: string,
+  cvTaskType?: string,
 ): string {
   return [
     file.name,
@@ -31,5 +34,7 @@ export function buildDatasetFileFingerprint(
     datasetName,
     version || 'v1',
     type,
+    annotationFormat || '',
+    cvTaskType || '',
   ].join('|');
 }

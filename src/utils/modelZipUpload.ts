@@ -56,6 +56,7 @@ export async function uploadModelZipPackage(
     );
   }
 
+  const commitInfo = remark.trim();
   const fileFingerprint = buildModelFileFingerprint(
     file,
     modelName,
@@ -67,6 +68,7 @@ export async function uploadModelZipPackage(
       fileName: file.name,
       fileSize: file.size,
       fileFingerprint,
+      commitInfo,
     },
     requestOpts,
   );
@@ -115,7 +117,8 @@ export async function uploadModelZipPackage(
       modelName: modelName.trim(),
       version: version.trim(),
       type,
-      remark: remark.trim(),
+      remark: commitInfo,
+      commitInfo,
       ...(assetId ? { assetId } : {}),
     },
     requestOpts,

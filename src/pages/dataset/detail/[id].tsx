@@ -42,6 +42,7 @@ import {
   updateDatasetVersion,
   updateDatasetVersionStatus,
 } from '@/services/platform';
+import { getApiErrorMessage } from '@/utils/apiError';
 import {
   DATASET_VERSION_DESC_PLACEHOLDER,
   DATASET_VERSION_FORMAT_HINT,
@@ -54,6 +55,7 @@ import {
   supportsDatasetWorkspaceEdit,
   type WorkspaceEditableDatasetType,
 } from '@/utils/datasetWorkspace';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
 import MultimodalImportBanner from '../components/MultimodalImportBanner';
 import MultimodalPreviewPanel from '../components/MultimodalPreviewPanel';
@@ -147,6 +149,138 @@ function buildDraftContext(
     importStatus: datasetInfo.importStatus,
     editSessionId: datasetInfo.editSessionId,
   };
+}
+
+/** 资产级活动草稿 ID（版本表可能暂未带上 DRAFT 行） */
+function resolveActiveDraftId(
+  datasetInfo?:
+    | (API.DatasetDetail & {
+        latestDraftVersionId?: string | null;
+        editSessionId?: string | null;
+      })
+    | null,
+  draftContext?: DraftVersionContext,
+): string | undefined {
+  if (!datasetInfo) return undefined;
+  const fromMeta =
+    datasetInfo.editSessionId || datasetInfo.latestDraftVersionId || undefined;
+  if (fromMeta) return fromMeta;
+  const row = datasetInfo.versions.find((item) =>
+    isWorkspaceDraftVersion(item, draftContext),
+  );
+  return row
+    ? (resolveDatasetVersionId(row, datasetInfo.id) ?? row.id)
+    : undefined;
+}
+
+function isVersionAlreadyExistsError(error: unknown): boolean {
+  const msg = getApiErrorMessage(error, '');
+  return /version already exists for asset/i.test(msg);
+}
+
+/** 规范为 vN 或 vX.Y.Z；漏写 v 时补上 */
+function normalizeDatasetVersionInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  if (/^v?\d+\.\d+\.\d+$/i.test(trimmed)) {
+    return `v${trimmed.replace(/^v/i, '')}`;
+  }
+  if (/^v?\d+$/i.test(trimmed)) {
+    return `v${trimmed.replace(/^v/i, '')}`;
+  }
+  return trimmed;
+}
+
+/**
+ * 改名候选：用户填写号 + 其后若干递增。
+ * 软删版本标签仍占唯一约束，页面列表看不到，故需自动跳号。
+ */
+function buildVersionLabelCandidates(
+  preferred: string,
+  existingVisible: string[],
+  extraAttempts = 8,
+): string[] {
+  const preferredNorm = normalizeDatasetVersionInput(preferred);
+  const occupied = new Set(
+    existingVisible.map((item) => item.trim().toLowerCase()),
+  );
+  const out: string[] = [];
+  const push = (label: string) => {
+    const key = label.toLowerCase();
+    if (
+      !label ||
+      occupied.has(key) ||
+      out.some((x) => x.toLowerCase() === key)
+    ) {
+      return;
+    }
+    out.push(label);
+  };
+  push(preferredNorm);
+  const semver = preferredNorm.match(/^v(\d+)\.(\d+)\.(\d+)$/i);
+  const legacy = preferredNorm.match(/^v(\d+)$/i);
+  if (semver) {
+    const major = Number(semver[1]);
+    const minor = Number(semver[2]);
+    let patch = Number(semver[3]);
+    for (let i = 0; i < extraAttempts; i += 1) {
+      patch += 1;
+      push(`v${major}.${minor}.${patch}`);
+    }
+  } else if (legacy) {
+    let n = Number(legacy[1]);
+    for (let i = 0; i < extraAttempts; i += 1) {
+      n += 1;
+      push(`v${n}`);
+    }
+  } else {
+    push(suggestNextDatasetVersion(existingVisible));
+  }
+  return out;
+}
+
+async function applyDraftVersionLabel(params: {
+  draftId: string;
+  preferred: string;
+  existingVisible: string[];
+  remark?: string;
+}): Promise<{ applied: string; fallbackFrom?: string }> {
+  const candidates = buildVersionLabelCandidates(
+    params.preferred,
+    params.existingVisible,
+  );
+  let lastError: unknown;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const label = candidates[i];
+    try {
+      await updateDatasetVersion(
+        params.draftId,
+        {
+          version: label,
+          versionLabel: label,
+          remark: params.remark,
+          description: params.remark,
+        },
+        { skipErrorHandler: true },
+      );
+      return {
+        applied: label,
+        fallbackFrom:
+          i === 0 ? undefined : normalizeDatasetVersionInput(params.preferred),
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isVersionAlreadyExistsError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw (
+    lastError ||
+    new Error(
+      `版本号「${normalizeDatasetVersionInput(params.preferred)}」及后续候选均被占用（含已软删、页面不可见的历史标签）。请改用未占用标签，例如 v3 或 v1.0.10。`,
+    )
+  );
 }
 
 const DATASET_TYPE_LABEL: Record<string, string> = {
@@ -389,11 +523,13 @@ const DatasetDetail: React.FC = () => {
     const existingWorkspaceDraft = datasetInfo.versions.find((item) =>
       isWorkspaceDraftVersion(item, draftContext),
     );
-    if (existingWorkspaceDraft) {
-      const draftId =
-        resolveDatasetVersionId(existingWorkspaceDraft, datasetInfo.id) ??
-        existingWorkspaceDraft.id;
-      const parentId = existingWorkspaceDraft.parentVersionId
+    const activeDraftId =
+      (existingWorkspaceDraft
+        ? (resolveDatasetVersionId(existingWorkspaceDraft, datasetInfo.id) ??
+          existingWorkspaceDraft.id)
+        : undefined) || resolveActiveDraftId(datasetInfo, draftContext);
+    if (activeDraftId) {
+      const parentId = existingWorkspaceDraft?.parentVersionId
         ? (resolveDatasetVersionId(
             datasetInfo.versions.find(
               (v) =>
@@ -403,12 +539,14 @@ const DatasetDetail: React.FC = () => {
             ),
             datasetInfo.id,
           ) ?? existingWorkspaceDraft.parentVersionId)
-        : undefined;
+        : versionId;
       if (parentId) {
         setWorkspaceEditSourceVersionId(parentId);
       }
-      message.info('该数据集已有编辑草稿，已为您切换');
-      setPreviewVersionId(draftId);
+      message.info(
+        '该数据集已有未发布的编辑草稿（同一资产只能有一个），已为您切入；可继续编辑或「取消增删」后重开。',
+      );
+      setPreviewVersionId(activeDraftId);
       scrollToWorkspace();
       return;
     }
@@ -460,7 +598,7 @@ const DatasetDetail: React.FC = () => {
         );
         message.success('版本记录已创建，请通过「上传新版本」绑定数据文件');
       } else if (versionModalMode === 'editWorkspace') {
-        const version = values.version.trim();
+        const version = normalizeDatasetVersionInput(values.version.trim());
         const sourceId = workspaceEditSourceVersionId;
         if (!sourceId) {
           message.error('缺少源版本信息，请重新点击「编辑当前版本」');
@@ -471,32 +609,124 @@ const DatasetDetail: React.FC = () => {
           return;
         }
         const assetId = datasetInfo.id;
+        // 资产级已有 DRAFT 时禁止再建；先切入（版本表可能尚未展示该行）
+        const existingDraftId = resolveActiveDraftId(datasetInfo, draftContext);
+        if (existingDraftId) {
+          try {
+            const renamed = await applyDraftVersionLabel({
+              draftId: existingDraftId,
+              preferred: version,
+              existingVisible: existingVersionNames,
+              remark,
+            });
+            if (renamed.fallbackFrom) {
+              message.warning(
+                `「${renamed.fallbackFrom}」已被占用（含软删历史，页面可能看不见）。已改用 ${renamed.applied} 并切入草稿。`,
+              );
+            } else {
+              message.success(
+                `已切入现有编辑草稿，版本号为 ${renamed.applied}`,
+              );
+            }
+          } catch (renameExistingError) {
+            message.warning(
+              getApiErrorMessage(
+                renameExistingError,
+                '已切入现有草稿，但版本号未能更新。可继续编辑或取消草稿后换更大版本号再建。',
+              ),
+            );
+          }
+          setWorkspaceEditSourceVersionId(sourceId);
+          setVersionModalOpen(false);
+          await loadDetail();
+          setPreviewVersionId(existingDraftId);
+          scrollToWorkspace();
+          return;
+        }
         let draftId: string | undefined;
+        const draftMeta = {
+          versionLabel: version,
+          version,
+          remark,
+          description: remark,
+        };
         try {
-          const v2Res = await getOrCreateV2EditSession(assetId, {
-            skipErrorHandler: true,
-          });
+          const v2Res = await getOrCreateV2EditSession(
+            assetId,
+            { skipErrorHandler: true },
+            { ...draftMeta, baseVersionId: sourceId },
+          );
           draftId = v2Res?.editSessionId;
-        } catch {
-          const res = await createWorkspaceDraft(sourceId, {
-            skipErrorHandler: true,
-          });
-          draftId = res?.data?.draftVersionId;
+        } catch (v2Error) {
+          try {
+            const res = await createWorkspaceDraft(
+              sourceId,
+              { skipErrorHandler: true },
+              draftMeta,
+            );
+            draftId = res?.data?.draftVersionId;
+          } catch (legacyError) {
+            if (isVersionAlreadyExistsError(legacyError)) {
+              const recovered =
+                resolveActiveDraftId(datasetInfo, draftContext) ||
+                (legacyError as any)?.info?.data?.draftVersionId ||
+                (legacyError as any)?.response?.data?.data?.draftVersionId;
+              if (recovered) {
+                message.warning(
+                  '已有未发布草稿，已为您切入。请先继续编辑或「取消增删」后再开新草稿。',
+                );
+                setWorkspaceEditSourceVersionId(sourceId);
+                setVersionModalOpen(false);
+                await loadDetail();
+                setPreviewVersionId(recovered);
+                scrollToWorkspace();
+                return;
+              }
+              throw new Error(
+                '该资产已有未发布草稿或版本号冲突。请刷新详情：若见「编辑草稿」请先切入编辑或取消；新版本号须与现有版本（含草稿）不同。',
+              );
+            }
+            throw legacyError;
+          }
+          if (!draftId && isVersionAlreadyExistsError(v2Error)) {
+            throw new Error(
+              '该资产已有未发布草稿。请刷新后切入草稿继续编辑，或先取消草稿。',
+            );
+          }
         }
         if (!draftId) {
           throw new Error('创建编辑草稿失败');
         }
-        await updateDatasetVersion(
-          draftId,
-          {
-            version,
-            versionLabel: version,
+        // 后端默认 v{versionNo}；改成用户号。软删标签仍占唯一约束时自动跳号。
+        try {
+          const renamed = await applyDraftVersionLabel({
+            draftId,
+            preferred: version,
+            existingVisible: existingVersionNames,
             remark,
-            description: remark,
-          },
-          { skipErrorHandler: true },
-        );
-        message.success('已创建新版本草稿，可在下方增删文件或样本');
+          });
+          if (renamed.fallbackFrom) {
+            message.warning(
+              `「${renamed.fallbackFrom}」已被占用（含页面不可见的软删历史标签）。已自动改用 ${renamed.applied}。`,
+            );
+          } else {
+            message.success(
+              `已创建编辑草稿 ${renamed.applied}，可在下方增删文件或样本`,
+            );
+          }
+        } catch (renameError) {
+          try {
+            await deleteDatasetVersion(draftId, { skipErrorHandler: true });
+          } catch {
+            // ignore cleanup failure
+          }
+          throw new Error(
+            getApiErrorMessage(
+              renameError,
+              `版本号「${version}」及后续候选均被占用（正式版/草稿/软删均算）。请改用未占用标签，如 v3 或 v1.0.10。`,
+            ),
+          );
+        }
         setWorkspaceEditSourceVersionId(sourceId);
         setVersionModalOpen(false);
         await loadDetail();
@@ -521,7 +751,7 @@ const DatasetDetail: React.FC = () => {
       await loadDetail();
     } catch (error: any) {
       if (error?.errorFields) return;
-      message.error(error?.info?.message || error?.message || '操作失败');
+      message.error(getApiErrorMessage(error, '操作失败'));
     } finally {
       setVersionModalLoading(false);
     }
@@ -620,7 +850,8 @@ const DatasetDetail: React.FC = () => {
   };
 
   const previewVersion = datasetInfo?.versions.find(
-    (v) => v.id === previewVersionId,
+    (v) =>
+      (resolveDatasetVersionId(v, datasetInfo.id) ?? v.id) === previewVersionId,
   );
   const isPointCloud = datasetInfo?.type === 'POINT_CLOUD';
   const isMultimodal = datasetInfo?.type === 'MULTIMODAL';
@@ -701,7 +932,7 @@ const DatasetDetail: React.FC = () => {
   return (
     <PageContainer
       title="数据集详情"
-      subTitle="数据集资产与版本管理；版本号采用 vX.Y.Z，版本描述记录更新原因与内容"
+      subTitle="数据集资产与版本管理；版本号可用 vN 或 vX.Y.Z，版本描述记录更新原因与内容"
       onBack={() => history.push('/dataset/list')}
       extra={
         <Space>
@@ -738,7 +969,7 @@ const DatasetDetail: React.FC = () => {
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="最近上传时间">
-            {datasetInfo.uploadTime || '-'}
+            {formatDisplayDateTime(datasetInfo.uploadTime)}
           </Descriptions.Item>
           <Descriptions.Item label="版本数量">
             {datasetInfo.versions.length}
@@ -901,6 +1132,7 @@ const DatasetDetail: React.FC = () => {
               dataIndex: 'createdAt',
               key: 'createdAt',
               width: 180,
+              render: (value?: string) => formatDisplayDateTime(value),
             },
             {
               title: '版本描述',
@@ -1025,8 +1257,8 @@ const DatasetDetail: React.FC = () => {
           type="secondary"
           style={{ display: 'block', marginTop: 8 }}
         >
-          版本号须为 vX.Y.Z
-          格式；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
+          版本号可用 vN 或 vX.Y.Z（如
+          v2、v1.0.0），资产内须唯一；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
         </Typography.Text>
       </Card>
 
@@ -1065,8 +1297,12 @@ const DatasetDetail: React.FC = () => {
                 draftVersionLabel={previewVersion?.version}
                 parentVersionLabel={workspaceParentVersion?.version}
                 onPublished={async () => {
+                  const publishedId = previewVersionId;
                   setWorkspaceEditSourceVersionId(undefined);
                   await loadDetail();
+                  if (publishedId) {
+                    setPreviewVersionId(publishedId);
+                  }
                 }}
                 onRefresh={loadDetail}
                 onCancelEdit={handleCancelWorkspaceEdit}
@@ -1082,11 +1318,23 @@ const DatasetDetail: React.FC = () => {
                 <Empty description="该版本正在后台导入样本，导入完成并变为 READY 后可浏览；导入期间无法编辑删除。" />
               )
             ) : supportsInlinePreview ? (
-              <DatasetPreviewPanel
-                key={previewVersionId}
-                versionId={previewVersionId}
-                compact
-              />
+              <>
+                {previewVersion?.parentVersionId ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="本版本来自工作区发布"
+                    description="左侧优先展示本版本样本（含 APPEND 追加）。若样本接口不可用，会回退到主包 ZIP（主包不会自动合并追加包）。"
+                  />
+                ) : null}
+                <DatasetPreviewPanel
+                  key={previewVersionId}
+                  versionId={previewVersionId}
+                  compact
+                  preferSamples={!!previewVersion?.parentVersionId}
+                />
+              </>
             ) : (
               <Empty description="当前类型不支持在线预览" />
             )}
@@ -1104,8 +1352,12 @@ const DatasetDetail: React.FC = () => {
               draftVersionLabel={previewVersion?.version}
               parentVersionLabel={workspaceParentVersion?.version}
               onPublished={async () => {
+                const publishedId = previewVersionId;
                 setWorkspaceEditSourceVersionId(undefined);
                 await loadDetail();
+                if (publishedId) {
+                  setPreviewVersionId(publishedId);
+                }
               }}
               onRefresh={loadDetail}
               onCancelEdit={handleCancelWorkspaceEdit}
@@ -1171,7 +1423,14 @@ const DatasetDetail: React.FC = () => {
               type="info"
               showIcon
               message="将基于当前正式版本创建新版本草稿"
-              description="确认后可在工作区增删样本；点击「发布为新版本」后保存；可随时「取消增删」放弃草稿并回到编辑前状态。"
+              description={
+                <>
+                  版本号在资产内唯一，
+                  <strong>已取消/软删的草稿标签仍占用</strong>
+                  ，列表里可能看不到。若提示被占用，请改用 v3、v1.0.3
+                  等更大号；前端也会自动尝试跳号。同一资产同时只能有一个未发布草稿。
+                </>
+              }
             />
           )}
         </Form>

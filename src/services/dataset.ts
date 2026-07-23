@@ -863,7 +863,15 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
     const file = files[0];
     const fp =
       fileFingerprint ||
-      [file.name, String(file.size), name, version || 'v1', type].join('|');
+      [
+        file.name,
+        String(file.size),
+        name,
+        version || 'v1',
+        type,
+        annotationFormat || '',
+        cvTaskType || '',
+      ].join('|');
     const initBody: DatasetUploadInitParams = {
       fileName: file.name,
       fileSize: file.size,

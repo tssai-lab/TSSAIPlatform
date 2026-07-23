@@ -258,7 +258,13 @@ const DatasetUpload: React.FC = () => {
       let createdAssetId: string | undefined;
       if (files.length === 1) {
         const file = files[0];
-        const fp = buildDatasetFileFingerprint(file, name, version, type);
+        const fp = buildDatasetFileFingerprint(
+          file,
+          name,
+          version,
+          type,
+          annotationFormat,
+        );
         const uploadRes = await uploadDataset(
           {
             name,
@@ -350,8 +356,8 @@ const DatasetUpload: React.FC = () => {
       title={isNewVersionUpload ? '上传新版本' : '上传数据集'}
       subTitle={
         isNewVersionUpload
-          ? '为已有数据集资产上传新版本文件，版本号须符合 vX.Y.Z 规范且不可重复'
-          : '首次上传将创建数据集资产；版本号采用 vX.Y.Z 语义化命名'
+          ? '为已有数据集资产上传新版本文件，版本号可用 vN / vX.Y.Z 且不可重复'
+          : '首次上传将创建数据集资产；版本号可用 vN（如 v2）或 vX.Y.Z（如 v1.0.0）'
       }
       onBack={() => history.push(backPath)}
     >
