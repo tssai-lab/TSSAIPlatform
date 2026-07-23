@@ -62,6 +62,7 @@ public class ServerMetricsCollector {
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     }
 
+    @Transactional
     @Scheduled(fixedDelayString = "${resource-monitor.metrics.collect-interval-ms:30000}")
     public void collectMetrics() {
         if (!isK8sReady()) return;
@@ -258,7 +259,6 @@ public class ServerMetricsCollector {
         catch (NumberFormatException e) { return 0; }
     }
 
-    @Transactional
     void cleanupHistory() {
         Instant cutoff = Instant.now().minus(Duration.ofDays(properties.getMetricsRetentionDays()));
         int n = historyRepo.deleteByCollectedAtBefore(cutoff);
