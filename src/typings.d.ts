@@ -70,6 +70,8 @@ declare namespace API {
 
   type ModelUploadCompleteParams = {
     uploadId: string;
+    /** 已有资产时传入：仅新增版本，不创建新资产 */
+    assetId?: string;
     modelName: string;
     version: string;
     type: string;
@@ -131,6 +133,8 @@ declare namespace API {
     versionNo?: number;
     modelName?: string;
     datasetName?: string;
+    modelId?: string;
+    datasetId?: string;
     createTime: string;
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
@@ -146,6 +150,10 @@ declare namespace API {
     modelArtifactSizeBytes?: number;
     codeVersionId?: string;
     trainingProfile?: string;
+    trainingPlanId?: string;
+    trainingPlanVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
     metrics?: Record<string, any>;
@@ -183,6 +191,10 @@ declare namespace API {
     modelArtifactSizeBytes?: number;
     codeVersionId: string;
     trainingProfile?: string;
+    trainingPlanId?: string;
+    trainingPlanVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     datasetVersionId: string;
     hyperParams?: Record<string, any>;
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';

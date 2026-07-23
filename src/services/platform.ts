@@ -10,6 +10,8 @@ export {
   fetchModelDetail,
   fetchModelAssetDetail,
   fetchModelVersionCodePreview,
+  listModelCodeFiles,
+  previewModelCode,
   modelUploadInit,
   modelUploadChunk,
   modelUploadProgress,
@@ -216,6 +218,8 @@ export {
   deleteTask,
   publishTaskModel,
 } from './task';
+
+export { fetchTrainingPlans, type TrainingPlan } from './trainingPlans';
 
 export {
   fetchMlflowMetricHistory,

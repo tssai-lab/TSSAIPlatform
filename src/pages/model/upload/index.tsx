@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
+import { MODEL_TYPE_OPTIONS } from '@/constants/model';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import {
   fetchModelAssetDetail,
@@ -56,7 +57,7 @@ const ModelUpload: React.FC = () => {
     const fp = localStorage.getItem(LS_MODEL_UPLOAD_FP);
     if (id && fp) {
       setResumeHint(
-        '检测到未完成的上传会话，请重新选择同一个 zip 文件继续上传。',
+        '检测到未完成的上传会话，请重新选择同一个模型文件继续上传。',
       );
     }
   }, []);
@@ -123,8 +124,8 @@ const ModelUpload: React.FC = () => {
       message.error('请选择模型文件');
       return;
     }
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      message.error('后端当前仅支持 zip 代码或预训练包');
+    if (!UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.some((suffix) => file.name.toLowerCase().endsWith(suffix))) {
+      message.error('模型仅支持 .zip、.safetensors、.pt、.pth、.ckpt 或 .onnx');
       return;
     }
     if (file.size > UPLOAD_CONFIG.MODEL.MAX_SIZE) {
@@ -198,6 +199,7 @@ const ModelUpload: React.FC = () => {
       await modelUploadComplete(
         {
           uploadId,
+          ...(assetId ? { assetId } : {}),
           modelName: values.modelName,
           version: values.version.trim(),
           type: values.type,
@@ -281,10 +283,11 @@ const ModelUpload: React.FC = () => {
           <Select
             placeholder="请选择类型"
             disabled={isNewVersionUpload || prefillLoading}
-          >
-            <Select.Option value="CV">CV</Select.Option>
-            <Select.Option value="NLP">NLP</Select.Option>
-          </Select>
+            options={MODEL_TYPE_OPTIONS.map((item) => ({
+              value: item.value,
+              label: item.label,
+            }))}
+          />
         </Form.Item>
         <Form.Item
           name="remark"
@@ -339,7 +342,7 @@ const ModelUpload: React.FC = () => {
           </Form.Item>
         )}
         <Form.Item
-          extra={`当前仅支持单个 zip 代码或预训练包，大小限制 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB。`}
+          extra={`支持 .zip、.safetensors、.pt、.pth、.ckpt、.onnx，大小限制 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB。`}
         >
           <Space>
             <Button onClick={() => history.push(backPath)} disabled={uploading}>
