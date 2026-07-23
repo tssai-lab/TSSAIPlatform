@@ -17,4 +17,6 @@ public interface InferenceScriptVersionRepository extends JpaRepository<Inferenc
     List<InferenceScriptVersion> findByAssetIdInAndDeletedFalseOrderByCreatedAtDesc(Collection<String> assetIds);
 
     boolean existsByAssetIdAndVersion(String assetId, String version);
+
+    long countByAssetIdAndDeletedFalse(String assetId);
 }

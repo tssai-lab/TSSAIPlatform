@@ -29,4 +29,6 @@ public interface InferenceTaskRepository extends JpaRepository<InferenceTask, St
     List<InferenceTask> findByServerIpAndStatusIn(String serverIp, List<String> statuses);
 
     List<InferenceTask> findByServerIpNotNullAndStatusIn(List<String> statuses);
+
+    long countByScriptVersionId(String scriptVersionId);
 }

@@ -9,6 +9,7 @@ import com.tss.platform.dto.UpdateInferenceResultRequest;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
+import com.tss.platform.entity.MinioDeleteTask;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.inference.InferenceExecutorRouter;
 import com.tss.platform.inference.KubernetesInferenceExecutor;
@@ -17,6 +18,7 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.InferenceScriptAssetRepository;
 import com.tss.platform.repository.InferenceScriptVersionRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
+import com.tss.platform.repository.MinioDeleteTaskRepository;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.security.AuthContext;
@@ -24,14 +26,22 @@ import com.tss.platform.training.TrainingEnvironmentService;
 import io.minio.StatObjectResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class InferenceTaskServiceTest {
@@ -41,6 +51,8 @@ class InferenceTaskServiceTest {
     private FakeDatasetVersionRepository datasetVersionRepo;
     private FakeScriptService scriptService;
     private FakeExecutorRouter executorRouter;
+    private FakeMinioService minioService;
+    private FakeMinioDeleteTaskService minioDeleteTaskService;
     private InferenceTaskService service;
 
     @BeforeEach
@@ -50,6 +62,8 @@ class InferenceTaskServiceTest {
         datasetVersionRepo = new FakeDatasetVersionRepository();
         scriptService = new FakeScriptService();
         executorRouter = new FakeExecutorRouter();
+        minioService = new FakeMinioService();
+        minioDeleteTaskService = new FakeMinioDeleteTaskService();
 
         service = new InferenceTaskService(
                 taskRepo.proxy(),
@@ -59,7 +73,8 @@ class InferenceTaskServiceTest {
                 emptyProxy(DatasetAssetRepository.class),
                 scriptService,
                 executorRouter,
-                new FakeMinioService(),
+                minioService,
+                minioDeleteTaskService,
                 new FakeAuthContext(),
                 new ObjectMapper()
         );
@@ -167,6 +182,40 @@ class InferenceTaskServiceTest {
         assertEquals("minio://inference-results/infer-task-1/outputs/", saved.getOutputPath());
     }
 
+    @Test
+    void deletesRunningTaskAndQueuesOutputCleanup() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("running");
+        task.setScriptVersionId("script-ver-1");
+        task.setOwnerUserId(7);
+        task.setLogPath("minio://users/7/inference-results/infer-task-1/infer.log");
+        task.setOutputPath("minio://users/7/inference-results/infer-task-1/outputs/");
+        taskRepo.tasks.put(task.getId(), task);
+        minioService.objectsByPrefix.put(
+                "users/7/inference-results/infer-task-1/outputs/",
+                List.of(
+                        "users/7/inference-results/infer-task-1/outputs/result.json",
+                        "users/7/inference-results/infer-task-1/outputs/prediction.jpg"
+                )
+        );
+
+        Map<String, Object> result = service.deleteTask("infer-task-1");
+
+        assertEquals(true, result.get("deleted"));
+        assertEquals(3, result.get("queuedObjectCount"));
+        assertEquals("infer-task-1", executorRouter.stoppedTaskId);
+        assertFalse(taskRepo.tasks.containsKey("infer-task-1"));
+        assertEquals(
+                List.of(
+                        "users/7/inference-results/infer-task-1/infer.log",
+                        "users/7/inference-results/infer-task-1/outputs/result.json",
+                        "users/7/inference-results/infer-task-1/outputs/prediction.jpg"
+                ),
+                minioDeleteTaskService.queuedObjectNames
+        );
+    }
+
     private static ModelVersion modelVersion() {
         ModelVersion version = new ModelVersion();
         version.setId("model-ver-1");
@@ -215,7 +264,7 @@ class InferenceTaskServiceTest {
             return false;
         }
         if (returnType.equals(int.class) || returnType.equals(long.class)) {
-            return 0;
+            return returnType.equals(long.class) ? 0L : 0;
         }
         if (returnType.equals(Optional.class)) {
             return Optional.empty();
@@ -237,6 +286,15 @@ class InferenceTaskServiceTest {
                             yield task;
                         }
                         case "findById" -> Optional.ofNullable(tasks.get((String) args[0]));
+                        case "delete" -> {
+                            InferenceTask task = (InferenceTask) args[0];
+                            tasks.remove(task.getId());
+                            yield null;
+                        }
+                        case "countByScriptVersionId" -> tasks.values()
+                                .stream()
+                                .filter(task -> Objects.equals(task.getScriptVersionId(), args[0]))
+                                .count();
                         default -> defaultValue(method.getReturnType());
                     }
             );
@@ -284,8 +342,9 @@ class InferenceTaskServiceTest {
             super(
                     emptyProxy(InferenceScriptAssetRepository.class),
                     emptyProxy(InferenceScriptVersionRepository.class),
-                    null,
-                    null,
+                    emptyProxy(InferenceTaskRepository.class),
+                    new FakeMinioService(),
+                    new FakeMinioDeleteTaskService(),
                     new FakeAuthContext(),
                     new ObjectMapper()
             );
@@ -302,6 +361,7 @@ class InferenceTaskServiceTest {
 
     private static class FakeExecutorRouter extends InferenceExecutorRouter {
         String startedTaskId;
+        String stoppedTaskId;
 
         FakeExecutorRouter() {
             super(
@@ -317,15 +377,51 @@ class InferenceTaskServiceTest {
         public void start(String taskId) {
             this.startedTaskId = taskId;
         }
+
+        @Override
+        public void stop(String taskId) {
+            this.stoppedTaskId = taskId;
+        }
     }
 
     private static class FakeMinioService extends MinioService {
+        final Map<String, List<String>> objectsByPrefix = new HashMap<>();
+
         FakeMinioService() {
             super(null, new MinioConfig());
         }
 
         @Override
         public StatObjectResponse stat(String objectName) {
+            return null;
+        }
+
+        @Override
+        public List<String> listObjectNames(String prefix) {
+            return objectsByPrefix.getOrDefault(prefix, List.of());
+        }
+    }
+
+    private static class FakeMinioDeleteTaskService extends MinioDeleteTaskService {
+        final List<String> queuedObjectNames = new ArrayList<>();
+
+        FakeMinioDeleteTaskService() {
+            super(
+                    emptyProxy(MinioDeleteTaskRepository.class),
+                    new FakeMinioService(),
+                    new MinioConfig(),
+                    noopTransactionManager()
+            );
+        }
+
+        @Override
+        public MinioDeleteTask enqueueDefaultBucketDelete(
+                String objectName,
+                String sourceType,
+                String sourceId,
+                Integer ownerUserId
+        ) {
+            queuedObjectNames.add(objectName);
             return null;
         }
     }
@@ -360,5 +456,22 @@ class InferenceTaskServiceTest {
 
     private static KubernetesInferenceExecutor nullKubernetesInferenceExecutor() {
         return null;
+    }
+
+    private static PlatformTransactionManager noopTransactionManager() {
+        return new PlatformTransactionManager() {
+            @Override
+            public TransactionStatus getTransaction(TransactionDefinition definition) {
+                return new SimpleTransactionStatus();
+            }
+
+            @Override
+            public void commit(TransactionStatus status) {
+            }
+
+            @Override
+            public void rollback(TransactionStatus status) {
+            }
+        };
     }
 }

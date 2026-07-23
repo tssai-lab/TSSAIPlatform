@@ -4,6 +4,7 @@ import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.InferenceScriptUploadResultDto;
 import com.tss.platform.dto.InferenceScriptVersionDto;
 import com.tss.platform.service.InferenceScriptService;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/inference/scripts")
@@ -59,6 +61,15 @@ public class InferenceScriptController {
     public ApiResponse<InferenceScriptVersionDto> detail(@PathVariable String versionId) {
         try {
             return ApiResponse.ok(scriptService.getScript(versionId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{versionId}")
+    public ApiResponse<Map<String, Object>> delete(@PathVariable String versionId) {
+        try {
+            return ApiResponse.ok(scriptService.deleteScriptVersion(versionId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
