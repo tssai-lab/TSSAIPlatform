@@ -1755,7 +1755,8 @@ public class DatasetUploadService {
                 }
                 String entryName = sanitizeZipEntryPath(paths.get(i), file.getOriginalFilename());
                 String ext = extensionOf(entryName);
-                if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)) {
+                if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)
+                        && !DatasetZipValidator.isCvDatasetManifest(annotationFormat, entryName)) {
                     throw new IllegalArgumentException(
                             "CV folder upload does not allow file for annotationFormat "
                                     + annotationFormat + ": " + entryName

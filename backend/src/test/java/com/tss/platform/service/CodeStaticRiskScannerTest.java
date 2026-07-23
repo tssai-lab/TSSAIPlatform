@@ -128,12 +128,35 @@ class CodeStaticRiskScannerTest {
                         from transformers import AutoModelForImageClassification
 
                         def train(output: Path) -> int:
+                            child = output / "_hf_model"
                             model = AutoModelForImageClassification.from_pretrained(output)
                             if output.exists():
                                 shutil.rmtree(output)
                             output.mkdir(parents=True)
                             model.save_pretrained(output)
                             return 0
+                        """)
+        ));
+
+        assertEquals("AUTO_APPROVE", result.disposition());
+        assertTrue(result.findings().isEmpty());
+    }
+
+    @Test
+    void multilineExpressionCanBeTheFirstStatementOfAnIndentedSuite() {
+        CodeRiskScanResult result = scanner.scan(Map.of(
+                "train.py", bytes("""
+                        def evaluate(rows):
+                            for row in rows:
+                                values.append({
+                                    "label": row["label"],
+                                    "prediction": row["prediction"],
+                                })
+                            metrics = {
+                                "accuracy": 1.0,
+                                "f1": 1.0,
+                            }
+                            return metrics, values
                         """)
         ));
 

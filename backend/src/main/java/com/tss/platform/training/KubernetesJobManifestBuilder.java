@@ -78,7 +78,13 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 8, "- name: training-worker");
         line(yaml, 10, "image: " + quote(image));
         line(yaml, 10, "imagePullPolicy: " + runSpec.runtime().imagePullPolicy());
-        line(yaml, 10, "workingDir: " + runSpec.workspace().codeDir());
+        // The container runtime creates a missing workingDir before the worker
+        // process starts. Pointing it at /workspace/job/code therefore creates
+        // that directory as root inside the EmptyDir, while the worker runs as
+        // UID 10001 and cannot extract the uploaded code. The worker itself
+        // creates the code directory and later starts user code with CODE_DIR
+        // as its subprocess cwd.
+        line(yaml, 10, "workingDir: /workspace/job");
         line(yaml, 10, "volumeMounts:");
         line(yaml, 12, "- name: workspace");
         line(yaml, 14, "mountPath: /workspace/job");

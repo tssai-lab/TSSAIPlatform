@@ -32,7 +32,7 @@ inputs:
     required: true
     taskTypes: [CV]
     cvTaskTypes: [IMAGE_CLASSIFICATION, UNLABELED]
-    annotationFormats: [IMAGE_FOLDER, OTHER]
+    annotationFormats: [FOLDER_CLASSIFICATION, OTHER]
     requiredEntries: [data/train, data/validation, data/test]
   code:
     required: true
@@ -95,7 +95,7 @@ runtimes:
         cpuLimit: "4"
         memoryRequest: 4Gi
         memoryLimit: 8Gi
-        ephemeralStorageLimit: 20Gi
+        ephemeralStorageLimit: 12Gi
         gpuCount: 0
         nodeSelector:
           tss.ai/node-pool: cpu

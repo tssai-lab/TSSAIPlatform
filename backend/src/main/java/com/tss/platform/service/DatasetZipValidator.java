@@ -223,7 +223,11 @@ final class DatasetZipValidator {
                     files += 1;
                     String ext = extensionOf(entryName);
                     if ("CV".equals(taskType)) {
-                        if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)) {
+                        boolean datasetManifest = isCvDatasetManifest(
+                                annotationFormat, entryName
+                        );
+                        if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)
+                                && !datasetManifest) {
                             throw new IllegalArgumentException(
                                     "CV zip dataset does not allow file for annotationFormat "
                                             + annotationFormat + ": " + entryName
@@ -232,7 +236,8 @@ final class DatasetZipValidator {
                         boolean image = CV_IMAGE_EXTENSIONS.contains(ext);
                         foundCvImage = foundCvImage || image;
                         foundCvAnnotation = foundCvAnnotation
-                                || CvAnnotationFormat.isAnnotationFile(annotationFormat, ext);
+                                || (!datasetManifest
+                                && CvAnnotationFormat.isAnnotationFile(annotationFormat, ext));
                         if ("YOLO".equals(annotationFormat)) {
                             if (image && !yoloImages.add(yoloKey(entryName, "images"))) {
                                 throw new IllegalArgumentException("YOLO zip contains duplicate image mapping: " + entryName);
@@ -342,6 +347,17 @@ final class DatasetZipValidator {
 
     static boolean isCvImageExtension(String extension) {
         return CV_IMAGE_EXTENSIONS.contains(extension);
+    }
+
+    static boolean isCvDatasetManifest(String annotationFormat, String entryName) {
+        if (!"FOLDER_CLASSIFICATION".equals(annotationFormat) || entryName == null) {
+            return false;
+        }
+        String normalized = entryName.replace('\\', '/').toLowerCase(Locale.ROOT);
+        return "dataset.yaml".equals(normalized)
+                || "dataset.yml".equals(normalized)
+                || "data.yaml".equals(normalized)
+                || "data.yml".equals(normalized);
     }
 
     static String extensionOf(String name) {

@@ -181,6 +181,30 @@ class DatasetZipValidatorContentTest {
     }
 
     @Test
+    void acceptsRootManifestForFolderClassificationDataset() throws Exception {
+        assertDoesNotThrow(() -> validateZip(
+                "CV",
+                "FOLDER_CLASSIFICATION",
+                entry(
+                        "dataset.yaml",
+                        "schemaVersion: tss.dataset/v1\nsplits: [train, validation, test]\n"
+                                .getBytes(StandardCharsets.UTF_8)
+                ),
+                entry("data/train/healthy/sample.png", png())
+        ));
+    }
+
+    @Test
+    void rejectsArbitraryYamlInsideFolderClassificationDataset() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> validateZip(
+                "CV",
+                "FOLDER_CLASSIFICATION",
+                entry("config/payload.yaml", "key: value\n".getBytes(StandardCharsets.UTF_8)),
+                entry("data/train/healthy/sample.png", png())
+        ));
+    }
+
+    @Test
     void rejectsFakeAndMismatchedImageContent() throws Exception {
         assertThrows(IllegalArgumentException.class, () -> validateZip(
                 "CV",

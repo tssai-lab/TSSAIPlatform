@@ -61,6 +61,7 @@ final class PythonStaticPolicy {
         String[] originalLines = text.split("\\R", -1);
         String[] maskedLines = masked.split("\\R", -1);
         boolean unverifiedSyntax = false;
+        Integer unverifiedLine = null;
 
         for (int index = 0; index < maskedLines.length; index++) {
             String line = maskedLines[index];
@@ -72,11 +73,13 @@ final class PythonStaticPolicy {
                     || hasTopLevelSemicolon(line)
                     || endsWithExplicitContinuation(line)) {
                 unverifiedSyntax = true;
+                unverifiedLine = firstLine(unverifiedLine, index + 1);
             }
             ImportResult importResult = analyzeImport(trimmed);
             if (importResult.importStatement()) {
                 if (!importResult.classified()) {
                     unverifiedSyntax = true;
+                    unverifiedLine = firstLine(unverifiedLine, index + 1);
                 }
                 for (String root : importResult.roots()) {
                     if (HIGH_CAPABILITY_IMPORT_ROOTS.contains(root)) {
@@ -105,10 +108,11 @@ final class PythonStaticPolicy {
             ));
         }
         unverifiedSyntax = unverifiedSyntax || structure.unverified();
+        unverifiedLine = firstLine(unverifiedLine, structure.unverifiedLine());
         if (unverifiedSyntax && structure.errorLine() == null) {
             findings.add(finding(
                     "PYTHON_SYNTAX_UNVERIFIED", "HIGH", "SYNTAX",
-                    path, null,
+                    path, unverifiedLine,
                     "Python syntax uses a form that requires manual review", false
             ));
         }
@@ -164,6 +168,7 @@ final class PythonStaticPolicy {
         int suiteParentIndent = 0;
         int bracketDepth = 0;
         boolean unverified = false;
+        Integer unverifiedLine = null;
 
         for (int index = 0; index < maskedLines.length; index++) {
             String line = maskedLines[index];
@@ -171,9 +176,9 @@ final class PythonStaticPolicy {
             int beforeDepth = bracketDepth;
             bracketDepth += bracketDelta(line);
             if (bracketDepth < 0) {
-                return new StructuralResult(index + 1, unverified);
+                return new StructuralResult(index + 1, unverified, unverifiedLine);
             }
-            if (beforeDepth > 0 || bracketDepth > 0) {
+            if (beforeDepth > 0) {
                 continue;
             }
             if (trimmed.isEmpty()) {
@@ -182,29 +187,37 @@ final class PythonStaticPolicy {
             int indent = leadingSpaces(originalLines[index]);
             if (leadingWhitespaceContainsTab(originalLines[index])) {
                 unverified = true;
+                unverifiedLine = firstLine(unverifiedLine, index + 1);
                 continue;
             }
             if (requiresIndentedSuite) {
                 if (indent <= suiteParentIndent) {
-                    return new StructuralResult(index + 1, unverified);
+                    return new StructuralResult(index + 1, unverified, unverifiedLine);
                 }
                 indents.push(indent);
                 requiresIndentedSuite = false;
             } else {
                 if (indent > indents.peek()) {
-                    return new StructuralResult(index + 1, unverified);
+                    return new StructuralResult(index + 1, unverified, unverifiedLine);
                 }
                 while (indent < indents.peek() && indents.size() > 1) {
                     indents.pop();
                 }
                 if (indent != indents.peek()) {
-                    return new StructuralResult(index + 1, unverified);
+                    return new StructuralResult(index + 1, unverified, unverifiedLine);
                 }
             }
 
+            if (bracketDepth > 0) {
+                if (startsBlockHeader(trimmed)) {
+                    unverified = true;
+                    unverifiedLine = firstLine(unverifiedLine, index + 1);
+                }
+                continue;
+            }
             HeaderResult header = headerResult(trimmed);
             if (header.blockHeader() && !header.valid()) {
-                return new StructuralResult(index + 1, unverified);
+                return new StructuralResult(index + 1, unverified, unverifiedLine);
             }
             if (header.blockHeader() && header.requiresSuite()) {
                 requiresIndentedSuite = true;
@@ -212,12 +225,29 @@ final class PythonStaticPolicy {
             }
             if (looksIncompleteStatement(trimmed)) {
                 unverified = true;
+                unverifiedLine = firstLine(unverifiedLine, index + 1);
             }
         }
         if (bracketDepth != 0 || requiresIndentedSuite) {
-            return new StructuralResult(maskedLines.length, unverified);
+            return new StructuralResult(maskedLines.length, unverified, unverifiedLine);
         }
-        return new StructuralResult(null, unverified);
+        return new StructuralResult(null, unverified, unverifiedLine);
+    }
+
+    private static boolean startsBlockHeader(String line) {
+        String lower = line.toLowerCase(Locale.ROOT);
+        return lower.startsWith("def ")
+                || lower.startsWith("async def ")
+                || lower.startsWith("class ")
+                || lower.startsWith("if ")
+                || lower.startsWith("elif ")
+                || lower.startsWith("for ")
+                || lower.startsWith("async for ")
+                || lower.startsWith("while ")
+                || lower.startsWith("with ")
+                || lower.startsWith("async with ")
+                || lower.startsWith("match ")
+                || lower.startsWith("case ");
     }
 
     private static HeaderResult headerResult(String line) {
@@ -321,7 +351,9 @@ final class PythonStaticPolicy {
                 triple = index + 2 < text.length()
                         && text.charAt(index + 1) == value
                         && text.charAt(index + 2) == value;
-                masked.append(' ');
+                // Keep a harmless operand marker so `path / "child"` does not
+                // become a false trailing-operator finding after masking.
+                masked.append('x');
                 if (triple) {
                     masked.append("  ");
                     index += 2;
@@ -411,6 +443,10 @@ final class PythonStaticPolicy {
         return dot < 0 ? module : module.substring(0, dot);
     }
 
+    private static Integer firstLine(Integer current, Integer candidate) {
+        return current == null ? candidate : current;
+    }
+
     private static CodeRiskScanFinding finding(
             String ruleId,
             String severity,
@@ -432,7 +468,11 @@ final class PythonStaticPolicy {
     ) {
     }
 
-    private record StructuralResult(Integer errorLine, boolean unverified) {
+    private record StructuralResult(
+            Integer errorLine,
+            boolean unverified,
+            Integer unverifiedLine
+    ) {
     }
 
     private record HeaderResult(boolean blockHeader, boolean valid, boolean requiresSuite) {

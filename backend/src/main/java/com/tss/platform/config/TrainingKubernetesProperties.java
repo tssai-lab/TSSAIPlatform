@@ -55,6 +55,9 @@ public class TrainingKubernetesProperties {
     private String runtimeImageDockerPath = "docker";
     private String runtimeImageBuildDirectory = "/tmp/tss-runtime-image-builds";
     private int runtimeImageBuildTimeoutSeconds = 1800;
+    private String runtimeImagePipIndexUrl = "";
+    private int runtimeImagePipTimeoutSeconds = 120;
+    private int runtimeImagePipRetries = 5;
 
     /** Worker 容器内访问宿主机服务的 K8s Service 名称 */
     private String backendServiceUrl = "http://tss-backend:8080";

@@ -31,6 +31,6 @@ class TrainingPlanRegistryTest {
         assertEquals("mobilenet_beans_model.zip", huggingFace.outputs().artifacts().stream()
                 .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
                 .findFirst().orElseThrow().path());
-        assertTrue(huggingFace.inputs().dataset().annotationFormats().contains("IMAGE_FOLDER"));
+        assertTrue(huggingFace.inputs().dataset().annotationFormats().contains("FOLDER_CLASSIFICATION"));
     }
 }
