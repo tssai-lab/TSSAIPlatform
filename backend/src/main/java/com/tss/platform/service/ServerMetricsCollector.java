@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -257,6 +258,7 @@ public class ServerMetricsCollector {
         catch (NumberFormatException e) { return 0; }
     }
 
+    @Transactional
     void cleanupHistory() {
         Instant cutoff = Instant.now().minus(Duration.ofDays(properties.getMetricsRetentionDays()));
         int n = historyRepo.deleteByCollectedAtBefore(cutoff);
