@@ -167,7 +167,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         await publishDraftVersion(draftVersionId, { skipErrorHandler: true });
       }
       message.success(
-        '已发布为新版本。请在样本/文件列表核对追加内容（勿仅看主包 ZIP 文件树）。',
+        '已发布为新版本。请在详情预览的「本版本样本」中核对追加内容。',
       );
       onPublished?.();
     } catch (e: unknown) {
@@ -335,9 +335,8 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
             {!isMultimodalDataset && (
               <>
                 <br />
-                发布后请看「样本/文件列表」核对追加是否生效；主包 ZIP
-                文件树不会自动合并 APPEND
-                追加包，看起来像「还是原版」是预期现象。
+                发布后请在详情预览的「本版本样本」中核对追加是否生效；不会用主包
+                ZIP 文件树冒充当前版本内容。
               </>
             )}
           </>

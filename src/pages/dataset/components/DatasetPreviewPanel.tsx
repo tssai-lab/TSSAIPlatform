@@ -357,16 +357,16 @@ export type DatasetPreviewPanelProps = {
   /** 嵌入详情页时使用较小高度 */
   compact?: boolean;
   /**
-   * 仅工作区发布版本（含 APPEND）为 true：优先样本清单。
-   * 独立整包上传版本保持 false，直接扫该版本主包 ZIP，避免各版内容串台。
+   * 工作区发布版本（含 APPEND）为 true：只展示本版本样本清单，不回退主包 ZIP。
+   * 独立整包上传版本保持 false，直接扫该版本主包 ZIP。
    */
-  preferSamples?: boolean;
+  samplesOnly?: boolean;
 };
 
 const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   versionId,
   compact = false,
-  preferSamples = false,
+  samplesOnly = false,
 }) => {
   const listScrollY = compact ? 320 : 480;
   const contentMaxHeight = compact ? '45vh' : '65vh';
@@ -427,7 +427,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
 
   useEffect(() => {
     resetPreviewState();
-  }, [versionId, preferSamples, resetPreviewState]);
+  }, [versionId, samplesOnly, resetPreviewState]);
 
   useEffect(() => {
     return () => {
@@ -436,6 +436,43 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
       revokeImageUrl();
     };
   }, [revokeImageUrl]);
+
+  const applySampleFiles = useCallback(
+    (args: {
+      files: DatasetPreviewFileItem[];
+      total: number;
+      datasetVersionId?: string;
+      type?: string;
+      fileName?: string;
+      page?: number;
+      pageSize?: number;
+    }) => {
+      let nextFiles = args.files;
+      const kw = keyword.trim().toLowerCase();
+      if (kw) {
+        nextFiles = nextFiles.filter((f) =>
+          getFileLabel(f).toLowerCase().includes(kw),
+        );
+      }
+      if (kindFilter) {
+        nextFiles = nextFiles.filter((f) => f.kind === kindFilter);
+      }
+      setListSource('sample');
+      setMeta({
+        datasetVersionId: args.datasetVersionId || versionId || '',
+        type: (args.type as 'CV' | 'NLP') || 'CV',
+        fileName: args.fileName || '样本清单',
+        sourceArchive: true,
+        page: args.page ?? filePage,
+        pageSize: args.pageSize ?? filePageSize,
+        total: args.total,
+        files: nextFiles,
+      });
+      setFiles(nextFiles);
+      setFileTotal(args.total);
+    },
+    [keyword, kindFilter, versionId, filePage, filePageSize],
+  );
 
   const loadFiles = useCallback(async () => {
     if (!versionId) return;
@@ -459,7 +496,9 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     setFilesLoading(true);
     setFilesError(null);
     try {
-      if (preferSamples) {
+      if (samplesOnly) {
+        let lastError: string | null = null;
+
         try {
           const raw = await fetchConsumerManifest(
             versionId,
@@ -468,38 +507,24 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
           );
           if (isStale()) return;
           const page = unwrapConsumerManifestPage(raw);
-          const mapped = flattenManifestSamples(page?.samples ?? []);
-          if (page && (page.totalSamples > 0 || mapped.length > 0)) {
-            let nextFiles = mapped;
-            const kw = keyword.trim().toLowerCase();
-            if (kw) {
-              nextFiles = nextFiles.filter((f) =>
-                getFileLabel(f).toLowerCase().includes(kw),
-              );
-            }
-            if (kindFilter) {
-              nextFiles = nextFiles.filter((f) => f.kind === kindFilter);
-            }
-            if (isStale()) return;
-            setListSource('sample');
-            setMeta({
-              datasetVersionId: page.datasetVersionId || versionId,
-              type: (page.type as 'CV' | 'NLP') || 'CV',
+          if (page) {
+            applySampleFiles({
+              files: flattenManifestSamples(page.samples ?? []),
+              total: page.totalSamples,
+              datasetVersionId: page.datasetVersionId,
+              type: page.type,
               fileName: page.versionLabel
                 ? `版本 ${page.versionLabel}`
                 : '样本清单',
-              sourceArchive: true,
-              page: page.page ?? filePage,
-              pageSize: page.pageSize ?? filePageSize,
-              total: page.totalSamples || nextFiles.length,
-              files: nextFiles,
+              page: page.page,
+              pageSize: page.pageSize,
             });
-            setFiles(nextFiles);
-            setFileTotal(page.totalSamples || nextFiles.length);
             return;
           }
-        } catch {
-          // fall through
+          lastError = '样本消费清单返回为空';
+        } catch (e: unknown) {
+          if ((e as Error)?.name === 'AbortError') return;
+          lastError = getApiErrorMessage(e);
         }
 
         try {
@@ -510,8 +535,8 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
           );
           if (isStale()) return;
           const pageData = samplesRes?.data;
-          const summaries = pageData?.data ?? [];
-          if ((pageData?.total ?? 0) > 0 || summaries.length > 0) {
+          if (pageData) {
+            const summaries = pageData.data ?? [];
             const details = await Promise.all(
               summaries.map(async (sample) => {
                 try {
@@ -526,7 +551,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
               }),
             );
             if (isStale()) return;
-            let nextFiles: DatasetPreviewFileItem[] = [];
+            const nextFiles: DatasetPreviewFileItem[] = [];
             details.forEach((detail, index) => {
               const sample = summaries[index];
               if (!detail?.data?.length) {
@@ -544,33 +569,30 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                 nextFiles.push(mapSampleDataToPreviewFile(item, sample));
               });
             });
-            const kw = keyword.trim().toLowerCase();
-            if (kw) {
-              nextFiles = nextFiles.filter((f) =>
-                getFileLabel(f).toLowerCase().includes(kw),
-              );
-            }
-            if (kindFilter) {
-              nextFiles = nextFiles.filter((f) => f.kind === kindFilter);
-            }
-            setListSource('sample');
-            setMeta({
-              datasetVersionId: versionId,
-              type: 'CV',
-              fileName: '样本清单',
-              sourceArchive: true,
-              page: pageData?.page ?? filePage,
-              pageSize: pageData?.pageSize ?? filePageSize,
-              total: pageData?.total ?? nextFiles.length,
+            applySampleFiles({
               files: nextFiles,
+              total: pageData.total ?? nextFiles.length,
+              page: pageData.page,
+              pageSize: pageData.pageSize,
             });
-            setFiles(nextFiles);
-            setFileTotal(pageData?.total ?? nextFiles.length);
             return;
           }
-        } catch {
-          // fall through to zip
+          lastError = lastError || '样本列表返回为空';
+        } catch (e: unknown) {
+          if ((e as Error)?.name === 'AbortError') return;
+          lastError = getApiErrorMessage(e) || lastError;
         }
+
+        if (isStale()) return;
+        setFilesError(
+          lastError
+            ? `无法加载本版本样本：${lastError}。已停止展示，不会回退到主包 ZIP（以免把未含 APPEND 的主包当成当前版本内容）。`
+            : '无法加载本版本样本清单。已停止展示，不会回退到主包 ZIP（以免把未含 APPEND 的主包当成当前版本内容）。',
+        );
+        setMeta(null);
+        setFiles([]);
+        setFileTotal(0);
+        return;
       }
 
       const data = await fetchDatasetPreviewFiles(
@@ -599,7 +621,15 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         setFilesLoading(false);
       }
     }
-  }, [versionId, preferSamples, filePage, filePageSize, keyword, kindFilter]);
+  }, [
+    versionId,
+    samplesOnly,
+    filePage,
+    filePageSize,
+    keyword,
+    kindFilter,
+    applySampleFiles,
+  ]);
 
   useEffect(() => {
     loadFiles();

@@ -1345,14 +1345,14 @@ const DatasetDetail: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 12 }}
                     message="本版本来自工作区发布"
-                    description="左侧优先展示本版本样本（含 APPEND 追加）。若样本接口不可用，会回退到主包 ZIP（主包不会自动合并追加包）。"
+                    description="预览只展示本版本样本清单（含 APPEND 追加）。样本接口不可用时不会回退到主包 ZIP，避免把未合并追加包的主包当成当前版本内容。"
                   />
                 ) : null}
                 <DatasetPreviewPanel
                   key={previewVersionId}
                   versionId={previewVersionId}
                   compact
-                  preferSamples={!!previewVersion?.parentVersionId}
+                  samplesOnly={!!previewVersion?.parentVersionId}
                 />
               </>
             ) : (
