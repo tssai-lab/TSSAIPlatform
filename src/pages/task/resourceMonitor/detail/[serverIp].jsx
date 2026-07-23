@@ -439,7 +439,7 @@ const ServerDetail = () => {
       </Card>
 
       <Card
-        title={`正在运行的任务（${server.runningTasks.length}）`}
+        title={`正在运行的任务（${server.runningTasks?.length ?? 0}）`}
         style={{ marginBottom: 16 }}
       >
         <Table

@@ -139,7 +139,7 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
         </Text>
       </div>
 
-      {server.runningTasks.length > 0 && (
+      {server.runningTasks?.length > 0 && (
         <div
           style={{
             marginTop: 10,
@@ -220,7 +220,7 @@ const ResourceMonitor = () => {
         !searchText ||
         s.serverIp.includes(searchText) ||
         s.hostname.includes(searchText) ||
-        s.runningTasks.some((t) => t.name.includes(searchText));
+        s.runningTasks?.some((t) => t.name.includes(searchText));
       const matchStatus = statusFilter === 'all' || s.status === statusFilter;
       return matchSearch && matchStatus;
     });

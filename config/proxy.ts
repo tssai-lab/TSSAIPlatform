@@ -9,23 +9,41 @@
  *
  * @doc https://umijs.org/docs/guides/proxy
  */
+
+/** 后端服务器预设：DEV_SERVER=master 切换主节点，默认 node */
+const SERVERS: Record<string, { api: string; mlflow: string }> = {
+  node: {
+    api: 'http://47.114.84.133:8080',
+    mlflow: 'http://47.114.84.133:5000',
+  },
+  master: {
+    api: 'http://47.111.225.144:8080',
+    mlflow: 'http://47.111.225.144:5000',
+  },
+};
+
+const activeServer = SERVERS[process.env.DEV_SERVER || 'node'];
+
+const API_TARGET = process.env.DEV_API_TARGET || activeServer.api;
+const MLFLOW_TARGET = process.env.DEV_MLFLOW_TARGET || activeServer.mlflow;
+
 export default {
   /** 本地开发环境：api 与 mlflow 代理 */
   dev: {
     /** 平台后端（backend-api.md：默认 8080） */
     '/api/': {
-      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      target: API_TARGET,
       changeOrigin: true,
     },
     /** 独立 MLflow 服务，用于任务详情页训练指标 */
     '/mlflow-api/': {
-      target: process.env.DEV_MLFLOW_TARGET || 'http://47.114.84.133:5000',
+      target: MLFLOW_TARGET,
       changeOrigin: true,
       pathRewrite: { '^/mlflow-api': '/ajax-api' },
     },
     /** openAPI服务*/
     '/v3/api-docs': {
-      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      target: API_TARGET,
       changeOrigin: true,
     },
   },
@@ -53,16 +71,16 @@ export default {
    */
   prod: {
     '/api/': {
-      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      target: API_TARGET,
       changeOrigin: true,
     },
     '/mlflow-api/': {
-      target: process.env.DEV_MLFLOW_TARGET || 'http://47.114.84.133:5000',
+      target: MLFLOW_TARGET,
       changeOrigin: true,
       pathRewrite: { '^/mlflow-api': '/ajax-api' },
     },
     '/v3/api-docs': {
-      target: process.env.DEV_API_TARGET || 'http://47.114.84.133:8080',
+      target: API_TARGET,
       changeOrigin: true,
     },
   },
