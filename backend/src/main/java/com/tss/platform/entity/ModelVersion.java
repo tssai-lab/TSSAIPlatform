@@ -43,6 +43,9 @@ public class ModelVersion {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "artifact_sha256", length = 64)
+    private String artifactSha256;
+
     @Column(name = "description", length = 2048)
     private String description;
 

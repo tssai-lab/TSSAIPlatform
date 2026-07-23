@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""TSS Platform 训练 Worker：按固定 trainingProfile 解压代码/数据 ZIP 并执行白名单命令。"""
+"""Generic TSS training worker driven only by an immutable TrainingRunSpec."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import hmac
+import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -13,133 +15,268 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 try:
     from minio import Minio
-except ImportError:
-    print("minio package not installed", file=sys.stderr)
-    sys.exit(1)
+except ImportError:  # Allows the standard-library unit tests to import this module.
+    Minio = None  # type: ignore[assignment]
 
-# MLflow logging 通过 REST API 直写（与后端 MlflowTrackingService 一致），
-# 不依赖 mlflow Python SDK，兼容平台 lite MLflow server（仅实现 REST 子集，无 artifact 存储）。
 
 WORKSPACE = Path("/workspace/job")
 MODEL_DIR = WORKSPACE / "model"
+DATA_DIR = WORKSPACE / "data"
+CODE_DIR = WORKSPACE / "code"
+CONFIG_DIR = WORKSPACE / "config"
+OUTPUT_DIR = WORKSPACE / "output"
+PARAMS_FILE = CONFIG_DIR / "params.json"
+RUN_SPEC_SCHEMA = "tss.training.run-spec/v1"
+TRAINING_MODES = {
+    "FROM_SCRATCH",
+    "FULL_FINETUNE",
+    "PEFT",
+    "PREFERENCE_OPTIMIZATION",
+}
+EVENT_PREFIX = "TSS_EVENT "
+MAX_ARCHIVE_ENTRIES = 200_000
+MAX_EXPANDED_BYTES = 200 * 1024 * 1024 * 1024
+CALLBACK_ATTEMPTS = 4
+LOG_HANDLE = None
+LAST_PROGRESS = 0
 
-PROFILES = {
-    "image_text_consistency_fusion_logreg": {
-        "command": [
-            "python",
-            "scripts/training/train_fusion_baseline.py",
-            "--data-dir",
-            "data",
-            "--model",
-            "logreg",
-            "--out-dir",
-            "outputs/fusion_baseline_logreg",
-        ],
-        "metrics_path": "outputs/fusion_baseline_logreg/metrics.json",
-        "output_dir": "outputs/fusion_baseline_logreg",
-        "model_file": "fusion_model.pkl",
-        "model_archive": "fusion_model.zip",
-        "model_format": "SKLEARN_PICKLE_ZIP",
-        "artifact_files": [
-            "fusion_model.pkl",
-            "fusion_model.zip",
-            "metrics.json",
-            "val_predictions.csv",
-            "test_predictions.csv",
-        ],
+
+class WorkerError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def env(name: str, default: str = "") -> str:
+    value = os.environ.get(name, default)
+    return value.strip() if value else default
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def log(message: str) -> None:
+    text = str(message)
+    print(text, flush=True)
+    if LOG_HANDLE is not None:
+        LOG_HANDLE.write(text + "\n")
+        LOG_HANDLE.flush()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def parse_endpoint(endpoint: str) -> tuple[str, bool]:
+    secure = endpoint.startswith("https://")
+    endpoint = endpoint.removeprefix("http://").removeprefix("https://")
+    return endpoint.split("/", 1)[0], secure
+
+
+def load_run_spec() -> tuple[dict[str, Any], str]:
+    raw = os.environ.get("RUN_SPEC_JSON", "")
+    expected_sha256 = env("RUN_SPEC_SHA256")
+    if not raw:
+        raise WorkerError("RUN_SPEC_MISSING", "RUN_SPEC_JSON is required")
+    if len(expected_sha256) != 64:
+        raise WorkerError("RUN_SPEC_INVALID", "RUN_SPEC_SHA256 is invalid")
+    actual_sha256 = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    if not _constant_time_equal(actual_sha256, expected_sha256):
+        raise WorkerError("RUN_SPEC_DIGEST_MISMATCH", "RunSpec SHA-256 mismatch")
+    try:
+        spec = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise WorkerError("RUN_SPEC_INVALID", f"RunSpec is not valid JSON: {exc}") from exc
+    validate_run_spec(spec)
+    return spec, actual_sha256
+
+
+def validate_run_spec(spec: dict[str, Any]) -> None:
+    if not isinstance(spec, dict) or spec.get("schemaVersion") != RUN_SPEC_SCHEMA:
+        raise WorkerError("RUN_SPEC_INVALID", "unsupported RunSpec schemaVersion")
+    training_id = spec.get("trainingId")
+    if not isinstance(training_id, str) or not training_id:
+        raise WorkerError("RUN_SPEC_INVALID", "trainingId is required")
+    if env("TRAINING_ID") and env("TRAINING_ID") != training_id:
+        raise WorkerError("RUN_SPEC_INVALID", "TRAINING_ID does not match RunSpec")
+    if spec.get("trainingMode") not in TRAINING_MODES:
+        raise WorkerError("RUN_SPEC_INVALID", "trainingMode is invalid")
+    # RunSpec is a cross-platform JSON contract. Keep its paths POSIX even when
+    # the worker module is imported by a Windows unit test.
+    expected_workspace = {
+        "modelDir": "/workspace/job/model",
+        "dataDir": "/workspace/job/data",
+        "codeDir": "/workspace/job/code",
+        "configDir": "/workspace/job/config",
+        "outputDir": "/workspace/job/output",
+        "paramsFile": "/workspace/job/config/params.json",
     }
-}
+    if spec.get("workspace") != expected_workspace:
+        raise WorkerError("RUN_SPEC_INVALID", "RunSpec workspace is not the fixed TSS workspace")
+    inputs = spec.get("inputs")
+    if not isinstance(inputs, dict) or set(inputs) != {"model", "dataset", "code"}:
+        raise WorkerError("RUN_SPEC_INVALID", "RunSpec inputs must contain model, dataset and code")
+    for name in ("model", "dataset", "code"):
+        validate_input_spec(name, inputs[name])
+    execution = spec.get("execution")
+    argv = execution.get("argv") if isinstance(execution, dict) else None
+    if not isinstance(argv, list) or not 2 <= len(argv) <= 128:
+        raise WorkerError("RUN_SPEC_INVALID", "execution.argv is invalid")
+    if argv[0] not in {"python", "python3"}:
+        raise WorkerError("ENTRYPOINT_INVALID", "only python/python3 interpreter is allowed")
+    expected_entrypoint = CODE_DIR / inputs["code"]["entrypoint"]
+    if Path(argv[1]) != expected_entrypoint:
+        raise WorkerError("ENTRYPOINT_INVALID", "argv entrypoint does not match approved code entrypoint")
+    if execution.get("workingDirectory") != "/workspace/job/code":
+        raise WorkerError("ENTRYPOINT_INVALID", "workingDirectory must be the code directory")
+    for argument in argv:
+        if not isinstance(argument, str) or "\0" in argument or len(argument) > 1024:
+            raise WorkerError("ENTRYPOINT_INVALID", "execution argv contains an invalid argument")
+    if not isinstance(spec.get("parameters"), dict):
+        raise WorkerError("PARAMETER_INVALID", "parameters must be a JSON object")
+    outputs = spec.get("outputs")
+    artifacts = outputs.get("artifacts") if isinstance(outputs, dict) else None
+    if not isinstance(artifacts, list) or not artifacts:
+        raise WorkerError("RUN_SPEC_INVALID", "outputs.artifacts is required")
+    if sum(1 for artifact in artifacts if artifact.get("publishAsModel") is True) != 1:
+        raise WorkerError("RUN_SPEC_INVALID", "exactly one output must publish as model")
 
-PROFILE_DISPLAY_NAMES = {
-    "image_text_consistency_fusion_logreg": "图文一致性基线训练",
-}
 
-# 训练完成后从 metrics.json 读取并写入 MLflow 的指标键（统一前缀）
-MLFLOW_METRIC_KEYS = [
-    "accuracy",
-    "precision",
-    "recall",
-    "f1",
-    "roc_auc",
-]
-MLFLOW_METRIC_SPLITS = ["train", "val", "test"]
-LAST_REPORTED_PROGRESS = 0
+def validate_input_spec(name: str, artifact: Any) -> None:
+    if not isinstance(artifact, dict):
+        raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name} must be an object")
+    for field in ("versionId", "objectName", "sha256", "sizeBytes", "format", "fileName"):
+        if artifact.get(field) in (None, ""):
+            raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name}.{field} is required")
+    if not isinstance(artifact.get("sha256"), str) or len(artifact["sha256"]) != 64:
+        raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name}.sha256 is invalid")
+    if not isinstance(artifact.get("sizeBytes"), int) or artifact["sizeBytes"] <= 0:
+        raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name}.sizeBytes is invalid")
+    if not isinstance(artifact.get("archive"), bool):
+        raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name}.archive is invalid")
+    required_entries = artifact.get("requiredEntries")
+    if not isinstance(required_entries, list):
+        raise WorkerError("RUN_SPEC_INVALID", f"inputs.{name}.requiredEntries is invalid")
+    safe_relative_path(artifact["fileName"], f"inputs.{name}.fileName")
+    for entry in required_entries:
+        safe_relative_path(entry, f"inputs.{name}.requiredEntries")
+    if name == "code":
+        requirements = artifact.get("requirements", [])
+        if not isinstance(requirements, list) or not all(
+            isinstance(item, str) and item and len(item) <= 512 for item in requirements
+        ):
+            raise WorkerError("RUN_SPEC_INVALID", "inputs.code.requirements is invalid")
+        requirements_sha256 = artifact.get("requirementsSha256")
+        if requirements and (not isinstance(requirements_sha256, str) or len(requirements_sha256) != 64):
+            raise WorkerError("RUN_SPEC_INVALID", "inputs.code.requirementsSha256 is invalid")
+        if not requirements and requirements_sha256 is not None:
+            raise WorkerError("RUN_SPEC_INVALID", "empty requirements must not declare requirementsSha256")
+
+
+def _constant_time_equal(left: str, right: str) -> bool:
+    return hmac.compare_digest(left, right)
+
+
+class CallbackReporter:
+    def __init__(self, training_id: str):
+        self.training_id = training_id
+        self.url = env("BACKEND_CALLBACK_URL")
+        self.token = env("INTERNAL_CALLBACK_TOKEN")
+        self.progress = 0
+        self.last_sent_at = 0.0
+
+    def report(self, status: str, progress: int, *, force: bool = False, required: bool = False, **extra: Any) -> bool:
+        global LAST_PROGRESS
+        normalized = max(self.progress, max(0, min(100, int(progress))))
+        if status == "success":
+            normalized = 100
+        now = time.monotonic()
+        if not force and normalized == self.progress and now - self.last_sent_at < 5:
+            return True
+        self.progress = normalized
+        LAST_PROGRESS = max(LAST_PROGRESS, normalized)
+        payload: dict[str, Any] = {"status": status, "progress": normalized}
+        payload.update({key: value for key, value in extra.items() if value is not None})
+        if not self.url:
+            if required:
+                raise WorkerError("CALLBACK_FAILED", "BACKEND_CALLBACK_URL is missing")
+            log("BACKEND_CALLBACK_URL is missing; progress callback skipped")
+            return False
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        last_error: Exception | None = None
+        for attempt in range(CALLBACK_ATTEMPTS):
+            request = urllib.request.Request(
+                self.url,
+                data=data,
+                headers={"Content-Type": "application/json", "X-Internal-Token": self.token},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    self.last_sent_at = time.monotonic()
+                    log(f"callback status={status} progress={normalized} http={response.status}")
+                    return True
+            except Exception as exc:  # Retry transient network and HTTP errors uniformly.
+                last_error = exc
+                if attempt + 1 < CALLBACK_ATTEMPTS:
+                    time.sleep(2 ** attempt)
+        message = f"callback failed after {CALLBACK_ATTEMPTS} attempts: {last_error}"
+        if required:
+            raise WorkerError("CALLBACK_RETRY_EXHAUSTED", message)
+        log(message)
+        return False
+
+    def stage(self, progress: int, stage: str, message: str) -> None:
+        self.report("running", progress, force=True, remark=f"{stage}: {message}")
 
 
 class MlflowLogger:
-    """观测能力：通过 REST 记录 params/metrics/tags。任何异常只 warning，不阻断训练。
-
-    平台 MLflow server 为 lite 实现，**不支持 artifact 存储**；
-    训练产物（含 metrics.json/csv/train.log/fusion_model.pkl）仍以 MinIO 为主。
-    """
-
-    def __init__(self, training_id: str, profile_name: str):
-        self.training_id = training_id
-        self.profile_name = profile_name
-        self.base_url = env("MLFLOW_TRACKING_URI", "").rstrip("/")
+    def __init__(self, spec: dict[str, Any]):
+        self.spec = spec
+        self.base_url = env("MLFLOW_TRACKING_URI").rstrip("/")
         self.experiment_name = env("MLFLOW_EXPERIMENT_NAME", "TSSAI-K8s-Training")
-        self.enabled = bool(self.base_url)
         self.run_id: str | None = None
         self.experiment_id: str | None = None
-        self.tracking_uri: str | None = None
 
     def start(self) -> None:
-        if not self.enabled:
-            log("MLflow 未启用（MLFLOW_TRACKING_URI 未设置），跳过 MLflow logging")
+        if not self.base_url:
             return
         try:
-            self.tracking_uri = self.base_url
-            log(f"MLflow tracking URI: {self.tracking_uri}")
-            log(f"MLflow experiment name: {self.experiment_name}")
             self.experiment_id = self._ensure_experiment()
-            self.run_id = self._create_run()
-            log(f"MLflow runId: {self.run_id}")
-        except Exception as e:
-            log(f"MLflow 启动失败，训练继续（不写 MLflow）: {e}")
+            response = self._post("/api/2.0/mlflow/runs/create", {
+                "experiment_id": self.experiment_id,
+                "start_time": int(time.time() * 1000),
+                "tags": [
+                    {"key": "tss.training_id", "value": self.spec["trainingId"]},
+                    {"key": "tss.training_plan", "value": self.spec["plan"]["id"]},
+                    {"key": "tss.training_plan_version", "value": self.spec["plan"]["version"]},
+                    {"key": "tss.training_mode", "value": self.spec["trainingMode"]},
+                ],
+            })
+            self.run_id = str(response["run"]["info"]["run_id"])
+            self._post("/api/2.0/mlflow/runs/log-batch", {
+                "run_id": self.run_id,
+                "params": [
+                    {"key": key, "value": str(value)[:6000]}
+                    for key, value in self.spec["parameters"].items()
+                ],
+            })
+            log(f"MLflow runId={self.run_id}")
+        except Exception as exc:
+            log(f"MLflow start failed; training continues: {exc}")
             self.run_id = None
-
-    def log_params(self, params: dict) -> None:
-        if not self.run_id:
-            return
-        records = [{"key": k, "value": _truncate_param(v)} for k, v in params.items()]
-        try:
-            self._post("/api/2.0/mlflow/runs/log-batch", {"run_id": self.run_id, "params": records})
-            log(f"MLflow log params: {list(params.keys())}")
-        except Exception as e:
-            log(f"MLflow log params 失败，训练继续: {e}")
-
-    def log_metrics_from_file(self, metrics_path: Path) -> None:
-        if not self.run_id or not metrics_path.exists():
-            return
-        try:
-            raw = json.loads(metrics_path.read_text(encoding="utf-8"))
-            records = []
-            ts = _now_ms()
-            for split in MLFLOW_METRIC_SPLITS:
-                section = raw.get(split)
-                if not isinstance(section, dict):
-                    continue
-                for key in MLFLOW_METRIC_KEYS:
-                    value = section.get(key)
-                    if isinstance(value, (int, float)):
-                        records.append({"key": f"{split}_{key}", "value": float(value), "timestamp": ts, "step": 0})
-            if records:
-                self._post("/api/2.0/mlflow/runs/log-batch", {"run_id": self.run_id, "metrics": records})
-                log(f"MLflow log metrics: {[r['key'] for r in records]}")
-            else:
-                log("MLflow 未从 metrics.json 解析到可记录指标")
-        except Exception as e:
-            log(f"MLflow log metrics 失败，训练继续: {e}")
-
-    def log_artifacts(self, output_dir: Path, log_file: Path | None) -> None:
-        # lite MLflow server 不支持 artifact 存储；产物以 MinIO 为主。
-        if self.run_id:
-            log("MLflow artifact 存储不支持（lite server），产物以 MinIO 为主")
 
     def finish(self, success: bool) -> None:
         if not self.run_id:
@@ -148,423 +285,329 @@ class MlflowLogger:
             self._post("/api/2.0/mlflow/runs/update", {
                 "run_id": self.run_id,
                 "status": "FINISHED" if success else "FAILED",
-                "end_time": _now_ms(),
+                "end_time": int(time.time() * 1000),
             })
-            log(f"MLflow end_run status={'FINISHED' if success else 'FAILED'}")
-        except Exception as e:
-            log(f"MLflow end_run 失败: {e}")
+        except Exception as exc:
+            log(f"MLflow finish failed: {exc}")
 
     def _ensure_experiment(self) -> str:
-        # get-by-name
         try:
-            resp = self._get(f"/api/2.0/mlflow/experiments/get-by-name?experiment_name={urllib.parse.quote(self.experiment_name)}")
-            exp = resp.get("experiment")
-            if exp and exp.get("experiment_id"):
-                return str(exp["experiment_id"])
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
+            path = "/api/2.0/mlflow/experiments/get-by-name?experiment_name=" + urllib.parse.quote(self.experiment_name)
+            with urllib.request.urlopen(self.base_url + path, timeout=20) as response:
+                payload = json.loads(response.read().decode())
+                return str(payload["experiment"]["experiment_id"])
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
                 raise
-        # create
-        resp = self._post("/api/2.0/mlflow/experiments/create", {"name": self.experiment_name})
-        if not resp.get("experiment_id"):
-            raise RuntimeError("MLflow 创建 experiment 未返回 experiment_id")
-        return str(resp["experiment_id"])
+        return str(self._post("/api/2.0/mlflow/experiments/create", {"name": self.experiment_name})["experiment_id"])
 
-    def _create_run(self) -> str:
-        tags = [
-            {"key": "mlflow.runName", "value": f"{self.training_id}-{self.profile_name}"},
-            {"key": "tss.training_id", "value": self.training_id},
-            {"key": "tss.training_profile", "value": self.profile_name},
-            {"key": "tss.training_profile_display_name", "value": PROFILE_DISPLAY_NAMES.get(self.profile_name, self.profile_name)},
-            {"key": "tss.code_version_id", "value": env("CODE_VERSION_ID")},
-            {"key": "tss.dataset_version_id", "value": env("DATASET_VERSION_ID")},
-        ]
-        body = {
-            "experiment_id": self.experiment_id,
-            "start_time": _now_ms(),
-            "tags": tags,
-        }
-        resp = self._post("/api/2.0/mlflow/runs/create", body)
-        run = resp.get("run") or {}
-        info = run.get("info") or {}
-        if not info.get("run_id"):
-            raise RuntimeError("MLflow 创建 run 未返回 run_id")
-        return str(info["run_id"])
-
-    def _get(self, path: str) -> dict:
-        url = self.base_url + path
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
-    def _post(self, path: str, body: dict) -> dict:
-        url = self.base_url + path
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode())
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-def _truncate_param(value) -> str:
-    if value is None:
-        return ""
-    return str(value)[:6000]
-
-
-def env(name: str, default: str = "") -> str:
-    value = os.environ.get(name, default)
-    return value.strip() if value else default
-
-
-def log(msg: str) -> None:
-    print(msg, flush=True)
-
-
-def callback(
-    status: str,
-    progress: int,
-    metrics=None,
-    error_message=None,
-    log_path=None,
-    output_path=None,
-    mlflow_run_id=None,
-    mlflow_experiment_id=None,
-    mlflow_tracking_uri=None,
-    model_artifact=None,
-) -> None:
-    global LAST_REPORTED_PROGRESS
-
-    url = env("BACKEND_CALLBACK_URL")
-    token = env("INTERNAL_CALLBACK_TOKEN")
-    if not url:
-        log("BACKEND_CALLBACK_URL 未设置，跳过回调")
-        return
-    normalized_progress = max(0, min(100, int(progress)))
-    if status == "success":
-        normalized_progress = 100
-    else:
-        normalized_progress = max(LAST_REPORTED_PROGRESS, normalized_progress)
-    LAST_REPORTED_PROGRESS = normalized_progress
-
-    payload: dict = {"status": status, "progress": normalized_progress}
-    if metrics is not None:
-        payload["metrics"] = metrics
-    if error_message:
-        payload["errorMessage"] = error_message
-    if log_path:
-        payload["logPath"] = log_path
-    if output_path:
-        payload["outputPath"] = output_path
-    if mlflow_run_id:
-        payload["runId"] = mlflow_run_id
-    if mlflow_experiment_id:
-        payload["mlflowExperimentId"] = mlflow_experiment_id
-    if mlflow_tracking_uri:
-        payload["mlflowTrackingUri"] = mlflow_tracking_uri
-    if model_artifact is not None:
-        payload["modelArtifact"] = model_artifact
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", "X-Internal-Token": token},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            log(f"回调成功: status={status}, http={resp.status}")
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"回调失败 HTTP {e.code}: {body}") from e
-
-
-def parse_endpoint(endpoint: str) -> tuple[str, bool]:
-    endpoint = endpoint.replace("http://", "").replace("https://", "")
-    secure = env("MINIO_ENDPOINT", "").startswith("https")
-    if "/" in endpoint:
-        endpoint = endpoint.split("/", 1)[0]
-    return endpoint, secure
-
-
-def sha256_file(path: Path) -> str:
+def download_verified(client: Any, bucket: str, artifact: dict[str, Any], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    response = client.get_object(bucket, artifact["objectName"])
     digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while True:
-            chunk = source.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def download_object(client: Minio, bucket: str, object_name: str) -> bytes:
-    log(f"下载 MinIO 对象: {bucket}/{object_name}")
-    response = client.get_object(bucket, object_name)
+    size = 0
     try:
-        return response.read()
+        with destination.open("wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
     finally:
         response.close()
         response.release_conn()
+    if size != artifact["sizeBytes"]:
+        raise WorkerError("INPUT_SIZE_MISMATCH", f"{artifact['versionId']} size mismatch")
+    if not _constant_time_equal(digest.hexdigest(), artifact["sha256"]):
+        raise WorkerError("INPUT_DIGEST_MISMATCH", f"{artifact['versionId']} SHA-256 mismatch")
+    log(f"downloaded and verified {artifact['versionId']} sha256={digest.hexdigest()}")
 
 
-def normalize_zip_name(name: str) -> str:
-    return name.replace("\\", "/")
-
-
-def is_safe_zip_member(name: str) -> bool:
-    normalized = normalize_zip_name(name)
-    if not normalized or normalized.endswith("/"):
-        return False
+def safe_relative_path(value: str, field: str) -> PurePosixPath:
+    if not isinstance(value, str):
+        raise WorkerError("RUN_SPEC_INVALID", f"{field} must be a string")
+    normalized = value.replace("\\", "/")
     path = PurePosixPath(normalized)
-    if path.is_absolute():
-        return False
-    return ".." not in path.parts
+    if not normalized or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise WorkerError("RUN_SPEC_INVALID", f"{field} is not a safe relative path")
+    return path
 
 
-def safe_extract_zip(data: bytes, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(BytesIO(data)) as zf:
-        for member in zf.infolist():
-            name = normalize_zip_name(member.filename)
-            if not is_safe_zip_member(name):
-                raise ValueError(f"拒绝解压不安全路径: {name}")
-            target = dest / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(member, "r") as src, target.open("wb") as dst:
-                dst.write(src.read())
-            log(f"解压: {name}")
-
-
-def safe_extract_model_zip(data: bytes, dest: Path) -> None:
-    """基础模型权重 ZIP：仅解压到 model/，不执行其中任何文件。"""
-    blocked_ext = {".py", ".sh", ".bash", ".exe", ".bat", ".cmd", ".dll", ".so", ".jar"}
-    allowed_ext = {
-        ".pt", ".pth", ".onnx", ".pkl", ".joblib",
-        ".yaml", ".yml", ".json", ".txt", ".md",
-    }
-    dest.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(BytesIO(data)) as zf:
-        found_file = False
-        for member in zf.infolist():
-            name = normalize_zip_name(member.filename)
-            if not is_safe_zip_member(name):
-                raise ValueError(f"拒绝解压不安全路径: {name}")
-            if name.endswith("/"):
+def safe_extract_zip(archive_path: Path, destination: Path, compressed_size: int) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    expanded_limit = min(MAX_EXPANDED_BYTES, max(1024 * 1024 * 1024, compressed_size * 100))
+    with zipfile.ZipFile(archive_path) as archive:
+        members = archive.infolist()
+        if len(members) > MAX_ARCHIVE_ENTRIES:
+            raise WorkerError("INPUT_ARCHIVE_INVALID", "archive has too many entries")
+        expanded = 0
+        for member in members:
+            path = safe_relative_path(member.filename, "archive entry")
+            unix_mode = member.external_attr >> 16
+            if unix_mode & 0o170000 == 0o120000:
+                raise WorkerError("INPUT_ARCHIVE_INVALID", f"symbolic link is forbidden: {member.filename}")
+            expanded += member.file_size
+            if expanded > expanded_limit:
+                raise WorkerError("INPUT_ARCHIVE_INVALID", "archive expanded size exceeds limit")
+            target = destination.joinpath(*path.parts)
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
                 continue
-            found_file = True
-            ext = Path(name).suffix.lower()
-            if not ext:
-                raise ValueError(f"模型权重包包含无扩展名文件: {name}")
-            if ext in blocked_ext:
-                raise ValueError(f"模型权重包不允许脚本或可执行文件: {name}")
-            if ext not in allowed_ext:
-                raise ValueError(f"模型权重包包含不支持的文件类型: {name}")
-            target = dest / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(member, "r") as src, target.open("wb") as dst:
-                dst.write(src.read())
-            log(f"解压模型权重: {name}")
-        if not found_file:
-            raise ValueError("模型权重 zip 不能为空")
+            with archive.open(member) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
-def upload_file(client: Minio, bucket: str, object_name: str, file_path: Path, content_type: str) -> None:
-    log(f"上传产物: {object_name}")
-    client.fput_object(bucket, object_name, str(file_path), content_type=content_type)
+def materialize_input(
+    client: Any,
+    bucket: str,
+    name: str,
+    artifact: dict[str, Any],
+    destination: Path,
+    temp_dir: Path,
+) -> None:
+    downloaded = temp_dir / f"{name}.download"
+    download_verified(client, bucket, artifact, downloaded)
+    destination.mkdir(parents=True, exist_ok=True)
+    if artifact["archive"]:
+        safe_extract_zip(downloaded, destination, artifact["sizeBytes"])
+    else:
+        relative = safe_relative_path(artifact["fileName"], f"inputs.{name}.fileName")
+        target = destination.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(downloaded, target)
+    for required in artifact["requiredEntries"]:
+        relative = safe_relative_path(required, f"inputs.{name}.requiredEntries")
+        target = destination.joinpath(*relative.parts)
+        if not target.exists():
+            raise WorkerError("INPUT_REQUIRED_ENTRY_MISSING", f"inputs.{name} is missing {required}")
 
 
-def flatten_metrics(raw: dict) -> dict:
-    flat: dict = {"trainingProfile": env("TRAINING_PROFILE")}
-    for split in ("train", "val", "test"):
-        section = raw.get(split)
-        if isinstance(section, dict):
-            for key, value in section.items():
-                flat[f"{split}_{key}"] = value
-    for key in ("accuracy", "precision", "recall", "f1", "roc_auc"):
-        if key in raw and key not in flat:
-            flat[key] = raw[key]
+def write_parameters(spec: dict[str, Any]) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    PARAMS_FILE.write_text(
+        json.dumps(spec["parameters"], ensure_ascii=False, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+
+
+def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, dict[str, Any]]:
+    argv = spec["execution"]["argv"]
+    entrypoint = Path(argv[1])
+    if not entrypoint.is_file():
+        raise WorkerError("ENTRYPOINT_INVALID", f"approved entrypoint is missing: {entrypoint}")
+    event_metrics: dict[str, Any] = {}
+    log(f"execute argv={json.dumps(argv, ensure_ascii=False)}")
+    child_env = os.environ.copy()
+    child_env.update({
+        "TSS_TRAINING_ID": spec["trainingId"],
+        "TSS_TRAINING_MODE": spec["trainingMode"],
+        "TSS_MODEL_DIR": str(MODEL_DIR),
+        "TSS_DATA_DIR": str(DATA_DIR),
+        "TSS_OUTPUT_DIR": str(OUTPUT_DIR),
+        "TSS_PARAMS_FILE": str(PARAMS_FILE),
+    })
+    process = subprocess.Popen(
+        argv,
+        cwd=spec["execution"]["workingDirectory"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        shell=False,
+        env=child_env,
+    )
+    assert process.stdout is not None
+    for raw_line in process.stdout:
+        line = raw_line.rstrip("\n")
+        log(line)
+        event = parse_training_event(line)
+        if event is None:
+            continue
+        if event.get("type") == "progress" and isinstance(event.get("progress"), (int, float)):
+            mapped = 45 + int(max(0, min(100, event["progress"])) * 0.4)
+            reporter.report("running", mapped)
+        if event.get("type") == "metric" and isinstance(event.get("metrics"), dict):
+            event_metrics.update(event["metrics"])
+    return process.wait(), event_metrics
+
+
+def parse_training_event(line: str) -> dict[str, Any] | None:
+    if not line.startswith(EVENT_PREFIX):
+        return None
+    try:
+        event = json.loads(line[len(EVENT_PREFIX):])
+        return event if isinstance(event, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def resolve_output_path(relative: str) -> Path:
+    path = safe_relative_path(relative, "output artifact path")
+    target = OUTPUT_DIR.joinpath(*path.parts)
+    try:
+        target.resolve().relative_to(OUTPUT_DIR.resolve())
+    except ValueError as exc:
+        raise WorkerError("OUTPUT_INVALID", f"output escapes workspace: {relative}") from exc
+    return target
+
+
+def upload_outputs(client: Any, bucket: str, spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    uploaded: list[dict[str, Any]] = []
+    primary = None
+    log_artifact = None
+    prefix = f"training-results/{spec['trainingId']}/artifacts"
+    for declared in spec["outputs"]["artifacts"]:
+        local_path = resolve_output_path(declared["path"])
+        if not local_path.is_file():
+            if declared.get("required"):
+                raise WorkerError("OUTPUT_MISSING", f"required output is missing: {declared['path']}")
+            continue
+        size = local_path.stat().st_size
+        if size <= 0:
+            raise WorkerError("OUTPUT_INVALID", f"output is empty: {declared['path']}")
+        object_name = f"{prefix}/{declared['path']}"
+        content_type = output_content_type(declared["format"])
+        client.fput_object(bucket, object_name, str(local_path), content_type=content_type)
+        artifact = {
+            "path": declared["path"],
+            "objectName": object_name,
+            "role": declared["role"],
+            "format": declared["format"],
+            "sha256": sha256_file(local_path),
+            "sizeBytes": size,
+        }
+        uploaded.append(artifact)
+        if declared.get("publishAsModel"):
+            primary = artifact
+        if declared["role"] == "LOG":
+            log_artifact = artifact
+    if primary is None:
+        raise WorkerError("OUTPUT_MISSING", "primary model output is missing")
+    if log_artifact is None:
+        raise WorkerError("OUTPUT_MISSING", "training log output is missing")
+    return uploaded, primary, log_artifact
+
+
+def materialize_declared_packages(spec: dict[str, Any]) -> None:
+    for artifact in spec["outputs"]["artifacts"]:
+        packaging = artifact.get("packaging")
+        if packaging is None:
+            continue
+        if packaging.get("type") != "ZIP_SINGLE_FILE":
+            raise WorkerError("OUTPUT_INVALID", "unsupported output packaging type")
+        source = resolve_output_path(packaging["sourcePath"])
+        target = resolve_output_path(artifact["path"])
+        entry_name = safe_relative_path(packaging["entryName"], "output packaging entryName")
+        if not source.is_file() or source.stat().st_size <= 0:
+            raise WorkerError("OUTPUT_MISSING", f"packaging source is missing: {packaging['sourcePath']}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(source, arcname=str(entry_name))
+
+
+def output_content_type(format_name: str) -> str:
+    return {
+        "JSON": "application/json",
+        "CSV": "text/csv",
+        "TEXT": "text/plain",
+        "SKLEARN_PICKLE_ZIP": "application/zip",
+    }.get(format_name, "application/octet-stream")
+
+
+def load_metrics(spec: dict[str, Any], event_metrics: dict[str, Any]) -> dict[str, Any]:
+    metrics_path = resolve_output_path(spec["outputs"]["metricsPath"])
+    if not metrics_path.is_file():
+        raise WorkerError("OUTPUT_MISSING", f"metrics file is missing: {metrics_path}")
+    try:
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise WorkerError("OUTPUT_INVALID", f"metrics JSON is invalid: {exc}") from exc
+    if not isinstance(metrics, dict):
+        raise WorkerError("OUTPUT_INVALID", "metrics JSON must be an object")
+    flat = flatten_scalars(metrics)
+    flat.update(flatten_scalars(event_metrics))
+    flat["trainingPlan"] = spec["plan"]["id"]
+    flat["trainingPlanVersion"] = spec["plan"]["version"]
     return flat
 
 
-def run_profile_training(
-    client: Minio,
-    bucket: str,
-    training_id: str,
-    profile_name: str,
-    mlflow_logger: MlflowLogger,
-) -> None:
-    profile = PROFILES.get(profile_name)
-    if profile is None:
-        raise ValueError(f"不支持的 trainingProfile: {profile_name}")
-
-    code_path = env("CODE_STORAGE_PATH")
-    dataset_path = env("DATASET_STORAGE_PATH")
-    model_path = env("MODEL_STORAGE_PATH")
-    base_model_version_id = env("BASE_MODEL_VERSION_ID")
-    if not code_path or not dataset_path:
-        raise ValueError("CODE_STORAGE_PATH 与 DATASET_STORAGE_PATH 均不能为空")
-    if not model_path:
-        raise ValueError("MODEL_STORAGE_PATH 不能为空")
-
-    callback("running", 10)
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-    model_bytes = download_object(client, bucket, model_path)
-    callback("running", 15)
-    safe_extract_model_zip(model_bytes, MODEL_DIR)
-    log(
-        f"已下载基础模型权重 baseModelVersionId={base_model_version_id or env('MODEL_VERSION_ID')} "
-        f"到 {MODEL_DIR}"
-    )
-    log(
-        "当前训练方案 image_text_consistency_fusion_logreg 不自动加载基础模型权重"
-    )
-
-    code_bytes = download_object(client, bucket, code_path)
-    dataset_bytes = download_object(client, bucket, dataset_path)
-    callback("running", 25)
-
-    safe_extract_zip(code_bytes, WORKSPACE)
-    safe_extract_zip(dataset_bytes, WORKSPACE)
-    callback("running", 40)
-
-    command = profile["command"]
-    if command[0].endswith(".sh"):
-        raise ValueError("禁止执行 shell 脚本")
-
-    # 启动 MLflow run 并记录 params（观测能力，失败不阻断训练）
-    mlflow_logger.start()
-    mlflow_logger.log_params({
-        "trainingId": training_id,
-        "trainingProfile": profile_name,
-        "trainingProfileDisplayName": PROFILE_DISPLAY_NAMES.get(profile_name, profile_name),
-        "codeVersionId": env("CODE_VERSION_ID"),
-        "datasetVersionId": env("DATASET_VERSION_ID"),
-        "baseModelVersionId": env("BASE_MODEL_VERSION_ID") or env("MODEL_VERSION_ID"),
-        "modelStoragePath": model_path,
-        "codeStoragePath": code_path,
-        "datasetStoragePath": dataset_path,
-        "hyperParams": env("HYPER_PARAMS_JSON"),
-        "fixedCommand": " ".join(command),
-    })
-    callback(
-        "running",
-        50,
-        mlflow_run_id=mlflow_logger.run_id,
-        mlflow_experiment_id=mlflow_logger.experiment_id,
-        mlflow_tracking_uri=mlflow_logger.tracking_uri,
-    )
-
-    log(f"执行固定 profile 命令: {' '.join(command)}")
-    proc = subprocess.run(
-        command,
-        cwd=WORKSPACE,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    log(proc.stdout)
-    if proc.stderr:
-        log(proc.stderr)
-    if proc.returncode != 0:
-        raise RuntimeError(f"训练命令失败 exit={proc.returncode}: {proc.stderr[-2000:]}")
-
-    callback("running", 85)
-
-    metrics_path = WORKSPACE / profile["metrics_path"]
-    if not metrics_path.exists():
-        raise FileNotFoundError(f"缺少 metrics 文件: {metrics_path}")
-
-    raw_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-    metrics = flatten_metrics(raw_metrics)
-    callback("running", 90)
-
-    # 写入 MLflow metrics（从 metrics.json 解析 train/val/test × accuracy/.../roc_auc）
-    mlflow_logger.log_metrics_from_file(metrics_path)
-
-    output_prefix = f"training-results/{training_id}/artifacts"
-    output_dir = WORKSPACE / profile["output_dir"]
-    model_file = output_dir / profile["model_file"]
-    if not model_file.exists() or not model_file.is_file():
-        raise FileNotFoundError(f"缺少训练模型文件: {model_file}")
-    model_archive = output_dir / profile["model_archive"]
-    with zipfile.ZipFile(model_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(model_file, arcname=profile["model_file"])
-    model_sha256 = sha256_file(model_file)
-
-    uploaded = []
-    for file_name in profile["artifact_files"]:
-        local_file = output_dir / file_name
-        if not local_file.exists():
-            log(f"跳过缺失产物: {local_file}")
-            continue
-        object_name = f"{output_prefix}/{file_name}"
-        content_type = "application/json" if file_name.endswith(".json") else "application/octet-stream"
-        if file_name.endswith(".csv"):
-            content_type = "text/csv"
-        elif file_name.endswith(".zip"):
-            content_type = "application/zip"
-        upload_file(client, bucket, object_name, local_file, content_type)
-        uploaded.append(object_name)
-    callback("running", 95)
-
-    log_object = f"training-results/{training_id}/train.log"
-    log_text = "\n".join([
-        f"trainingId={training_id}",
-        f"profile={profile_name}",
-        f"command={' '.join(command)}",
-        proc.stdout[-4000:] if proc.stdout else "",
-    ])
-    client.put_object(
-        bucket,
-        log_object,
-        BytesIO(log_text.encode("utf-8")),
-        len(log_text.encode("utf-8")),
-        content_type="text/plain",
-    )
-
-    # MLflow artifact 存储由 lite server 限制，产物以 MinIO 为主；保留调用以记录日志说明。
-    mlflow_logger.log_artifacts(output_dir, None)
-
-    mlflow_logger.finish(success=True)
-
-    callback(
-        "success",
-        100,
-        metrics=metrics,
-        log_path=f"minio://{log_object}",
-        output_path=f"minio://{output_prefix}/",
-        mlflow_run_id=mlflow_logger.run_id,
-        mlflow_experiment_id=mlflow_logger.experiment_id,
-        mlflow_tracking_uri=mlflow_logger.tracking_uri,
-        model_artifact={
-            "fileName": profile["model_archive"],
-            "objectName": f"{output_prefix}/{profile['model_archive']}",
-            "modelFileName": profile["model_file"],
-            "format": profile["model_format"],
-            "sha256": model_sha256,
-            "sizeBytes": model_archive.stat().st_size,
-        },
-    )
+def flatten_scalars(value: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(item, dict):
+            result.update(flatten_scalars(item, name))
+        elif item is None or isinstance(item, (str, int, float, bool)):
+            result[name] = item
+    return result
 
 
-def main() -> None:
-    training_id = env("TRAINING_ID", "unknown")
-    profile_name = env("TRAINING_PROFILE")
-    log(f"TSS Training Worker 启动: trainingId={training_id}, profile={profile_name}")
+def legacy_model_callback(primary: dict[str, Any], local_path: Path) -> dict[str, Any]:
+    model_file_name = local_path.name
+    digest = primary["sha256"]
+    if zipfile.is_zipfile(local_path):
+        with zipfile.ZipFile(local_path) as archive:
+            files = [entry for entry in archive.infolist() if not entry.is_dir()]
+            if len(files) != 1:
+                raise WorkerError("OUTPUT_INVALID", "published model ZIP must contain exactly one file")
+            model_file_name = files[0].filename
+            inner_digest = hashlib.sha256()
+            with archive.open(files[0]) as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    inner_digest.update(chunk)
+            digest = inner_digest.hexdigest()
+    return {
+        "fileName": local_path.name,
+        "objectName": primary["objectName"],
+        "modelFileName": model_file_name,
+        "format": primary["format"],
+        "sha256": digest,
+        "sizeBytes": primary["sizeBytes"],
+    }
 
-    if not profile_name:
-        raise ValueError("TRAINING_PROFILE 不能为空")
 
+def put_json(client: Any, bucket: str, object_name: str, payload: dict[str, Any]) -> tuple[str, int]:
+    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    client.put_object(bucket, object_name, BytesIO(data), len(data), content_type="application/json")
+    return hashlib.sha256(data).hexdigest(), len(data)
+
+
+def prepare_workspace(spec: dict[str, Any]) -> Path:
+    for directory in (MODEL_DIR, DATA_DIR, CODE_DIR, CONFIG_DIR, OUTPUT_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
+    log_relative = spec["outputs"]["logPath"]
+    return resolve_output_path(log_relative)
+
+
+def run() -> None:
+    global LOG_HANDLE
+    started_at = utc_now()
+    spec, run_spec_sha256 = load_run_spec()
+    training_id = spec["trainingId"]
+    reporter = CallbackReporter(training_id)
+    log_path = prepare_workspace(spec)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    LOG_HANDLE = log_path.open("a", encoding="utf-8")
+    log(f"TSS generic training worker start trainingId={training_id} runSpecSha256={run_spec_sha256}")
+
+    if Minio is None:
+        raise WorkerError("WORKER_DEPENDENCY_MISSING", "minio package is not installed")
     host, secure = parse_endpoint(env("MINIO_ENDPOINT", "http://tss-minio:9000"))
     client = Minio(
         host,
@@ -573,17 +616,116 @@ def main() -> None:
         secure=secure,
     )
     bucket = env("MINIO_BUCKET", "models")
-    mlflow_logger = MlflowLogger(training_id, profile_name)
+    temp_dir = WORKSPACE / ".downloads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    mlflow = MlflowLogger(spec)
 
     try:
-        callback("running", 5)
-        run_profile_training(client, bucket, training_id, profile_name, mlflow_logger)
-        log("训练完成")
-    except Exception as e:
-        log(f"训练失败: {e}")
-        mlflow_logger.finish(success=False)
-        callback("failed", LAST_REPORTED_PROGRESS, error_message=str(e))
+        reporter.stage(5, "prepare", "RunSpec verified")
+        materialize_input(client, bucket, "model", spec["inputs"]["model"], MODEL_DIR, temp_dir)
+        reporter.stage(15, "model", "base model downloaded and verified")
+        materialize_input(client, bucket, "dataset", spec["inputs"]["dataset"], DATA_DIR, temp_dir)
+        reporter.stage(28, "dataset", "dataset downloaded and verified")
+        materialize_input(client, bucket, "code", spec["inputs"]["code"], CODE_DIR, temp_dir)
+        reporter.stage(40, "code", "approved code downloaded and verified")
+        write_parameters(spec)
+        mlflow.start()
+        reporter.report(
+            "running",
+            45,
+            force=True,
+            runId=mlflow.run_id,
+            mlflowExperimentId=mlflow.experiment_id,
+            mlflowTrackingUri=mlflow.base_url or None,
+        )
+        exit_code, event_metrics = execute_training(spec, reporter)
+        if exit_code != 0:
+            raise WorkerError("PROCESS_FAILED", f"training process exited with code {exit_code}")
+        reporter.stage(86, "validate", "training process completed; validating outputs")
+        materialize_declared_packages(spec)
+        metrics = load_metrics(spec, event_metrics)
+        uploaded, primary, log_artifact = upload_outputs(client, bucket, spec)
+        reporter.stage(96, "upload", "required outputs uploaded")
+        finished_at = utc_now()
+        output = {
+            "schemaVersion": "tss.training.output/v1",
+            "trainingId": training_id,
+            "planId": spec["plan"]["id"],
+            "planVersion": spec["plan"]["version"],
+            "status": "success",
+            "progress": 100,
+            "startedAt": started_at,
+            "finishedAt": finished_at,
+            "exitCode": exit_code,
+            "metrics": metrics,
+            "artifacts": uploaded,
+            "primaryModel": primary,
+            "log": log_artifact,
+            "inputDigests": {
+                "model": spec["inputs"]["model"]["sha256"],
+                "dataset": spec["inputs"]["dataset"]["sha256"],
+                "code": spec["inputs"]["code"]["sha256"],
+            },
+        }
+        output_object = f"training-results/{training_id}/training-output.json"
+        output_sha256, output_size = put_json(client, bucket, output_object, output)
+        mlflow.finish(True)
+        reporter.report(
+            "success",
+            100,
+            force=True,
+            required=True,
+            metrics=metrics,
+            logPath=f"minio://{log_artifact['objectName']}",
+            outputPath=f"minio://training-results/{training_id}/artifacts/",
+            runId=mlflow.run_id,
+            mlflowExperimentId=mlflow.experiment_id,
+            mlflowTrackingUri=mlflow.base_url or None,
+            modelArtifact=legacy_model_callback(primary, resolve_output_path(primary["path"])),
+            trainingOutput=output,
+            trainingOutputObjectName=output_object,
+            trainingOutputSha256=output_sha256,
+            trainingOutputSizeBytes=output_size,
+            remark=f"trainingOutput=minio://{output_object}",
+            startedAt=started_at,
+            finishedAt=finished_at,
+        )
+        log("training completed")
+    except Exception:
+        mlflow.finish(False)
+        raise
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def main() -> None:
+    global LOG_HANDLE
+    started_at = utc_now()
+    try:
+        run()
+    except Exception as exc:
+        code = exc.code if isinstance(exc, WorkerError) else "WORKER_FAILED"
+        log(f"training failed code={code}: {exc}")
+        training_id = env("TRAINING_ID", "unknown")
+        reporter = CallbackReporter(training_id)
+        reporter.progress = LAST_PROGRESS
+        try:
+            reporter.report(
+                "failed",
+                reporter.progress,
+                force=True,
+                required=True,
+                errorMessage=f"{code}: {exc}",
+                startedAt=started_at,
+                finishedAt=utc_now(),
+            )
+        except Exception as callback_error:
+            log(f"failure callback also failed: {callback_error}")
         sys.exit(1)
+    finally:
+        if LOG_HANDLE is not None:
+            LOG_HANDLE.close()
+            LOG_HANDLE = None
 
 
 if __name__ == "__main__":

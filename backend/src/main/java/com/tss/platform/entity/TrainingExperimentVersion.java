@@ -50,6 +50,42 @@ public class TrainingExperimentVersion {
     @Column(name = "training_profile", length = 128)
     private String trainingProfile;
 
+    @Column(name = "training_plan_id", length = 64, updatable = false)
+    private String trainingPlanId;
+
+    @Column(name = "training_plan_version", length = 32, updatable = false)
+    private String trainingPlanVersion;
+
+    @Column(name = "training_mode", length = 32, updatable = false)
+    private String trainingMode;
+
+    @Column(name = "resource_profile_id", length = 64, updatable = false)
+    private String resourceProfileId;
+
+    @Column(name = "run_spec_json", columnDefinition = "TEXT", updatable = false)
+    private String runSpecJson;
+
+    @Column(name = "run_spec_sha256", length = 64, updatable = false)
+    private String runSpecSha256;
+
+    @Column(name = "input_model_sha256", length = 64, updatable = false)
+    private String inputModelSha256;
+
+    @Column(name = "input_dataset_sha256", length = 64, updatable = false)
+    private String inputDatasetSha256;
+
+    @Column(name = "input_code_sha256", length = 64, updatable = false)
+    private String inputCodeSha256;
+
+    @Column(name = "code_approval_record_id", length = 64, updatable = false)
+    private String codeApprovalRecordId;
+
+    @Column(name = "runtime_image", length = 512, updatable = false)
+    private String runtimeImage;
+
+    @Column(name = "runtime_image_digest", length = 71, updatable = false)
+    private String runtimeImageDigest;
+
     @Column(name = "dataset_version_id", nullable = false, length = 64)
     private String datasetVersionId;
 
@@ -109,6 +145,18 @@ public class TrainingExperimentVersion {
 
     @Column(name = "model_artifact_size_bytes")
     private Long modelArtifactSizeBytes;
+
+    @Column(name = "training_output_json", columnDefinition = "TEXT")
+    private String trainingOutputJson;
+
+    @Column(name = "training_output_sha256", length = 64)
+    private String trainingOutputSha256;
+
+    @Column(name = "training_output_object_name", length = 1024)
+    private String trainingOutputObjectName;
+
+    @Column(name = "training_output_size_bytes")
+    private Long trainingOutputSizeBytes;
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
