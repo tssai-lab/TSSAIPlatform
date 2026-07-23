@@ -192,7 +192,7 @@ public class ServerMetricsCollector {
                 }
             }
         } catch (Exception e) {
-            LOG.debug("Metrics API failed: {}", e.getMessage());
+            LOG.warn("Metrics API failed: {}", e.getMessage());
         }
 
         if (result.isEmpty()) {
@@ -270,6 +270,7 @@ public class ServerMetricsCollector {
         if (s == null || s.isEmpty()) return 0;
         s = s.trim();
         if (s.endsWith("m")) return Double.parseDouble(s.replace("m", "")) / 1000.0;
+        if (s.endsWith("n")) return Double.parseDouble(s.replace("n", "")) / 1_000_000_000.0;
         return Double.parseDouble(s);
     }
 
