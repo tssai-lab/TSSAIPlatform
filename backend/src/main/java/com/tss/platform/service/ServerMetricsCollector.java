@@ -67,6 +67,9 @@ public class ServerMetricsCollector {
     public void collectMetrics() {
         if (!isK8sReady()) return;
 
+        // 获取各节点容量（CPU总核数/内存总量）
+        Map<String, double[]> capacities = fetchNodeCapacities();
+
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
         Map<String, ComputeServer> ipMap = new LinkedHashMap<>();
@@ -76,23 +79,30 @@ public class ServerMetricsCollector {
 
         for (ComputeServer server : servers) {
             try {
-                collectOne(server, topMetrics.get(server.getServerIp()));
+                double[] cap = capacities.get(server.getServerIp());
+                if (cap != null && (server.getCpuCores() == null || server.getCpuCores() <= 0)) {
+                    server.setCpuCores(cap[0]);
+                    server.setMemoryGib(cap[1]);
+                    serverRepo.save(server);
+                }
+                collectOne(server, topMetrics.get(server.getServerIp()), cap);
             } catch (Exception e) {
                 LOG.debug("采集 {} 失败: {}", server.getServerIp(), e.getMessage());
             }
         }
 
         // 把 K8s 节点也自动同步进来
-        for (String ip : topMetrics.keySet()) {
-            if (!ipMap.containsKey(ip)) {
-                autoRegisterK8sNode(ip);
+        for (String name : topMetrics.keySet()) {
+            if (!ipMap.containsKey(name)) {
+                double[] cap = capacities.get(name);
+                autoRegisterK8sNode(name, cap);
             }
         }
 
         cleanupHistory();
     }
 
-    private void collectOne(ComputeServer server, TopData top) {
+    private void collectOne(ComputeServer server, TopData top, double[] capacity) {
         ServerMetricSnapshot snap = snapshotRepo.findByServerIp(server.getServerIp())
                 .orElseGet(() -> {
                     ServerMetricSnapshot s = new ServerMetricSnapshot();
@@ -103,8 +113,16 @@ public class ServerMetricsCollector {
         Instant now = Instant.now();
 
         if (top != null) {
-            snap.setCpuRate(top.cpuPct);
-            snap.setMemRate(top.memPct);
+            // 用绝对值除总容量算百分比
+            if (capacity != null) {
+                double cpuCores = capacity[0] > 0 ? capacity[0] : (server.getCpuCores() != null ? server.getCpuCores() : 0);
+                double memGiB = capacity[1] > 0 ? capacity[1] : (server.getMemoryGib() != null ? server.getMemoryGib() : 0);
+                snap.setCpuRate(cpuCores > 0 ? Math.round(top.cpuUsed * 1000.0 / cpuCores) / 10.0 : top.cpuPct);
+                snap.setMemRate(memGiB > 0 ? Math.round(top.memBytes * 1000.0 / (memGiB * 1024 * 1024 * 1024)) / 10.0 : top.memPct);
+            } else {
+                snap.setCpuRate(top.cpuPct);
+                snap.setMemRate(top.memPct);
+            }
         } else {
             snap.setCpuRate(0.0);
             snap.setMemRate(0.0);
@@ -145,17 +163,45 @@ public class ServerMetricsCollector {
         historyRepo.save(hist);
     }
 
-    private void autoRegisterK8sNode(String ip) {
+    private void autoRegisterK8sNode(String name, double[] capacity) {
         ComputeServer s = new ComputeServer();
-        s.setServerIp(ip);
-        s.setHostname(ip);
+        s.setServerIp(name);
+        s.setHostname(name);
         s.setStatus("online");
-        s.setK8sNodeName(ip);
+        s.setK8sNodeName(name);
         s.setDeleted(false);
+        if (capacity != null) {
+            s.setCpuCores(capacity[0] > 0 ? capacity[0] : null);
+            s.setMemoryGib(capacity[1] > 0 ? capacity[1] : null);
+        }
         s.setCreatedAt(Instant.now());
         s.setUpdatedAt(Instant.now());
         serverRepo.save(s);
-        LOG.info("自动注册K8s节点: {}", ip);
+        LOG.info("自动注册K8s节点: {}", name);
+    }
+
+    /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数和内存总量(GiB) */
+    Map<String, double[]> fetchNodeCapacities() {
+        Map<String, double[]> caps = new LinkedHashMap<>();
+        try {
+            Path kubectl = envService.resolveKubectl();
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (r.success()) {
+                JsonNode root = objectMapper.readTree(r.output());
+                for (JsonNode item : root.path("items")) {
+                    String name = item.path("metadata").path("name").asText();
+                    JsonNode cap = item.path("status").path("capacity");
+                    double cpu = parseCpu(cap.path("cpu").asText());
+                    double memGiB = parseMemToBytes(cap.path("memory").asText()) / (1024.0 * 1024.0 * 1024.0);
+                    caps.put(name, new double[]{cpu, memGiB});
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("获取节点容量失败: {}", e.getMessage());
+        }
+        return caps;
     }
 
     // ── top / GPU ──
