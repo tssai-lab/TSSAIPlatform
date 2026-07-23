@@ -37,6 +37,12 @@ public class ComputeServer {
     @Column(name = "spec_os", length = 64)
     private String specOs;
 
+    @Column(name = "cpu_cores")
+    private Double cpuCores;
+
+    @Column(name = "memory_gib")
+    private Double memoryGib;
+
     @Column(name = "k8s_node_name", length = 256)
     private String k8sNodeName;
 
