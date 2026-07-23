@@ -7,19 +7,14 @@ import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
-import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.ModelCodePreviewService;
-import com.tss.platform.service.MinioDeleteTaskService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.tss.platform.service.ModelVersionLifecycleService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,27 +26,22 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/model")
 public class ModelController {
 
-    private static final Logger log = LoggerFactory.getLogger(ModelController.class);
-
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
-    private final TrainingExperimentVersionRepository trainingRepo;
-    private final MinioDeleteTaskService minioDeleteTaskService;
     private final ModelCodePreviewService codePreviewService;
     private final AuthContext authContext;
+    private final ModelVersionLifecycleService lifecycleService;
 
     public ModelController(ModelAssetRepository modelAssetRepo,
                            ModelVersionRepository modelVersionRepo,
-                           TrainingExperimentVersionRepository trainingRepo,
-                           MinioDeleteTaskService minioDeleteTaskService,
                            ModelCodePreviewService codePreviewService,
-                           AuthContext authContext) {
+                           AuthContext authContext,
+                           ModelVersionLifecycleService lifecycleService) {
         this.modelAssetRepo = modelAssetRepo;
         this.modelVersionRepo = modelVersionRepo;
-        this.trainingRepo = trainingRepo;
-        this.minioDeleteTaskService = minioDeleteTaskService;
         this.codePreviewService = codePreviewService;
         this.authContext = authContext;
+        this.lifecycleService = lifecycleService;
     }
 
     @GetMapping("/list")
@@ -117,6 +107,11 @@ public class ModelController {
         item.put("storagePath", version.getStoragePath());
         item.put("fileName", version.getFileName());
         item.put("sizeBytes", version.getSizeBytes());
+        item.put("artifactSha256", version.getArtifactSha256());
+        item.put("commitInfo", version.getCommitInfo());
+        item.put("hyperParams", version.getHyperParams());
+        item.put("isCurrent", asset != null
+                && version.getId().equals(asset.getCurrentVersionId()));
         item.put("description", version.getDescription());
         item.put("changeLog", version.getChangeLog());
         item.put("status", version.getStatus());
@@ -148,6 +143,11 @@ public class ModelController {
         item.put("storagePath", ver.getStoragePath());
         item.put("fileName", ver.getFileName());
         item.put("sizeBytes", ver.getSizeBytes());
+        item.put("artifactSha256", ver.getArtifactSha256());
+        item.put("commitInfo", ver.getCommitInfo());
+        item.put("hyperParams", ver.getHyperParams());
+        item.put("isCurrent", a.map(asset -> ver.getId().equals(asset.getCurrentVersionId()))
+                .orElse(false));
         item.put("description", ver.getDescription());
         item.put("changeLog", ver.getChangeLog());
         item.put("status", ver.getStatus());
@@ -179,63 +179,12 @@ public class ModelController {
     }
 
     @DeleteMapping("/delete")
-    @Transactional
     public ApiResponse<Map<String, Object>> delete(@RequestParam String id) {
-        Optional<ModelVersion> v = modelVersionRepo.findByIdAndDeletedFalse(id);
-        if (v.isEmpty()) {
-            return ApiResponse.fail("model not found");
+        try {
+            return ApiResponse.ok(lifecycleService.deleteVersion(id));
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.fail(exception.getMessage());
         }
-        ModelVersion ver = v.get();
-        if (!authContext.canAccessOwner(effectiveOwner(ver))) {
-            return ApiResponse.fail("model not found or no permission");
-        }
-        ModelAsset asset = modelAssetRepo.findByIdAndDeletedFalse(ver.getAssetId()).orElse(null);
-        if (asset == null) {
-            log.warn("Reject model delete because parent asset is missing or deleted: id={}, assetId={}", id, ver.getAssetId());
-            return ApiResponse.fail("model version parent asset not found or deleted: " + ver.getAssetId());
-        }
-        Integer ownerUserId = ver.getOwnerUserId() != null ? ver.getOwnerUserId() : asset.getOwnerUserId();
-        if (trainingRepo.countByModelVersionId(id) > 0
-                || trainingRepo.countByProducedModelVersionId(id) > 0) {
-            log.warn("Reject model delete because version is referenced by training experiments: id={}", id);
-            return ApiResponse.fail("model version is referenced by training experiments");
-        }
-        boolean minioDeleteQueued = false;
-        if (ver.getStoragePath() != null && !ver.getStoragePath().isBlank()) {
-            try {
-                authContext.requireObjectAccess(ver.getStoragePath(), ownerUserId, "object not found or no permission");
-                minioDeleteTaskService.enqueueDefaultBucketDelete(
-                        ver.getStoragePath(),
-                        MinioDeleteTaskService.SOURCE_MODEL_VERSION,
-                        id,
-                        ownerUserId
-                );
-                minioDeleteQueued = true;
-            } catch (IllegalArgumentException e) {
-                return ApiResponse.fail(e.getMessage());
-            } catch (Exception e) {
-                log.warn("Reject model delete because MinIO delete task cannot be queued: id={}, error={}", id, e.getMessage());
-                return ApiResponse.fail("创建模型文件删除任务失败: " + e.getMessage());
-            }
-        }
-        Instant now = Instant.now();
-        ver.setDeleted(true);
-        ver.setDeletedAt(now);
-        modelVersionRepo.save(ver);
-        log.info(
-                "Model version soft deleted through /api/model/delete: id={}, assetId={}, minioDeleteQueued={}, ownerUserId={}",
-                id,
-                ver.getAssetId(),
-                minioDeleteQueued,
-                ownerUserId
-        );
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("id", id);
-        result.put("assetId", ver.getAssetId());
-        result.put("deleted", true);
-        result.put("minioDeleteQueued", minioDeleteQueued);
-        return ApiResponse.ok(result);
     }
 
     private Integer effectiveOwner(ModelVersion version) {

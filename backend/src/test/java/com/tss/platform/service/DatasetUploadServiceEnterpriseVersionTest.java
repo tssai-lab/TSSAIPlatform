@@ -28,8 +28,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -73,13 +75,14 @@ class DatasetUploadServiceEnterpriseVersionTest {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         ImportJobRepository importJobRepo = mock(ImportJobRepository.class);
+        DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         DatasetUploadService service = new DatasetUploadService(
                 mock(MinioClient.class),
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
                 mock(DatasetAssetRepository.class),
-                mock(DatasetVersionRepository.class),
+                versionRepo,
                 mock(DatasetPackageRepository.class),
                 mock(DatasetVersionPackageRepository.class),
                 importJobRepo,
@@ -95,8 +98,13 @@ class DatasetUploadServiceEnterpriseVersionTest {
         ImportJob job = new ImportJob();
         job.setId("ijob-1");
         job.setStatus("FAILED");
+        DatasetVersion version = new DatasetVersion();
+        version.setId(session.getVersionId());
+        version.setStatus("DRAFT");
         when(sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
         when(importJobRepo.findById("ijob-1")).thenReturn(Optional.of(job));
+        when(versionRepo.findByIdAndDeletedFalse(session.getVersionId()))
+                .thenReturn(Optional.of(version));
 
         DatasetUploadProgressDto progress = service.getProgress(session.getId());
 
@@ -108,14 +116,17 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
-    void completeForNewAssetCreatesFirstReadyVersion() {
+    void completeForNewAssetCreatesFirstReadyVersion() throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        List<String> persistedStatuses = emulateVersionPersistence(versionRepo);
+        emulateAssetPersistence(assetRepo);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -131,6 +142,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1"))
                 .thenReturn(List.of(uploadedChunk()));
         when(authContext.currentUserId()).thenReturn(7);
+        when(minioClient.getObject(any())).thenReturn(textObject(session.getFileSize()));
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId("dataset-upload-1");
@@ -141,9 +153,10 @@ class DatasetUploadServiceEnterpriseVersionTest {
         DatasetAsset asset = assetCaptor.getAllValues().get(1);
 
         ArgumentCaptor<DatasetVersion> versionCaptor = ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(versionRepo).saveAndFlush(versionCaptor.capture());
-        DatasetVersion version = versionCaptor.getValue();
+        verify(versionRepo, times(2)).saveAndFlush(versionCaptor.capture());
+        DatasetVersion version = versionCaptor.getAllValues().get(1);
 
+        assertEquals(List.of("DRAFT", "READY"), persistedStatuses);
         assertEquals(1, version.getVersionNo());
         assertEquals("v1", version.getVersionLabel());
         assertEquals("READY", version.getStatus());
@@ -161,6 +174,8 @@ class DatasetUploadServiceEnterpriseVersionTest {
         AuthContext authContext = mock(AuthContext.class);
         MinioClient minioClient = mock(MinioClient.class);
         ZipCentralDirectoryReader zipReader = mock(ZipCentralDirectoryReader.class);
+        emulateVersionPersistence(versionRepo);
+        emulateAssetPersistence(assetRepo);
         DatasetUploadService service = new DatasetUploadService(
                 minioClient,
                 minioConfig(),
@@ -204,7 +219,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         service.complete(request);
 
         ArgumentCaptor<DatasetVersion> versionCaptor = ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(versionRepo).saveAndFlush(versionCaptor.capture());
+        verify(versionRepo, times(2)).saveAndFlush(versionCaptor.capture());
         assertEquals(2L, versionCaptor.getValue().getFileCount());
     }
 
@@ -215,8 +230,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -625,14 +641,16 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
-    void completeForExistingAssetCreatesNextVersionAndUpdatesCurrentVersion() {
+    void completeForExistingAssetCreatesNextVersionAndUpdatesCurrentVersion() throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        emulateVersionPersistence(versionRepo);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -676,13 +694,14 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1")).thenReturn(List.of(chunk));
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
+        when(minioClient.getObject(any())).thenReturn(textObject(session.getFileSize()));
 
         DatasetUploadCompleteRequest completeRequest = new DatasetUploadCompleteRequest();
         completeRequest.setUploadId("dataset-upload-1");
         service.complete(completeRequest);
 
         ArgumentCaptor<DatasetVersion> versionCaptor = ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(versionRepo).saveAndFlush(versionCaptor.capture());
+        verify(versionRepo, times(2)).saveAndFlush(versionCaptor.capture());
         DatasetVersion savedVersion = versionCaptor.getValue();
         assertEquals("dataset-asset-1", savedVersion.getAssetId());
         assertEquals(2, savedVersion.getVersionNo());
@@ -699,14 +718,16 @@ class DatasetUploadServiceEnterpriseVersionTest {
     }
 
     @Test
-    void completeForExistingAssetRefreshesAutoGeneratedLabelWhenFinalVersionNoChanges() {
+    void completeForExistingAssetRefreshesAutoGeneratedLabelWhenFinalVersionNoChanges() throws Exception {
         DatasetUploadSessionRepository sessionRepo = mock(DatasetUploadSessionRepository.class);
         DatasetUploadChunkRepository chunkRepo = mock(DatasetUploadChunkRepository.class);
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        MinioClient minioClient = mock(MinioClient.class);
+        emulateVersionPersistence(versionRepo);
         DatasetUploadService service = new DatasetUploadService(
-                mock(MinioClient.class),
+                minioClient,
                 minioConfig(),
                 sessionRepo,
                 chunkRepo,
@@ -749,13 +770,14 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-1")).thenReturn(List.of(chunk));
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(2);
+        when(minioClient.getObject(any())).thenReturn(textObject(session.getFileSize()));
 
         DatasetUploadCompleteRequest completeRequest = new DatasetUploadCompleteRequest();
         completeRequest.setUploadId("dataset-upload-1");
         service.complete(completeRequest);
 
         ArgumentCaptor<DatasetVersion> versionCaptor = ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(versionRepo).saveAndFlush(versionCaptor.capture());
+        verify(versionRepo, times(2)).saveAndFlush(versionCaptor.capture());
         DatasetVersion savedVersion = versionCaptor.getValue();
         assertEquals(3, savedVersion.getVersionNo());
         assertEquals("v3", savedVersion.getVersionLabel());
@@ -770,6 +792,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         DatasetVersionRepository versionRepo = mock(DatasetVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
         MinioClient minioClient = mock(MinioClient.class);
+        emulateVersionPersistence(versionRepo);
         DatasetUploadService service = new DatasetUploadService(
                 minioClient,
                 minioConfig(),
@@ -794,6 +817,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(assetRepo.findByIdAndDeletedFalseForUpdate("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
         when(authContext.currentUserId()).thenReturn(7);
+        when(minioClient.getObject(any())).thenReturn(textObject(session.getFileSize()));
 
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId("dataset-upload-1");
@@ -802,7 +826,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
 
         assertEquals(first.get("id"), second.get("id"));
         assertEquals(first.get("versionNo"), second.get("versionNo"));
-        verify(versionRepo, times(1)).saveAndFlush(any(DatasetVersion.class));
+        verify(versionRepo, times(2)).saveAndFlush(any(DatasetVersion.class));
         verify(minioClient, times(1)).composeObject(any());
     }
 
@@ -987,6 +1011,62 @@ class DatasetUploadServiceEnterpriseVersionTest {
                 false,
                 directory
         );
+    }
+
+    private GetObjectResponse textObject(long size) {
+        byte[] bytes = "a".repeat(Math.toIntExact(size)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return new GetObjectResponse(
+                new Headers.Builder().build(),
+                "datasets",
+                null,
+                "corpus.txt",
+                new ByteArrayInputStream(bytes)
+        );
+    }
+
+    private List<String> emulateVersionPersistence(DatasetVersionRepository repository) {
+        AtomicReference<DatasetVersion> stored = new AtomicReference<>();
+        List<String> statuses = new ArrayList<>();
+        when(repository.saveAndFlush(any(DatasetVersion.class))).thenAnswer(invocation -> {
+            DatasetVersion version = invocation.getArgument(0);
+            statuses.add(version.getStatus());
+            stored.set(version);
+            return version;
+        });
+        when(repository.findByIdAndDeletedFalseForUpdate(anyString())).thenAnswer(invocation -> {
+            DatasetVersion version = stored.get();
+            return version != null && invocation.getArgument(0).equals(version.getId())
+                    ? Optional.of(version)
+                    : Optional.empty();
+        });
+        when(repository.findById(anyString())).thenAnswer(invocation -> {
+            DatasetVersion version = stored.get();
+            return version != null && invocation.getArgument(0).equals(version.getId())
+                    ? Optional.of(version)
+                    : Optional.empty();
+        });
+        return statuses;
+    }
+
+    private void emulateAssetPersistence(DatasetAssetRepository repository) {
+        AtomicReference<DatasetAsset> stored = new AtomicReference<>();
+        when(repository.saveAndFlush(any(DatasetAsset.class))).thenAnswer(invocation -> {
+            DatasetAsset asset = invocation.getArgument(0);
+            stored.set(asset);
+            return asset;
+        });
+        when(repository.findByIdAndDeletedFalseForUpdate(anyString())).thenAnswer(invocation -> {
+            DatasetAsset asset = stored.get();
+            return asset != null && invocation.getArgument(0).equals(asset.getId())
+                    ? Optional.of(asset)
+                    : Optional.empty();
+        });
+        when(repository.findById(anyString())).thenAnswer(invocation -> {
+            DatasetAsset asset = stored.get();
+            return asset != null && invocation.getArgument(0).equals(asset.getId())
+                    ? Optional.of(asset)
+                    : Optional.empty();
+        });
     }
 
     private MinioConfig minioConfig() {

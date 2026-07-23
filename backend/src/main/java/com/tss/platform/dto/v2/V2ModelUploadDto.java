@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class V2ModelUploadDto {
@@ -23,6 +24,10 @@ public class V2ModelUploadDto {
     private String modelVersion;
     private String taskType;
     private String remark;
+    private String commitInfo;
+    private Map<String, Object> hyperParams;
+    private String artifactSha256;
+    private Boolean isCurrent;
     private Instant createdAt;
     private Instant updatedAt;
 }

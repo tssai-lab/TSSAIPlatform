@@ -1,5 +1,6 @@
 package com.tss.platform.service;
 
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -52,6 +53,8 @@ final class ModelWeightZipValidator {
         int entries = 0;
         boolean foundFile = false;
         long totalUncompressedBytes = 0;
+        Set<String> paths = new HashSet<>();
+        Set<String> filePaths = new HashSet<>();
         ZipEntry entry;
         while ((entry = zip.getNextEntry()) != null) {
             entries += 1;
@@ -61,6 +64,24 @@ final class ModelWeightZipValidator {
             String entryName = CodeModelZipValidator.normalizeZipEntryName(entry.getName());
             if (!CodeModelZipValidator.isSafeZipEntryPath(entryName)) {
                 throw new IllegalArgumentException("模型权重 zip 包含非法路径: " + entry.getName());
+            }
+            String canonicalPath = canonicalPath(
+                    ZipPathValidator.normalizeEntryPath(entryName)
+            );
+            if (!paths.add(canonicalPath)) {
+                throw new IllegalArgumentException("模型权重 zip 包含重复路径: " + entryName);
+            }
+            rejectParentFileConflict(canonicalPath, filePaths);
+            if (!entry.isDirectory()) {
+                for (String existing : paths) {
+                    if (!existing.equals(canonicalPath)
+                            && existing.startsWith(canonicalPath + "/")) {
+                        throw new IllegalArgumentException(
+                                "模型权重 zip 包含文件/目录冲突: " + entryName
+                        );
+                    }
+                }
+                filePaths.add(canonicalPath);
             }
             if (!entry.isDirectory()) {
                 foundFile = true;
@@ -72,6 +93,24 @@ final class ModelWeightZipValidator {
         if (!foundFile) {
             throw new IllegalArgumentException("模型权重 zip 不能为空");
         }
+    }
+
+    private static void rejectParentFileConflict(String path, Set<String> filePaths) {
+        int slash = path.indexOf('/');
+        while (slash >= 0) {
+            if (filePaths.contains(path.substring(0, slash))) {
+                throw new IllegalArgumentException("模型权重 zip 包含文件/目录冲突: " + path);
+            }
+            slash = path.indexOf('/', slash + 1);
+        }
+    }
+
+    private static String canonicalPath(String path) {
+        String canonical = path;
+        while (canonical.endsWith("/") && !canonical.isEmpty()) {
+            canonical = canonical.substring(0, canonical.length() - 1);
+        }
+        return canonical;
     }
 
     private static void validateFileExtension(String entryName) {

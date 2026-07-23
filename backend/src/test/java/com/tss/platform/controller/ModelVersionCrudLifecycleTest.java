@@ -1,13 +1,13 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.ModelVersionUpdateRequest;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
-import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
-import com.tss.platform.service.MinioDeleteTaskService;
+import com.tss.platform.service.ModelVersionLifecycleService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -26,15 +26,13 @@ class ModelVersionCrudLifecycleTest {
     void updateStatusAllowsDeprecatingModelVersion() {
         ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
         ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
-        TrainingExperimentVersionRepository trainingRepo =
-                mock(TrainingExperimentVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
+        ModelVersionLifecycleService lifecycleService = mock(ModelVersionLifecycleService.class);
         ModelVersionCrudController controller = new ModelVersionCrudController(
                 versionRepo,
                 assetRepo,
-                trainingRepo,
-                mock(MinioDeleteTaskService.class),
-                authContext
+                authContext,
+                lifecycleService
         );
         ModelVersion version = new ModelVersion();
         version.setId("model-ver-1");
@@ -45,12 +43,12 @@ class ModelVersionCrudLifecycleTest {
         ModelAsset asset = new ModelAsset();
         asset.setId("model-asset-1");
         asset.setOwnerUserId(7);
-        when(versionRepo.findByIdAndDeletedFalse(version.getId()))
-                .thenReturn(Optional.of(version));
         when(assetRepo.findByIdAndDeletedFalse(asset.getId()))
                 .thenReturn(Optional.of(asset));
-        when(authContext.canAccessOwner(7)).thenReturn(true);
-        when(versionRepo.save(version)).thenReturn(version);
+        when(lifecycleService.retire(version.getId(), "DEPRECATED")).thenAnswer(invocation -> {
+            version.setStatus("DEPRECATED");
+            return version;
+        });
 
         ApiResponse<ModelVersion> response = controller.updateStatus(
                 version.getId(),
@@ -59,22 +57,19 @@ class ModelVersionCrudLifecycleTest {
 
         assertTrue(response.isSuccess());
         assertEquals("DEPRECATED", response.getData().getStatus());
-        verify(versionRepo).save(version);
+        verify(lifecycleService).retire(version.getId(), "DEPRECATED");
     }
 
     @Test
     void adminUpdatePreservesExistingStorageMetadataWhenBodyOmitsIt() {
         ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
         ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
-        TrainingExperimentVersionRepository trainingRepo =
-                mock(TrainingExperimentVersionRepository.class);
         AuthContext authContext = mock(AuthContext.class);
         ModelVersionCrudController controller = new ModelVersionCrudController(
                 versionRepo,
                 assetRepo,
-                trainingRepo,
-                mock(MinioDeleteTaskService.class),
-                authContext
+                authContext,
+                mock(ModelVersionLifecycleService.class)
         );
         ModelVersion version = new ModelVersion();
         version.setId("model-ver-1");
@@ -88,7 +83,7 @@ class ModelVersionCrudLifecycleTest {
         ModelAsset asset = new ModelAsset();
         asset.setId("model-asset-1");
         asset.setOwnerUserId(7);
-        ModelVersion body = new ModelVersion();
+        ModelVersionUpdateRequest body = new ModelVersionUpdateRequest();
         body.setVersion("v1");
         body.setDescription("updated description");
         when(versionRepo.findByIdAndDeletedFalse(version.getId()))

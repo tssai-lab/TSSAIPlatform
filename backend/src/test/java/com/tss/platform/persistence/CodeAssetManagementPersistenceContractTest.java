@@ -243,16 +243,20 @@ class CodeAssetManagementPersistenceContractTest {
     }
 
     @Test
-    void readmeRegistersV30AsTheCurrentMigration() throws Exception {
+    void readmeRegistersV41AsTheCurrentMigration() throws Exception {
         String resource = "db/migration/README.md";
         try (var input = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource)) {
             assertNotNull(input, resource);
             String readme = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(readme.contains("当前最高迁移版本为 `V30`"));
+            assertTrue(readme.contains("当前已使用的最高迁移版本为 `V41`"));
             assertTrue(readme.contains("V1-V30"));
-            assertFalse(readme.contains("V1-V29 共同构成"));
+            assertTrue(readme.contains("V31-V40"));
+            assertFalse(readme.contains("当前最高迁移版本为 `V32`"));
             assertTrue(readme.contains("V29__code_asset_workspace_validation_approval.sql"));
             assertTrue(readme.contains("V30__code_risk_assessment_and_review_queue.sql"));
+            assertTrue(readme.contains("V31__training_produced_model.sql"));
+            assertTrue(readme.contains("V32__training_plan_run_spec_snapshot.sql"));
+            assertTrue(readme.contains("V41__model_version_integrity_and_current.sql"));
         }
     }
 

@@ -91,6 +91,42 @@ class V2DatasetConsumerManifestServiceTest {
         assertEquals("DATASET_NOT_READY", error.getErrorCode());
     }
 
+    @Test
+    void rejectsReadyVersionWhenNoConsumableSamplesCanBeBuilt() {
+        Fixture fixture = new Fixture();
+        fixture.version.setStatus("READY");
+        fixture.stub();
+        when(fixture.sampleRepo.countByDatasetVersionIdAndDeletedFalse(fixture.version.getId()))
+                .thenReturn(0L);
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.get("dataset-ver-ready", 1, 100)
+        );
+
+        assertEquals("DATASET_NOT_CONSUMABLE", error.getErrorCode());
+    }
+
+    @Test
+    void lazilyIndexesLegacyReadySingleModalVersion() {
+        Fixture fixture = new Fixture();
+        fixture.asset.setType("NLP");
+        fixture.version.setStatus("READY");
+        fixture.stub();
+        when(fixture.sampleRepo.countByDatasetVersionIdAndDeletedFalse(fixture.version.getId()))
+                .thenReturn(0L, 1L);
+        SingleModalDatasetIndexer indexer = mock(SingleModalDatasetIndexer.class);
+        when(indexer.ensureIndexed(fixture.version.getId()))
+                .thenReturn(SingleModalDatasetIndexer.EnsureResult.success(1));
+        fixture.service.setSingleModalDatasetIndexer(indexer);
+
+        V2DatasetConsumerManifest manifest =
+                fixture.service.get("dataset-ver-ready", 1, 100);
+
+        assertEquals(1, manifest.getTotalSamples());
+        assertEquals(1, manifest.getSamples().size());
+    }
+
     private static final class Fixture {
         private final DatasetVersionRepository versionRepo =
                 mock(DatasetVersionRepository.class);
@@ -126,6 +162,8 @@ class V2DatasetConsumerManifestServiceTest {
                     .thenReturn(Optional.of(asset));
             when(authContext.canAccessOwner(asset.getOwnerUserId()))
                     .thenReturn(true);
+            when(sampleRepo.countByDatasetVersionIdAndDeletedFalse(version.getId()))
+                    .thenReturn(1L);
             when(sampleRepo.findByDatasetVersionIdAndDeletedFalse(
                     eq(version.getId()),
                     any(Pageable.class)

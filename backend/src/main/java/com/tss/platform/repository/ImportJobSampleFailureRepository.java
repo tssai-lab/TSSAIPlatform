@@ -1,9 +1,7 @@
 package com.tss.platform.repository;
 
 import com.tss.platform.entity.ImportJobSampleFailure;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -23,7 +21,6 @@ public interface ImportJobSampleFailureRepository
             Collection<String> statuses
     );
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<ImportJobSampleFailure> findByImportJobIdAndStatusOrderBySampleIndexAsc(
             String importJobId,
             String status

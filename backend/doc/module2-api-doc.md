@@ -252,17 +252,18 @@ profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、training
 | `GET /api/model/detail` | 模型版本详情 | 查询参数 `id` 必须是模型版本 ID |
 | `GET /api/model/code-files` | 列出模型 zip 中可预览代码 | 最多返回 500 个白名单代码/文本文件 |
 | `GET /api/model/previewCode` | 在线查看模型代码文本 | `path` 使用 `code-files` 返回值；单文件超过 1MB 会拒绝 |
-| `DELETE /api/model/delete` | 从模型版本列表删除版本 | 与 `/api/model-versions/{id}` 删除行为基本一致；被训练引用时拒绝 |
+| `DELETE /api/model/delete` | 从模型版本列表删除版本 | 与 `/api/model-versions/{id}` 共用生命周期服务；当前版本、最后版本或被训练引用时拒绝 |
 | `POST /api/model-assets` | 预创建空模型资产 | 创建后还没有可训练文件；后续通过 upload complete 的 `assetId` 挂版本 |
 | `GET /api/model-assets/{id}` | 查询模型资产元数据 | `id` 是资产 ID，不是版本 ID |
 | `GET /api/model-assets` | 获取可选模型资产 | 无分页；普通用户只看到自己的未删除资产 |
 | `PUT /api/model-assets/{id}` | 编辑模型名称、类型、备注 | 修改 `type` 会影响该资产所有版本的训练类型判断，前端应二次确认 |
 | `DELETE /api/model-assets/{id}` | 删除资产和全部版本 | 软删除元数据，MinIO 异步清理；任一版本被训练引用时整体拒绝 |
-| `POST /api/model-versions` | 手工创建模型版本元数据 | 不上传文件；普通用户不能提交存储字段，生产上传流程优先使用 `/api/model/upload/**` |
+| `POST /api/model-versions` | 手工创建 DRAFT 模型版本元数据 | 不上传文件；提交状态、存储、摘要或发布时间等服务端字段返回 `400` |
 | `GET /api/model-versions/{id}` | 查询原始版本实体 | 用于版本管理页，不替代 `/api/model/detail` 的聚合详情 |
 | `GET /api/model-versions` | 查询资产下版本 | 传 `assetId` 获取指定资产版本；当前无分页 |
-| `PUT /api/model-versions/{id}` | 修改版本号或管理员维护元数据 | 普通用户不能改资产和存储字段；管理员代码路径允许修改这些字段 |
-| `DELETE /api/model-versions/{id}` | 删除指定模型版本 | 软删除；被训练引用时拒绝；MinIO 清理由任务异步执行 |
+| `PUT /api/model-versions/{id}` | 修改版本号和业务元数据 | 可补录说明、变更信息、`commitInfo`、`hyperParams`；任何角色都不能改资产、状态或制品字段 |
+| `PUT /api/model-assets/{id}/current-version` | 兼容切换当前版本 | 目标必须是同资产、完整性校验通过的 READY 版本 |
+| `DELETE /api/model-versions/{id}` | 删除指定模型版本 | 当前版本、最后版本或被训练引用时拒绝；MinIO 清理由任务异步执行 |
 
 #### 数据集接口
 
@@ -351,6 +352,8 @@ POST /api/model/upload/init
 | `fileName` | string | 是 | 模型文件名，仅支持 `.zip` |
 | `fileSize` | number | 是 | 文件字节数，必须大于 `0` |
 | `fileFingerprint` | string | 否 | 文件指纹；同用户同文件未完成上传可复用上传会话 |
+| `commitInfo` | string | 是 | 提交信息；去除首尾空白后长度为 `1`～`1024` |
+| `hyperParams` | object | 否 | 模型超参数；默认 `{}` |
 
 请求示例：
 
@@ -358,7 +361,11 @@ POST /api/model/upload/init
 {
   "fileName": "resnet50.zip",
   "fileSize": 10485760,
-  "fileFingerprint": "sha256-demo"
+  "fileFingerprint": "sha256-demo",
+  "commitInfo": "train: imagenet baseline",
+  "hyperParams": {
+    "imageSize": 224
+  }
 }
 ```
 
@@ -428,6 +435,8 @@ POST /api/model/upload/complete
 | `version` | string | 是 | 模型版本号 |
 | `type` | string | 条件必填 | 创建新资产时必填；使用已有资产时可省略，若传入则必须与资产类型一致 |
 | `remark` | string | 条件必填 | 创建新资产时必填；使用已有资产时可省略且不会更新资产备注 |
+| `commitInfo` | string | 条件必填 | 必须与 init 保存的信息一致；省略时使用 init 值 |
+| `hyperParams` | object | 否 | 若提供必须与 init 保存的信息一致；省略时使用 init 值 |
 
 创建新模型资产并上传首个版本：
 
@@ -437,14 +446,18 @@ POST /api/model/upload/complete
   "modelName": "ResNet50",
   "version": "v1",
   "type": "CV",
-  "remark": "baseline model"
+  "remark": "baseline model",
+  "commitInfo": "train: imagenet baseline",
+  "hyperParams": {
+    "imageSize": 224
+  }
 }
 ```
 
 前端注意事项：
 
-- `fileFingerprint` 相同且 `fileName`、`fileSize` 一致时，后端只会复用状态为 `UPLOADING` 的会话。
-- 指纹仅用于查找可续传会话，后端不会用它重新计算并校验合并后文件哈希。
+- `fileFingerprint` 相同且 `fileName`、`fileSize`、`commitInfo`、`hyperParams` 全部一致时，后端只会复用状态为 `UPLOADING` 的会话。
+- 指纹仅用于查找可续传会话；发布时后端仍会读取完整对象并独立计算 SHA-256。
 - 前端重新进入上传页面时，可以再次调用 init，再根据返回的 `uploadedPartIndexes` 只上传缺失分片。
 
 给已有模型资产上传新版本：
@@ -453,7 +466,8 @@ POST /api/model/upload/complete
 {
   "uploadId": "model-upload-1710000000000-def",
   "assetId": "model-asset-8e2b",
-  "version": "v2"
+  "version": "v2",
+  "commitInfo": "fine-tune: internal dataset"
 }
 ```
 
@@ -469,8 +483,14 @@ POST /api/model/upload/complete
   "type": "CV",
   "remark": "baseline model",
   "fileName": "resnet50.zip",
-  "storagePath": "users/3/models/model-asset-8e2b/v1/resnet50.zip",
+  "storagePath": "users/3/models/model-asset-8e2b/v1/model-upload-1710000000000-abc/resnet50.zip",
   "sizeBytes": 10485760,
+  "artifactSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "commitInfo": "train: imagenet baseline",
+  "hyperParams": {
+    "imageSize": 224
+  },
+  "isCurrent": true,
   "status": "COMPLETED",
   "ownerUserId": 3,
   "createdAt": "2026-05-16T10:00:00Z",
@@ -487,8 +507,10 @@ POST /api/model/upload/complete
 - 已有资产模式只允许资产所有者本人完成上传；管理员也不能通过该接口给其他用户的资产代上传版本。
 - 同一模型资产下 `version` 唯一，包括已经软删除的历史版本；重复版本会返回明确错误。
 - 已完成的 `uploadId` 重复调用完成接口时，返回第一次完成生成的资产和版本，不会重复创建。
-- 模型最终对象路径按 `users/{asset.ownerUserId}/models/{assetId}/{version}/{fileName}` 生成。
+- 完成上传会校验对象存在性、实际长度和完整 SHA-256；检查成功的 READY 版本自动成为资产当前版本。
+- 模型最终对象使用版本和上传会话隔离的内部路径；前端及消费者不得拼接或持久化该路径，应使用模型版本下载接口。
 - 模型 zip 必须为合法非空压缩包；zip 内路径不能包含绝对路径、盘符、`..` 或空字节。
+- 模型 zip 规范化后的路径必须唯一，并拒绝 `/`、`\` 别名重复及文件/目录冲突。
 - 模型 zip 当前最多检查 `100000` 个条目，解压后累计内容不能超过 `50GB`。
 - complete 执行期间状态为 `COMPLETING`，前端不要并发重复发起合并；收到“正在合并”提示时应改为轮询 progress。
 
@@ -542,6 +564,11 @@ GET /api/model/list
 | `storagePath` | 存储路径 |
 | `fileName` | 文件名 |
 | `sizeBytes` | 文件大小 |
+| `artifactSha256` | 模型制品 SHA-256；未校验的历史版本可为空 |
+| `commitInfo` | 提交信息；历史版本可为空 |
+| `hyperParams` | 模型超参数对象 |
+| `status` | `DRAFT`、`READY`、`DEPRECATED` 或 `ARCHIVED` |
+| `isCurrent` | 是否为资产当前版本 |
 | `createdAt` | 创建时间 |
 
 ### 3.2 查询模型详情
@@ -609,7 +636,7 @@ DELETE /api/model/delete?id={modelVersionId}
 | `deleted` | 是否已软删除 |
 | `minioDeleteQueued` | 是否已加入 MinIO 删除任务 |
 
-如果模型版本被训练实验引用，删除会失败。
+当前版本、资产的最后一个未删除版本或被训练实验引用的版本不能通过该接口删除。应先切换当前版本；最后版本只能随模型资产删除。
 
 ## 4. 模型资产 CRUD 接口
 
@@ -648,6 +675,8 @@ GET /api/model-assets
 
 普通用户返回自己的未删除资产；管理员返回全部未删除资产。
 
+资产详情和列表响应增加 `currentVersionId`。没有可用当前版本时为 `null`。
+
 ### 4.4 更新模型资产
 
 ```http
@@ -666,13 +695,26 @@ PUT /api/model-assets/{id}
 
 该接口是完整 `PUT` 更新：前端应回传当前 `name`、`type` 和 `remark`，不要只提交单个改动字段。修改资产 `type` 会改变其全部模型版本的训练类型判断。
 
-### 4.5 删除模型资产
+### 4.5 切换当前模型版本
+
+兼容接口：
+
+```http
+PUT /api/model-assets/{assetId}/current-version
+Content-Type: application/json
+
+{"versionId":"model-ver-..."}
+```
+
+正式 V2 接口为 `PUT /api/v2/model-assets/{assetId}/current-version`，请求体相同。目标版本必须属于该资产、未删除、状态为 `READY`，并通过对象存在性、实际长度和完整 SHA-256 校验。成功只更新 `currentVersionId`。
+
+### 4.6 删除模型资产
 
 ```http
 DELETE /api/model-assets/{id}
 ```
 
-删除模型资产会软删除该资产及其下未删除的模型版本，并将相关 MinIO 对象加入删除任务。如果任一模型版本被训练实验引用，删除会失败。
+删除模型资产会清除当前指针，软删除该资产及其下未删除的模型版本，并将相关 MinIO 对象加入删除任务。如果任一模型版本被训练实验引用，删除会失败。
 
 ## 5. 模型版本 CRUD 接口
 
@@ -690,15 +732,12 @@ POST /api/model-versions
 | --- | --- | --- | --- |
 | `assetId` | string | 是 | 模型资产 ID |
 | `version` | string | 是 | 版本号；同一资产下唯一 |
+| `description` | string | 否 | 版本说明 |
+| `changeLog` | string | 否 | 版本变更信息 |
+| `commitInfo` | string | 否 | 提交信息；最长 `1024` 字符 |
+| `hyperParams` | object | 否 | 模型超参数；默认 `{}` |
 
-普通用户不能通过该接口写入 `storagePath`、`fileName`、`sizeBytes`，这些存储元数据通常应由上传服务生成。当前代码允许管理员在该接口中写入存储元数据。
-
-注意：创建时后端会忽略客户端传入的 `id`，重新生成 `model-ver-...`。
-
-该接口只创建模型版本元数据，不上传模型文件，也不写入 MinIO，不等同于
-`/api/model/upload/**` 上传流程。
-
-前端建议：普通业务页面不要使用该接口代替模型上传。没有真实文件和存储路径的版本仍会出现在版本 CRUD 查询中，后续本地训练读取文件时会失败。
+该接口只创建状态为 `DRAFT` 的模型版本元数据，不上传模型文件、不写入 MinIO，也不会成为当前版本。`id`、`status`、`fileName`、`storagePath`、`sizeBytes`、`artifactSha256`、`publishedAt` 以及所有创建者/删除字段均由服务端管理；请求中只要出现这些字段即返回 HTTP `400`。生产文件上传应使用 `/api/model/upload/**` 或 V2 上传流程。
 
 ### 5.2 查询模型版本详情
 
@@ -714,6 +753,8 @@ GET /api/model-versions?assetId={assetId}
 
 `assetId` 可选。不传时普通用户返回自己可见模型资产下的全部未删除版本，管理员返回全部未删除版本。
 
+详情和列表响应增加 `artifactSha256`、`commitInfo`、`hyperParams` 和 `isCurrent`。
+
 ### 5.4 更新模型版本
 
 ```http
@@ -724,15 +765,13 @@ PUT /api/model-versions/{id}
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `assetId` | string | 否 | 目标资产 ID；普通用户不能修改 |
 | `version` | string | 是 | 版本号；同一资产下唯一 |
-| `fileName` | string | 否 | 普通用户只读；管理员当前可修改 |
-| `storagePath` | string | 否 | 普通用户只读；管理员当前可修改 |
-| `sizeBytes` | number | 否 | 普通用户只读；管理员当前可修改 |
+| `description` | string | 否 | 版本说明 |
+| `changeLog` | string | 否 | 版本变更信息 |
+| `commitInfo` | string | 否 | 提交信息；历史版本可通过此接口补录 |
+| `hyperParams` | object | 否 | 模型超参数；省略时保留原值 |
 
-普通用户不能修改存储元数据，也不能把版本移动到其他资产。管理员当前可以修改目标资产和存储元数据，因此管理端应将该能力视为运维能力，不建议在普通编辑表单中暴露。
-
-管理员调用时，代码会直接用请求体的 `fileName`、`storagePath`、`sizeBytes` 覆盖原值；若省略会被写成 `null`。管理端更新版本号时必须同时回传需要保留的存储元数据。
+`assetId`、状态、存储路径、文件名、大小、摘要、发布时间和创建者/删除字段对所有角色均不可修改。
 
 ### 5.5 删除模型版本
 
@@ -740,7 +779,7 @@ PUT /api/model-versions/{id}
 DELETE /api/model-versions/{id}
 ```
 
-如果模型版本被训练实验引用，删除会失败。删除成功后会软删除版本，并将对象加入 MinIO 删除任务。
+当前版本、资产的最后一个未删除版本或被训练实验引用的版本不能删除。其他版本删除成功后会软删除版本，并将对象加入 MinIO 删除任务。`DELETE /api/model/delete?id=...` 使用同一服务和相同限制。
 
 ## 6. 数据集上传接口
 
@@ -1790,7 +1829,7 @@ POST /api/task/create
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注 |
 
-后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。不带 `trainingProfile` 的 legacy 路径会校验模型版本存在、模型类型与数据集类型一致；例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。带 `trainingProfile` 的当前兼容路径会额外校验基础模型权重版本存在且有 `storagePath`、代码版本存在且为 `READY` + `APPROVED`、冻结后的代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。模块二在首个未删除代码版本产生后禁止修改该字段，版本消费清单则返回发布时固化的 profile 快照。
+后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。legacy 和 profile 两条路径都要求模型版本为 `READY` 且 `storagePath` 非空；legacy 还校验模型类型与数据集类型一致，例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。profile 路径会额外校验代码版本为 `READY` + `APPROVED`、冻结后的代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。模块二在首个未删除代码版本产生后禁止修改该字段，版本消费清单则返回发布时固化的 profile 快照。
 
 当前代码的额外行为：
 
@@ -1799,7 +1838,7 @@ POST /api/task/create
 - 当前本地训练器实际只解析 zip 中的图片和路径包含 `labels/` 的 YOLO `.txt` 标签。NLP、POINT_CLOUD 或其他 CV 格式即使通过类型匹配，也可能在异步训练阶段进入 `failed`。
 - `MULTIMODAL` 当前不属于模型或训练任务类型，不能用于创建训练。
 - legacy 本地训练器当前有效超参数主要是 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）。profile 路径会记录并传递 `hyperParams`，但不能覆盖固定训练命令。
-- legacy 路径创建阶段会确认模型版本和资产存在，但不会提前校验模型版本的 `storagePath`、`fileName`、`sizeBytes`；profile 路径会校验基础模型权重版本 `storagePath`。
+- legacy 和 profile 路径创建阶段都会拒绝非 `READY` 或缺少 `storagePath` 的模型版本；完整对象长度和 SHA-256 校验由模型 V2 consumer manifest/下载接口执行。
 - 前端创建后应轮询 `/api/task/detail`，不能把创建接口返回的 `pending` 当成训练已经成功启动。
 
 响应 `data`：
@@ -2946,17 +2985,57 @@ init 请求：
   "modelName": "YOLO Detector",
   "modelVersion": "v1",
   "taskType": "CV",
-  "remark": "baseline"
+  "remark": "baseline",
+  "commitInfo": "train: baseline weights",
+  "hyperParams": {
+    "imageSize": 640
+  }
 }
 ```
 
+- `commitInfo` 对所有新上传必填，去除首尾空白后长度为 `1`～`1024`；`hyperParams` 可选且默认 `{}`。
 - 新建模型资产时必须提供 `modelName`、`modelVersion`、`taskType` 和 `remark`。
 - 给已有资产新增版本时传 `targetAssetId`；后端校验资产归属，并把资产名称、类型和备注固化到上传会话。
-- 相同文件指纹仅在文件信息和模型业务信息全部一致时恢复会话。
+- 相同文件指纹仅在文件信息、模型业务信息、`commitInfo` 和 `hyperParams` 全部一致时恢复会话。
 - complete 不再接收模型名称、版本、类型、备注或目标资产。
+- complete 会核对对象实际长度、计算完整 SHA-256，并把成功的 READY 版本自动设为当前版本；完成响应增加 `artifactSha256` 和 `isCurrent`。
 - V2 响应不返回 `storagePath`、`ownerUserId` 或 MinIO 信息。
 
-### 18.6 训练对接边界
+### 18.6 模型版本 V2 消费与完整性
+
+| 接口 | 说明 |
+| --- | --- |
+| `PUT /api/v2/model-assets/{assetId}/current-version` | 切换到同资产且完整性校验通过的 READY 版本；请求体为 `{"versionId":"..."}` |
+| `GET /api/v2/model-versions/{versionId}/consumer-manifest` | 获取稳定模型消费清单 |
+| `GET /api/v2/model-versions/{versionId}/download` | 按版本下载模型制品 |
+| `GET /api/v2/model-versions/{versionId}/files` | 获取模型 ZIP 文件树 |
+| `GET /api/v2/model-versions/{versionId}/files/content?path=...` | 预览允许的模型文本文件 |
+
+`consumer-manifest` 响应示例：
+
+```json
+{
+  "modelAssetId": "model-asset-8e2b",
+  "modelVersionId": "model-ver-9f1a",
+  "version": "v2",
+  "status": "READY",
+  "type": "CV",
+  "fileName": "model.zip",
+  "sizeBytes": 104857600,
+  "artifactSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "commitInfo": "fine-tune: internal dataset",
+  "hyperParams": {
+    "imageSize": 640
+  },
+  "isCurrent": true,
+  "downloadUrl": "/api/v2/model-versions/model-ver-9f1a/download",
+  "filesUrl": "/api/v2/model-versions/model-ver-9f1a/files"
+}
+```
+
+清单不返回 bucket、`storagePath`、objectName 或签名 URL。上述接口每次调用前都会重新读取完整对象并核对长度与 SHA-256；历史空摘要在对象有效时原子回填。对象缺失、长度不符、摘要不符或 ZIP 文件树出现重复/非法路径时返回 `422 / MODEL_ARTIFACT_INVALID`，确定损坏的版本降为 `DRAFT` 并清除其当前指针。临时 MinIO 故障返回 `503 / MODEL_STORAGE_UNAVAILABLE`，不改变状态。
+
+### 18.7 训练对接边界
 
 V2 数据集列表和上传门面不直接提供训练动作；训练页面继续通过训练任务接口、模型版本接口、数据集版本接口和训练代码资产接口拿到具体版本 ID。
 

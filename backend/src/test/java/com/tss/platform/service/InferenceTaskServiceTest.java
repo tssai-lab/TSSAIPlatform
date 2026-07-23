@@ -124,6 +124,27 @@ class InferenceTaskServiceTest {
     }
 
     @Test
+    void rejectsDraftModelVersion() {
+        ModelVersion draft = modelVersion();
+        draft.setStatus("DRAFT");
+        modelVersionRepo.model = draft;
+        scriptService.version = scriptVersion();
+
+        CreateInferenceTaskRequest req = new CreateInferenceTaskRequest();
+        req.setModelVersionId("model-ver-1");
+        req.setScriptVersionId("script-ver-1");
+        req.setInputMode(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT);
+        req.setInputObjectName("users/7/files/input.jpg");
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.createTask(req)
+        );
+
+        assertEquals("模型版本必须是 READY 状态", error.getMessage());
+    }
+
+    @Test
     void internalCallbackUpdatesResult() {
         InferenceTask task = new InferenceTask();
         task.setId("infer-task-1");
@@ -151,6 +172,7 @@ class InferenceTaskServiceTest {
         version.setId("model-ver-1");
         version.setAssetId("model-asset-1");
         version.setStoragePath("users/7/models/model.zip");
+        version.setStatus("READY");
         version.setOwnerUserId(7);
         version.setDeleted(false);
         return version;

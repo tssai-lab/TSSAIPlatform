@@ -290,6 +290,9 @@ public class InferenceTaskService {
                     .orElse(null);
         }
         authContext.requireOwnerAccess(ownerUserId, "no permission for modelVersionId: " + modelVersionId);
+        if (!"READY".equals(version.getStatus())) {
+            throw new IllegalArgumentException("模型版本必须是 READY 状态");
+        }
         if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
             throw new IllegalArgumentException("模型版本缺少存储路径");
         }

@@ -8,7 +8,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -67,6 +70,13 @@ public class ModelUploadSession {
 
     @Column(name = "remark", length = 1024)
     private String remark;
+
+    @Column(name = "commit_info", length = 1024)
+    private String commitInfo;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "hyper_params", nullable = false, columnDefinition = "jsonb")
+    private Map<String, Object> hyperParams = Map.of();
 
     @Column(name = "owner_user_id")
     private Integer ownerUserId;

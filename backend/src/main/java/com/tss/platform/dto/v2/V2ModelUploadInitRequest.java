@@ -2,6 +2,8 @@ package com.tss.platform.dto.v2;
 
 import lombok.Data;
 
+import java.util.Map;
+
 @Data
 public class V2ModelUploadInitRequest {
     private String targetAssetId;
@@ -12,4 +14,6 @@ public class V2ModelUploadInitRequest {
     private String modelVersion;
     private String taskType;
     private String remark;
+    private String commitInfo;
+    private Map<String, Object> hyperParams;
 }

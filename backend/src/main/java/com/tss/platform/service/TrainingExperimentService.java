@@ -881,9 +881,7 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
-        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("基础模型权重版本缺少 storagePath");
-        }
+        requireReadyModelArtifact(version);
     }
 
     private String resolveBaseModelVersionId(String baseModelVersionId, String modelVersionId) {
@@ -913,7 +911,17 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
+        requireReadyModelArtifact(version);
         return TaskType.normalize(asset.getType());
+    }
+
+    private void requireReadyModelArtifact(ModelVersion version) {
+        if (!"READY".equals(version.getStatus())) {
+            throw new IllegalArgumentException("model version must be READY for training");
+        }
+        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
+            throw new IllegalArgumentException("model version storage path is required for training");
+        }
     }
 
     private String resolveDatasetTaskType(String datasetVersionId) {
