@@ -43,6 +43,19 @@ public class TrainingKubernetesProperties {
     private String workerImage = "tss-training-worker:local";
     private String workerImagePullPolicy = "IfNotPresent";
 
+    /**
+     * Whether a code package's approved requirements.txt may produce a derived
+     * Worker image.  This stays opt-in because the backend host must have Docker
+     * access and a registry that every Kubernetes node can pull from.
+     */
+    private boolean runtimeImageBuildEnabled = false;
+
+    /** Repository without a tag, for example registry.example.com/tss/training-worker. */
+    private String runtimeImageRepository = "";
+    private String runtimeImageDockerPath = "docker";
+    private String runtimeImageBuildDirectory = "/tmp/tss-runtime-image-builds";
+    private int runtimeImageBuildTimeoutSeconds = 1800;
+
     /** Worker 容器内访问宿主机服务的 K8s Service 名称 */
     private String backendServiceUrl = "http://tss-backend:8080";
     private String minioServiceUrl = "http://tss-minio:9000";

@@ -18,6 +18,9 @@ class ModelWeightZipValidatorTest {
     void acceptsAllowedWeightFiles() throws Exception {
         byte[] zip = buildZip(
                 entry("weights/best.pt", "FAKE"),
+                entry("weights/model.safetensors", "FAKE"),
+                entry("weights/pytorch_model.bin", "FAKE"),
+                entry("weights/adapter.ckpt", "FAKE"),
                 entry("config/model.yaml", "model: logreg\n"),
                 entry("meta.json", "{}")
         );
@@ -36,12 +39,12 @@ class ModelWeightZipValidatorTest {
 
     @Test
     void rejectsUnsupportedExtension() throws Exception {
-        byte[] zip = buildZip(entry("weights/model.bin", "binary"));
+        byte[] zip = buildZip(entry("weights/model.weights", "binary"));
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> validate(zip)
         );
-        assertEquals("模型权重包包含不支持的文件类型: weights/model.bin", error.getMessage());
+        assertEquals("模型权重包包含不支持的文件类型: weights/model.weights", error.getMessage());
     }
 
     @Test

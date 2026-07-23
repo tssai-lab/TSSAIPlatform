@@ -4,6 +4,7 @@ import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.CodeWorkspaceFileDelta;
 import com.tss.platform.training.TrainingProfileRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
@@ -21,17 +22,31 @@ public class CodeArtifactAssembler {
     private final CodeZipArchiveService zipArchiveService;
     private final CodePathPolicy pathPolicy;
     private final CodeFilePolicy filePolicy;
+    private final PythonRequirementsValidator requirementsValidator;
 
+    public CodeArtifactAssembler(
+            CodeArtifactStorageService storageService,
+            CodeZipArchiveService zipArchiveService,
+            CodePathPolicy pathPolicy,
+            CodeFilePolicy filePolicy,
+            PythonRequirementsValidator requirementsValidator
+    ) {
+        this.storageService = storageService;
+        this.zipArchiveService = zipArchiveService;
+        this.pathPolicy = pathPolicy;
+        this.filePolicy = filePolicy;
+        this.requirementsValidator = requirementsValidator;
+    }
+
+    /** Keeps the existing Spring wiring contract while still applying requirements validation. */
+    @Autowired
     public CodeArtifactAssembler(
             CodeArtifactStorageService storageService,
             CodeZipArchiveService zipArchiveService,
             CodePathPolicy pathPolicy,
             CodeFilePolicy filePolicy
     ) {
-        this.storageService = storageService;
-        this.zipArchiveService = zipArchiveService;
-        this.pathPolicy = pathPolicy;
-        this.filePolicy = filePolicy;
+        this(storageService, zipArchiveService, pathPolicy, filePolicy, new PythonRequirementsValidator());
     }
 
     public MaterializedCodeArtifact materialize(
@@ -87,6 +102,7 @@ public class CodeArtifactAssembler {
         if (!files.containsKey(entryScript)) {
             throw validation("ENTRY_SCRIPT_MISSING", "Code artifact entry script is missing");
         }
+        requirementsValidator.parse(files.get("requirements.txt"));
         return new CodeValidationResult(
                 POLICY_VERSION,
                 filePolicy.sha256(archiveBytes),

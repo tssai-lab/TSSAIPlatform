@@ -12,6 +12,8 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
+import com.tss.platform.training.plan.TrainingOutputValidator;
+import com.tss.platform.training.plan.TrainingRunSpecFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +47,8 @@ class TrainingExperimentServiceApplyResultTest {
                 mock(CodeVersionRepository.class),
                 mock(CodeAssetRepository.class),
                 mock(CodeVersionService.class),
+                mock(TrainingRunSpecFactory.class),
+                mock(TrainingOutputValidator.class),
                 mock(TrainingExecutorRouter.class),
                 new ObjectMapper(),
                 authContext

@@ -1,0 +1,96 @@
+package com.tss.platform.training;
+
+import com.tss.platform.config.TrainingKubernetesProperties;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
+import com.tss.platform.training.plan.TrainingRunSpec;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class TrainingRuntimeImageServiceTest {
+
+    @TempDir
+    Path temporaryDirectory;
+
+    @Test
+    void returnsPinnedBaseImageWhenCodeHasNoExtraDependencies() {
+        TrainingRuntimeImageService service = new TrainingRuntimeImageService(
+                properties(false), mock(ShellCommandRunner.class)
+        );
+
+        assertEquals("registry.example/tss/worker@sha256:" + "b".repeat(64),
+                service.resolveImage(runSpec(List.of(), null)));
+    }
+
+    @Test
+    void rejectsDependencyBuildWhenTheCapabilityIsNotConfigured() {
+        TrainingRuntimeImageService service = new TrainingRuntimeImageService(
+                properties(false), mock(ShellCommandRunner.class)
+        );
+
+        assertThrows(IllegalStateException.class,
+                () -> service.resolveImage(runSpec(List.of("ultralytics==8.3.0"), "a".repeat(64))));
+    }
+
+    @Test
+    void buildsAndPushesOneDeterministicallyTaggedDerivedImage() {
+        ShellCommandRunner runner = mock(ShellCommandRunner.class);
+        when(runner.run(anyList(), any(), anyInt())).thenReturn(
+                ShellCommandRunner.CommandResult.failed(1, "not found", "pull failed"),
+                ShellCommandRunner.CommandResult.success("built"),
+                ShellCommandRunner.CommandResult.success("pushed")
+        );
+        TrainingRuntimeImageService service = new TrainingRuntimeImageService(properties(true), runner);
+
+        String image = service.resolveImage(runSpec(List.of("ultralytics==8.3.0"), "a".repeat(64)));
+
+        assertEquals("registry.example/tss/training-worker:deps-" + "c".repeat(24), image);
+        verify(runner, times(3)).run(anyList(), any(), anyInt());
+    }
+
+    private TrainingKubernetesProperties properties(boolean enabled) {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        properties.setRuntimeImageBuildEnabled(enabled);
+        properties.setRuntimeImageRepository("registry.example/tss/training-worker");
+        properties.setRuntimeImageBuildDirectory(temporaryDirectory.toString());
+        properties.setRuntimeImageBuildTimeoutSeconds(30);
+        return properties;
+    }
+
+    private TrainingRunSpec runSpec(List<String> requirements, String requirementsSha256) {
+        return new TrainingRunSpec(
+                TrainingRunSpec.SCHEMA_VERSION,
+                "training-1",
+                null,
+                null,
+                TrainingPlanDefinition.TrainingMode.FULL_FINETUNE,
+                new TrainingRunSpec.Inputs(null, null, new TrainingRunSpec.CodeArtifact(
+                        "code-1", "users/1/code.zip", "a".repeat(64), 1L, "ZIP", "code.zip", true,
+                        List.of("train.py"), "train.py", "approval-1", requirements, requirementsSha256
+                )),
+                null,
+                null,
+                new TrainingRunSpec.Runtime(
+                        "gpu", TrainingPlanDefinition.DeviceType.NVIDIA_GPU,
+                        "registry.example/tss/worker", "sha256:" + "b".repeat(64),
+                        TrainingPlanDefinition.ImagePullPolicy.IfNotPresent, "c".repeat(64)
+                ),
+                null,
+                null,
+                null,
+                null
+        );
+    }
+}

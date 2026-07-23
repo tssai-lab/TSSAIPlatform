@@ -10,6 +10,10 @@ public class CreateExperimentVersionRequest {
     private String modelVersionId;
     private String codeVersionId;
     private String datasetVersionId;
+    private String planId;
+    private String planVersion;
+    private String trainingMode;
+    private String resourceProfileId;
     private Object hyperParams;
     private Object params;
     private String remark;
