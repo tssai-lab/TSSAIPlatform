@@ -7,6 +7,11 @@ export type TrainingPlan = {
   description?: string;
   enabled: boolean;
   trainingModes: string[];
+  execution: {
+    interpreter: 'python' | 'python3';
+    entrypoint: string;
+    arguments: string[];
+  };
   inputs: {
     model: { taskTypes: string[] };
     dataset: {
