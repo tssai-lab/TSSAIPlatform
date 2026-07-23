@@ -138,7 +138,10 @@ const DatasetList: React.FC = () => {
 
   const handleDownload = (versionId?: string, storagePath?: string) => {
     if (versionId) {
-      window.open(`/api/dataset-versions/${encodeURIComponent(versionId)}/download`, '_blank');
+      window.open(
+        `/api/dataset-versions/${encodeURIComponent(versionId)}/download`,
+        '_blank',
+      );
       return;
     }
     if (!storagePath) {

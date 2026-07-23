@@ -32,6 +32,9 @@ export type DatasetPreviewFileItem = {
   previewAllowed?: boolean;
   previewUrl?: string | null;
   message?: string | null;
+  /** 样本数据预览（package/APPEND 版本）：有值时走 sample-data 接口而非 zip path */
+  sampleDataId?: string;
+  source?: 'zip' | 'sample';
 };
 
 export type DatasetPreviewFilesQuery = {

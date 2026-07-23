@@ -290,10 +290,33 @@ export type DraftPackageCompleteResult = {
 export async function createWorkspaceDraft(
   readyVersionId: string,
   options?: { [key: string]: unknown },
+  meta?: {
+    versionLabel?: string;
+    version?: string;
+    remark?: string;
+    description?: string;
+    changeLog?: string;
+  },
 ) {
+  const body =
+    meta &&
+    Object.fromEntries(
+      Object.entries(meta).filter(
+        ([, value]) => value != null && String(value).trim() !== '',
+      ),
+    );
   return request<{ success?: boolean; data: CreateWorkspaceDraftResult }>(
     `/dataset-versions/${encodeURIComponent(readyVersionId)}/draft`,
-    { method: 'POST', ...(options || {}) },
+    {
+      method: 'POST',
+      ...(body && Object.keys(body).length
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            data: body,
+          }
+        : {}),
+      ...(options || {}),
+    },
   );
 }
 

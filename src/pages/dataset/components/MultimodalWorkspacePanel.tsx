@@ -166,7 +166,9 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
       } catch {
         await publishDraftVersion(draftVersionId, { skipErrorHandler: true });
       }
-      message.success('已发布为新版本，当前正式版本已更新');
+      message.success(
+        '已发布为新版本。请在详情预览的「本版本样本」中核对追加内容。',
+      );
       onPublished?.();
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
@@ -333,7 +335,8 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
             {!isMultimodalDataset && (
               <>
                 <br />
-                草稿阶段不支持在线预览，发布为正式版后可预览。
+                发布后请在详情预览的「本版本样本」中核对追加是否生效；不会用主包
+                ZIP 文件树冒充当前版本内容。
               </>
             )}
           </>

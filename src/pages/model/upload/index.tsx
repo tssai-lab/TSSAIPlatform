@@ -124,7 +124,11 @@ const ModelUpload: React.FC = () => {
       message.error('请选择模型文件');
       return;
     }
-    if (!UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.some((suffix) => file.name.toLowerCase().endsWith(suffix))) {
+    if (
+      !UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.some((suffix) =>
+        file.name.toLowerCase().endsWith(suffix),
+      )
+    ) {
       message.error('模型仅支持 .zip、.safetensors、.pt、.pth、.ckpt 或 .onnx');
       return;
     }
@@ -140,7 +144,8 @@ const ModelUpload: React.FC = () => {
     const requestOpts = { skipErrorHandler: true } as const;
 
     try {
-      const commitInfo = values.remark.trim();
+      // 后端要求 commitInfo 非空；与公网一致，用备注作为 Commit/版本说明
+      const commitInfo = String(values.remark ?? '').trim();
       const fileFingerprint = buildModelFileFingerprint(
         file,
         values.modelName,

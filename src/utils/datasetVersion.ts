@@ -1,8 +1,12 @@
-/** 语义化版本号：v{major}.{minor}.{patch} */
-export const DATASET_VERSION_PATTERN = /^v\d+\.\d+\.\d+$/;
+/**
+ * 数据集版本展示标签（versionLabel）。
+ * 后端只要求资产内唯一；默认常为 v{versionNo}。
+ * 前端接受 vN（如 v2）或 vX.Y.Z（如 v1.0.0），与模型版本约定对齐。
+ */
+export const DATASET_VERSION_PATTERN = /^v\d+(?:\.\d+\.\d+)?$/i;
 
 export const DATASET_VERSION_FORMAT_HINT =
-  '格式：vX.Y.Z（如 v1.0.0）；major 不兼容变更，minor 新增数据，patch 修正标注/去重';
+  '格式：vN 或 vX.Y.Z（如 v2、v1.0.0）；同一资产内须唯一';
 
 export const DATASET_VERSION_DESC_PLACEHOLDER =
   '【更新原因】说明为何发布此版本\n【更新内容】样本增减、标注修正、格式变更等';
@@ -60,7 +64,7 @@ export function formatAssetVersionLabel(
   return `v${version[0]}.${version[1]}.${version[2]}`;
 }
 
-/** 新版本号必须严格大于已有版本中的最大值 */
+/** 新版本号必须严格大于已有版本中的最大值（仅对可解析的 vN / vX.Y.Z 生效） */
 export function validateVersionGreaterThanLatest(
   version: string,
   existing: string[],
@@ -75,11 +79,17 @@ export function validateVersionGreaterThanLatest(
   return null;
 }
 
-/** 根据已有版本号建议下一 patch 版本（如 v1.2.0 → v1.2.1） */
+/**
+ * 建议下一版本：若当前最新是 vN 风格则建议 v(N+1)；
+ * 若是 vX.Y.Z 则建议下一 patch。
+ */
 export function suggestNextDatasetVersion(existing: string[]): string {
-  const max = getLatestAssetVersion(existing) ?? [0, 0, 0];
-  if (max[0] === 0 && max[1] === 0 && max[2] === 0) {
-    return 'v1.0.0';
+  const max = getLatestAssetVersion(existing);
+  if (!max) {
+    return 'v1';
+  }
+  if (max[1] === 0 && max[2] === 0) {
+    return `v${max[0] + 1}`;
   }
   return `v${max[0]}.${max[1]}.${max[2] + 1}`;
 }
@@ -87,7 +97,7 @@ export function suggestNextDatasetVersion(existing: string[]): string {
 export function validateDatasetVersionFormat(version: string): string | null {
   const trimmed = version?.trim();
   if (!trimmed) return '请输入版本号';
-  if (!DATASET_VERSION_PATTERN.test(trimmed)) {
+  if (!parseAssetVersion(trimmed)) {
     return DATASET_VERSION_FORMAT_HINT;
   }
   return null;

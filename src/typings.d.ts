@@ -53,7 +53,7 @@ declare namespace API {
     fileName: string;
     fileSize: number;
     fileFingerprint?: string;
-    /** 复用页面“备注”，作为模型版本提交说明 */
+    /** 复用页面“备注”，作为模型版本提交说明；须与 init/complete 一致且非空 */
     commitInfo: string;
   };
 
@@ -78,7 +78,7 @@ declare namespace API {
     version: string;
     type: string;
     remark: string;
-    /** 必须与上传初始化阶段保持一致 */
+    /** 必须与上传初始化阶段保持一致；复用备注且非空 */
     commitInfo: string;
   };
 

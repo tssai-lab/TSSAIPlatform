@@ -124,11 +124,31 @@ export function mapV2DatasetToListItem(row: V2DatasetListItem): DatasetListItem 
 export async function getOrCreateV2EditSession(
   datasetId: string,
   options?: { [key: string]: unknown },
+  meta?: {
+    versionLabel?: string;
+    version?: string;
+    baseVersionId?: string;
+    remark?: string;
+    description?: string;
+  },
 ) {
+  const body =
+    meta &&
+    Object.fromEntries(
+      Object.entries(meta).filter(
+        ([, value]) => value != null && String(value).trim() !== '',
+      ),
+    );
   return request<V2EditSession>(
     `/v2/datasets/${encodeURIComponent(datasetId)}/edit-sessions`,
     {
       method: 'POST',
+      ...(body && Object.keys(body).length
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            data: body,
+          }
+        : {}),
       ...(options || {}),
     },
   );
