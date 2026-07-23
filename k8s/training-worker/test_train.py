@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -13,6 +14,7 @@ MODULE_PATH = Path(__file__).with_name("train.py")
 SPEC = importlib.util.spec_from_file_location("tss_training_worker", MODULE_PATH)
 worker = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
+sys.modules[SPEC.name] = worker
 SPEC.loader.exec_module(worker)
 
 
@@ -176,6 +178,65 @@ class GenericTrainingWorkerTest(unittest.TestCase):
         self.assertEqual(42, event["progress"])
         self.assertIsNone(worker.parse_training_event("ordinary stdout"))
         self.assertIsNone(worker.parse_training_event("TSS_EVENT not-json"))
+
+    def test_legacy_execution_uses_approved_python_argv(self):
+        spec = run_spec()
+
+        launch = worker.resolve_execution_command(spec)
+
+        self.assertEqual("NONE", launch.strategy)
+        self.assertEqual(tuple(spec["execution"]["argv"]), launch.command)
+
+    def test_single_node_ddp_uses_worker_python_and_torch_distributed_run(self):
+        spec = run_spec()
+        spec["runtime"]["deviceType"] = "NVIDIA_GPU"
+        spec["resources"]["gpuCount"] = 2
+        spec["execution"]["distributed"] = {
+            "strategy": "PYTORCH_DDP",
+            "scope": "SINGLE_NODE",
+            "worldSize": 2,
+            "processesPerNode": 2,
+        }
+
+        launch = worker.resolve_execution_command(spec)
+
+        self.assertEqual("PYTORCH_DDP", launch.strategy)
+        self.assertEqual((
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            "--nproc_per_node=2",
+            "/workspace/job/code/train.py",
+        ), launch.command)
+
+    def test_single_node_ddp_requires_matching_gpu_count(self):
+        spec = run_spec()
+        spec["runtime"]["deviceType"] = "NVIDIA_GPU"
+        spec["resources"]["gpuCount"] = 1
+        spec["execution"]["distributed"] = {
+            "strategy": "PYTORCH_DDP",
+            "scope": "SINGLE_NODE",
+            "worldSize": 2,
+            "processesPerNode": 2,
+        }
+
+        with self.assertRaisesRegex(worker.WorkerError, "gpuCount"):
+            worker.resolve_execution_command(spec)
+
+    def test_multi_node_ddp_is_explicitly_rejected(self):
+        spec = run_spec()
+        spec["runtime"]["deviceType"] = "NVIDIA_GPU"
+        spec["resources"]["gpuCount"] = 2
+        spec["execution"]["distributed"] = {
+            "strategy": "PYTORCH_DDP",
+            "scope": "MULTI_NODE",
+            "worldSize": 2,
+            "processesPerNode": 2,
+        }
+
+        with self.assertRaisesRegex(worker.WorkerError, "MULTI_NODE"):
+            worker.resolve_execution_command(spec)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -52,6 +53,22 @@ class WorkerError(RuntimeError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class DistributedExecution:
+    """Validated training launch details owned by the platform Worker.
+
+    The user-provided training code is responsible for initializing its PyTorch
+    process group and using DDP.  This Worker only supplies the safe launcher
+    and the rank-related environment created by ``torch.distributed.run``.
+    """
+
+    strategy: str
+    scope: str
+    world_size: int
+    processes_per_node: int
+    command: tuple[str, ...]
 
 
 def env(name: str, default: str = "") -> str:
@@ -152,6 +169,7 @@ def validate_run_spec(spec: dict[str, Any]) -> None:
         raise WorkerError("RUN_SPEC_INVALID", "outputs.artifacts is required")
     if sum(1 for artifact in artifacts if artifact.get("publishAsModel") is True) != 1:
         raise WorkerError("RUN_SPEC_INVALID", "exactly one output must publish as model")
+    resolve_execution_command(spec)
 
 
 def validate_input_spec(name: str, artifact: Any) -> None:
@@ -183,6 +201,73 @@ def validate_input_spec(name: str, artifact: Any) -> None:
             raise WorkerError("RUN_SPEC_INVALID", "inputs.code.requirementsSha256 is invalid")
         if not requirements and requirements_sha256 is not None:
             raise WorkerError("RUN_SPEC_INVALID", "empty requirements must not declare requirementsSha256")
+
+
+def resolve_execution_command(spec: dict[str, Any]) -> DistributedExecution:
+    """Return the only command form the generic Worker may execute.
+
+    The legacy command remains unchanged when no distributed configuration is
+    present.  The first implementation intentionally supports *only* local
+    DDP inside one Kubernetes Pod.  A multi-node process group needs separate
+    Pod orchestration, a private rendezvous endpoint and NCCL validation; it
+    must not be accidentally approximated by this single-Pod Worker.
+    """
+    execution = spec["execution"]
+    argv = execution["argv"]
+    raw = execution.get("distributed")
+    if raw is None:
+        return DistributedExecution("NONE", "SINGLE_NODE", 1, 1, tuple(argv))
+    if not isinstance(raw, dict):
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "execution.distributed must be an object")
+
+    strategy = raw.get("strategy")
+    if strategy == "NONE":
+        if set(raw) != {"strategy"}:
+            raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "NONE strategy cannot declare DDP fields")
+        return DistributedExecution("NONE", "SINGLE_NODE", 1, 1, tuple(argv))
+    if strategy != "PYTORCH_DDP":
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "execution.distributed.strategy is invalid")
+    if set(raw) != {"strategy", "scope", "worldSize", "processesPerNode"}:
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "DDP configuration has unsupported or missing fields")
+
+    scope = raw.get("scope")
+    if scope != "SINGLE_NODE":
+        raise WorkerError(
+            "DISTRIBUTED_SCOPE_UNSUPPORTED",
+            "only SINGLE_NODE PyTorch DDP is enabled; MULTI_NODE requires a dedicated Kubernetes launcher",
+        )
+    world_size = raw.get("worldSize")
+    processes_per_node = raw.get("processesPerNode")
+    if (not isinstance(world_size, int) or isinstance(world_size, bool) or world_size < 2
+            or not isinstance(processes_per_node, int) or isinstance(processes_per_node, bool)
+            or processes_per_node < 2):
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "DDP worldSize and processesPerNode must be integers >= 2")
+    if world_size != processes_per_node:
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "SINGLE_NODE DDP requires worldSize == processesPerNode")
+
+    runtime = spec.get("runtime")
+    resources = spec.get("resources")
+    if not isinstance(runtime, dict) or runtime.get("deviceType") != "NVIDIA_GPU":
+        raise WorkerError("DISTRIBUTED_CONFIG_INVALID", "PyTorch DDP requires NVIDIA_GPU runtime")
+    gpu_count = resources.get("gpuCount") if isinstance(resources, dict) else None
+    if (not isinstance(gpu_count, int) or isinstance(gpu_count, bool)
+            or gpu_count != processes_per_node):
+        raise WorkerError(
+            "DISTRIBUTED_CONFIG_INVALID",
+            "SINGLE_NODE DDP requires gpuCount to equal processesPerNode",
+        )
+
+    # Avoid a mutable PATH lookup for torchrun.  The pinned PyTorch runtime
+    # image supplies torch.distributed.run for the Worker interpreter itself.
+    command = (
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        f"--nproc_per_node={processes_per_node}",
+        *argv[1:],
+    )
+    return DistributedExecution("PYTORCH_DDP", scope, world_size, processes_per_node, command)
 
 
 def _constant_time_equal(left: str, right: str) -> bool:
@@ -405,8 +490,9 @@ def write_parameters(spec: dict[str, Any]) -> None:
 
 
 def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, dict[str, Any]]:
-    argv = spec["execution"]["argv"]
-    entrypoint = Path(argv[1])
+    launch = resolve_execution_command(spec)
+    argv = list(launch.command)
+    entrypoint = Path(spec["execution"]["argv"][1])
     if not entrypoint.is_file():
         raise WorkerError("ENTRYPOINT_INVALID", f"approved entrypoint is missing: {entrypoint}")
     event_metrics: dict[str, Any] = {}
@@ -419,6 +505,10 @@ def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[
         "TSS_DATA_DIR": str(DATA_DIR),
         "TSS_OUTPUT_DIR": str(OUTPUT_DIR),
         "TSS_PARAMS_FILE": str(PARAMS_FILE),
+        "TSS_DISTRIBUTED_STRATEGY": launch.strategy,
+        "TSS_DISTRIBUTED_SCOPE": launch.scope,
+        "TSS_WORLD_SIZE": str(launch.world_size),
+        "TSS_PROCESSES_PER_NODE": str(launch.processes_per_node),
     })
     process = subprocess.Popen(
         argv,
