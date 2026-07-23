@@ -62,11 +62,13 @@ export async function uploadModelZipPackage(
     version,
     type,
   );
+  const commitInfo = remark.trim();
   const initRes = await modelUploadInit(
     {
       fileName: file.name,
       fileSize: file.size,
       fileFingerprint,
+      commitInfo,
     },
     requestOpts,
   );
@@ -115,7 +117,8 @@ export async function uploadModelZipPackage(
       modelName: modelName.trim(),
       version: version.trim(),
       type,
-      remark: remark.trim(),
+      remark: commitInfo,
+      commitInfo,
       ...(assetId ? { assetId } : {}),
     },
     requestOpts,

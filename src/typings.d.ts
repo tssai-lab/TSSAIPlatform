@@ -53,6 +53,8 @@ declare namespace API {
     fileName: string;
     fileSize: number;
     fileFingerprint?: string;
+    /** 复用页面“备注”，作为模型版本提交说明 */
+    commitInfo: string;
   };
 
   /** 分片上传进度 / 初始化响应 */
@@ -76,6 +78,8 @@ declare namespace API {
     version: string;
     type: string;
     remark: string;
+    /** 必须与上传初始化阶段保持一致 */
+    commitInfo: string;
   };
 
   /** GET /api/model/code-files 返回项（与 backend-api.md 对齐，兼容旧字段） */

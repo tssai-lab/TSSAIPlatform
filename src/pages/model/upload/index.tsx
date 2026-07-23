@@ -140,6 +140,7 @@ const ModelUpload: React.FC = () => {
     const requestOpts = { skipErrorHandler: true } as const;
 
     try {
+      const commitInfo = values.remark.trim();
       const fileFingerprint = buildModelFileFingerprint(
         file,
         values.modelName,
@@ -151,6 +152,7 @@ const ModelUpload: React.FC = () => {
           fileName: file.name,
           fileSize: file.size,
           fileFingerprint,
+          commitInfo,
         },
         requestOpts,
       );
@@ -203,7 +205,8 @@ const ModelUpload: React.FC = () => {
           modelName: values.modelName,
           version: values.version.trim(),
           type: values.type,
-          remark: values.remark,
+          remark: commitInfo,
+          commitInfo,
         },
         requestOpts,
       );
@@ -306,7 +309,7 @@ const ModelUpload: React.FC = () => {
         </Form.Item>
         <Form.Item
           name="file"
-          label="代码或预训练包"
+          label="模型包"
           valuePropName="fileList"
           getValueFromEvent={(event) => event?.fileList ?? []}
           rules={[
@@ -317,7 +320,7 @@ const ModelUpload: React.FC = () => {
                   ? value
                   : (value?.fileList ?? []);
                 if (!list?.length || !list[0]?.originFileObj) {
-                  return Promise.reject(new Error('请上传代码或预训练包'));
+                  return Promise.reject(new Error('请上传模型包'));
                 }
                 return Promise.resolve();
               },
