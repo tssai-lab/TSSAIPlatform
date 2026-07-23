@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TrainingPlanRegistryTest {
 
     @Test
-    void loadsBothBuiltInPlansWithTheirDeclaredExecutionContracts() {
+    void loadsBuiltInPlansWithTheirDeclaredExecutionContracts() {
         TrainingPlanRegistry registry = new TrainingPlanRegistry(new TrainingPlanValidator());
         registry.initialize();
 
@@ -23,5 +23,14 @@ class TrainingPlanRegistryTest {
                 "image_text_consistency_fusion_logreg", "v1"
         );
         assertEquals("scripts/training/train_fusion_baseline.py", baseline.execution().entrypoint());
+
+        TrainingPlanDefinition huggingFace = registry.requireEnabled(
+                "hf_image_classification", "v1"
+        );
+        assertEquals("train.py", huggingFace.execution().entrypoint());
+        assertEquals("mobilenet_beans_model.zip", huggingFace.outputs().artifacts().stream()
+                .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
+                .findFirst().orElseThrow().path());
+        assertTrue(huggingFace.inputs().dataset().annotationFormats().contains("IMAGE_FOLDER"));
     }
 }

@@ -22,8 +22,8 @@ import java.util.regex.Pattern;
 @Service
 public class CodeStaticRiskScanner {
 
-    public static final String SCANNER_VERSION = "code-static-scanner-v2";
-    public static final String RISK_POLICY_VERSION = "code-risk-policy-v2";
+    public static final String SCANNER_VERSION = "code-static-scanner-v3";
+    public static final String RISK_POLICY_VERSION = "code-risk-policy-v3";
 
     private static final int MAX_SCANNED_FILE_BYTES = 1_048_576;
     private static final long MAX_TOTAL_SCANNED_BYTES = 16L * 1_048_576L;
@@ -37,15 +37,14 @@ public class CodeStaticRiskScanner {
                     + "\\s*[:=]\\s*[\\\"'][^\\\"'\\r\\n]{8,}[\\\"']"
     );
     private static final Pattern DYNAMIC_CODE = Pattern.compile(
-            "(?m)(?:\\b(?:eval|exec|compile|__import__)\\s*\\("
+            "(?m)(?:(?<![A-Za-z0-9_.])(?:eval|exec|compile|__import__)\\s*\\("
                     + "|\\bimportlib\\.import_module\\s*\\("
-                    + "|\\b(?:getattr|setattr|delattr)\\s*\\("
-                    + "|\\b(?:globals|locals)\\s*\\("
                     + "|\\b__builtins__\\b)"
     );
     private static final Pattern PROCESS_EXECUTION = Pattern.compile(
             "(?m)(?:\\b(?:os\\.system|os\\.popen|subprocess\\.|shutil\\.which)"
-                    + "|(?:^|;)\\s*(?:from|import)\\s+subprocess\\b)"
+                    + "|(?:^|;)\\s*(?:from|import)\\s+subprocess\\b"
+                    + "|(?:^|;)\\s*from\\s+os\\s+import[^\\r\\n]*(?:system|popen)\\b)"
     );
     private static final Pattern NETWORK_ACCESS = Pattern.compile(
             "(?m)(?:^|;)\\s*(?:from|import)\\s+"
@@ -59,12 +58,12 @@ public class CodeStaticRiskScanner {
                     + "|torch\\.load|joblib\\.load)\\s*\\("
     );
     private static final Pattern DESTRUCTIVE_FILE_OPERATION = Pattern.compile(
-            "(?m)(?:\\b(?:shutil\\.rmtree|os\\.remove|os\\.unlink"
-                    + "|Path\\([^)]*\\)\\.unlink|Path\\([^)]*\\)\\.(?:write_text|write_bytes))\\s*\\("
-                    + "|\\bopen\\s*\\([^\\r\\n)]*,[^\\r\\n)]*[\\\"'][^\\\"']*[wax+][^\\\"']*[\\\"'])"
+            "(?m)(?:\\b(?:os\\.remove|os\\.unlink)\\s*\\("
+                    + "|(?<![A-Za-z0-9_.])open\\s*\\([^,\\r\\n]+,"
+                    + "\\s*[\\\"'][wax+][^\\\"']*[\\\"'])"
     );
     private static final Pattern DYNAMIC_DOWNLOAD = Pattern.compile(
-            "(?m)\\b(?:from_pretrained|hf_hub_download|snapshot_download"
+            "(?m)\\b(?:hf_hub_download|snapshot_download"
                     + "|load_state_dict_from_url|urlretrieve|download_url)\\s*\\("
     );
     private static final Pattern PACKAGE_INSTALL = Pattern.compile(

@@ -24,7 +24,8 @@ final class PythonStaticPolicy {
     );
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern DEF_HEADER = Pattern.compile(
-            "^(?:async\\s+)?def\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\(.*"
+            "^(?:async\\s+)?def\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\(.*\\)"
+                    + "(?:\\s*->\\s*.+)?$"
     );
     private static final Pattern CLASS_HEADER = Pattern.compile(
             "^class\\s+[A-Za-z_][A-Za-z0-9_]*(?:\\s*\\(.*)?"
@@ -34,20 +35,21 @@ final class PythonStaticPolicy {
             "__future__", "argparse", "bisect", "collections", "copy", "csv",
             "dataclasses", "datetime", "decimal", "enum", "fractions", "functools",
             "hashlib", "heapq", "itertools", "json", "logging", "math", "operator",
-            "random", "re", "statistics", "string", "time", "typing",
+            "os", "pathlib", "random", "re", "shutil", "statistics", "string",
+            "time", "typing", "zipfile",
             "typing_extensions", "uuid",
             "cv2", "joblib", "lightgbm", "matplotlib", "numpy", "pandas", "PIL",
             "scipy", "seaborn", "sklearn", "torch", "torchaudio", "torchvision",
-            "tqdm", "xgboost"
+            "tqdm", "transformers", "datasets", "xgboost"
     );
 
     private static final Set<String> HIGH_CAPABILITY_IMPORT_ROOTS = Set.of(
             "asyncio", "builtins", "cffi", "code", "codeop", "concurrent", "ctypes",
             "fabric", "ftplib", "glob", "http", "httpx", "importlib", "inspect",
-            "marshal", "multiprocessing", "os", "paramiko", "pathlib", "pickle",
-            "pip", "pkgutil", "requests", "resource", "runpy", "setuptools", "shutil",
+            "marshal", "multiprocessing", "paramiko", "pickle",
+            "pip", "pkgutil", "requests", "resource", "runpy", "setuptools",
             "signal", "socket", "sqlite3", "ssl", "subprocess", "sys", "tarfile",
-            "tempfile", "threading", "types", "urllib", "webbrowser", "yaml", "zipfile"
+            "tempfile", "threading", "types", "urllib", "webbrowser", "yaml"
     );
 
     private PythonStaticPolicy() {
@@ -172,9 +174,6 @@ final class PythonStaticPolicy {
                 return new StructuralResult(index + 1, unverified);
             }
             if (beforeDepth > 0 || bracketDepth > 0) {
-                if (!trimmed.isEmpty()) {
-                    unverified = true;
-                }
                 continue;
             }
             if (trimmed.isEmpty()) {
@@ -248,7 +247,7 @@ final class PythonStaticPolicy {
         String prefixLower = prefix.toLowerCase(Locale.ROOT);
         boolean valid;
         if (prefixLower.startsWith("def ") || prefixLower.startsWith("async def ")) {
-            valid = DEF_HEADER.matcher(prefix).matches() && prefix.endsWith(")");
+            valid = DEF_HEADER.matcher(prefix).matches();
         } else if (prefixLower.startsWith("class ")) {
             valid = CLASS_HEADER.matcher(prefix).matches()
                     && (!prefix.contains("(") || prefix.endsWith(")"));
