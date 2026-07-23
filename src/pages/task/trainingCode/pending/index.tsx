@@ -64,7 +64,7 @@ type FindingRow = {
 const TrainingCodePending: React.FC = () => {
   const access = useAccess();
   const { initialState } = useModel('@@initialState');
-  const actionRef = useRef<ActionType>();
+  const actionRef = useRef<ActionType | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm();
   const [adding, setAdding] = useState(false);

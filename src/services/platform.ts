@@ -219,6 +219,8 @@ export {
   publishTaskModel,
 } from './task';
 
+export { fetchTrainingPlans, type TrainingPlan } from './trainingPlans';
+
 export {
   fetchMlflowMetricHistory,
   fetchMlflowMetricsBulk,

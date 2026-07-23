@@ -21,14 +21,24 @@ const INTERVAL_MAX_OFFSET = {
 /**
  * 将数据映射为相对偏移量
  * 左侧 = maxOffset（最早），右侧 = 0（当前）
+ *
+ * 不依赖后端 tickIndex 的语义（0=最新 还是 0=最早），统一按 fullTime
+ * 降序排列（最新在前），用数组下标计算偏移，mock 与真实接口均正确。
  */
 const transformChartData = (data = [], interval = '1hour') => {
   const maxOffset = INTERVAL_MAX_OFFSET[interval] ?? 24;
-  const maxTickIndex = Math.max(...data.map((d) => d.tickIndex ?? 0), 1);
 
-  return data.map((d) => ({
+  // 按时间降序：index 0 = 最新 → offset 0 → 右侧
+  const sorted = [...data].sort((a, b) => {
+    if (!a.fullTime || !b.fullTime) return 0;
+    return b.fullTime.localeCompare(a.fullTime);
+  });
+
+  const maxIndex = Math.max(sorted.length - 1, 1);
+
+  return sorted.map((d, index) => ({
     ...d,
-    offset: +(((d.tickIndex ?? 0) * maxOffset) / maxTickIndex).toFixed(2),
+    offset: +((index * maxOffset) / maxIndex).toFixed(2),
   }));
 };
 

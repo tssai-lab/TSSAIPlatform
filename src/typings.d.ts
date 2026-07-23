@@ -53,8 +53,8 @@ declare namespace API {
     fileName: string;
     fileSize: number;
     fileFingerprint?: string;
-    /** 版本说明 / Commit；后端校验不能为空，与 remark 同源 */
-    commitInfo?: string;
+    /** 复用页面“备注”，作为模型版本提交说明；须与 init/complete 一致且非空 */
+    commitInfo: string;
   };
 
   /** 分片上传进度 / 初始化响应 */
@@ -78,8 +78,8 @@ declare namespace API {
     version: string;
     type: string;
     remark: string;
-    /** 版本说明 / Commit；后端校验不能为空，与 remark 同源 */
-    commitInfo?: string;
+    /** 必须与上传初始化阶段保持一致；复用备注且非空 */
+    commitInfo: string;
   };
 
   /** GET /api/model/code-files 返回项（与 backend-api.md 对齐，兼容旧字段） */
@@ -137,6 +137,8 @@ declare namespace API {
     versionNo?: number;
     modelName?: string;
     datasetName?: string;
+    modelId?: string;
+    datasetId?: string;
     createTime: string;
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
@@ -152,6 +154,10 @@ declare namespace API {
     modelArtifactSizeBytes?: number;
     codeVersionId?: string;
     trainingProfile?: string;
+    trainingPlanId?: string;
+    trainingPlanVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
     metrics?: Record<string, any>;
@@ -189,6 +195,10 @@ declare namespace API {
     modelArtifactSizeBytes?: number;
     codeVersionId: string;
     trainingProfile?: string;
+    trainingPlanId?: string;
+    trainingPlanVersion?: string;
+    trainingMode?: string;
+    resourceProfileId?: string;
     datasetVersionId: string;
     hyperParams?: Record<string, any>;
     status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';

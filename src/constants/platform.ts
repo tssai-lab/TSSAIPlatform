@@ -75,7 +75,7 @@ export const UPLOAD_CONFIG = {
   MODEL: {
     MAX_SIZE: 2 * 1024 * 1024 * 1024, // 2GB
     /** 单文件模型：.pt/.pth/.onnx 等；千问等大模型由多文件组成，请上传 .zip 包 */
-    ACCEPT_TYPES: ['.zip'],
+    ACCEPT_TYPES: ['.zip', '.safetensors', '.pt', '.pth', '.ckpt', '.onnx'],
     REQUIRED_FIELDS: ['file', 'name', 'version', 'type', 'remark'],
   },
   DATASET: {
@@ -107,7 +107,7 @@ export const DATASET_TYPES = {
 /** 任务状态 */
 export const TASK_STATUS = {
   PENDING: { label: '待执行', value: 'pending', color: '#595959' },
-  QUEUED: { label: '排队中', value: 'queued', color: '#faad14' },
+  QUEUED: { label: '调度中', value: 'queued', color: '#faad14' },
   RUNNING: { label: '运行中', value: 'running', color: '#1890ff' },
   SUCCESS: { label: '成功', value: 'success', color: '#52c41a' },
   FAILED: { label: '失败', value: 'failed', color: '#ff4d4f' },

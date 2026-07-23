@@ -47,8 +47,12 @@ export async function uploadModelZipPackage(
     requestOpts,
   } = params;
 
-  if (!file.name.toLowerCase().endsWith('.zip')) {
-    throw new Error('后端当前仅支持 zip 代码或预训练包');
+  if (
+    !UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.some((suffix) =>
+      file.name.toLowerCase().endsWith(suffix),
+    )
+  ) {
+    throw new Error('模型仅支持 .zip、.safetensors、.pt、.pth、.ckpt 或 .onnx');
   }
   if (file.size > UPLOAD_CONFIG.MODEL.MAX_SIZE) {
     throw new Error(
@@ -56,7 +60,7 @@ export async function uploadModelZipPackage(
     );
   }
 
-  const commitInfo = remark.trim();
+  const commitInfo = String(remark ?? '').trim();
   const fileFingerprint = buildModelFileFingerprint(
     file,
     modelName,

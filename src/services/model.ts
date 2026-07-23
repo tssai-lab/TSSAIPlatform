@@ -435,7 +435,7 @@ export async function fetchModelVersionCodePreview(
   const version: API.ModelVersionDetail | undefined = raw
     ? {
         id: raw.id,
-        assetId: 'assetId' in raw ? raw.assetId : '',
+        assetId: 'assetId' in raw ? raw.assetId || '' : '',
         version: 'version' in raw ? raw.version : '',
         fileName: 'fileName' in raw ? raw.fileName : undefined,
         storagePath: raw.storagePath,
