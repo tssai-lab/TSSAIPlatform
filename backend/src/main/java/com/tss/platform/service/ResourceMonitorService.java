@@ -22,7 +22,7 @@ public class ResourceMonitorService {
 
     private static final Logger LOG = LoggerFactory.getLogger(ResourceMonitorService.class);
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-            .withZone(ZoneId.systemDefault());
+            .withZone(ZoneId.of("Asia/Shanghai"));
     private static final Set<String> PRIORITY_VALUES = Set.of("高", "中", "低");
     private static final Map<String, Integer> PRIORITY_ORDER = Map.of("高", 3, "中", 2, "低", 1);
 
