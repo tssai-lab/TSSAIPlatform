@@ -59,6 +59,15 @@ public class TrainingExperimentVersion {
     @Column(name = "status", length = 32)
     private String status;
 
+    @Column(name = "server_ip", length = 45)
+    private String serverIp;
+
+    @Column(name = "queue_sort_index")
+    private Integer queueSortIndex = 0;
+
+    @Column(name = "priority", length = 8)
+    private String priority = "中";
+
     @Column(name = "progress")
     private Integer progress;
 
