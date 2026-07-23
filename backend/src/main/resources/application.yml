@@ -126,3 +126,10 @@ training:
     internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}
     monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
     bootstrap-timeout-seconds: ${TRAINING_K8S_BOOTSTRAP_TIMEOUT_SECONDS:600}
+
+resource-monitor:
+  metrics:
+    collect-interval-ms: ${RESOURCE_MONITOR_COLLECT_INTERVAL_MS:30000}
+    dcgm-exporter-port: ${RESOURCE_MONITOR_DCGM_EXPORTER_PORT:9400}
+    gpu-node-label: ${RESOURCE_MONITOR_GPU_NODE_LABEL:tss.ai/node-pool=gpu}
+    metrics-retention-days: ${RESOURCE_MONITOR_METRICS_RETENTION_DAYS:7}
