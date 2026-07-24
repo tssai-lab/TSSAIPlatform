@@ -64,7 +64,8 @@ class CodeValidationServiceTest {
     private final CodeFilePolicy filePolicy = new CodeFilePolicy();
     private final CodeZipArchiveService zipService = new CodeZipArchiveService();
     private final CodeArtifactAssembler assembler = new CodeArtifactAssembler(
-            storageService, zipService, new CodePathPolicy(), filePolicy
+            storageService, zipService, new CodePathPolicy(), filePolicy,
+            mock(com.tss.platform.training.plan.TrainingPlanRegistry.class)
     );
 
     private CodeValidationService service;

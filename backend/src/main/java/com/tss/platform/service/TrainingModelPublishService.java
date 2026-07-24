@@ -6,34 +6,22 @@ import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
-import com.tss.platform.training.TrainingProfileRegistry;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
-import io.minio.StatObjectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 @Service
 public class TrainingModelPublishService {
@@ -44,7 +32,6 @@ public class TrainingModelPublishService {
     public static final String STATUS_FAILED = "FAILED";
 
     private static final Logger LOG = LoggerFactory.getLogger(TrainingModelPublishService.class);
-    private static final long MAX_MODEL_BYTES = 2L * 1024 * 1024 * 1024;
     private static final Duration STALE_PUBLISH_AFTER = Duration.ofMinutes(10);
 
     private final TrainingExperimentVersionRepository trainingRepo;
@@ -125,50 +112,7 @@ public class TrainingModelPublishService {
             publishRunSpecClaimed(snapshot);
             return;
         }
-        TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(snapshot.getTrainingProfile())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "训练方案不支持自动发布模型: " + snapshot.getTrainingProfile()
-                ));
-        if (snapshot.getOwnerUserId() == null) {
-            throw new IllegalArgumentException("训练任务缺少 ownerUserId");
-        }
-
-        PublishedArtifact artifact = ensureTrainingArchive(snapshot, spec);
-        String assetId = deterministicId("model-asset-train-", snapshot.getExperimentId());
-        String modelVersionId = deterministicId("model-ver-train-", snapshot.getId());
-        String versionName = "v" + snapshot.getVersionNo();
-        String targetPath = "users/" + snapshot.getOwnerUserId()
-                + "/models/" + assetId
-                + "/" + versionName
-                + "/" + spec.producedModelArchiveName();
-
-        if (minioService.objectExists(targetPath)) {
-            PublishedArtifact existing = validateArchive(targetPath, spec.producedModelFileName(), artifact.sha256());
-            if (!existing.sha256().equals(artifact.sha256())) {
-                throw new IllegalStateException("目标模型文件已存在，但摘要与训练产物不一致");
-            }
-        } else {
-            minioService.copyObject(artifact.objectName(), targetPath);
-            validateArchive(targetPath, spec.producedModelFileName(), artifact.sha256());
-        }
-        StatObjectResponse targetStat = minioService.stat(targetPath);
-
-        transactionTemplate.executeWithoutResult(status -> persistPublishedModel(
-                trainingId,
-                spec,
-                artifact,
-                assetId,
-                modelVersionId,
-                versionName,
-                targetPath,
-                targetStat.size()
-        ));
-        LOG.info(
-                "训练模型发布成功: trainingId={}, modelVersionId={}, target={}",
-                trainingId,
-                modelVersionId,
-                targetPath
-        );
+        throw new IllegalArgumentException("训练方案不支持自动发布模型: " + snapshot.getTrainingProfile());
     }
 
     private void publishRunSpecClaimed(TrainingExperimentVersion snapshot) throws Exception {
@@ -319,223 +263,6 @@ public class TrainingModelPublishService {
         return leaf;
     }
 
-    private PublishedArtifact ensureTrainingArchive(
-            TrainingExperimentVersion training,
-            TrainingProfileRegistry.ProfileSpec spec
-    ) throws Exception {
-        String expectedArchive = artifactPrefix(training.getId()) + spec.producedModelArchiveName();
-        String callbackPath = normalizeObjectName(training.getModelArtifactPath());
-        if (callbackPath != null && !expectedArchive.equals(callbackPath)) {
-            throw new IllegalArgumentException("模型产物路径与训练任务不匹配");
-        }
-
-        PublishedArtifact artifact;
-        if (minioService.objectExists(expectedArchive)) {
-            artifact = validateArchive(
-                    expectedArchive,
-                    spec.producedModelFileName(),
-                    normalizeSha256(training.getModelArtifactSha256())
-            );
-        } else {
-            String legacyModelPath = artifactPrefix(training.getId()) + spec.producedModelFileName();
-            if (!minioService.objectExists(legacyModelPath)) {
-                throw new IllegalArgumentException("训练模型产物不存在: " + expectedArchive);
-            }
-            artifact = packageLegacyModel(legacyModelPath, expectedArchive, spec.producedModelFileName());
-        }
-
-        transactionTemplate.executeWithoutResult(status -> trainingRepo.findById(training.getId()).ifPresent(current -> {
-            if (!STATUS_PUBLISHING.equals(current.getModelPublishStatus())) {
-                return;
-            }
-            current.setModelArtifactPath(artifact.objectName());
-            current.setModelArtifactSha256(artifact.sha256());
-            current.setModelArtifactSizeBytes(artifact.archiveSize());
-            current.setUpdatedAt(Instant.now());
-            trainingRepo.save(current);
-        }));
-        return artifact;
-    }
-
-    private PublishedArtifact packageLegacyModel(
-            String sourceModelPath,
-            String archivePath,
-            String modelFileName
-    ) throws Exception {
-        Path temp = Files.createTempFile("tss-training-model-", ".zip");
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        long modelBytes = 0;
-        try {
-            try (InputStream source = new BufferedInputStream(minioService.downloadStream(sourceModelPath));
-                 OutputStream fileOut = new BufferedOutputStream(Files.newOutputStream(temp));
-                 ZipOutputStream zip = new ZipOutputStream(fileOut)) {
-                zip.putNextEntry(new ZipEntry(modelFileName));
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = source.read(buffer)) != -1) {
-                    modelBytes += read;
-                    if (modelBytes > MAX_MODEL_BYTES) {
-                        throw new IllegalArgumentException("训练模型文件超过 2GB，无法自动发布");
-                    }
-                    digest.update(buffer, 0, read);
-                    zip.write(buffer, 0, read);
-                }
-                zip.closeEntry();
-            }
-            long archiveSize = Files.size(temp);
-            try (InputStream input = new BufferedInputStream(Files.newInputStream(temp))) {
-                minioService.uploadStream(archivePath, input, archiveSize, "application/zip");
-            }
-            return new PublishedArtifact(
-                    archivePath,
-                    archiveSize,
-                    modelBytes,
-                    HexFormat.of().formatHex(digest.digest())
-            );
-        } finally {
-            Files.deleteIfExists(temp);
-        }
-    }
-
-    private PublishedArtifact validateArchive(
-            String objectName,
-            String requiredModelFileName,
-            String expectedSha256
-    ) throws Exception {
-        StatObjectResponse stat = minioService.stat(objectName);
-        if (stat.size() <= 0) {
-            throw new IllegalArgumentException("训练模型 ZIP 为空");
-        }
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        long modelBytes = 0;
-        int fileCount = 0;
-        try (InputStream source = new BufferedInputStream(minioService.downloadStream(objectName));
-             ZipInputStream zip = new ZipInputStream(source)) {
-            ZipEntry entry;
-            byte[] buffer = new byte[8192];
-            while ((entry = zip.getNextEntry()) != null) {
-                if (entry.isDirectory()) {
-                    zip.closeEntry();
-                    continue;
-                }
-                fileCount += 1;
-                if (!requiredModelFileName.equals(entry.getName())) {
-                    throw new IllegalArgumentException("训练模型 ZIP 只能包含 " + requiredModelFileName);
-                }
-                int read;
-                while ((read = zip.read(buffer)) != -1) {
-                    modelBytes += read;
-                    if (modelBytes > MAX_MODEL_BYTES) {
-                        throw new IllegalArgumentException("训练模型文件超过 2GB，无法自动发布");
-                    }
-                    digest.update(buffer, 0, read);
-                }
-                zip.closeEntry();
-            }
-        }
-        if (fileCount != 1 || modelBytes <= 0) {
-            throw new IllegalArgumentException("训练模型 ZIP 必须且只能包含一个非空的 " + requiredModelFileName);
-        }
-        String sha256 = HexFormat.of().formatHex(digest.digest());
-        String normalizedExpected = normalizeSha256(expectedSha256);
-        if (normalizedExpected != null && !normalizedExpected.equals(sha256)) {
-            throw new IllegalArgumentException("训练模型摘要校验失败");
-        }
-        return new PublishedArtifact(objectName, stat.size(), modelBytes, sha256);
-    }
-
-    private void persistPublishedModel(
-            String trainingId,
-            TrainingProfileRegistry.ProfileSpec spec,
-            PublishedArtifact artifact,
-            String assetId,
-            String modelVersionId,
-            String versionName,
-            String targetPath,
-            long targetSize
-    ) {
-        TrainingExperimentVersion training = trainingRepo.findById(trainingId)
-                .orElseThrow(() -> new IllegalArgumentException("训练任务不存在: " + trainingId));
-        if (training.getProducedModelVersionId() != null) {
-            return;
-        }
-        if (!STATUS_PUBLISHING.equals(training.getModelPublishStatus())) {
-            throw new IllegalStateException("训练模型发布状态已变化");
-        }
-
-        Instant now = Instant.now();
-        ModelAsset asset = modelAssetRepo.findById(assetId).orElse(null);
-        if (asset == null) {
-            asset = new ModelAsset();
-            asset.setId(assetId);
-            asset.setName(limit(defaultModelName(training), 255));
-            asset.setType(spec.outputTaskType());
-            asset.setRemark(limit("由训练实验 " + training.getExperimentId() + " 自动产生", 1024));
-            asset.setOwnerUserId(training.getOwnerUserId());
-            asset.setCreatedAt(now);
-            asset.setUpdatedAt(now);
-            asset.setDeleted(false);
-            modelAssetRepo.saveAndFlush(asset);
-        } else {
-            if (Boolean.TRUE.equals(asset.getDeleted())) {
-                throw new IllegalStateException("训练模型资产已被删除");
-            }
-            if (!Objects.equals(asset.getOwnerUserId(), training.getOwnerUserId())) {
-                throw new IllegalStateException("训练模型资产所有者不一致");
-            }
-        }
-
-        ModelVersion modelVersion = modelVersionRepo.findById(modelVersionId).orElse(null);
-        if (modelVersion == null) {
-            if (modelVersionRepo.existsByAssetIdAndVersion(assetId, versionName)) {
-                throw new IllegalStateException("训练模型版本号已存在: " + versionName);
-            }
-            modelVersion = new ModelVersion();
-            modelVersion.setId(modelVersionId);
-            modelVersion.setAssetId(assetId);
-            modelVersion.setVersion(versionName);
-            modelVersion.setFileName(spec.producedModelArchiveName());
-            modelVersion.setStoragePath(targetPath);
-            modelVersion.setSizeBytes(targetSize);
-            modelVersion.setDescription(limit(
-                    "由训练任务 " + trainingId + " 自动发布，格式 " + spec.producedModelFormat(),
-                    2048
-            ));
-            modelVersion.setChangeLog("trainingProfile=" + training.getTrainingProfile()
-                    + ", datasetVersionId=" + training.getDatasetVersionId()
-                    + ", codeVersionId=" + training.getCodeVersionId()
-                    + ", sha256=" + artifact.sha256());
-            modelVersion.setStatus("READY");
-            modelVersion.setPublishedAt(now);
-            modelVersion.setCreatedBy(training.getOwnerUserId());
-            modelVersion.setOwnerUserId(training.getOwnerUserId());
-            modelVersion.setCreatedAt(now);
-            modelVersion.setDeleted(false);
-            modelVersionRepo.saveAndFlush(modelVersion);
-        } else {
-            if (Boolean.TRUE.equals(modelVersion.getDeleted())
-                    || !Objects.equals(modelVersion.getAssetId(), assetId)
-                    || !Objects.equals(modelVersion.getStoragePath(), targetPath)
-                    || !Objects.equals(modelVersion.getOwnerUserId(), training.getOwnerUserId())) {
-                throw new IllegalStateException("已有训练模型版本与当前任务不一致");
-            }
-        }
-
-        asset.setCurrentVersionId(modelVersionId);
-        asset.setUpdatedAt(now);
-        modelAssetRepo.saveAndFlush(asset);
-
-        training.setProducedModelVersionId(modelVersionId);
-        training.setModelPublishStatus(STATUS_PUBLISHED);
-        training.setModelPublishError(null);
-        training.setModelPublishedAt(now);
-        training.setModelArtifactPath(artifact.objectName());
-        training.setModelArtifactSha256(artifact.sha256());
-        training.setModelArtifactSizeBytes(artifact.archiveSize());
-        training.setUpdatedAt(now);
-        trainingRepo.saveAndFlush(training);
-    }
-
     private void markFailed(String trainingId, String message) {
         transactionTemplate.executeWithoutResult(status -> trainingRepo.findById(trainingId).ifPresent(training -> {
             if (training.getProducedModelVersionId() != null) {
@@ -614,13 +341,5 @@ public class TrainingModelPublishService {
             return value;
         }
         return value.substring(0, maxLength);
-    }
-
-    private record PublishedArtifact(
-            String objectName,
-            long archiveSize,
-            long modelSize,
-            String sha256
-    ) {
     }
 }

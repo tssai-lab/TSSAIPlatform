@@ -1,5 +1,6 @@
 package com.tss.platform.service;
 
+import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -36,6 +37,11 @@ class CodeArtifactSpringWiringTest {
         @Bean
         CodeArtifactStorageService codeArtifactStorageService() {
             return mock(CodeArtifactStorageService.class);
+        }
+
+        @Bean
+        TrainingPlanRegistry trainingPlanRegistry() {
+            return mock(TrainingPlanRegistry.class);
         }
     }
 }

@@ -170,14 +170,6 @@ public class KubernetesTrainingJobMonitor {
                             "training-results/" + version.getId() + "/artifacts/" + modelPath
                     );
                     version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
-                } else {
-                    TrainingProfileRegistry.specOf(version.getTrainingProfile()).ifPresent(spec -> {
-                        version.setModelArtifactPath(
-                                "training-results/" + version.getId() + "/artifacts/"
-                                        + spec.producedModelArchiveName()
-                        );
-                        version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
-                    });
                 }
             }
             version.setUpdatedAt(Instant.now());

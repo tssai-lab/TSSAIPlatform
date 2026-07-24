@@ -8,7 +8,6 @@ import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeValidationRunRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
-import com.tss.platform.training.TrainingProfileRegistry;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,7 +96,7 @@ class CodeAssetImportServiceTest {
                 ));
 
         CodeArtifactAssembler assembler = new CodeArtifactAssembler(
-                storageService, zipService, new CodePathPolicy(), filePolicy
+                storageService, zipService, new CodePathPolicy(), filePolicy, trainingPlanRegistry
         );
         service = new CodeAssetImportService(
                 assetRepository,
@@ -233,7 +232,7 @@ class CodeAssetImportServiceTest {
         CodeAssetImportCommand aliasedEntry = new CodeAssetImportCommand(
                 "Training asset",
                 "v1",
-                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG,
+                "image_text_consistency_fusion_logreg",
                 "TRAINING",
                 "python:3.11",
                 "src/train.py",
@@ -306,10 +305,10 @@ class CodeAssetImportServiceTest {
 
     @Test
     void legacyMappingAloneRetainsDeprecatedStoragePath() {
-        String profile = TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG;
-        String requiredEntry = TrainingProfileRegistry.specOf(profile)
-                .orElseThrow()
-                .requiredEntryScript();
+        String profile = "image_text_consistency_fusion_logreg";
+        String requiredEntry = trainingPlanRegistry.requireEnabled(profile, null)
+                .execution()
+                .entrypoint();
         MockMultipartFile file = new MockMultipartFile(
                 "file",
                 "legacy.zip",
@@ -368,7 +367,7 @@ class CodeAssetImportServiceTest {
         return new CodeAssetImportCommand(
                 "Training asset",
                 "v1",
-                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG,
+                "image_text_consistency_fusion_logreg",
                 "TRAINING",
                 "python:3.11",
                 "train.py",

@@ -1,0 +1,19 @@
+# CV 通用训练 Worker 镜像。
+# 覆盖图像分类、目标检测等 CV 训练方案，预装 PyTorch + transformers + ultralytics + opencv。
+# 用户在 code.zip 内带 requirements.txt 时，由层2派生镜像机制 FROM 本镜像再 pip install。
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+WORKDIR /app
+
+RUN useradd -r -u 10001 -m worker \
+    && mkdir -p /workspace/job \
+    && chown -R worker:worker /workspace
+
+COPY requirements-cv.txt .
+RUN pip install --no-cache-dir -r requirements-cv.txt
+
+COPY --chmod=0644 train.py .
+
+USER 10001
+
+ENTRYPOINT ["python", "/app/train.py"]

@@ -26,7 +26,6 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
-import com.tss.platform.training.TrainingProfileRegistry;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSnapshot;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
@@ -112,38 +111,20 @@ public class TrainingExperimentService {
             throw new IllegalArgumentException("trainingProfile 与 planId 不一致");
         }
         String effectivePlanId = requestedPlanId != null ? requestedPlanId : trainingProfile;
-        boolean legacyPlanSelection = requestedPlanId == null && trainingProfile != null;
+        requireText(effectivePlanId, "planId 不能为空");
         Object initialParams = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
-        ResolvedCodeArtifact approvedCodeArtifact = null;
+        ResolvedCodeArtifact approvedCodeArtifact;
 
-        if (effectivePlanId != null) {
-            String baseModelVersionId = resolveBaseModelVersionId(
-                    req.getBaseModelVersionId(),
-                    req.getModelVersionId()
-            );
-            requireText(baseModelVersionId, "baseModelVersionId 不能为空");
-            approvedCodeArtifact = codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
-            if (legacyPlanSelection) {
-                TrainingProfileRegistry.requireSupported(trainingProfile);
-                validateBaseModelVersion(baseModelVersionId);
-                validateProfileTraining(req.getCodeVersionId(), req.getDatasetVersionId(), trainingProfile);
-            }
-            if (initialParams == null) {
-                initialParams = Map.of();
-            }
-            req.setModelVersionId(baseModelVersionId);
-        } else {
-            String modelVersionId = resolveBaseModelVersionId(
-                    req.getBaseModelVersionId(),
-                    req.getModelVersionId()
-            );
-            requireText(modelVersionId, "modelVersionId 不能为空");
-            validateModelDatasetMatch(modelVersionId, req.getDatasetVersionId());
-            req.setModelVersionId(modelVersionId);
-            if (initialParams == null) {
-                throw new IllegalArgumentException("hyperParams 不能为空");
-            }
+        String baseModelVersionId = resolveBaseModelVersionId(
+                req.getBaseModelVersionId(),
+                req.getModelVersionId()
+        );
+        requireText(baseModelVersionId, "baseModelVersionId 不能为空");
+        approvedCodeArtifact = codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
+        if (initialParams == null) {
+            initialParams = Map.of();
         }
+        req.setModelVersionId(baseModelVersionId);
 
         String experimentId = "exp-" + System.currentTimeMillis() + "-"
                 + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -164,28 +145,24 @@ public class TrainingExperimentService {
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
-        if (effectivePlanId != null) {
-            TrainingRunSnapshot snapshot = trainingRunSpecFactory.create(
-                    new TrainingRunSpecFactory.CreateCommand(
-                            version.getId(),
-                            now,
-                            effectivePlanId,
-                            blankToNull(req.getPlanVersion()),
-                            blankToNull(req.getTrainingMode()),
-                            blankToNull(req.getResourceProfileId()),
-                            legacyPlanSelection,
-                            version.getModelVersionId(),
-                            version.getDatasetVersionId(),
-                            version.getCodeVersionId(),
-                            toParameterMap(initialParams),
-                            approvedCodeArtifact
-                    )
-            );
-            applyRunSnapshot(version, snapshot);
-            version.setHyperParamsJson(toJson(snapshot.resolvedParameters()));
-        } else {
-            version.setHyperParamsJson(toJson(initialParams));
-        }
+        TrainingRunSnapshot snapshot = trainingRunSpecFactory.create(
+                new TrainingRunSpecFactory.CreateCommand(
+                        version.getId(),
+                        now,
+                        effectivePlanId,
+                        blankToNull(req.getPlanVersion()),
+                        blankToNull(req.getTrainingMode()),
+                        blankToNull(req.getResourceProfileId()),
+                        false,
+                        version.getModelVersionId(),
+                        version.getDatasetVersionId(),
+                        version.getCodeVersionId(),
+                        toParameterMap(initialParams),
+                        approvedCodeArtifact
+                )
+        );
+        applyRunSnapshot(version, snapshot);
+        version.setHyperParamsJson(toJson(snapshot.resolvedParameters()));
         TrainingExperimentVersion saved = repo.save(version);
         startTrainingAfterCommit(saved.getId());
         return toDto(saved);
@@ -212,23 +189,11 @@ public class TrainingExperimentService {
         String requestedPlanId = blankToNull(req.getPlanId());
         String inheritedPlanId = firstText(latest.getTrainingPlanId(), latest.getTrainingProfile());
         String effectivePlanId = firstText(requestedPlanId, inheritedPlanId);
-        boolean legacyPlanSelection = requestedPlanId == null
-                && latest.getTrainingPlanId() == null
-                && latest.getTrainingProfile() != null;
+        requireText(effectivePlanId, "planId 不能为空");
         version.setTrainingProfile(effectivePlanId);
         version.setTrainingMode(firstText(req.getTrainingMode(), latest.getTrainingMode()));
-        ResolvedCodeArtifact approvedCodeArtifact = null;
-        if (effectivePlanId != null) {
-            requireText(resolvedModelVersionId, "baseModelVersionId 不能为空");
-            approvedCodeArtifact = codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
-            if (legacyPlanSelection) {
-                validateBaseModelVersion(resolvedModelVersionId);
-                validateProfileTraining(version.getCodeVersionId(), version.getDatasetVersionId(), effectivePlanId);
-            }
-        } else {
-            requireText(resolvedModelVersionId, "modelVersionId 不能为空");
-            validateModelDatasetMatch(resolvedModelVersionId, version.getDatasetVersionId());
-        }
+        requireText(resolvedModelVersionId, "baseModelVersionId 不能为空");
+        ResolvedCodeArtifact approvedCodeArtifact = codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setStatus(STATUS_PENDING);
         version.setProgress(progressOf(STATUS_PENDING));
@@ -237,29 +202,25 @@ public class TrainingExperimentService {
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
-        if (effectivePlanId != null) {
-            Object effectiveParams = params != null ? params : fromJson(latest.getHyperParamsJson());
-            TrainingRunSnapshot snapshot = trainingRunSpecFactory.create(
-                    new TrainingRunSpecFactory.CreateCommand(
-                            version.getId(),
-                            now,
-                            effectivePlanId,
-                            firstText(req.getPlanVersion(), latest.getTrainingPlanVersion()),
-                            firstText(req.getTrainingMode(), latest.getTrainingMode()),
-                            firstText(req.getResourceProfileId(), latest.getResourceProfileId()),
-                            legacyPlanSelection,
-                            version.getModelVersionId(),
-                            version.getDatasetVersionId(),
-                            version.getCodeVersionId(),
-                            toParameterMap(effectiveParams),
-                            approvedCodeArtifact
-                    )
-            );
-            applyRunSnapshot(version, snapshot);
-            version.setHyperParamsJson(toJson(snapshot.resolvedParameters()));
-        } else {
-            version.setHyperParamsJson(params != null ? toJson(params) : latest.getHyperParamsJson());
-        }
+        Object effectiveParams = params != null ? params : fromJson(latest.getHyperParamsJson());
+        TrainingRunSnapshot snapshot = trainingRunSpecFactory.create(
+                new TrainingRunSpecFactory.CreateCommand(
+                        version.getId(),
+                        now,
+                        effectivePlanId,
+                        firstText(req.getPlanVersion(), latest.getTrainingPlanVersion()),
+                        firstText(req.getTrainingMode(), latest.getTrainingMode()),
+                        firstText(req.getResourceProfileId(), latest.getResourceProfileId()),
+                        false,
+                        version.getModelVersionId(),
+                        version.getDatasetVersionId(),
+                        version.getCodeVersionId(),
+                        toParameterMap(effectiveParams),
+                        approvedCodeArtifact
+                )
+        );
+        applyRunSnapshot(version, snapshot);
+        version.setHyperParamsJson(toJson(snapshot.resolvedParameters()));
         TrainingExperimentVersion saved = repo.save(version);
         startTrainingAfterCommit(saved.getId());
         return toDto(saved);
@@ -440,10 +401,7 @@ public class TrainingExperimentService {
             throw new IllegalArgumentException("只有已完成的训练任务可以发布模型");
         }
         if (version.getRunSpecJson() == null || version.getRunSpecJson().isBlank()) {
-            TrainingProfileRegistry.specOf(version.getTrainingProfile())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "当前训练方案不支持自动发布模型: " + version.getTrainingProfile()
-                    ));
+            throw new IllegalArgumentException("当前训练方案不支持自动发布模型");
         }
         if (version.getProducedModelVersionId() != null) {
             version.setModelPublishStatus(TrainingModelPublishService.STATUS_PUBLISHED);
@@ -702,15 +660,6 @@ public class TrainingExperimentService {
             if (version.getModelArtifactPath() == null || version.getModelArtifactPath().isBlank()) {
                 version.setModelArtifactPath(defaultRunSpecModelPath(version));
             }
-        } else {
-            TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(version.getTrainingProfile())
-                    .orElse(null);
-            if (spec == null) {
-                return;
-            }
-            if (version.getModelArtifactPath() == null || version.getModelArtifactPath().isBlank()) {
-                version.setModelArtifactPath(defaultModelArchivePath(version.getId(), spec));
-            }
         }
         if (version.getModelPublishStatus() == null
                 || (allowRetryAfterArtifactCallback
@@ -718,13 +667,6 @@ public class TrainingExperimentService {
             version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
             version.setModelPublishError(null);
         }
-    }
-
-    private String defaultModelArchivePath(
-            String trainingId,
-            TrainingProfileRegistry.ProfileSpec spec
-    ) {
-        return "training-results/" + trainingId + "/artifacts/" + spec.producedModelArchiveName();
     }
 
     private String defaultRunSpecModelPath(TrainingExperimentVersion version) {
@@ -851,26 +793,6 @@ public class TrainingExperimentService {
         String result = firstText(value, fallback);
         requireText(result, message);
         return result;
-    }
-
-    private void validateProfileTraining(String codeVersionId, String datasetVersionId, String trainingProfile) {
-        TrainingProfileRegistry.requireSupported(trainingProfile);
-        CodeVersion codeVersion = codeVersionRepo.findByIdAndDeletedFalse(codeVersionId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("训练代码版本不存在: " + codeVersionId));
-        CodeAsset codeAsset = codeAssetRepo.findByIdAndDeletedFalse(codeVersion.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException("代码资产不存在: " + codeVersion.getAssetId()));
-        if (codeAsset.getTrainingProfile() == null
-                || !codeAsset.getTrainingProfile().equals(trainingProfile)) {
-            throw new IllegalArgumentException("trainingProfile 与代码资产不匹配");
-        }
-
-        TrainingProfileRegistry.ProfileSpec spec = TrainingProfileRegistry.specOf(trainingProfile)
-                .orElseThrow(() -> new IllegalArgumentException("不支持的 trainingProfile: " + trainingProfile));
-        String datasetType = resolveDatasetTaskType(datasetVersionId.trim());
-        if (!spec.requiredDatasetType().equals(datasetType)) {
-            throw new IllegalArgumentException(
-                    "数据集类型与 trainingProfile 不匹配：需要 " + spec.requiredDatasetType() + "，实际 " + datasetType);
-        }
     }
 
     private void validateBaseModelVersion(String modelVersionId) {

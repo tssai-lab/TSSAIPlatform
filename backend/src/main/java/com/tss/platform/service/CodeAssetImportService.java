@@ -11,7 +11,6 @@ import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
-import com.tss.platform.training.TrainingProfileRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -102,9 +101,7 @@ public class CodeAssetImportService {
                 trainingProfile,
                 null,
                 null,
-                TrainingProfileRegistry.specOf(trainingProfile)
-                        .map(TrainingProfileRegistry.ProfileSpec::requiredEntryScript)
-                        .orElse(null),
+                null,
                 null,
                 remark
         ));

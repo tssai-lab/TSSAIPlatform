@@ -84,9 +84,9 @@ parameters:
     maximum: 100000000
 
 runtimes:
-  - id: python-cpu
+  - id: cv-cu
     deviceType: CPU
-    image: tss-training-worker:local
+    image: tss-cv-worker:local
     imagePullPolicy: IfNotPresent
     productionDigestRequired: false
     resourceProfiles:

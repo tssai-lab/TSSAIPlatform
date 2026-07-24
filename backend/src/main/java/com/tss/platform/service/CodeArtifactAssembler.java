@@ -3,7 +3,8 @@ package com.tss.platform.service;
 import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.entity.CodeWorkspaceFileDelta;
-import com.tss.platform.training.TrainingProfileRegistry;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
+import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -23,19 +24,22 @@ public class CodeArtifactAssembler {
     private final CodePathPolicy pathPolicy;
     private final CodeFilePolicy filePolicy;
     private final PythonRequirementsValidator requirementsValidator;
+    private final TrainingPlanRegistry trainingPlanRegistry;
 
     public CodeArtifactAssembler(
             CodeArtifactStorageService storageService,
             CodeZipArchiveService zipArchiveService,
             CodePathPolicy pathPolicy,
             CodeFilePolicy filePolicy,
-            PythonRequirementsValidator requirementsValidator
+            PythonRequirementsValidator requirementsValidator,
+            TrainingPlanRegistry trainingPlanRegistry
     ) {
         this.storageService = storageService;
         this.zipArchiveService = zipArchiveService;
         this.pathPolicy = pathPolicy;
         this.filePolicy = filePolicy;
         this.requirementsValidator = requirementsValidator;
+        this.trainingPlanRegistry = trainingPlanRegistry;
     }
 
     /** Keeps the existing Spring wiring contract while still applying requirements validation. */
@@ -44,9 +48,10 @@ public class CodeArtifactAssembler {
             CodeArtifactStorageService storageService,
             CodeZipArchiveService zipArchiveService,
             CodePathPolicy pathPolicy,
-            CodeFilePolicy filePolicy
+            CodeFilePolicy filePolicy,
+            TrainingPlanRegistry trainingPlanRegistry
     ) {
-        this(storageService, zipArchiveService, pathPolicy, filePolicy, new PythonRequirementsValidator());
+        this(storageService, zipArchiveService, pathPolicy, filePolicy, new PythonRequirementsValidator(), trainingPlanRegistry);
     }
 
     public MaterializedCodeArtifact materialize(
@@ -146,8 +151,9 @@ public class CodeArtifactAssembler {
             String profile = trimToNull(asset.getTrainingProfile());
             configured = profile == null
                     ? null
-                    : TrainingProfileRegistry.specOf(profile)
-                            .map(TrainingProfileRegistry.ProfileSpec::requiredEntryScript)
+                    : trainingPlanRegistry.find(profile, null)
+                            .map(TrainingPlanDefinition::execution)
+                            .map(TrainingPlanDefinition.Execution::entrypoint)
                             .orElse(null);
         }
         if (configured == null) {
