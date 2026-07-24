@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
+import com.tss.platform.service.JobScheduler;
 import com.tss.platform.service.TrainingModelPublishService;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
@@ -29,6 +30,7 @@ public class KubernetesTrainingJobMonitor {
     private final ShellCommandRunner shellCommandRunner;
     private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
+    private final JobScheduler jobScheduler;
 
     public KubernetesTrainingJobMonitor(
             TrainingKubernetesProperties properties,
@@ -36,7 +38,8 @@ public class KubernetesTrainingJobMonitor {
             TrainingExperimentVersionRepository repository,
             ShellCommandRunner shellCommandRunner,
             TrainingRunSpecCodec runSpecCodec,
-            TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            JobScheduler jobScheduler
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
@@ -44,6 +47,7 @@ public class KubernetesTrainingJobMonitor {
         this.shellCommandRunner = shellCommandRunner;
         this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = transactionTemplate;
+        this.jobScheduler = jobScheduler;
     }
 
     @Scheduled(fixedDelayString = "${training.kubernetes.monitor-interval-ms:30000}")
@@ -170,18 +174,14 @@ public class KubernetesTrainingJobMonitor {
                             "training-results/" + version.getId() + "/artifacts/" + modelPath
                     );
                     version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
-                } else {
-                    TrainingProfileRegistry.specOf(version.getTrainingProfile()).ifPresent(spec -> {
-                        version.setModelArtifactPath(
-                                "training-results/" + version.getId() + "/artifacts/"
-                                        + spec.producedModelArchiveName()
-                        );
-                        version.setModelPublishStatus(TrainingModelPublishService.STATUS_PENDING);
-                    });
                 }
             }
             version.setUpdatedAt(Instant.now());
             repository.save(version);
+            String nodeName = version.getServerIp();
+            if (nodeName != null) {
+                jobScheduler.releaseResources(trainingId, nodeName);
+            }
             LOG.info("训练任务因 K8s Job 成功而同步为 success: id={}", trainingId);
         }));
     }
@@ -197,6 +197,10 @@ public class KubernetesTrainingJobMonitor {
             version.setFinishedAt(Instant.now());
             version.setUpdatedAt(Instant.now());
             repository.save(version);
+            String nodeName = version.getServerIp();
+            if (nodeName != null) {
+                jobScheduler.releaseResources(trainingId, nodeName);
+            }
             LOG.warn("训练任务同步为 failed: id={}, reason={}", trainingId, errorMessage);
         }));
     }

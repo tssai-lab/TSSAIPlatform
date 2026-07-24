@@ -70,9 +70,9 @@ parameters:
     maximum: 1
 
 runtimes:
-  - id: pytorch-cuda12
+  - id: cv-gpu
     deviceType: NVIDIA_GPU
-    image: tss-pytorch-cuda12-py311:local
+    image: tss-cv-worker:local
     imagePullPolicy: IfNotPresent
     productionDigestRequired: true
     resourceProfiles:

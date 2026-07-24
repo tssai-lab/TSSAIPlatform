@@ -121,7 +121,7 @@ python scripts/training/train_fusion_baseline.py \
 
 定义位置：
 
-- 后端：`TrainingProfileRegistry.java`
+- 后端：YAML 训练方案（`TrainingPlanRegistry` 加载，见 `training-plans/`）
 - Worker：`k8s/training-worker/train.py` 中 `PROFILE_COMMANDS`
 
 ### 重要行为说明
@@ -435,7 +435,7 @@ print("OK: fusion_model.pkl reproduces test_predictions.csv")
 |--------|------|------|
 | ★★★ | `k8s/training-worker/train.py` | Worker：下载 code/data/model、固定命令、上传产物、MLflow REST、回调 |
 | ★★★ | 代码包内 `scripts/training/train_fusion_baseline.py` | 特征工程、训练、写 pkl/csv/json（种子包：`consistency_test_code.zip`） |
-| ★★☆ | `backend/.../training/TrainingProfileRegistry.java` | profile 白名单、固定命令、产物文件名 |
+| ★★☆ | `backend/.../training/plan/TrainingPlanRegistry.java` | YAML 训练方案注册表（plan 白名单、命令、产物） |
 | ★★☆ | `backend/.../service/TrainingExperimentService.java` | CreateTask、`baseModelVersionId`、启动训练 |
 | ★★☆ | `backend/.../training/KubernetesTrainingExecutor.java` | 提交 K8s Job、注入 modelVersion |
 | ★★☆ | `backend/.../training/KubernetesJobManifestBuilder.java` | Job YAML + env |

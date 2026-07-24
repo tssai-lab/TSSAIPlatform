@@ -30,7 +30,8 @@ public class KubernetesJobManifestBuilder {
             TrainingExperimentVersion task,
             String minioAccessKey,
             String minioSecretKey,
-            String minioBucket
+            String minioBucket,
+            String targetNodeName
     ) {
         TrainingRunSpec runSpec = runSpecCodec.decode(task);
         String jobName = KubernetesJobNaming.jobNameForTraining(task.getId());
@@ -62,7 +63,11 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 6, "serviceAccountName: " + properties.getServiceAccount());
         line(yaml, 6, "automountServiceAccountToken: false");
         line(yaml, 6, "restartPolicy: Never");
-        appendNodeSelector(yaml, runSpec.resources().nodeSelector());
+        if (targetNodeName != null && !targetNodeName.isBlank()) {
+            line(yaml, 6, "nodeName: " + targetNodeName);
+        } else {
+            appendNodeSelector(yaml, runSpec.resources().nodeSelector());
+        }
         line(yaml, 6, "securityContext:");
         line(yaml, 8, "runAsNonRoot: " + runSpec.security().runAsNonRoot());
         line(yaml, 8, "runAsUser: 10001");

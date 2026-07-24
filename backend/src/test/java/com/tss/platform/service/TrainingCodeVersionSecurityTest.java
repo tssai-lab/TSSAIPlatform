@@ -16,7 +16,6 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
-import com.tss.platform.training.TrainingProfileRegistry;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
@@ -48,6 +47,7 @@ class TrainingCodeVersionSecurityTest {
     private CodeArtifactResolver codeArtifactResolver;
 
     private TrainingExperimentService trainingExperimentService;
+    private TrainingRunSpecFactory trainingRunSpecFactory;
     private DatasetVersionRepository datasetVersionRepo;
     private DatasetAssetRepository datasetAssetRepo;
     private ModelVersionRepository modelVersionRepo;
@@ -75,6 +75,7 @@ class TrainingCodeVersionSecurityTest {
         datasetAssetRepo = mock(DatasetAssetRepository.class);
         modelVersionRepo = mock(ModelVersionRepository.class);
         modelAssetRepo = mock(ModelAssetRepository.class);
+        trainingRunSpecFactory = mock(TrainingRunSpecFactory.class);
         trainingExperimentService = new TrainingExperimentService(
                 mock(TrainingExperimentVersionRepository.class),
                 modelVersionRepo,
@@ -84,9 +85,10 @@ class TrainingCodeVersionSecurityTest {
                 codeVersionRepo,
                 codeAssetRepo,
                 codeVersionService,
-                mock(TrainingRunSpecFactory.class),
+                trainingRunSpecFactory,
                 mock(TrainingOutputValidator.class),
                 mock(TrainingExecutorRouter.class),
+                mock(JobScheduler.class),
                 new ObjectMapper(),
                 authContext
         );
@@ -135,7 +137,7 @@ class TrainingCodeVersionSecurityTest {
     @Test
     void trainingCheckRevalidatesButNeverApproves() {
         CodeVersion pending = readyCodeVersion("code-ver-pending", CodeApprovalStatus.PENDING);
-        pending.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        pending.setTrainingProfile("image_text_consistency_fusion_logreg");
         when(codeValidationService.validateVersion(pending.getId())).thenReturn(
                 new CodeValidationResult(
                         CodeArtifactAssembler.POLICY_VERSION,
@@ -158,7 +160,7 @@ class TrainingCodeVersionSecurityTest {
 
         var result = codeVersionService.trainingCheck(
                 pending.getId(),
-                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG
+                "image_text_consistency_fusion_logreg"
         );
 
         assertEquals(true, result.getPassed());
@@ -186,7 +188,7 @@ class TrainingCodeVersionSecurityTest {
                 CodeAssetAccessException.class,
                 () -> codeVersionService.trainingCheck(
                         "owner-7-version",
-                        TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG
+                        "image_text_consistency_fusion_logreg"
                 )
         );
 
@@ -249,14 +251,14 @@ class TrainingCodeVersionSecurityTest {
     void missingBaseModelVersionRejectedOnCreateExperiment() {
         CodeVersion approved = readyCodeVersion("code-ver-approved", CodeApprovalStatus.APPROVED);
         CodeAsset asset = codeAsset("asset-1");
-        asset.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        asset.setTrainingProfile("image_text_consistency_fusion_logreg");
         when(codeVersionRepo.findByIdAndDeletedFalse(approved.getId())).thenReturn(Optional.of(approved));
         when(codeAssetRepo.findByIdAndDeletedFalse(approved.getAssetId())).thenReturn(Optional.of(asset));
 
         CreateTrainingExperimentRequest req = new CreateTrainingExperimentRequest();
         req.setCodeVersionId(approved.getId());
         req.setDatasetVersionId("dataset-ver-1");
-        req.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        req.setTrainingProfile("image_text_consistency_fusion_logreg");
         req.setHyperParams(java.util.Map.of());
 
         IllegalArgumentException error = assertThrows(
@@ -271,7 +273,7 @@ class TrainingCodeVersionSecurityTest {
         CreateTrainingExperimentRequest req = new CreateTrainingExperimentRequest();
         req.setCodeVersionId("code-ver-approved");
         req.setDatasetVersionId("dataset-ver-1");
-        req.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        req.setTrainingProfile("image_text_consistency_fusion_logreg");
         req.setBaseModelVersionId("model-ver-a");
         req.setModelVersionId("model-ver-b");
         req.setHyperParams(java.util.Map.of());
@@ -293,45 +295,49 @@ class TrainingCodeVersionSecurityTest {
         when(codeAssetRepo.findByIdAndDeletedFalse(approved.getAssetId())).thenReturn(Optional.of(asset));
         when(modelVersionRepo.findByIdAndDeletedFalse(modelVersion.getId())).thenReturn(Optional.of(modelVersion));
         when(modelAssetRepo.findByIdAndDeletedFalse(modelVersion.getAssetId())).thenReturn(Optional.of(modelAsset()));
+        when(trainingRunSpecFactory.create(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new IllegalArgumentException("code trainingProfile does not match selected plan"));
 
         CreateTrainingExperimentRequest req = new CreateTrainingExperimentRequest();
         req.setCodeVersionId(approved.getId());
         req.setDatasetVersionId("dataset-ver-1");
         req.setBaseModelVersionId(modelVersion.getId());
-        req.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        req.setTrainingProfile("image_text_consistency_fusion_logreg");
         req.setHyperParams(java.util.Map.of());
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> trainingExperimentService.createExperiment(req)
         );
-        assertEquals("trainingProfile 与代码资产不匹配", error.getMessage());
+        assertEquals("code trainingProfile does not match selected plan", error.getMessage());
     }
 
     @Test
     void missingDatasetVersionRejectedOnCreateExperiment() {
         CodeVersion approved = readyCodeVersion("code-ver-approved", CodeApprovalStatus.APPROVED);
         CodeAsset asset = codeAsset("asset-1");
-        asset.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        asset.setTrainingProfile("image_text_consistency_fusion_logreg");
         ModelVersion modelVersion = readyModelVersion("model-ver-1");
         when(codeVersionRepo.findByIdAndDeletedFalse(approved.getId())).thenReturn(Optional.of(approved));
         when(codeAssetRepo.findByIdAndDeletedFalse(approved.getAssetId())).thenReturn(Optional.of(asset));
         when(modelVersionRepo.findByIdAndDeletedFalse(modelVersion.getId())).thenReturn(Optional.of(modelVersion));
         when(modelAssetRepo.findByIdAndDeletedFalse(modelVersion.getAssetId())).thenReturn(Optional.of(modelAsset()));
         when(datasetVersionRepo.findByIdAndDeletedFalse("missing-dataset")).thenReturn(Optional.empty());
+        when(trainingRunSpecFactory.create(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new IllegalArgumentException("dataset version does not exist"));
 
         CreateTrainingExperimentRequest req = new CreateTrainingExperimentRequest();
         req.setCodeVersionId(approved.getId());
         req.setDatasetVersionId("missing-dataset");
         req.setBaseModelVersionId(modelVersion.getId());
-        req.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        req.setTrainingProfile("image_text_consistency_fusion_logreg");
         req.setHyperParams(java.util.Map.of());
 
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class,
                 () -> trainingExperimentService.createExperiment(req)
         );
-        assertEquals("数据集版本不存在: missing-dataset", error.getMessage());
+        assertEquals("dataset version does not exist", error.getMessage());
     }
 
     private static CodeVersion readyCodeVersion(String id, String approvalStatus) {
@@ -350,7 +356,7 @@ class TrainingCodeVersionSecurityTest {
         CodeAsset asset = new CodeAsset();
         asset.setId(id);
         asset.setName("Code asset");
-        asset.setTrainingProfile(TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG);
+        asset.setTrainingProfile("image_text_consistency_fusion_logreg");
         asset.setOwnerUserId(1);
         asset.setDeleted(false);
         return asset;
@@ -383,7 +389,7 @@ class TrainingCodeVersionSecurityTest {
                 "python:3.11",
                 "train.py",
                 "NLP",
-                TrainingProfileRegistry.IMAGE_TEXT_CONSISTENCY_FUSION_LOGREG,
+                "image_text_consistency_fusion_logreg",
                 "a".repeat(64),
                 "validation-1",
                 CodeArtifactAssembler.POLICY_VERSION,

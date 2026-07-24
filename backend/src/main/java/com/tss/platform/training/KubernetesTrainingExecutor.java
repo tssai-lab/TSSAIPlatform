@@ -91,7 +91,8 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
         try {
             TrainingExperimentVersion task = repository.findById(trainingId)
                     .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
-            String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket);
+            String targetNode = task.getServerIp();
+            String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket, targetNode);
             Path kubeconfig = environmentService.resolveKubeconfig();
             List<String> applyCmd = environmentService.kubectlCommand(kubeconfig, "apply", "-f", "-");
             ShellCommandRunner.CommandResult result = runWithStdin(

@@ -46,9 +46,9 @@ parameters:
     maximum: 1
 
 runtimes:
-  - id: cpu
+  - id: nlp-cpu
     deviceType: CPU
-    image: tss-training-worker:local
+    image: tss-nlp-worker:local
     imagePullPolicy: IfNotPresent
     productionDigestRequired: true
     resourceProfiles:
