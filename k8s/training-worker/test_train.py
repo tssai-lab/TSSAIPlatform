@@ -169,6 +169,27 @@ class GenericTrainingWorkerTest(unittest.TestCase):
                 self.assertEqual(["best.bin"], archive.namelist())
                 self.assertEqual(b"trained-model", archive.read("best.bin"))
 
+    def test_multifile_model_archive_uses_archive_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            model_zip = Path(temp) / "hf-model.zip"
+            with zipfile.ZipFile(model_zip, "w") as archive:
+                archive.writestr("config.json", "{}")
+                archive.writestr("model.safetensors", b"weights")
+            archive_digest = worker.sha256_file(model_zip)
+
+            callback = worker.legacy_model_callback(
+                {
+                    "sha256": archive_digest,
+                    "objectName": "training-results/train-1/artifacts/hf-model.zip",
+                    "format": "HF_MODEL_ARCHIVE",
+                    "sizeBytes": model_zip.stat().st_size,
+                },
+                model_zip,
+            )
+
+            self.assertEqual("hf-model.zip", callback["modelFileName"])
+            self.assertEqual(archive_digest, callback["sha256"])
+
     def test_progress_event_is_data_not_code(self):
         event = worker.parse_training_event(
             'TSS_EVENT {"type":"progress","progress":42,"message":"epoch"}'

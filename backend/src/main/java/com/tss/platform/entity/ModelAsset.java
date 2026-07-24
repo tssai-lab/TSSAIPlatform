@@ -28,6 +28,9 @@ public class ModelAsset {
     @Column(name = "remark", length = 1024)
     private String remark;
 
+    @Column(name = "current_version_id", length = 64)
+    private String currentVersionId;
+
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 

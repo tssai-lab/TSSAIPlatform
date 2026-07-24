@@ -193,8 +193,6 @@ public class SingleModalImportPlanBuilder {
             case "xml" -> new FileDescriptor("TEXT", extension, "application/xml");
             case "yaml", "yml" ->
                     new FileDescriptor("TEXT", extension, "application/yaml");
-            case "jpg", "jpeg", "png", "bmp", "gif", "webp", "tif", "tiff" ->
-                    describeCvFile(extension, path);
             default -> unsupported(extension, path);
         };
     }

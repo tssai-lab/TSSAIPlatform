@@ -8,6 +8,7 @@ import com.tss.platform.entity.InferenceScriptAsset;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.repository.InferenceScriptAssetRepository;
 import com.tss.platform.repository.InferenceScriptVersionRepository;
+import com.tss.platform.repository.InferenceTaskRepository;
 import com.tss.platform.security.AuthContext;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,9 +30,11 @@ public class InferenceScriptService {
 
     private static final String RUNTIME_PYTHON3 = "PYTHON3";
     private static final String STATUS_READY = "READY";
+    private static final String SOURCE_INFERENCE_SCRIPT_VERSION = "INFERENCE_SCRIPT_VERSION";
 
     private final InferenceScriptAssetRepository assetRepo;
     private final InferenceScriptVersionRepository versionRepo;
+    private final InferenceTaskRepository taskRepo;
     private final MinioService minioService;
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
@@ -39,6 +43,7 @@ public class InferenceScriptService {
     public InferenceScriptService(
             InferenceScriptAssetRepository assetRepo,
             InferenceScriptVersionRepository versionRepo,
+            InferenceTaskRepository taskRepo,
             MinioService minioService,
             MinioDeleteTaskService minioDeleteTaskService,
             AuthContext authContext,
@@ -46,6 +51,7 @@ public class InferenceScriptService {
     ) {
         this.assetRepo = assetRepo;
         this.versionRepo = versionRepo;
+        this.taskRepo = taskRepo;
         this.minioService = minioService;
         this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
@@ -166,6 +172,46 @@ public class InferenceScriptService {
         return toDto(version, asset);
     }
 
+    @Transactional
+    public Map<String, Object> deleteScriptVersion(String versionId) {
+        InferenceScriptVersion version = versionRepo.findByIdAndDeletedFalse(requireText(versionId, "scriptVersionId 不能为空"))
+                .orElseThrow(() -> new IllegalArgumentException("推理脚本版本不存在"));
+        InferenceScriptAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId()).orElse(null);
+        Integer ownerUserId = version.getOwnerUserId();
+        if (ownerUserId == null && asset != null) {
+            ownerUserId = asset.getOwnerUserId();
+        }
+        authContext.requireOwnerAccess(ownerUserId, "推理脚本版本不存在或无权限");
+
+        long taskReferences = taskRepo.countByScriptVersionId(version.getId());
+        if (taskReferences > 0) {
+            throw new IllegalArgumentException("推理脚本版本已被推理任务引用，不能删除");
+        }
+
+        boolean minioDeleteQueued = queueScriptFileDelete(version, ownerUserId);
+        Instant now = Instant.now();
+        version.setDeleted(true);
+        version.setDeletedAt(now);
+        versionRepo.save(version);
+
+        boolean assetDeleted = false;
+        if (asset != null && versionRepo.countByAssetIdAndDeletedFalse(asset.getId()) == 0) {
+            asset.setDeleted(true);
+            asset.setDeletedAt(now);
+            asset.setUpdatedAt(now);
+            assetRepo.save(asset);
+            assetDeleted = true;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", version.getId());
+        result.put("assetId", version.getAssetId());
+        result.put("deleted", true);
+        result.put("assetDeleted", assetDeleted);
+        result.put("minioDeleteQueued", minioDeleteQueued);
+        return result;
+    }
+
     @Transactional(readOnly = true)
     public InferenceScriptVersion requireAccessibleVersion(String versionId) {
         InferenceScriptVersion version = versionRepo.findByIdAndDeletedFalse(requireText(versionId, "scriptVersionId 不能为空"))
@@ -259,6 +305,46 @@ public class InferenceScriptService {
         } catch (Exception ignored) {
             // Preserve the original error path.
         }
+    }
+
+    private boolean queueScriptFileDelete(InferenceScriptVersion version, Integer ownerUserId) {
+        String objectName = minioPathToObjectName(version.getStoragePath());
+        if (objectName == null) {
+            return false;
+        }
+        try {
+            minioDeleteTaskService.enqueueDefaultBucketDelete(
+                    objectName,
+                    SOURCE_INFERENCE_SCRIPT_VERSION,
+                    version.getId(),
+                    ownerUserId
+            );
+            return true;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("创建推理脚本文件删除任务失败: " + e.getMessage());
+        }
+    }
+
+    private String minioPathToObjectName(String value) {
+        String normalized = normalizeText(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.startsWith("minio://")) {
+            normalized = normalized.substring("minio://".length());
+        }
+        String objectName = cleanObjectName(normalized);
+        return objectName.isBlank() ? null : objectName;
+    }
+
+    private String cleanObjectName(String objectName) {
+        String normalized = objectName.replace('\\', '/').replaceAll("^/+", "");
+        for (String part : normalized.split("/")) {
+            if (".".equals(part) || "..".equals(part) || part.contains("\u0000")) {
+                throw new IllegalArgumentException("objectName 非法");
+            }
+        }
+        return normalized;
     }
 
     private String sanitizeSegment(String value) {

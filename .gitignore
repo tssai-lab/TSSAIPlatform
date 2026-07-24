@@ -257,3 +257,9 @@ __marimo__/
 .DS_Store
 
  
+# --- 閮ㄧ讲浜х墿涓庢湰鍦板浠?涓嶅叆搴?---
+/backups/
+/docs/
+/frontend/
+/frontend-deploy-backups/
+/frontend-deploy-version

@@ -295,6 +295,10 @@ public class TrainingModelPublishService {
                 || !Objects.equals(modelVersion.getArtifactSha256(), artifact.sha256())) {
             throw new IllegalStateException("published model version does not match the training artifact");
         }
+        asset.setCurrentVersionId(modelVersionId);
+        asset.setUpdatedAt(now);
+        modelAssetRepo.saveAndFlush(asset);
+
         training.setProducedModelVersionId(modelVersionId);
         training.setModelPublishStatus(STATUS_PUBLISHED);
         training.setModelPublishError(null);
@@ -516,6 +520,10 @@ public class TrainingModelPublishService {
                 throw new IllegalStateException("已有训练模型版本与当前任务不一致");
             }
         }
+
+        asset.setCurrentVersionId(modelVersionId);
+        asset.setUpdatedAt(now);
+        modelAssetRepo.saveAndFlush(asset);
 
         training.setProducedModelVersionId(modelVersionId);
         training.setModelPublishStatus(STATUS_PUBLISHED);

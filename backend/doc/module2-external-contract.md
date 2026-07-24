@@ -147,6 +147,10 @@ scheduler_lock row
 | `remark` | 备注 |
 | `fileName` | 原始文件名 |
 | `sizeBytes` | 文件大小 |
+| `artifactSha256` | 服务端读取完整对象后计算的 SHA-256 |
+| `commitInfo` | 本次模型提交信息 |
+| `hyperParams` | 模型超参数对象，未提供时为 `{}` |
+| `isCurrent` | 该版本是否为资产当前版本 |
 | `status` | 上传状态 |
 | `ownerUserId` | 资源归属用户 ID |
 | `createdAt` | 创建时间 |
@@ -158,12 +162,16 @@ scheduler_lock row
 
 ```text
 模型文件只支持 .zip
-complete 时 uploadId、modelName、version、type、remark 都不能为空
+init 时 commitInfo 必填，去除首尾空白后长度为 1～1024；hyperParams 可选且默认为 {}
+complete 时 uploadId、modelName、version、type、remark、commitInfo 都不能为空
 type 仅支持 CV、NLP、POINT_CLOUD 或 ROBOT
 zip 必须是合法且非空的压缩包
 zip 内路径可以使用 / 或 \，后端统一规范化为 /；规范化后不能包含绝对路径、盘符、.. 或空字节
+zip 内规范化路径必须唯一，并拒绝文件/目录冲突
 zip 条目数不超过 100000，解压后总体积不超过 50GB
 ```
+
+完成上传时，后端会检查 MinIO 对象存在性、实际长度并完整计算 SHA-256；只有检查和 ZIP 校验全部成功才创建或提升 `READY` 版本。每次成功上传的 `READY` 版本自动成为 `model_asset.currentVersionId`。
 
 ### 5.2 模型查询
 
@@ -188,15 +196,43 @@ zip 条目数不超过 100000，解压后总体积不超过 50GB
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 模型版本 ID |
+| `assetId` | 模型资产 ID |
 | `name` | 模型名称 |
 | `version` | 模型版本号 |
-| `type` | `CV` 或 `NLP` |
+| `type` | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `remark` | 备注 |
 | `ownerUserId` | 归属用户 |
 | `sizeBytes` | 文件大小 |
+| `artifactSha256` | 制品 SHA-256；尚未校验的历史版本可为空 |
+| `commitInfo` | 提交信息；历史版本可为空 |
+| `hyperParams` | 模型超参数对象 |
+| `status` | `DRAFT`、`READY`、`DEPRECATED` 或 `ARCHIVED` |
+| `isCurrent` | 是否为资产当前版本 |
 | `createdAt` | 创建时间 |
 
 说明：当前响应中可能包含 `storagePath`，但其他模块不要将其作为长期契约使用。
+
+### 5.3 模型版本生命周期与稳定消费接口
+
+- `POST /api/model-versions` 只创建 `DRAFT` 元数据版本，不接受 `status`、存储路径、文件名、大小、摘要、发布时间等服务端字段；提交这些字段返回 HTTP `400`。
+- `PUT /api/model-versions/{id}` 只允许补录版本号、说明、变更信息、`commitInfo` 和 `hyperParams`，不能修改资产归属、状态或制品字段。
+- `PUT /api/model-assets/{assetId}/current-version` 是兼容切换接口；正式 V2 路径为 `PUT /api/v2/model-assets/{assetId}/current-version`，请求体均为 `{"versionId":"..."}`。
+- 切换目标必须属于同一资产、未删除、状态为 `READY`，并通过实时对象长度和 SHA-256 校验。
+- 当前版本不能废弃、归档或通过版本接口删除。一个资产的最后一个未删除版本也不能通过版本接口删除，只能随资产删除；其他版本仍受训练引用检查。
+- `DELETE /api/model/delete` 与 `DELETE /api/model-versions/{id}` 共用同一生命周期服务。
+
+稳定消费接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v2/model-versions/{modelVersionId}/consumer-manifest` | 返回模型版本稳定消费清单 |
+| `GET` | `/api/v2/model-versions/{modelVersionId}/download` | 按模型版本下载制品 |
+| `GET` | `/api/v2/model-versions/{modelVersionId}/files` | 返回模型 ZIP 文件树 |
+| `GET` | `/api/v2/model-versions/{modelVersionId}/files/content?path=...` | 预览允许的文本文件 |
+
+`consumer-manifest` 固定返回 `modelAssetId`、`modelVersionId`、`version`、`status`、`type`、`fileName`、`sizeBytes`、`artifactSha256`、`commitInfo`、`hyperParams`、`isCurrent`、`downloadUrl`、`filesUrl`，不返回 bucket、`storagePath`、objectName 或签名 URL。
+
+上述 V2 接口每次调用前都会重新读取完整对象并核对长度与 SHA-256。历史 `READY` 版本摘要为空且对象有效时会原子回填；对象缺失、长度不符或摘要不符返回 `422 / MODEL_ARTIFACT_INVALID`，并将确定损坏版本降为 `DRAFT`、清除对应当前指针。MinIO 临时不可用返回 `503 / MODEL_STORAGE_UNAVAILABLE`，不修改版本状态。
 
 ## 6. 数据集边界
 

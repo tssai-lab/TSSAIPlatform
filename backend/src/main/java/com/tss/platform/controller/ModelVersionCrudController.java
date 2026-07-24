@@ -1,22 +1,30 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.dto.ModelVersionCreateRequest;
+import com.tss.platform.dto.ModelVersionUpdateRequest;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
-import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
-import com.tss.platform.service.MinioDeleteTaskService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.*;
+import com.tss.platform.service.ModelVersionLifecycleService;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,161 +36,157 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/model-versions")
 public class ModelVersionCrudController {
 
-    private static final Logger log = LoggerFactory.getLogger(ModelVersionCrudController.class);
-    private static final String STATUS_READY = "READY";
     private static final String STATUS_DRAFT = "DRAFT";
-    private static final String STATUS_DEPRECATED = "DEPRECATED";
-    private static final String STATUS_ARCHIVED = "ARCHIVED";
-    private static final Set<String> VALID_STATUSES = Set.of(
-            STATUS_DRAFT,
-            STATUS_READY,
-            STATUS_DEPRECATED,
-            STATUS_ARCHIVED
-    );
 
     private final ModelVersionRepository repo;
     private final ModelAssetRepository assetRepo;
-    private final TrainingExperimentVersionRepository trainingRepo;
-    private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
+    private final ModelVersionLifecycleService lifecycleService;
 
     public ModelVersionCrudController(
             ModelVersionRepository repo,
             ModelAssetRepository assetRepo,
-            TrainingExperimentVersionRepository trainingRepo,
-            MinioDeleteTaskService minioDeleteTaskService,
-            AuthContext authContext
+            AuthContext authContext,
+            ModelVersionLifecycleService lifecycleService
     ) {
         this.repo = repo;
         this.assetRepo = assetRepo;
-        this.trainingRepo = trainingRepo;
-        this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
+        this.lifecycleService = lifecycleService;
     }
 
     @PostMapping
-    public ApiResponse<ModelVersion> create(@RequestBody ModelVersion body) {
-        if (body.getAssetId() == null || body.getAssetId().isBlank()) {
+    public ApiResponse<ModelVersion> create(@RequestBody ModelVersionCreateRequest body) {
+        if (body == null) {
+            return ApiResponse.fail("request body cannot be empty");
+        }
+        if (hasCreateServerManagedFields(body)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "status and artifact fields are managed by the upload service"
+            );
+        }
+        String assetId = normalize(body.getAssetId());
+        String versionName = normalize(body.getVersion());
+        if (assetId == null) {
             return ApiResponse.fail("assetId cannot be empty");
         }
-        if (body.getVersion() == null || body.getVersion().isBlank()) {
+        if (versionName == null) {
             return ApiResponse.fail("version cannot be empty");
         }
-        body.setAssetId(body.getAssetId().trim());
-        body.setVersion(body.getVersion().trim());
-        body.setId("model-ver-" + UUID.randomUUID().toString().replace("-", ""));
-        Integer ownerUserId = resolveAssetOwner(body.getAssetId());
-        if (!authContext.canAccessOwner(ownerUserId)) {
-            return ApiResponse.fail("no permission for asset: " + body.getAssetId());
+        ModelAsset asset = assetRepo.findByIdAndDeletedFalse(assetId).orElse(null);
+        if (asset == null || !authContext.canAccessOwner(asset.getOwnerUserId())) {
+            return ApiResponse.fail("not found or no permission: " + assetId);
         }
-        if (!authContext.isAdmin() && hasStorageMetadata(body)) {
-            return ApiResponse.fail("storage metadata can only be generated by upload service");
+        if (repo.existsByAssetIdAndVersion(assetId, versionName)) {
+            return ApiResponse.fail("model version already exists for asset: " + assetId);
         }
-        if (repo.existsByAssetIdAndVersion(body.getAssetId(), body.getVersion())) {
-            return ApiResponse.fail("model version already exists for asset: " + body.getAssetId());
+        String commitInfo = normalize(body.getCommitInfo());
+        if (commitInfo != null && commitInfo.length() > 1024) {
+            return ApiResponse.fail("commitInfo length cannot exceed 1024");
         }
-        body.setOwnerUserId(ownerUserId != null ? ownerUserId : authContext.currentUserId());
-        if (body.getCreatedAt() == null) {
-            body.setCreatedAt(Instant.now());
-        }
-        body.setCreatedBy(authContext.currentUserId());
-        try {
-            body.setStatus(normalizeStatus(body.getStatus(), STATUS_READY));
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.fail(e.getMessage());
-        }
-        publishIfReady(body);
-        body.setDeleted(false);
-        body.setDeletedAt(null);
-        return ApiResponse.ok(repo.save(body));
+
+        ModelVersion version = new ModelVersion();
+        version.setId("model-ver-" + UUID.randomUUID().toString().replace("-", ""));
+        version.setAssetId(assetId);
+        version.setVersion(versionName);
+        version.setDescription(body.getDescription());
+        version.setChangeLog(body.getChangeLog());
+        version.setCommitInfo(commitInfo);
+        version.setHyperParams(copyMap(body.getHyperParams()));
+        version.setOwnerUserId(asset.getOwnerUserId());
+        version.setCreatedBy(authContext.currentUserId());
+        version.setCreatedAt(Instant.now());
+        version.setStatus(STATUS_DRAFT);
+        version.setDeleted(false);
+        version.setDeletedAt(null);
+        version.setCurrent(false);
+        return ApiResponse.ok(repo.save(version));
     }
 
     @GetMapping("/{id}")
     public ApiResponse<ModelVersion> get(@PathVariable String id) {
-        Optional<ModelVersion> v = repo.findByIdAndDeletedFalse(id);
-        if (v.isEmpty() || !authContext.canAccessOwner(effectiveOwner(v.get()))) {
+        Optional<ModelVersion> found = repo.findByIdAndDeletedFalse(id);
+        if (found.isEmpty() || !authContext.canAccessOwner(effectiveOwner(found.get()))) {
             return ApiResponse.fail("not found or no permission: " + id);
         }
-        return ApiResponse.ok(v.get());
+        return ApiResponse.ok(markCurrent(found.get()));
     }
 
     @GetMapping
-    public ApiResponse<List<ModelVersion>> list(@RequestParam(value = "assetId", required = false) String assetId) {
+    public ApiResponse<List<ModelVersion>> list(
+            @RequestParam(value = "assetId", required = false) String assetId
+    ) {
+        List<ModelVersion> versions;
         if (assetId != null && !assetId.isBlank()) {
-            if (authContext.isAdmin()) {
-                return ApiResponse.ok(repo.findByAssetIdAndDeletedFalse(assetId));
-            }
-            if (!authContext.canAccessOwner(resolveAssetOwner(assetId))) {
+            ModelAsset asset = assetRepo.findByIdAndDeletedFalse(assetId).orElse(null);
+            if (asset == null || !authContext.canAccessOwner(asset.getOwnerUserId())) {
                 return ApiResponse.fail("not found or no permission: " + assetId);
             }
-            return ApiResponse.ok(repo.findByAssetIdAndDeletedFalse(assetId));
+            versions = repo.findByAssetIdAndDeletedFalse(assetId);
+            versions.forEach(version -> version.setCurrent(
+                    Objects.equals(asset.getCurrentVersionId(), version.getId())
+            ));
+            return ApiResponse.ok(versions);
         }
         if (authContext.isAdmin()) {
-            return ApiResponse.ok(repo.findByDeletedFalse());
+            versions = repo.findByDeletedFalse();
+        } else {
+            Set<String> assetIds = assetRepo
+                    .findByOwnerUserIdAndDeletedFalse(authContext.currentUserId())
+                    .stream()
+                    .map(ModelAsset::getId)
+                    .filter(value -> value != null && !value.isBlank())
+                    .collect(Collectors.toSet());
+            versions = assetIds.isEmpty()
+                    ? List.of()
+                    : repo.findByAssetIdInAndDeletedFalse(assetIds);
         }
-        Set<String> assetIds = assetRepo.findByOwnerUserIdAndDeletedFalse(authContext.currentUserId())
-                .stream()
-                .map(ModelAsset::getId)
-                .filter(id -> id != null && !id.isBlank())
-                .collect(Collectors.toSet());
-        return ApiResponse.ok(assetIds.isEmpty() ? List.of() : repo.findByAssetIdInAndDeletedFalse(assetIds));
+        versions.forEach(this::markCurrent);
+        return ApiResponse.ok(versions);
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<ModelVersion> update(@PathVariable String id, @RequestBody ModelVersion body) {
+    public ApiResponse<ModelVersion> update(
+            @PathVariable String id,
+            @RequestBody ModelVersionUpdateRequest body
+    ) {
+        if (body == null) {
+            return ApiResponse.fail("request body cannot be empty");
+        }
         Optional<ModelVersion> existing = repo.findByIdAndDeletedFalse(id);
-        if (existing.isEmpty()) {
-            return ApiResponse.fail("未找到: " + id);
+        if (existing.isEmpty() || !authContext.canAccessOwner(effectiveOwner(existing.get()))) {
+            return ApiResponse.fail("not found or no permission: " + id);
         }
-        ModelVersion e = existing.get();
-        if (!authContext.canAccessOwner(effectiveOwner(e))) {
-            return ApiResponse.fail("no permission: " + id);
+        if (hasUpdateServerManagedFields(body)) {
+            return ApiResponse.fail("asset, status and artifact fields cannot be modified");
         }
-        String targetAssetId = body.getAssetId() == null || body.getAssetId().isBlank()
-                ? e.getAssetId()
-                : body.getAssetId().trim();
-        if (body.getVersion() == null || body.getVersion().isBlank()) {
+        ModelVersion version = existing.get();
+        String targetVersion = normalize(body.getVersion());
+        if (targetVersion == null) {
             return ApiResponse.fail("version cannot be empty");
         }
-        String targetVersion = body.getVersion().trim();
-        if (!authContext.isAdmin() && !Objects.equals(targetAssetId, e.getAssetId())) {
-            return ApiResponse.fail("assetId cannot be modified");
+        if (repo.existsByAssetIdAndVersionAndIdNot(
+                version.getAssetId(),
+                targetVersion,
+                id
+        )) {
+            return ApiResponse.fail(
+                    "model version already exists for asset: " + version.getAssetId()
+            );
         }
-        if (!authContext.isAdmin() && storageMetadataChanged(e, body)) {
-            return ApiResponse.fail("storage metadata cannot be modified");
+        String commitInfo = normalize(body.getCommitInfo());
+        if (commitInfo != null && commitInfo.length() > 1024) {
+            return ApiResponse.fail("commitInfo length cannot exceed 1024");
         }
-        Integer ownerUserId = resolveAssetOwner(targetAssetId);
-        if (!authContext.canAccessOwner(ownerUserId)) {
-            return ApiResponse.fail("no permission for asset: " + targetAssetId);
+        version.setVersion(targetVersion);
+        version.setDescription(body.getDescription());
+        version.setChangeLog(body.getChangeLog());
+        version.setCommitInfo(commitInfo);
+        if (body.getHyperParams() != null) {
+            version.setHyperParams(copyMap(body.getHyperParams()));
         }
-        if (repo.existsByAssetIdAndVersionAndIdNot(targetAssetId, targetVersion, id)) {
-            return ApiResponse.fail("model version already exists for asset: " + targetAssetId);
-        }
-        e.setAssetId(targetAssetId);
-        e.setVersion(targetVersion);
-        if (authContext.isAdmin()) {
-            if (body.getFileName() != null) {
-                e.setFileName(body.getFileName());
-            }
-            if (body.getStoragePath() != null) {
-                e.setStoragePath(body.getStoragePath());
-            }
-            if (body.getSizeBytes() != null) {
-                e.setSizeBytes(body.getSizeBytes());
-            }
-        }
-        e.setDescription(body.getDescription());
-        e.setChangeLog(body.getChangeLog());
-        if (body.getStatus() != null && !body.getStatus().isBlank()) {
-            try {
-                e.setStatus(normalizeStatus(body.getStatus(), e.getStatus()));
-            } catch (IllegalArgumentException ex) {
-                return ApiResponse.fail(ex.getMessage());
-            }
-            publishIfReady(e);
-        }
-        e.setOwnerUserId(ownerUserId != null ? ownerUserId : e.getOwnerUserId());
-        return ApiResponse.ok(repo.save(e));
+        return ApiResponse.ok(markCurrent(repo.save(version)));
     }
 
     @PatchMapping("/{id}/status")
@@ -190,125 +194,78 @@ public class ModelVersionCrudController {
             @PathVariable String id,
             @RequestBody Map<String, String> body
     ) {
-        Optional<ModelVersion> existing = repo.findByIdAndDeletedFalse(id);
-        if (existing.isEmpty()) {
-            return ApiResponse.fail("not found or no permission: " + id);
-        }
-        ModelVersion version = existing.get();
-        if (!authContext.canAccessOwner(effectiveOwner(version))) {
-            return ApiResponse.fail("not found or no permission: " + id);
-        }
-        String targetStatus;
         try {
-            targetStatus = normalizeStatus(body == null ? null : body.get("status"), null);
-        } catch (IllegalArgumentException e) {
-            return ApiResponse.fail(e.getMessage());
+            return ApiResponse.ok(markCurrent(lifecycleService.retire(
+                    id,
+                    body == null ? null : body.get("status")
+            )));
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.fail(exception.getMessage());
         }
-        version.setStatus(targetStatus);
-        publishIfReady(version);
-        return ApiResponse.ok(repo.save(version));
     }
 
     @DeleteMapping("/{id}")
-    @Transactional
     public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
-        Optional<ModelVersion> existing = repo.findByIdAndDeletedFalse(id);
-        if (existing.isEmpty() || !authContext.canAccessOwner(effectiveOwner(existing.get()))) {
-            return ApiResponse.fail("not found or no permission: " + id);
+        try {
+            return ApiResponse.ok(lifecycleService.deleteVersion(id));
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.fail(exception.getMessage());
         }
-        ModelVersion version = existing.get();
-        ModelAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId()).orElse(null);
-        if (asset == null) {
-            log.warn("Reject model version delete because parent asset is missing or deleted: id={}, assetId={}", id, version.getAssetId());
-            return ApiResponse.fail("model version parent asset not found or deleted: " + version.getAssetId());
-        }
-        Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
-        if (trainingRepo.countByModelVersionId(id) > 0
-                || trainingRepo.countByProducedModelVersionId(id) > 0) {
-            log.warn("Reject model version delete because it is referenced by training experiments: id={}", id);
-            return ApiResponse.fail("model version is referenced by training experiments");
-        }
-        boolean minioDeleteQueued = false;
-        String objectName = version.getStoragePath();
-        if (objectName != null && !objectName.isBlank()) {
-            try {
-                authContext.requireObjectAccess(objectName, ownerUserId, "object not found or no permission");
-                minioDeleteTaskService.enqueueDefaultBucketDelete(
-                        objectName,
-                        MinioDeleteTaskService.SOURCE_MODEL_VERSION,
-                        id,
-                        ownerUserId
-                );
-                minioDeleteQueued = true;
-            } catch (Exception e) {
-                log.warn("Reject model version delete because MinIO delete task cannot be queued: id={}, error={}", id, e.getMessage());
-                return ApiResponse.fail("创建模型版本文件删除任务失败: " + e.getMessage());
-            }
-        }
-
-        Instant now = Instant.now();
-        version.setDeleted(true);
-        version.setDeletedAt(now);
-        repo.save(version);
-        log.info(
-                "Model version soft deleted: id={}, assetId={}, minioDeleteQueued={}, ownerUserId={}",
-                id,
-                version.getAssetId(),
-                minioDeleteQueued,
-                ownerUserId
-        );
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("id", id);
-        result.put("assetId", version.getAssetId());
-        result.put("deleted", true);
-        result.put("minioDeleteQueued", minioDeleteQueued);
-        return ApiResponse.ok(result);
     }
 
-    private Integer resolveAssetOwner(String assetId) {
-        if (assetId == null || assetId.isBlank()) {
-            return null;
-        }
-        return assetRepo.findByIdAndDeletedFalse(assetId).map(ModelAsset::getOwnerUserId).orElse(null);
+    private ModelVersion markCurrent(ModelVersion version) {
+        String currentVersionId = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .map(ModelAsset::getCurrentVersionId)
+                .orElse(null);
+        version.setCurrent(Objects.equals(currentVersionId, version.getId()));
+        return version;
     }
 
     private Integer effectiveOwner(ModelVersion version) {
         if (version.getOwnerUserId() != null) {
             return version.getOwnerUserId();
         }
-        return resolveAssetOwner(version.getAssetId());
+        return assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .map(ModelAsset::getOwnerUserId)
+                .orElse(null);
     }
 
-    private boolean hasStorageMetadata(ModelVersion body) {
-        return body.getStoragePath() != null
+    private boolean hasCreateServerManagedFields(ModelVersionCreateRequest body) {
+        return body.getId() != null
+                || body.getStatus() != null
                 || body.getFileName() != null
-                || body.getSizeBytes() != null;
+                || body.getStoragePath() != null
+                || body.getSizeBytes() != null
+                || body.getArtifactSha256() != null
+                || body.getPublishedAt() != null
+                || body.getCreatedAt() != null
+                || body.getCreatedBy() != null
+                || body.getOwnerUserId() != null
+                || body.getDeleted() != null
+                || body.getDeletedAt() != null;
     }
 
-    private boolean storageMetadataChanged(ModelVersion existing, ModelVersion body) {
-        return (body.getStoragePath() != null && !body.getStoragePath().equals(existing.getStoragePath()))
-                || (body.getFileName() != null && !body.getFileName().equals(existing.getFileName()))
-                || (body.getSizeBytes() != null && !body.getSizeBytes().equals(existing.getSizeBytes()));
+    private boolean hasUpdateServerManagedFields(ModelVersionUpdateRequest body) {
+        return body.getId() != null
+                || body.getAssetId() != null
+                || body.getStatus() != null
+                || body.getFileName() != null
+                || body.getStoragePath() != null
+                || body.getSizeBytes() != null
+                || body.getArtifactSha256() != null
+                || body.getPublishedAt() != null
+                || body.getCreatedAt() != null
+                || body.getCreatedBy() != null
+                || body.getOwnerUserId() != null
+                || body.getDeleted() != null
+                || body.getDeletedAt() != null;
     }
 
-    private String normalizeStatus(String status, String defaultStatus) {
-        if (status == null || status.isBlank()) {
-            if (defaultStatus != null) {
-                return defaultStatus;
-            }
-            throw new IllegalArgumentException("status cannot be empty");
-        }
-        String normalized = status.trim().toUpperCase(Locale.ROOT);
-        if (!VALID_STATUSES.contains(normalized)) {
-            throw new IllegalArgumentException("unsupported model version status: " + status);
-        }
-        return normalized;
+    private String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private void publishIfReady(ModelVersion version) {
-        if (STATUS_READY.equals(version.getStatus()) && version.getPublishedAt() == null) {
-            version.setPublishedAt(version.getCreatedAt() != null ? version.getCreatedAt() : Instant.now());
-        }
+    private Map<String, Object> copyMap(Map<String, Object> source) {
+        return source == null ? Map.of() : new LinkedHashMap<>(source);
     }
 }

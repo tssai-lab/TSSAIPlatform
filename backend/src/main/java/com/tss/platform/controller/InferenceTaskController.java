@@ -6,6 +6,7 @@ import com.tss.platform.dto.InferenceTaskDto;
 import com.tss.platform.dto.InferenceTaskResultDto;
 import com.tss.platform.dto.PageResponse;
 import com.tss.platform.service.InferenceTaskService;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/inference/tasks")
@@ -68,6 +71,15 @@ public class InferenceTaskController {
     public ApiResponse<InferenceTaskResultDto> result(@PathVariable String id) {
         try {
             return ApiResponse.ok(taskService.getResult(id));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
+        try {
+            return ApiResponse.ok(taskService.deleteTask(id));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

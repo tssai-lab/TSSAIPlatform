@@ -40,6 +40,7 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -67,6 +68,7 @@ public class ModelUploadService {
     private final ModelVersionRepository modelVersionRepo;
     private final AuthContext authContext;
     private final MinioDeleteTaskService minioDeleteTaskService;
+    private final ModelArtifactIntegrityService artifactIntegrityService;
     private final TransactionTemplate transactionTemplate;
 
     public ModelUploadService(
@@ -88,6 +90,9 @@ public class ModelUploadService {
         this.modelVersionRepo = modelVersionRepo;
         this.authContext = authContext;
         this.minioDeleteTaskService = minioDeleteTaskService;
+        this.artifactIntegrityService = new ModelArtifactIntegrityService(
+                new MinioService(minioClient, minioConfig)
+        );
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -116,6 +121,8 @@ public class ModelUploadService {
         session.setFileFingerprint(fingerprint);
         session.setFileName(req.getFileName().trim());
         session.setFileSize(req.getFileSize());
+        session.setCommitInfo(normalizeCommitInfo(req.getCommitInfo()));
+        session.setHyperParams(copyHyperParams(req.getHyperParams()));
         session.setChunkSize(CHUNK_SIZE);
         session.setTotalChunks((int) Math.ceil(req.getFileSize() / (double) CHUNK_SIZE));
         session.setStatus(STATUS_UPLOADING);
@@ -160,6 +167,8 @@ public class ModelUploadService {
             session.setModelVersion(req.getModelVersion().trim());
             session.setTaskType(metadata.taskType());
             session.setRemark(metadata.remark());
+            session.setCommitInfo(normalizeCommitInfo(req.getCommitInfo()));
+            session.setHyperParams(copyHyperParams(req.getHyperParams()));
             session.setStatus(STATUS_UPLOADING);
             session.setOwnerUserId(ownerUserId);
             Instant now = Instant.now();
@@ -258,10 +267,16 @@ public class ModelUploadService {
         }
         boolean objectReady = false;
         try {
-            composeAndValidateModelObject(plan.destName(), plan.chunks());
+            resolveCommitInfo(req, plan.session());
+            ModelArtifactIntegrityService.Inspection inspection =
+                    composeAndValidateModelObject(
+                            plan.destName(),
+                            plan.chunks(),
+                            plan.session().getFileSize()
+                    );
             objectReady = true;
             CompletionPersistenceResult persisted = transactionTemplate.execute(status ->
-                    persistCompletedModel(req, plan)
+                    persistCompletedModel(req, plan, inspection)
             );
             if (persisted == null) {
                 throw new IllegalArgumentException("保存模型上传记录失败");
@@ -269,10 +284,8 @@ public class ModelUploadService {
             registerChunkCleanup(persisted.session().getId(), plan.chunks());
             return completedPayload(
                     persisted.session(),
-                    persisted.asset().getName(),
-                    persisted.version().getVersion(),
-                    persisted.asset().getType(),
-                    persisted.asset().getRemark()
+                    persisted.asset(),
+                    persisted.version()
             );
         } catch (RuntimeException e) {
             if (objectReady) {
@@ -296,6 +309,7 @@ public class ModelUploadService {
             requireText(session.getModelName(), "modelName 不能为空");
             requireText(session.getTaskType(), "taskType 不能为空");
             requireText(session.getRemark(), "remark 不能为空");
+            requireText(session.getCommitInfo(), "commitInfo 不能为空");
 
             UploadCompleteRequest request = new UploadCompleteRequest();
             request.setUploadId(uploadId);
@@ -304,6 +318,8 @@ public class ModelUploadService {
             request.setVersion(session.getModelVersion());
             request.setType(session.getTaskType());
             request.setRemark(session.getRemark());
+            request.setCommitInfo(session.getCommitInfo());
+            request.setHyperParams(session.getHyperParams());
             Map<String, Object> completed = complete(request);
 
             ModelUploadSession refreshed = getSession(uploadId);
@@ -311,6 +327,8 @@ public class ModelUploadService {
             dto.setStatus(stringValue(completed.get("status")));
             dto.setModelId(stringValue(completed.get("id")));
             dto.setAssetId(stringValue(completed.get("assetId")));
+            dto.setArtifactSha256(stringValue(completed.get("artifactSha256")));
+            dto.setIsCurrent(Boolean.TRUE.equals(completed.get("isCurrent")));
             dto.setUpdatedAt(refreshed.getUpdatedAt());
             return dto;
         } catch (IllegalArgumentException exception) {
@@ -361,13 +379,19 @@ public class ModelUploadService {
 
         String assetId = target.assetId();
         String version = req.getVersion().trim();
-        if (modelVersionRepo.existsByAssetIdAndVersion(assetId, version)) {
+        ModelVersion existingDraft = modelVersionRepo
+                .findByAssetIdAndVersionAndDeletedFalse(assetId, version)
+                .orElse(null);
+        if (existingDraft != null && !"DRAFT".equals(existingDraft.getStatus())) {
             throw duplicateVersion(assetId, version);
         }
-        String versionId = "model-ver-" + UUID.randomUUID().toString().replace("-", "");
+        String versionId = existingDraft == null
+                ? "model-ver-" + UUID.randomUUID().toString().replace("-", "")
+                : existingDraft.getId();
         String destName = "users/" + target.ownerUserId()
                 + "/models/" + assetId
                 + "/" + sanitizeSegment(version)
+                + "/" + sanitizeSegment(session.getId())
                 + "/" + sanitizeSegment(session.getFileName());
         return new CompletionPlan(
                 session,
@@ -394,9 +418,10 @@ public class ModelUploadService {
         }
     }
 
-    private void composeAndValidateModelObject(
+    private ModelArtifactIntegrityService.Inspection composeAndValidateModelObject(
             String destName,
-            List<ModelUploadChunk> chunks
+            List<ModelUploadChunk> chunks,
+            Long expectedSize
     ) {
         try {
             List<ComposeSource> sources = chunks.stream()
@@ -413,6 +438,7 @@ public class ModelUploadService {
                             .build()
             );
             validateModelObjectFormat(destName);
+            return artifactIntegrityService.inspect(destName, expectedSize);
         } catch (Exception e) {
             removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
@@ -421,14 +447,18 @@ public class ModelUploadService {
 
     private CompletionPersistenceResult persistCompletedModel(
             UploadCompleteRequest req,
-            CompletionPlan plan
+            CompletionPlan plan,
+            ModelArtifactIntegrityService.Inspection inspection
     ) {
         CompletionTarget target = plan.target();
         if (!target.createAsset()) {
             target = resolveCompletionTarget(req, plan.session());
         }
         String assetId = target.assetId();
-        if (modelVersionRepo.existsByAssetIdAndVersion(assetId, plan.version())) {
+        ModelVersion existingDraft = modelVersionRepo
+                .findByAssetIdAndVersionAndDeletedFalse(assetId, plan.version())
+                .orElse(null);
+        if (existingDraft != null && !"DRAFT".equals(existingDraft.getStatus())) {
             throw duplicateVersion(assetId, plan.version());
         }
 
@@ -445,20 +475,29 @@ public class ModelUploadService {
             modelAssetRepo.saveAndFlush(asset);
         }
 
-        ModelVersion ver = new ModelVersion();
+        ModelVersion ver = existingDraft == null ? new ModelVersion() : existingDraft;
         ver.setId(plan.versionId());
         ver.setAssetId(assetId);
         ver.setVersion(plan.version());
         ver.setFileName(plan.session().getFileName());
         ver.setStoragePath(plan.destName());
         ver.setSizeBytes(plan.session().getFileSize());
+        ver.setArtifactSha256(inspection.sha256());
+        ver.setCommitInfo(resolveCommitInfo(req, plan.session()));
+        ver.setHyperParams(resolveHyperParams(req, plan.session()));
         ver.setOwnerUserId(target.ownerUserId());
-        ver.setCreatedAt(now);
+        if (existingDraft == null) {
+            ver.setCreatedAt(now);
+            ver.setCreatedBy(authContext.currentUserId());
+        }
         ver.setStatus("READY");
         ver.setChangeLog(normalizeText(req.getRemark()));
         ver.setPublishedAt(now);
-        ver.setCreatedBy(authContext.currentUserId());
         modelVersionRepo.saveAndFlush(ver);
+
+        asset.setCurrentVersionId(ver.getId());
+        asset.setUpdatedAt(now);
+        modelAssetRepo.saveAndFlush(asset);
 
         ModelUploadSession session = plan.session();
         session.setStatus(STATUS_COMPLETED);
@@ -475,6 +514,10 @@ public class ModelUploadService {
             throw new IllegalArgumentException("请求体不能为空");
         }
         requireText(req.getUploadId(), "uploadId 不能为空");
+        String commitInfo = normalizeText(req.getCommitInfo());
+        if (commitInfo != null && commitInfo.length() > 1024) {
+            throw new IllegalArgumentException("commitInfo 长度不能超过 1024");
+        }
     }
 
     private CompletionTarget resolveCompletionTarget(UploadCompleteRequest req, ModelUploadSession session) {
@@ -529,6 +572,7 @@ public class ModelUploadService {
         if (req.getFileSize() == null || req.getFileSize() <= 0) {
             throw new IllegalArgumentException("fileSize 必须大于 0");
         }
+        requireCommitInfo(req.getCommitInfo());
     }
 
     private void validateV2Init(V2ModelUploadInitRequest req) {
@@ -541,6 +585,7 @@ public class ModelUploadService {
             throw new IllegalArgumentException("fileSize 必须大于 0");
         }
         requireText(req.getModelVersion(), "modelVersion 不能为空");
+        requireCommitInfo(req.getCommitInfo());
     }
 
     private ModelBusinessMetadata resolveV2Metadata(
@@ -655,6 +700,8 @@ public class ModelUploadService {
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setCommitInfo(session.getCommitInfo());
+        dto.setHyperParams(session.getHyperParams());
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
@@ -679,6 +726,8 @@ public class ModelUploadService {
         dto.setModelVersion(session.getModelVersion());
         dto.setTaskType(session.getTaskType());
         dto.setRemark(session.getRemark());
+        dto.setCommitInfo(session.getCommitInfo());
+        dto.setHyperParams(session.getHyperParams());
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
@@ -735,13 +784,28 @@ public class ModelUploadService {
                 ? null
                 : modelAssetRepo.findById(version.getAssetId()).orElse(null);
 
-        return completedPayload(
+        return completedPayload(session, asset, version);
+    }
+
+    private Map<String, Object> completedPayload(
+            ModelUploadSession session,
+            ModelAsset asset,
+            ModelVersion version
+    ) {
+        Map<String, Object> data = completedPayload(
                 session,
                 asset != null ? asset.getName() : null,
                 version != null ? version.getVersion() : null,
                 asset != null ? asset.getType() : null,
                 asset != null ? asset.getRemark() : null
         );
+        data.put("artifactSha256", version == null ? null : version.getArtifactSha256());
+        data.put("commitInfo", version == null ? session.getCommitInfo() : version.getCommitInfo());
+        data.put("hyperParams", version == null ? session.getHyperParams() : version.getHyperParams());
+        data.put("isCurrent", version != null
+                && asset != null
+                && version.getId().equals(asset.getCurrentVersionId()));
+        return data;
     }
 
     private void registerChunkCleanup(String uploadId, List<ModelUploadChunk> chunks) {
@@ -811,7 +875,9 @@ public class ModelUploadService {
 
     private boolean sameUpload(ModelUploadSession session, UploadInitRequest req) {
         return session.getFileName().equals(req.getFileName().trim())
-                && session.getFileSize().equals(req.getFileSize());
+                && session.getFileSize().equals(req.getFileSize())
+                && Objects.equals(session.getCommitInfo(), normalizeText(req.getCommitInfo()))
+                && Objects.equals(session.getHyperParams(), copyHyperParams(req.getHyperParams()));
     }
 
     private boolean sameV2Upload(
@@ -828,7 +894,9 @@ public class ModelUploadService {
                         req.getModelVersion().trim()
                 )
                 && Objects.equals(session.getTaskType(), metadata.taskType())
-                && Objects.equals(session.getRemark(), metadata.remark());
+                && Objects.equals(session.getRemark(), metadata.remark())
+                && Objects.equals(session.getCommitInfo(), normalizeText(req.getCommitInfo()))
+                && Objects.equals(session.getHyperParams(), copyHyperParams(req.getHyperParams()));
     }
 
     private String stringValue(Object value) {
@@ -877,6 +945,51 @@ public class ModelUploadService {
 
     private String normalizeText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String normalizeCommitInfo(String value) {
+        String normalized = normalizeText(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException("commitInfo 不能为空");
+        }
+        if (normalized.length() > 1024) {
+            throw new IllegalArgumentException("commitInfo 长度不能超过 1024");
+        }
+        return normalized;
+    }
+
+    private void requireCommitInfo(String value) {
+        normalizeCommitInfo(value);
+    }
+
+    private Map<String, Object> copyHyperParams(Map<String, Object> source) {
+        return source == null ? Map.of() : new LinkedHashMap<>(source);
+    }
+
+    private String resolveCommitInfo(
+            UploadCompleteRequest request,
+            ModelUploadSession session
+    ) {
+        String requested = normalizeText(request.getCommitInfo());
+        String initialized = normalizeText(session.getCommitInfo());
+        if (requested != null && initialized != null && !requested.equals(initialized)) {
+            throw new IllegalArgumentException("commitInfo 与上传初始化信息不一致");
+        }
+        return normalizeCommitInfo(requested == null ? initialized : requested);
+    }
+
+    private Map<String, Object> resolveHyperParams(
+            UploadCompleteRequest request,
+            ModelUploadSession session
+    ) {
+        Map<String, Object> initialized = copyHyperParams(session.getHyperParams());
+        if (request.getHyperParams() != null
+                && !initialized.equals(request.getHyperParams())) {
+            throw new IllegalArgumentException("hyperParams 与上传初始化信息不一致");
+        }
+        return request.getHyperParams() == null
+                ? initialized
+                : copyHyperParams(request.getHyperParams());
     }
 
     private void requireText(String value, String message) {

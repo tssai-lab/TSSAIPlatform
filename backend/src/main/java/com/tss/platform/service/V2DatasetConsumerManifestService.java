@@ -16,6 +16,7 @@ import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -40,6 +41,7 @@ public class V2DatasetConsumerManifestService {
     private final DatasetSampleDataRepository dataRepo;
     private final DatasetAnnotationRepository annotationRepo;
     private final AuthContext authContext;
+    private SingleModalDatasetIndexer singleModalDatasetIndexer;
 
     public V2DatasetConsumerManifestService(
             DatasetVersionRepository versionRepo,
@@ -57,6 +59,11 @@ public class V2DatasetConsumerManifestService {
         this.authContext = authContext;
     }
 
+    @Autowired(required = false)
+    void setSingleModalDatasetIndexer(SingleModalDatasetIndexer singleModalDatasetIndexer) {
+        this.singleModalDatasetIndexer = singleModalDatasetIndexer;
+    }
+
     @Transactional(readOnly = true)
     public V2DatasetConsumerManifest get(
             String versionId,
@@ -65,6 +72,7 @@ public class V2DatasetConsumerManifestService {
     ) {
         DatasetVersion version = requireVersion(versionId);
         DatasetAsset asset = requireAsset(version);
+        ensureConsumable(version);
         int resolvedPage = resolvePage(page);
         int resolvedPageSize = resolvePageSize(pageSize);
         Page<DatasetSample> samples = sampleRepo.findByDatasetVersionIdAndDeletedFalse(
@@ -106,6 +114,40 @@ public class V2DatasetConsumerManifestService {
                 ))
                 .toList());
         return manifest;
+    }
+
+    private void ensureConsumable(DatasetVersion version) {
+        long existing = sampleRepo.countByDatasetVersionIdAndDeletedFalse(version.getId());
+        if (existing > 0) {
+            return;
+        }
+        if (singleModalDatasetIndexer == null) {
+            throw notConsumable("数据集版本没有可消费样本");
+        }
+        SingleModalDatasetIndexer.EnsureResult result =
+                singleModalDatasetIndexer.ensureIndexed(version.getId());
+        if (result.successful()
+                && sampleRepo.countByDatasetVersionIdAndDeletedFalse(version.getId()) > 0) {
+            return;
+        }
+        if (result.storageUnavailable()) {
+            throw new V2BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "DATASET_STORAGE_UNAVAILABLE",
+                    "数据集存储暂时不可用，请稍后重试"
+            );
+        }
+        throw notConsumable(result.message());
+    }
+
+    private V2BusinessException notConsumable(String message) {
+        return new V2BusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "DATASET_NOT_CONSUMABLE",
+                message == null || message.isBlank()
+                        ? "数据集版本没有可消费样本"
+                        : message
+        );
     }
 
     private DatasetVersion requireVersion(String versionId) {

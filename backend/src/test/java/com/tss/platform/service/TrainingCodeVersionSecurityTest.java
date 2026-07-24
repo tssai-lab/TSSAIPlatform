@@ -361,6 +361,7 @@ class TrainingCodeVersionSecurityTest {
         version.setId(id);
         version.setAssetId("model-asset-1");
         version.setStoragePath("users/1/models/model-asset-1/v1/weights.zip");
+        version.setStatus("READY");
         version.setOwnerUserId(1);
         version.setDeleted(false);
         return version;

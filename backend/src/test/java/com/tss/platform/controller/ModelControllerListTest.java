@@ -5,10 +5,9 @@ import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
-import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
-import com.tss.platform.service.MinioDeleteTaskService;
 import com.tss.platform.service.ModelCodePreviewService;
+import com.tss.platform.service.ModelVersionLifecycleService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.PageImpl;
@@ -34,18 +33,14 @@ class ModelControllerListTest {
     void listUsesRepositoryPagingAndFilteringInsteadOfFullMemoryScan() {
         ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
         ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
-        TrainingExperimentVersionRepository trainingRepo =
-                mock(TrainingExperimentVersionRepository.class);
-        MinioDeleteTaskService deleteTaskService = mock(MinioDeleteTaskService.class);
         ModelCodePreviewService codePreviewService = mock(ModelCodePreviewService.class);
         AuthContext authContext = mock(AuthContext.class);
         ModelController controller = new ModelController(
                 assetRepo,
                 versionRepo,
-                trainingRepo,
-                deleteTaskService,
                 codePreviewService,
-                authContext
+                authContext,
+                mock(ModelVersionLifecycleService.class)
         );
         ModelAsset asset = new ModelAsset();
         asset.setId("asset-1");

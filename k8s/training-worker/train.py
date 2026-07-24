@@ -564,14 +564,18 @@ def legacy_model_callback(primary: dict[str, Any], local_path: Path) -> dict[str
     if zipfile.is_zipfile(local_path):
         with zipfile.ZipFile(local_path) as archive:
             files = [entry for entry in archive.infolist() if not entry.is_dir()]
-            if len(files) != 1:
-                raise WorkerError("OUTPUT_INVALID", "published model ZIP must contain exactly one file")
-            model_file_name = files[0].filename
-            inner_digest = hashlib.sha256()
-            with archive.open(files[0]) as source:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    inner_digest.update(chunk)
-            digest = inner_digest.hexdigest()
+            if not files:
+                raise WorkerError("OUTPUT_INVALID", "published model ZIP must contain at least one file")
+            # Legacy single-file archives expose the inner model digest. Generic
+            # formats such as HuggingFace contain several files and use the
+            # immutable archive digest recorded in training-output.json.
+            if len(files) == 1:
+                model_file_name = files[0].filename
+                inner_digest = hashlib.sha256()
+                with archive.open(files[0]) as source:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        inner_digest.update(chunk)
+                digest = inner_digest.hexdigest()
     return {
         "fileName": local_path.name,
         "objectName": primary["objectName"],

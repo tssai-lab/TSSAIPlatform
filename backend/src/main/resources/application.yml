@@ -118,6 +118,9 @@ training:
     runtime-image-docker-path: ${TRAINING_K8S_RUNTIME_IMAGE_DOCKER_PATH:docker}
     runtime-image-build-directory: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_DIRECTORY:/tmp/tss-runtime-image-builds}
     runtime-image-build-timeout-seconds: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_TIMEOUT_SECONDS:1800}
+    runtime-image-pip-index-url: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_INDEX_URL:}
+    runtime-image-pip-timeout-seconds: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_TIMEOUT_SECONDS:120}
+    runtime-image-pip-retries: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_RETRIES:5}
     backend-service-url: ${TRAINING_K8S_BACKEND_SERVICE_URL:http://tss-backend:8080}
     minio-service-url: ${TRAINING_K8S_MINIO_SERVICE_URL:http://tss-minio:9000}
     mlflow-service-url: ${TRAINING_K8S_MLFLOW_SERVICE_URL:http://tss-mlflow:5000}

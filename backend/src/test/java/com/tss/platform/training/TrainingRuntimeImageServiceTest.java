@@ -6,6 +6,7 @@ import com.tss.platform.training.plan.TrainingRunSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -14,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -49,6 +51,7 @@ class TrainingRuntimeImageServiceTest {
         ShellCommandRunner runner = mock(ShellCommandRunner.class);
         when(runner.run(anyList(), any(), anyInt())).thenReturn(
                 ShellCommandRunner.CommandResult.failed(1, "not found", "pull failed"),
+                ShellCommandRunner.CommandResult.failed(1, "not found", "base not local"),
                 ShellCommandRunner.CommandResult.success("built"),
                 ShellCommandRunner.CommandResult.success("pushed")
         );
@@ -57,7 +60,65 @@ class TrainingRuntimeImageServiceTest {
         String image = service.resolveImage(runSpec(List.of("ultralytics==8.3.0"), "a".repeat(64)));
 
         assertEquals("registry.example/tss/training-worker:deps-" + "c".repeat(24), image);
-        verify(runner, times(3)).run(anyList(), any(), anyInt());
+        verify(runner, times(4)).run(anyList(), any(), anyInt());
+    }
+
+    @Test
+    void doesNotForceRemotePullWhenBaseImageExistsLocally() {
+        ShellCommandRunner runner = mock(ShellCommandRunner.class);
+        when(runner.run(anyList(), any(), anyInt())).thenReturn(
+                ShellCommandRunner.CommandResult.failed(1, "not found", "derived image absent"),
+                ShellCommandRunner.CommandResult.success("base image exists"),
+                ShellCommandRunner.CommandResult.success("built"),
+                ShellCommandRunner.CommandResult.success("pushed")
+        );
+        TrainingRuntimeImageService service = new TrainingRuntimeImageService(properties(true), runner);
+
+        String image = service.resolveImage(runSpec(List.of("torch"), "a".repeat(64)));
+
+        assertEquals("registry.example/tss/training-worker:deps-" + "c".repeat(24), image);
+        verify(runner).run(
+                eq(List.of(
+                        "docker", "build", "--tag",
+                        "registry.example/tss/training-worker:deps-" + "c".repeat(24),
+                        "."
+                )),
+                any(),
+                anyInt()
+        );
+    }
+
+    @Test
+    void writesConfiguredPipMirrorTimeoutAndRetriesIntoDerivedDockerfile() throws Exception {
+        ShellCommandRunner runner = mock(ShellCommandRunner.class);
+        when(runner.run(anyList(), any(), anyInt())).thenReturn(
+                ShellCommandRunner.CommandResult.failed(1, "not found", "derived image absent"),
+                ShellCommandRunner.CommandResult.success("base image exists"),
+                ShellCommandRunner.CommandResult.success("built"),
+                ShellCommandRunner.CommandResult.success("pushed")
+        );
+        TrainingKubernetesProperties properties = properties(true);
+        properties.setRuntimeImagePipIndexUrl("https://mirror.example/simple");
+        properties.setRuntimeImagePipTimeoutSeconds(180);
+        properties.setRuntimeImagePipRetries(7);
+
+        new TrainingRuntimeImageService(properties, runner)
+                .resolveImage(runSpec(List.of("transformers"), "a".repeat(64)));
+
+        Path dockerfile;
+        try (var paths = Files.walk(temporaryDirectory)) {
+            dockerfile = paths.filter(path -> "Dockerfile".equals(
+                            path.getFileName().toString()))
+                    .findFirst()
+                    .orElseThrow();
+        }
+        String content = Files.readString(dockerfile);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                content.contains(
+                        "--timeout 180 --retries 7"
+                                + " --index-url https://mirror.example/simple"
+                )
+        );
     }
 
     private TrainingKubernetesProperties properties(boolean enabled) {

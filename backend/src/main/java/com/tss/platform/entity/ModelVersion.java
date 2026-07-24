@@ -7,8 +7,13 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -46,6 +51,13 @@ public class ModelVersion {
     @Column(name = "artifact_sha256", length = 64)
     private String artifactSha256;
 
+    @Column(name = "commit_info", length = 1024)
+    private String commitInfo;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "hyper_params", nullable = false, columnDefinition = "jsonb")
+    private Map<String, Object> hyperParams = Map.of();
+
     @Column(name = "description", length = 2048)
     private String description;
 
@@ -53,7 +65,7 @@ public class ModelVersion {
     private String changeLog;
 
     @Column(name = "status", nullable = false, length = 32)
-    private String status = "READY";
+    private String status = "DRAFT";
 
     @Column(name = "published_at")
     private Instant publishedAt;
@@ -72,5 +84,9 @@ public class ModelVersion {
 
     @Column(name = "deleted_at")
     private Instant deletedAt;
+
+    @Transient
+    @JsonProperty("isCurrent")
+    private Boolean current;
 }
 

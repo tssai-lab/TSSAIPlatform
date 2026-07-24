@@ -15,6 +15,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -84,7 +85,32 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
-    void flywayAppliesEveryVersionFromV1ThroughLatest() throws SQLException {
+    void flywayAppliesEveryAvailableMigrationThroughV41()
+            throws SQLException {
+        List<String> expectedVersions = new ArrayList<>(IntStream.rangeClosed(1, 30)
+                .mapToObj(Integer::toString)
+                .toList());
+        for (String upstreamMigration : List.of(
+                "V31__training_produced_model.sql",
+                "V32__training_plan_run_spec_snapshot.sql",
+                "V33__training_output_evidence.sql",
+                "V34__training_mode.sql",
+                "V36__compute_server.sql",
+                "V37__server_metric_snapshot.sql",
+                "V38__task_queue_fields.sql",
+                "V39__server_metric_history.sql",
+                "V40__compute_server_capacity.sql"
+        )) {
+            if (Thread.currentThread()
+                    .getContextClassLoader()
+                    .getResource("db/migration/" + upstreamMigration) != null) {
+                expectedVersions.add(upstreamMigration.substring(
+                        1,
+                        upstreamMigration.indexOf("__")
+                ));
+            }
+        }
+        expectedVersions.add("41");
         List<String> installedVersions = queryStrings("""
                 SELECT version
                 FROM flyway_schema_history
@@ -92,11 +118,8 @@ class CodeAssetPostgresContainerTest {
                 ORDER BY installed_rank
                 """);
 
-        assertTrue(installedVersions.size() >= 31,
-                () -> "expected at least V1-V31, got " + installedVersions.size() + " versions");
-        assertEquals("1", installedVersions.get(0), "first migration must be V1");
-        String last = installedVersions.get(installedVersions.size() - 1);
-        assertNotNull(last, "last migration version must not be null");
+        assertEquals(expectedVersions, installedVersions);
+        assertEquals("41", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",

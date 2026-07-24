@@ -42,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -121,26 +122,23 @@ class ModelUploadServiceV2Test {
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(fixture.versionRepo.saveAndFlush(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        when(fixture.minioClient.getObject(any())).thenReturn(new GetObjectResponse(
-                new Headers.Builder().build(),
-                "models",
-                null,
-                "model.zip",
-                new ByteArrayInputStream(zipBytes())
-        ));
+        fixture.stubCompletedObject();
 
         V2ModelUploadDto result = fixture.service.completeV2(session.getId());
 
         ArgumentCaptor<ModelAsset> assetCaptor = ArgumentCaptor.forClass(ModelAsset.class);
-        verify(fixture.assetRepo).saveAndFlush(assetCaptor.capture());
-        assertEquals("Detector", assetCaptor.getValue().getName());
-        assertEquals("CV", assetCaptor.getValue().getType());
+        verify(fixture.assetRepo, times(2)).saveAndFlush(assetCaptor.capture());
+        ModelAsset savedAsset = assetCaptor.getAllValues().get(1);
+        assertEquals("Detector", savedAsset.getName());
+        assertEquals("CV", savedAsset.getType());
         ArgumentCaptor<ModelVersion> versionCaptor =
                 ArgumentCaptor.forClass(ModelVersion.class);
         verify(fixture.versionRepo).saveAndFlush(versionCaptor.capture());
         assertEquals("v1", versionCaptor.getValue().getVersion());
         assertEquals("READY", versionCaptor.getValue().getStatus());
         assertEquals("detector model", versionCaptor.getValue().getChangeLog());
+        assertEquals("git abc123", versionCaptor.getValue().getCommitInfo());
+        assertEquals(fixture.sha256(zipBytes()), versionCaptor.getValue().getArtifactSha256());
         assertEquals(7, versionCaptor.getValue().getCreatedBy());
         assertEquals(
                 versionCaptor.getValue().getCreatedAt(),
@@ -148,6 +146,8 @@ class ModelUploadServiceV2Test {
         );
         assertEquals("COMPLETED", result.getStatus());
         assertTrue(result.getModelId().startsWith("model-ver-"));
+        assertEquals(fixture.sha256(zipBytes()), result.getArtifactSha256());
+        assertEquals(true, result.getIsCurrent());
         String json = new ObjectMapper()
                 .findAndRegisterModules()
                 .writeValueAsString(result);
@@ -258,6 +258,7 @@ class ModelUploadServiceV2Test {
             );
             return mock(ObjectWriteResponse.class);
         });
+        byte[] zip = zipBytes();
         when(fixture.minioClient.getObject(any())).thenAnswer(invocation -> {
             assertEquals(
                     0,
@@ -269,8 +270,18 @@ class ModelUploadServiceV2Test {
                     "models",
                     null,
                     "model.zip",
-                    new ByteArrayInputStream(zipBytes())
+                    new ByteArrayInputStream(zip)
             );
+        });
+        StatObjectResponse completedStat = mock(StatObjectResponse.class);
+        when(completedStat.size()).thenReturn((long) zip.length);
+        when(fixture.minioClient.statObject(any())).thenAnswer(invocation -> {
+            assertEquals(
+                    0,
+                    fixture.activeTransactions.get(),
+                    "model object stat must run outside database transactions"
+            );
+            return completedStat;
         });
 
         V2ModelUploadDto result = fixture.service.completeV2(session.getId());
@@ -302,8 +313,10 @@ class ModelUploadServiceV2Test {
                 .thenReturn(Optional.of(asset));
         when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
                 .thenReturn(List.of(chunk));
-        when(fixture.versionRepo.existsByAssetIdAndVersion(asset.getId(), "v1"))
-                .thenReturn(true);
+        ModelVersion existing = new ModelVersion();
+        existing.setStatus("READY");
+        when(fixture.versionRepo.findByAssetIdAndVersionAndDeletedFalse(asset.getId(), "v1"))
+                .thenReturn(Optional.of(existing));
 
         com.tss.platform.controller.v2.V2BusinessException error = assertThrows(
                 com.tss.platform.controller.v2.V2BusinessException.class,
@@ -428,6 +441,7 @@ class ModelUploadServiceV2Test {
             request.setModelVersion("v1");
             request.setTaskType("CV");
             request.setRemark("detector model");
+            request.setCommitInfo("git abc123");
             return request;
         }
 
@@ -435,7 +449,7 @@ class ModelUploadServiceV2Test {
             ModelUploadSession session = new ModelUploadSession();
             session.setId("upload-1");
             session.setFileName("model.zip");
-            session.setFileSize(128L);
+            session.setFileSize((long) zipBytesUnchecked().length);
             session.setFileFingerprint("sha256:abc");
             session.setChunkSize(5 * 1024 * 1024);
             session.setTotalChunks(1);
@@ -444,10 +458,39 @@ class ModelUploadServiceV2Test {
             session.setModelVersion("v1");
             session.setTaskType("CV");
             session.setRemark("detector model");
+            session.setCommitInfo("git abc123");
             session.setOwnerUserId(7);
             session.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
             session.setUpdatedAt(session.getCreatedAt());
             return session;
+        }
+
+        private void stubCompletedObject() throws Exception {
+            byte[] zip = zipBytes();
+            when(minioClient.getObject(any())).thenAnswer(invocation -> new GetObjectResponse(
+                    new Headers.Builder().build(),
+                    "models",
+                    null,
+                    "model.zip",
+                    new ByteArrayInputStream(zip)
+            ));
+            StatObjectResponse stat = mock(StatObjectResponse.class);
+            when(stat.size()).thenReturn((long) zip.length);
+            when(minioClient.statObject(any())).thenReturn(stat);
+        }
+
+        private String sha256(byte[] bytes) throws Exception {
+            return java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            );
+        }
+    }
+
+    private static byte[] zipBytesUnchecked() {
+        try {
+            return zipBytes();
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
         }
     }
 }

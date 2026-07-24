@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +30,9 @@ public class TrainingRuntimeImageService {
 
     private static final Pattern SHA256 = Pattern.compile("^[a-f0-9]{64}$");
     private static final Pattern REPOSITORY = Pattern.compile("^[a-z0-9][a-z0-9._/:/-]*$");
+    private static final Pattern PIP_INDEX_URL = Pattern.compile(
+            "^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%/-]*)?/?$"
+    );
 
     private final TrainingKubernetesProperties properties;
     private final ShellCommandRunner commandRunner;
@@ -104,8 +109,17 @@ public class TrainingRuntimeImageService {
                     StandardCharsets.UTF_8);
             Files.writeString(context.resolve("Dockerfile"), dockerfile(baseImage), StandardCharsets.UTF_8);
 
+            List<String> buildCommand = new ArrayList<>();
+            buildCommand.add(properties.getRuntimeImageDockerPath());
+            buildCommand.add("build");
+            if (!baseImageAvailableLocally(baseImage)) {
+                buildCommand.add("--pull");
+            }
+            buildCommand.add("--tag");
+            buildCommand.add(image);
+            buildCommand.add(".");
             ShellCommandRunner.CommandResult build = commandRunner.run(
-                    List.of(properties.getRuntimeImageDockerPath(), "build", "--pull", "--tag", image, "."),
+                    List.copyOf(buildCommand),
                     context,
                     properties.getRuntimeImageBuildTimeoutSeconds()
             );
@@ -122,7 +136,36 @@ public class TrainingRuntimeImageService {
             }
         } catch (IOException exception) {
             throw new IllegalStateException("cannot prepare runtime image build context: " + exception.getMessage(), exception);
+        } finally {
+            deleteRecursively(context);
         }
+    }
+
+    private void deleteRecursively(Path directory) {
+        try (var stream = Files.walk(directory)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // best-effort cleanup of the runtime image build context
+                }
+            });
+        } catch (IOException ignored) {
+            // best-effort cleanup of the runtime image build context
+        }
+    }
+
+    private boolean baseImageAvailableLocally(String baseImage) {
+        return commandRunner.run(
+                List.of(
+                        properties.getRuntimeImageDockerPath(),
+                        "image",
+                        "inspect",
+                        baseImage
+                ),
+                null,
+                properties.getRuntimeImageBuildTimeoutSeconds()
+        ).success();
     }
 
     private Path createContext(String image) {
@@ -137,12 +180,37 @@ public class TrainingRuntimeImageService {
     }
 
     private String dockerfile(String baseImage) {
+        String pipIndex = normalizedPipIndexUrl();
+        int pipTimeout = Math.max(15, Math.min(
+                properties.getRuntimeImagePipTimeoutSeconds(), 600
+        ));
+        int pipRetries = Math.max(0, Math.min(
+                properties.getRuntimeImagePipRetries(), 20
+        ));
         return "FROM " + baseImage + "\n"
                 + "USER root\n"
                 + "COPY requirements.txt /tmp/tss-requirements.txt\n"
-                + "RUN python -m pip install --no-cache-dir --disable-pip-version-check -r /tmp/tss-requirements.txt"
+                + "RUN python -m pip install --no-cache-dir --disable-pip-version-check"
+                + " --timeout " + pipTimeout
+                + " --retries " + pipRetries
+                + (pipIndex == null ? "" : " --index-url " + pipIndex)
+                + " -r /tmp/tss-requirements.txt"
                 + " && rm -f /tmp/tss-requirements.txt\n"
                 + "USER 10001\n";
+    }
+
+    private String normalizedPipIndexUrl() {
+        String value = properties.getRuntimeImagePipIndexUrl();
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (!PIP_INDEX_URL.matcher(normalized).matches()) {
+            throw new IllegalStateException(
+                    "training.kubernetes.runtime-image-pip-index-url is invalid"
+            );
+        }
+        return normalized;
     }
 
     private IllegalStateException commandFailure(

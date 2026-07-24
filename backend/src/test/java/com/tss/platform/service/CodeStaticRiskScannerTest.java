@@ -95,12 +95,13 @@ class CodeStaticRiskScannerTest {
             assertEquals("MANUAL_REVIEW", result.disposition(), source);
             assertTrue(result.findings().stream().anyMatch(value ->
                     "HIGH_CAPABILITY_IMPORT".equals(value.ruleId())
+                            || "PROCESS_EXECUTION".equals(value.ruleId())
                             || "DYNAMIC_CODE_EXECUTION".equals(value.ruleId())), source);
         }
     }
 
     @Test
-    void unknownImportsAndUnsupportedSyntaxFailClosedToManualReview() {
+    void unknownImportsFailClosedButOrdinaryMultilineSyntaxCanAutoApprove() {
         CodeRiskScanResult unknownImport = scanner.scan(Map.of(
                 "train.py", bytes("import company_runtime\ncompany_runtime.run()\n")
         ));
@@ -108,12 +109,59 @@ class CodeStaticRiskScannerTest {
         assertTrue(unknownImport.findings().stream()
                 .anyMatch(value -> "UNREVIEWED_IMPORT".equals(value.ruleId())));
 
-        CodeRiskScanResult unsupportedSyntax = scanner.scan(Map.of(
+        CodeRiskScanResult multilineSyntax = scanner.scan(Map.of(
                 "train.py", bytes("values = [\n    1,\n    2,\n]\nprint(values)\n")
         ));
-        assertEquals("MANUAL_REVIEW", unsupportedSyntax.disposition());
-        assertTrue(unsupportedSyntax.findings().stream()
-                .anyMatch(value -> "PYTHON_SYNTAX_UNVERIFIED".equals(value.ruleId())));
+        assertEquals("AUTO_APPROVE", multilineSyntax.disposition());
+        assertTrue(multilineSyntax.findings().isEmpty());
+    }
+
+    @Test
+    void commonHuggingFaceTrainingCodeCanAutoApprove() {
+        CodeRiskScanResult result = scanner.scan(Map.of(
+                "train.py", bytes("""
+                        from pathlib import Path
+                        import os
+                        import shutil
+                        import zipfile
+                        from datasets import load_dataset
+                        from transformers import AutoModelForImageClassification
+
+                        def train(output: Path) -> int:
+                            child = output / "_hf_model"
+                            model = AutoModelForImageClassification.from_pretrained(output)
+                            if output.exists():
+                                shutil.rmtree(output)
+                            output.mkdir(parents=True)
+                            model.save_pretrained(output)
+                            return 0
+                        """)
+        ));
+
+        assertEquals("AUTO_APPROVE", result.disposition());
+        assertTrue(result.findings().isEmpty());
+    }
+
+    @Test
+    void multilineExpressionCanBeTheFirstStatementOfAnIndentedSuite() {
+        CodeRiskScanResult result = scanner.scan(Map.of(
+                "train.py", bytes("""
+                        def evaluate(rows):
+                            for row in rows:
+                                values.append({
+                                    "label": row["label"],
+                                    "prediction": row["prediction"],
+                                })
+                            metrics = {
+                                "accuracy": 1.0,
+                                "f1": 1.0,
+                            }
+                            return metrics, values
+                        """)
+        ));
+
+        assertEquals("AUTO_APPROVE", result.disposition());
+        assertTrue(result.findings().isEmpty());
     }
 
     @Test

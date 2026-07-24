@@ -29,7 +29,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -40,6 +43,7 @@ public class InferenceTaskService {
     public static final String INPUT_MODE_DATASET_VERSION = "DATASET_VERSION";
 
     private static final String STATUS_PENDING = "pending";
+    private static final String SOURCE_INFERENCE_TASK = "INFERENCE_TASK";
     private static final Set<String> ALLOWED_STATUSES = Set.of(
             "pending",
             "queued",
@@ -48,6 +52,7 @@ public class InferenceTaskService {
             "failed",
             "stopped"
     );
+    private static final Set<String> ACTIVE_TASK_STATUSES = Set.of("pending", "queued", "running");
 
     private final InferenceTaskRepository taskRepo;
     private final ModelVersionRepository modelVersionRepo;
@@ -57,6 +62,7 @@ public class InferenceTaskService {
     private final InferenceScriptService scriptService;
     private final InferenceExecutorRouter executorRouter;
     private final MinioService minioService;
+    private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
     private final ObjectMapper objectMapper;
 
@@ -69,6 +75,7 @@ public class InferenceTaskService {
             InferenceScriptService scriptService,
             InferenceExecutorRouter executorRouter,
             MinioService minioService,
+            MinioDeleteTaskService minioDeleteTaskService,
             AuthContext authContext,
             ObjectMapper objectMapper
     ) {
@@ -80,6 +87,7 @@ public class InferenceTaskService {
         this.scriptService = scriptService;
         this.executorRouter = executorRouter;
         this.minioService = minioService;
+        this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
         this.objectMapper = objectMapper;
     }
@@ -187,6 +195,24 @@ public class InferenceTaskService {
     }
 
     @Transactional
+    public Map<String, Object> deleteTask(String id) {
+        InferenceTask task = requireAccessibleTask(id);
+        if (ACTIVE_TASK_STATUSES.contains(task.getStatus())) {
+            executorRouter.stop(task.getId());
+        }
+
+        int queuedObjectCount = queueTaskOutputDeletes(task);
+        taskRepo.delete(task);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", task.getId());
+        result.put("deleted", true);
+        result.put("minioDeleteQueued", queuedObjectCount > 0);
+        result.put("queuedObjectCount", queuedObjectCount);
+        return result;
+    }
+
+    @Transactional
     public InferenceTaskDto updateResultInternal(String taskId, UpdateInferenceResultRequest req) {
         if (req == null) {
             throw new IllegalArgumentException("request body cannot be empty");
@@ -290,6 +316,9 @@ public class InferenceTaskService {
                     .orElse(null);
         }
         authContext.requireOwnerAccess(ownerUserId, "no permission for modelVersionId: " + modelVersionId);
+        if (!"READY".equals(version.getStatus())) {
+            throw new IllegalArgumentException("模型版本必须是 READY 状态");
+        }
         if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
             throw new IllegalArgumentException("模型版本缺少存储路径");
         }
@@ -349,6 +378,52 @@ public class InferenceTaskService {
             throw new IllegalArgumentException("status only supports pending, queued, running, success, failed, stopped");
         }
         return normalized;
+    }
+
+    private int queueTaskOutputDeletes(InferenceTask task) {
+        LinkedHashSet<String> objectNames = new LinkedHashSet<>();
+        String logObjectName = minioPathToObjectName(task.getLogPath());
+        if (logObjectName != null) {
+            objectNames.add(logObjectName);
+        }
+
+        String outputObjectName = minioPathToObjectName(task.getOutputPath());
+        if (outputObjectName != null) {
+            String outputPrefix = outputObjectName.endsWith("/") ? outputObjectName : outputObjectName + "/";
+            try {
+                objectNames.addAll(minioService.listObjectNames(outputPrefix));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("列出推理输出文件失败: " + e.getMessage());
+            }
+        }
+
+        int queuedCount = 0;
+        for (String objectName : objectNames) {
+            try {
+                minioDeleteTaskService.enqueueDefaultBucketDelete(
+                        objectName,
+                        SOURCE_INFERENCE_TASK,
+                        task.getId(),
+                        task.getOwnerUserId()
+                );
+                queuedCount++;
+            } catch (Exception e) {
+                throw new IllegalArgumentException("创建推理结果文件删除任务失败: " + e.getMessage());
+            }
+        }
+        return queuedCount;
+    }
+
+    private String minioPathToObjectName(String value) {
+        String normalized = normalizeText(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.startsWith("minio://")) {
+            normalized = normalized.substring("minio://".length());
+        }
+        String objectName = cleanObjectName(normalized);
+        return objectName.isBlank() ? null : objectName;
     }
 
     private Integer validateProgress(Integer progress) {
