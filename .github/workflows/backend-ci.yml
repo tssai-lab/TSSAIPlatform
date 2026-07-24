@@ -9,7 +9,6 @@ on:
       - ".github/workflows/**"
   push:
     branches:
-      - backend
       - backend-ops
     paths:
       - "backend/**"
