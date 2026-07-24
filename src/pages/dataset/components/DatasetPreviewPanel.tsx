@@ -199,22 +199,38 @@ function unwrapConsumerManifestPage(raw: unknown): {
   };
 }
 
-function isJsonlFile(file: DatasetPreviewFileItem): boolean {
+function extensionOfFile(file: DatasetPreviewFileItem): string | undefined {
+  const raw = (file.extension || '').toLowerCase().replace(/^\./, '');
+  if (raw) return raw;
   const label = getFileLabel(file).toLowerCase();
-  return label.endsWith('.jsonl') || file.extension?.toLowerCase() === 'jsonl';
+  const i = label.lastIndexOf('.');
+  if (i < 0) return undefined;
+  return label.slice(i + 1);
+}
+
+/** NLP/CV 文档约定可预览的文本类扩展名（后端若误标 UNSUPPORTED 仍允许点「查看」） */
+const FORCE_TEXT_PREVIEW_EXTS = new Set(['txt', 'json', 'jsonl', 'xml', 'md']);
+
+function isJsonlFile(file: DatasetPreviewFileItem): boolean {
+  return extensionOfFile(file) === 'jsonl';
+}
+
+function isForceTextPreviewFile(file: DatasetPreviewFileItem): boolean {
+  const ext = extensionOfFile(file);
+  return !!ext && FORCE_TEXT_PREVIEW_EXTS.has(ext);
 }
 
 function resolvePreviewKind(
   file: DatasetPreviewFileItem,
 ): DatasetPreviewFileKind {
-  if (isJsonlFile(file)) {
+  if (isForceTextPreviewFile(file)) {
     return DatasetPreviewFileKind.TEXT;
   }
   return file.kind;
 }
 
 function canPreviewFile(file: DatasetPreviewFileItem): boolean {
-  if (isJsonlFile(file)) {
+  if (isForceTextPreviewFile(file)) {
     return true;
   }
   if (!file.previewAllowed) {
@@ -232,8 +248,16 @@ function isTextContentPreview(
   contentData: DatasetPreviewContentData | null,
 ): boolean {
   if (!selected || !contentData) return false;
-  if (isJsonlFile(selected) && contentData.content != null) return true;
-  return contentData.contentType === 'TEXT';
+  if (contentData.content == null) return false;
+  // 后端对 json/jsonl 可能返回 contentType=JSONL / TEXT，均按文本区展示
+  const ct = String(contentData.contentType || '').toUpperCase();
+  if (ct === 'TEXT' || ct === 'JSONL' || ct === 'JSON' || ct === 'XML') {
+    return true;
+  }
+  if (isForceTextPreviewFile(selected)) {
+    return true;
+  }
+  return false;
 }
 
 function countTextLines(content?: string | null): number {
