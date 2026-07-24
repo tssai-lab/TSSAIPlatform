@@ -10,7 +10,9 @@ RUN useradd -r -u 10001 -m worker \
     && chown -R worker:worker /workspace
 
 COPY requirements-nlp.txt .
-RUN pip install --no-cache-dir -r requirements-nlp.txt
+RUN pip install --no-cache-dir -r requirements-nlp.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
 
 COPY --chmod=0644 train.py .
 

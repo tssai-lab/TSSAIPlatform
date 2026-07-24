@@ -404,6 +404,33 @@ def write_parameters(spec: dict[str, Any]) -> None:
     )
 
 
+def install_user_requirements() -> None:
+    """Install code/requirements.txt into the worker user site-packages when present.
+
+    Used when the platform cannot build a derived image (no Docker/registry on
+    the backend host). Runs as the worker user (10001) and installs into the
+    user site so the user's entry script can import the declared dependencies.
+    """
+    req_file = CODE_DIR / "requirements.txt"
+    if not req_file.is_file():
+        return
+    log("installing user requirements.txt")
+    pip_index = env("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")
+    host = urllib.parse.urlparse(pip_index).hostname or ""
+    cmd = [sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir",
+           "--disable-pip-version-check", "-r", str(req_file), "-i", pip_index]
+    if host:
+        cmd += ["--trusted-host", host]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.stdout:
+        log(result.stdout)
+    if result.returncode != 0:
+        log(f"pip install stderr: {result.stderr}")
+        raise WorkerError("REQUIREMENTS_INSTALL_FAILED",
+                          f"pip install requirements.txt failed: {result.stderr}")
+    log("user requirements installed")
+
+
 def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, dict[str, Any]]:
     argv = spec["execution"]["argv"]
     entrypoint = Path(argv[1])
@@ -632,6 +659,7 @@ def run() -> None:
         reporter.stage(28, "dataset", "dataset downloaded and verified")
         materialize_input(client, bucket, "code", spec["inputs"]["code"], CODE_DIR, temp_dir)
         reporter.stage(40, "code", "approved code downloaded and verified")
+        install_user_requirements()
         write_parameters(spec)
         mlflow.start()
         reporter.report(
