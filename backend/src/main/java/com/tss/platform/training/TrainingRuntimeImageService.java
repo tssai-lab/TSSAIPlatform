@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -135,6 +136,22 @@ public class TrainingRuntimeImageService {
             }
         } catch (IOException exception) {
             throw new IllegalStateException("cannot prepare runtime image build context: " + exception.getMessage(), exception);
+        } finally {
+            deleteRecursively(context);
+        }
+    }
+
+    private void deleteRecursively(Path directory) {
+        try (var stream = Files.walk(directory)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // best-effort cleanup of the runtime image build context
+                }
+            });
+        } catch (IOException ignored) {
+            // best-effort cleanup of the runtime image build context
         }
     }
 
