@@ -286,21 +286,9 @@ const TaskCreate: React.FC = () => {
       .then((res) => {
         const plans = (res?.data ?? []).filter((plan) => plan.enabled);
         setTrainingPlans(plans);
-        const defaultPlan =
-          plans.find((plan) => plan.id === CONSISTENCY_TRAINING_PROFILE) ??
-          plans[0];
-        if (!defaultPlan) {
+        if (!plans.length) {
           message.error('没有可用训练方案，请检查后端 training-plans 配置');
-          return;
         }
-        setSelectedTrainingPlanId(defaultPlan.id);
-        form.setFieldsValue({
-          trainingProfile: defaultPlan.id,
-          planId: defaultPlan.id,
-          planVersion: defaultPlan.version,
-          trainingMode: defaultPlan.trainingModes[0],
-          resourceProfileId: defaultPlan.runtimes[0]?.resourceProfiles[0]?.id,
-        });
       })
       .catch((error: any) =>
         message.error(error?.message || '训练方案加载失败'),
@@ -1017,6 +1005,11 @@ const TaskCreate: React.FC = () => {
 
   const validateStep = async (step: number) => {
     if (step === 0) {
+      await form.validateFields(['trainingProfile']);
+      if (!selectedTrainingPlan) {
+        message.error('请先选择训练方案');
+        throw new Error('missing training plan');
+      }
       if (!selectedBaseModelVersionId) {
         message.error('请选择或上传基础模型权重');
         throw new Error('missing model');
@@ -1182,7 +1175,7 @@ const TaskCreate: React.FC = () => {
   };
 
   const stepItems = [
-    { title: '基础模型权重' },
+    { title: '训练方案与基础模型' },
     { title: '训练数据集' },
     { title: '训练配置与代码' },
     { title: '确认并提交' },
@@ -1241,9 +1234,7 @@ const TaskCreate: React.FC = () => {
         preserve
         layout="vertical"
         initialValues={{
-          trainingProfile: CONSISTENCY_TRAINING_PROFILE,
           hyperParams: JSON.stringify(FUSION_HYPER_PARAMS_DEFAULT, null, 2),
-          modelType: 'NLP',
           modelVersion: 'v1.0.0',
           datasetVersion: 'v1.0.0',
         }}
@@ -1257,9 +1248,50 @@ const TaskCreate: React.FC = () => {
         <div style={{ minHeight: 280, marginBottom: 24 }}>
           {currentStep === 0 && (
             <>
+              <Form.Item
+                name="trainingProfile"
+                label="训练方案"
+                rules={[{ required: true, message: '请选择训练方案' }]}
+                extra="训练方案决定可选择的模型、数据集、训练代码、运行镜像和资源规格"
+              >
+                <Select
+                  loading={!trainingPlans.length}
+                  placeholder="请先选择训练方案"
+                  onChange={(value: string) => {
+                    const plan = trainingPlans.find(
+                      (item) => item.id === value,
+                    );
+                    const modelTypes = plan?.inputs?.model?.taskTypes ?? [];
+                    setSelectedTrainingPlanId(value);
+                    setSelectedBaseModelVersionId(undefined);
+                    setSelectedDatasetVersionId(undefined);
+                    setSelectedCodeVersionId(undefined);
+                    setSelectedCodeApprovalStatus(undefined);
+                    setCodeCheck({ loading: false });
+                    form.setFieldsValue({
+                      baseModelVersionId: undefined,
+                      datasetVersionId: undefined,
+                      codeVersionId: undefined,
+                      planId: value,
+                      planVersion: plan?.version,
+                      trainingMode: plan?.trainingModes?.[0],
+                      resourceProfileId:
+                        plan?.runtimes?.[0]?.resourceProfiles?.[0]?.id,
+                      modelType:
+                        modelTypes.length === 1 ? modelTypes[0] : undefined,
+                      hyperParams: '{}',
+                    });
+                  }}
+                  options={trainingPlans.map((plan) => ({
+                    value: plan.id,
+                    label: `${plan.displayName} (${plan.id})`,
+                  }))}
+                />
+              </Form.Item>
               <Radio.Group
                 value={modelInputMode}
                 onChange={(e) => setModelInputMode(e.target.value)}
+                disabled={!selectedTrainingPlanId}
                 style={{ marginBottom: 16 }}
               >
                 <Radio.Button value="select">选择已有</Radio.Button>
@@ -1280,6 +1312,7 @@ const TaskCreate: React.FC = () => {
                     showSearch
                     allowClear
                     loading={modelLoading}
+                    disabled={!selectedTrainingPlanId}
                     optionFilterProp="label"
                     value={selectedBaseModelVersionId}
                     onChange={(value?: string) => {
@@ -1319,12 +1352,19 @@ const TaskCreate: React.FC = () => {
                   >
                     <Input placeholder="例如：v1.0.0 或 v1" />
                   </Form.Item>
-                  <Form.Item name="modelType" label="类型" initialValue="NLP">
+                  <Form.Item name="modelType" label="类型">
                     <Select
                       options={[
                         { value: 'NLP', label: 'NLP' },
                         { value: 'CV', label: 'CV' },
-                      ]}
+                      ].filter(
+                        (option) =>
+                          !selectedTrainingPlan?.inputs?.model?.taskTypes
+                            ?.length ||
+                          selectedTrainingPlan.inputs.model.taskTypes.includes(
+                            option.value,
+                          ),
+                      )}
                     />
                   </Form.Item>
                   <Form.Item
@@ -1655,43 +1695,6 @@ const TaskCreate: React.FC = () => {
               />
               <Form.Item name="name" label="任务名称（可选）">
                 <Input placeholder="例如：fusion-k8s-train" />
-              </Form.Item>
-              <Form.Item
-                name="trainingProfile"
-                label="训练方案"
-                rules={[{ required: true, message: '训练方案不能为空' }]}
-                extra="训练方案决定模型、数据集、代码入口、运行镜像、输出物和资源规格。"
-              >
-                <Select
-                  loading={!trainingPlans.length}
-                  disabled={trainingConfigMode !== 'code'}
-                  onChange={(value: string) => {
-                    const plan = trainingPlans.find(
-                      (item) => item.id === value,
-                    );
-                    setSelectedTrainingPlanId(value);
-                    setSelectedBaseModelVersionId(undefined);
-                    setSelectedDatasetVersionId(undefined);
-                    setSelectedCodeVersionId(undefined);
-                    setSelectedCodeApprovalStatus(undefined);
-                    setCodeCheck({ loading: false });
-                    form.setFieldsValue({
-                      baseModelVersionId: undefined,
-                      datasetVersionId: undefined,
-                      codeVersionId: undefined,
-                      planId: value,
-                      planVersion: plan?.version,
-                      trainingMode: plan?.trainingModes?.[0],
-                      resourceProfileId:
-                        plan?.runtimes?.[0]?.resourceProfiles?.[0]?.id,
-                      hyperParams: '{}',
-                    });
-                  }}
-                  options={trainingPlans.map((plan) => ({
-                    value: plan.id,
-                    label: `${plan.displayName} (${plan.id})`,
-                  }))}
-                />
               </Form.Item>
               {trainingConfigMode === 'code' && (
                 <>
