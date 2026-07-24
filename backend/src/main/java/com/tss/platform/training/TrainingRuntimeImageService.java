@@ -2,6 +2,8 @@ package com.tss.platform.training;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.training.plan.TrainingRunSpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -27,6 +29,7 @@ import java.util.regex.Pattern;
 @Component
 public class TrainingRuntimeImageService {
 
+    private static final Logger LOG = LoggerFactory.getLogger(TrainingRuntimeImageService.class);
     private static final Pattern SHA256 = Pattern.compile("^[a-f0-9]{64}$");
     private static final Pattern REPOSITORY = Pattern.compile("^[a-z0-9][a-z0-9._/:/-]*$");
     private static final Pattern PIP_INDEX_URL = Pattern.compile(
@@ -53,9 +56,8 @@ public class TrainingRuntimeImageService {
             return baseImage;
         }
         if (!properties.isRuntimeImageBuildEnabled()) {
-            throw new IllegalStateException(
-                    "training code declares requirements.txt, but automatic runtime image building is disabled"
-            );
+            LOG.warn("training code declares requirements.txt, but automatic runtime image building is disabled; falling back to base image: {}", baseImage);
+            return baseImage;
         }
         String repository = requireRepository();
         String fingerprint = runSpec.runtime().environmentFingerprint();

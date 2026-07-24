@@ -37,13 +37,13 @@ class TrainingRuntimeImageServiceTest {
     }
 
     @Test
-    void rejectsDependencyBuildWhenTheCapabilityIsNotConfigured() {
+    void fallsBackToBaseImageWhenBuildCapabilityIsNotConfigured() {
         TrainingRuntimeImageService service = new TrainingRuntimeImageService(
                 properties(false), mock(ShellCommandRunner.class)
         );
 
-        assertThrows(IllegalStateException.class,
-                () -> service.resolveImage(runSpec(List.of("ultralytics==8.3.0"), "a".repeat(64))));
+        assertEquals("registry.example/tss/worker@sha256:" + "b".repeat(64),
+                service.resolveImage(runSpec(List.of("ultralytics==8.3.0"), "a".repeat(64))));
     }
 
     @Test
