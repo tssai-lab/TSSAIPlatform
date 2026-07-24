@@ -29,6 +29,7 @@ import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSnapshot;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -84,7 +85,7 @@ public class TrainingExperimentService {
             TrainingRunSpecFactory trainingRunSpecFactory,
             TrainingOutputValidator trainingOutputValidator,
             TrainingExecutorRouter trainingExecutorRouter,
-            JobScheduler jobScheduler,
+            @Lazy JobScheduler jobScheduler,
             ObjectMapper objectMapper,
             AuthContext authContext
     ) {

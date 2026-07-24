@@ -9,6 +9,7 @@ import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,7 +40,7 @@ public class KubernetesTrainingJobMonitor {
             ShellCommandRunner shellCommandRunner,
             TrainingRunSpecCodec runSpecCodec,
             TransactionTemplate transactionTemplate,
-            JobScheduler jobScheduler
+            @Lazy JobScheduler jobScheduler
     ) {
         this.properties = properties;
         this.environmentService = environmentService;

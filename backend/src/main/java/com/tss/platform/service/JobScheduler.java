@@ -10,6 +10,7 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.training.TrainingExecutorRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -37,7 +38,7 @@ public class JobScheduler {
             TrainingExperimentVersionRepository trainingRepo,
             InferenceTaskRepository inferenceRepo,
             TrainingKubernetesProperties k8sProperties,
-            TrainingExecutorRouter executorRouter) {
+            @Lazy TrainingExecutorRouter executorRouter) {
         this.computeServerRepo = computeServerRepo;
         this.trainingRepo = trainingRepo;
         this.inferenceRepo = inferenceRepo;
