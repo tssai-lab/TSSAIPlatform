@@ -68,6 +68,7 @@ public class TrainingExperimentService {
     private final TrainingRunSpecFactory trainingRunSpecFactory;
     private final TrainingOutputValidator trainingOutputValidator;
     private final TrainingExecutorRouter trainingExecutorRouter;
+    private final JobScheduler jobScheduler;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
 
@@ -83,6 +84,7 @@ public class TrainingExperimentService {
             TrainingRunSpecFactory trainingRunSpecFactory,
             TrainingOutputValidator trainingOutputValidator,
             TrainingExecutorRouter trainingExecutorRouter,
+            JobScheduler jobScheduler,
             ObjectMapper objectMapper,
             AuthContext authContext
     ) {
@@ -97,6 +99,7 @@ public class TrainingExperimentService {
         this.trainingRunSpecFactory = trainingRunSpecFactory;
         this.trainingOutputValidator = trainingOutputValidator;
         this.trainingExecutorRouter = trainingExecutorRouter;
+        this.jobScheduler = jobScheduler;
         this.objectMapper = objectMapper;
         this.authContext = authContext;
     }
@@ -759,11 +762,32 @@ public class TrainingExperimentService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    trainingExecutorRouter.start(trainingId);
+                    scheduleOrStart(trainingId);
                 }
             });
             return;
         }
+        scheduleOrStart(trainingId);
+    }
+
+    private void scheduleOrStart(String trainingId) {
+        TrainingExperimentVersion task = repo.findById(trainingId).orElse(null);
+        if (task == null) return;
+
+        // 只有带 trainingPlanId 的 K8s 任务走调度器
+        if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
+            Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
+            String node = jobScheduler.assignNodeForTraining(task, nodeSelector);
+            if (node != null) {
+                jobScheduler.bindTask(task, node);
+                trainingExecutorRouter.start(trainingId);
+                return;
+            }
+            jobScheduler.enqueueTask(task);
+            return;
+        }
+
+        // 旧版 trainingProfile 或本地训练直接执行
         trainingExecutorRouter.start(trainingId);
     }
 

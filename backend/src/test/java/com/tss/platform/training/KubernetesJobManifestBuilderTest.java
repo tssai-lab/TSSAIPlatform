@@ -51,7 +51,7 @@ class KubernetesJobManifestBuilderTest {
         when(runtimeImageService.resolveImage(runSpec)).thenReturn("registry.example/training-worker:test");
 
         String yaml = new KubernetesJobManifestBuilder(properties, codec, runtimeImageService)
-                .buildJobYaml(task, "access", "secret", "models");
+                .buildJobYaml(task, "access", "secret", "models", null);
 
         assertTrue(yaml.contains("workingDir: /workspace/job\n"));
         assertFalse(yaml.contains("workingDir: /workspace/job/code\n"));

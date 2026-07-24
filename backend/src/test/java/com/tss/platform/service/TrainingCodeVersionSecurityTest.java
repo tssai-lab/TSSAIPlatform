@@ -88,6 +88,7 @@ class TrainingCodeVersionSecurityTest {
                 trainingRunSpecFactory,
                 mock(TrainingOutputValidator.class),
                 mock(TrainingExecutorRouter.class),
+                mock(JobScheduler.class),
                 new ObjectMapper(),
                 authContext
         );

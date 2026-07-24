@@ -77,4 +77,8 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
     List<TrainingExperimentVersion> findByServerIpAndStatusIn(String serverIp, List<String> statuses);
 
     List<TrainingExperimentVersion> findByServerIpNotNullAndStatusIn(List<String> statuses);
+
+    List<TrainingExperimentVersion> findByStatus(String status);
+
+    List<TrainingExperimentVersion> findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc(String status);
 }

@@ -46,6 +46,12 @@ public class ComputeServer {
     @Column(name = "k8s_node_name", length = 256)
     private String k8sNodeName;
 
+    @Column(name = "enabled")
+    private Boolean enabled = true;
+
+    @Column(name = "k8s_labels_json", columnDefinition = "TEXT")
+    private String k8sLabelsJson;
+
     @Column(name = "deleted")
     private Boolean deleted = false;
 
