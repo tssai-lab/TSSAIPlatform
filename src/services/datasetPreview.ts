@@ -55,7 +55,13 @@ export type DatasetPreviewFilesData = {
   files: DatasetPreviewFileItem[];
 };
 
-export type DatasetPreviewContentType = 'TEXT' | 'CSV';
+export type DatasetPreviewContentType =
+  | 'TEXT'
+  | 'CSV'
+  | 'JSONL'
+  | 'JSON'
+  | 'XML'
+  | string;
 
 export type DatasetPreviewContentData = {
   path?: string | null;
