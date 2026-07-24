@@ -122,6 +122,7 @@ const TrainingCodeList: React.FC = () => {
       title: '代码名称',
       dataIndex: 'codeAssetName',
       key: 'codeAssetName',
+      width: 160,
       ellipsis: true,
       render: (_, record) => getCodeUserDisplayName(record),
     },
@@ -129,8 +130,10 @@ const TrainingCodeList: React.FC = () => {
       title: '文件名',
       dataIndex: 'fileName',
       key: 'fileName',
+      width: 180,
       ellipsis: true,
       hideInSearch: true,
+      render: (_, record) => record.fileName?.trim() || '-',
     },
     {
       title: '训练方案',
@@ -265,6 +268,8 @@ const TrainingCodeList: React.FC = () => {
         rowKey="codeVersionId"
         search={{ labelWidth: 'auto' }}
         pagination={{ pageSize: 10 }}
+        // 无 width 的 ellipsis 列在窄屏会被挤成 0 宽（列设置仍显示已勾选）
+        scroll={{ x: 1420 }}
       />
     </PageContainer>
   );

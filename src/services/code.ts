@@ -334,9 +334,29 @@ export async function approveCodeVersion(
   return decideCodeVersion(codeVersionId, 'APPROVE', options);
 }
 
+/** 读取版本当前审批状态（失败时返回 undefined，不抛错） */
+async function peekCodeApprovalStatus(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+): Promise<string | undefined> {
+  try {
+    const detail = await getV2CodeVersion(codeVersionId, {
+      skipErrorHandler: true,
+      ...(options || {}),
+    });
+    const status = String(detail?.approvalStatus || '').toUpperCase();
+    return status || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 自动审核通过（管理员审核开关关闭时生效）。
  * 开启管理员审核后为 no-op，人工审核路径保持不变。
+ *
+ * 说明：现网上传侧常已直接 APPROVED；普通用户再调管理员审批接口会失败
+ * （如「代码版本审批失败」）。此时若版本实际已是 APPROVED，视为成功，避免误入待审。
  */
 export async function autoApproveCodeVersionIfEnabled(
   codeVersionId: string,
@@ -348,6 +368,16 @@ export async function autoApproveCodeVersionIfEnabled(
 
   const { trainingProfile, ...rest } = options || {};
   const opts = { skipErrorHandler: true, ...rest };
+
+  const already = await peekCodeApprovalStatus(id, opts);
+  if (already === 'APPROVED') {
+    return {
+      codeVersionId: id,
+      approvalStatus: 'APPROVED',
+      decisionSource: 'already-approved',
+    };
+  }
+
   const profile = trainingProfile?.trim();
   if (profile) {
     try {
@@ -357,16 +387,28 @@ export async function autoApproveCodeVersionIfEnabled(
     }
   }
 
-  const res = await approveCodeVersion(id, opts);
-  if (res?.success === false) {
-    throw new Error(res?.errorMessage || '自动审核通过失败');
-  }
-  return (
-    res?.data || {
-      codeVersionId: id,
-      approvalStatus: 'APPROVED',
+  try {
+    const res = await approveCodeVersion(id, opts);
+    if (res?.success === false) {
+      throw new Error(res?.errorMessage || '自动审核通过失败');
     }
-  );
+    return (
+      res?.data || {
+        codeVersionId: id,
+        approvalStatus: 'APPROVED',
+      }
+    );
+  } catch (error) {
+    const after = await peekCodeApprovalStatus(id, opts);
+    if (after === 'APPROVED') {
+      return {
+        codeVersionId: id,
+        approvalStatus: 'APPROVED',
+        decisionSource: 'reconciled',
+      };
+    }
+    throw error;
+  }
 }
 
 /** 管理员拒绝训练代码版本（reason 必填） */

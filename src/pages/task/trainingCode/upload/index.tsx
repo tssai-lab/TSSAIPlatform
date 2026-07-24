@@ -24,15 +24,15 @@ import {
   checkCodeVersionForTraining,
   uploadCodeZip,
 } from '@/services/platform';
+import {
+  fetchTrainingPlans,
+  type TrainingPlan,
+} from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
   markPendingCodeApproved,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
-import {
-  fetchTrainingPlans,
-  type TrainingPlan,
-} from '@/services/trainingPlans';
 
 const TrainingCodeUpload: React.FC = () => {
   const access = useAccess();
@@ -132,10 +132,14 @@ const TrainingCodeUpload: React.FC = () => {
         trainingProfile: data.trainingProfile || trainingProfile,
       });
 
-      if (
-        isTrainingCodeAutoApproveEnabled() &&
-        data.approvalStatus !== 'APPROVED'
-      ) {
+      // 上传接口已返回 APPROVED（后端侧自动通过）时，直接成功，勿再调审批接口
+      if (data.approvalStatus === 'APPROVED') {
+        markPendingCodeApproved(data.codeVersionId);
+        message.success(`训练代码已上传并审核通过：${data.codeVersionId}`);
+        return;
+      }
+
+      if (isTrainingCodeAutoApproveEnabled()) {
         try {
           const approved = await autoApproveCodeVersionIfEnabled(
             data.codeVersionId,
@@ -158,21 +162,31 @@ const TrainingCodeUpload: React.FC = () => {
           );
           return;
         } catch (approveError: any) {
-          upsertPendingCodeVersion({
-            codeVersionId: data.codeVersionId,
-            codeAssetName: values.codeName.trim(),
-            fileName: data.fileName,
-            trainingProfile: data.trainingProfile || trainingProfile,
-            approvalStatus: data.approvalStatus || 'PENDING',
-            sizeBytes: data.sizeBytes,
-            source: 'upload',
-          });
-          message.warning(
-            getApiErrorMessage(
-              approveError,
-              '上传成功，但自动审核失败，请到待审核页处理',
-            ),
-          );
+          // 自动审核模式：仅管理员写入待审队列；普通用户看列表是否已通过即可
+          if (access.isAdmin) {
+            upsertPendingCodeVersion({
+              codeVersionId: data.codeVersionId,
+              codeAssetName: values.codeName.trim(),
+              fileName: data.fileName,
+              trainingProfile: data.trainingProfile || trainingProfile,
+              approvalStatus: data.approvalStatus || 'PENDING',
+              sizeBytes: data.sizeBytes,
+              source: 'upload',
+            });
+            message.warning(
+              getApiErrorMessage(
+                approveError,
+                '上传成功，但自动审核失败，请到待审核页处理',
+              ),
+            );
+          } else {
+            message.warning(
+              getApiErrorMessage(
+                approveError,
+                '上传成功，但审核状态未确认。请到训练代码列表查看是否已通过；若仍为 PENDING，请联系管理员。',
+              ),
+            );
+          }
           return;
         }
       }
