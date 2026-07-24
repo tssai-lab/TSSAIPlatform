@@ -1,0 +1,81 @@
+name: Runtime Images
+
+on:
+  push:
+    branches:
+      - backend-ops
+    paths:
+      - "deploy/main/mlflow-lite/**"
+      - "k8s/training-worker/**"
+      - "k8s/inference-worker/**"
+      - ".github/workflows/runtime-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runtime-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mlflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/main/mlflow-lite
+          file: ./deploy/main/mlflow-lite/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tss-mlflow-lite:${{ github.sha }}
+          cache-from: type=gha,scope=mlflow-lite
+          cache-to: type=gha,mode=max,scope=mlflow-lite
+
+  training-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./k8s/training-worker
+          file: ./k8s/training-worker/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tss-training-worker:${{ github.sha }}
+          cache-from: type=gha,scope=training-worker
+          cache-to: type=gha,mode=max,scope=training-worker
+
+  inference-worker:
+    needs: training-worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./k8s/inference-worker
+          file: ./k8s/inference-worker/Dockerfile
+          push: true
+          build-args: |
+            INFERENCE_BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/tss-training-worker:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/tss-inference-worker-cpu:${{ github.sha }}
+          cache-from: type=gha,scope=inference-worker-cpu
+          cache-to: type=gha,mode=max,scope=inference-worker-cpu
