@@ -111,6 +111,7 @@ class CodeAssetPostgresContainerTest {
             }
         }
         expectedVersions.add("41");
+        expectedVersions.add("42");
         List<String> installedVersions = queryStrings("""
                 SELECT version
                 FROM flyway_schema_history
@@ -119,7 +120,7 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("41", installedVersions.get(installedVersions.size() - 1));
+        assertEquals("42", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",
