@@ -135,6 +135,7 @@ public class TrainingRuntimeImageService {
             }
         } catch (IOException exception) {
             throw new IllegalStateException("cannot prepare runtime image build context: " + exception.getMessage(), exception);
+        }
     }
 
 
