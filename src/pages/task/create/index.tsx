@@ -850,7 +850,9 @@ const TaskCreate: React.FC = () => {
         throw new Error('训练代码上传成功但未返回 codeVersionId');
       }
       let approvalStatus = res?.data?.approvalStatus;
-      if (isTrainingCodeAutoApproveEnabled() && approvalStatus !== 'APPROVED') {
+      if (approvalStatus === 'APPROVED') {
+        message.success(`训练代码已上传并审核通过：${codeVersionId}`);
+      } else if (isTrainingCodeAutoApproveEnabled()) {
         try {
           const approved = await autoApproveCodeVersionIfEnabled(
             codeVersionId,
@@ -866,16 +868,12 @@ const TaskCreate: React.FC = () => {
           message.warning(
             getApiErrorMessage(
               approveError,
-              '上传成功，但自动审核失败，请到训练代码待审核页处理或改选已审核版本',
+              '上传成功，但审核状态未确认。请刷新训练代码列表查看；若仍不可用，请改选已审核版本或联系管理员。',
             ),
           );
         }
       } else {
-        message.success(
-          approvalStatus === 'APPROVED'
-            ? `训练代码已上传：${codeVersionId}`
-            : `训练代码已上传，正在执行准入校验：${codeVersionId}`,
-        );
+        message.success(`训练代码已上传，正在执行准入校验：${codeVersionId}`);
       }
       setSelectedCodeVersionId(codeVersionId);
       setSelectedCodeApprovalStatus(approvalStatus);
