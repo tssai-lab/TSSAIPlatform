@@ -15,7 +15,7 @@ import {
   Typography,
   Upload,
 } from 'antd';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import {
   approveCodeVersion,
@@ -29,14 +29,18 @@ import {
   markPendingCodeApproved,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
-
-const PROFILE_DISPLAY_NAME = '图文一致性基线训练';
+import {
+  fetchTrainingPlans,
+  type TrainingPlan,
+} from '@/services/trainingPlans';
 
 const TrainingCodeUpload: React.FC = () => {
   const access = useAccess();
   const [form] = Form.useForm();
   const [uploading, setUploading] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [plansLoading, setPlansLoading] = useState(true);
+  const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
   const [uploadResult, setUploadResult] = useState<{
     codeVersionId: string;
     approvalStatus?: string;
@@ -46,6 +50,43 @@ const TrainingCodeUpload: React.FC = () => {
     fileName?: string;
     trainingProfile?: string;
   } | null>(null);
+  const selectedPlanId = Form.useWatch('trainingProfile', form);
+  const selectedPlan = useMemo(
+    () => trainingPlans.find((plan) => plan.id === selectedPlanId),
+    [selectedPlanId, trainingPlans],
+  );
+
+  useEffect(() => {
+    let active = true;
+    setPlansLoading(true);
+    fetchTrainingPlans({ skipErrorHandler: true })
+      .then((res) => {
+        if (!active) return;
+        const plans = (res?.data ?? []).filter((plan) => plan.enabled);
+        setTrainingPlans(plans);
+        const current = form.getFieldValue('trainingProfile');
+        const fallback =
+          plans.find((plan) => plan.id === CONSISTENCY_TRAINING_PROFILE) ??
+          plans[0];
+        if (!plans.some((plan) => plan.id === current) && fallback) {
+          form.setFieldValue('trainingProfile', fallback.id);
+        }
+        if (!fallback) {
+          message.error('没有可用训练方案，请检查后端 training-plans 配置');
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          message.error(getApiErrorMessage(error, '加载训练方案失败'));
+        }
+      })
+      .finally(() => {
+        if (active) setPlansLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [form]);
 
   const handleUpload = async () => {
     const values = await form.validateFields();
@@ -252,7 +293,7 @@ const TrainingCodeUpload: React.FC = () => {
             <span>
               zip 须包含入口脚本{' '}
               <Typography.Text code>
-                scripts/training/train_fusion_baseline.py
+                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
               </Typography.Text>
               。当前为<strong>自动审核</strong>
               ：上传成功后会自动审核通过，可直接在训练代码列表中使用。管理员审核入口仍保留，需要时可改回人工审核。
@@ -261,7 +302,7 @@ const TrainingCodeUpload: React.FC = () => {
             <span>
               zip 须包含入口脚本{' '}
               <Typography.Text code>
-                scripts/training/train_fusion_baseline.py
+                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
               </Typography.Text>
               。上传接口使用 multipart 表单字段{' '}
               <Typography.Text code>
@@ -414,20 +455,23 @@ const TrainingCodeUpload: React.FC = () => {
             label="训练方案"
             extra={
               <span>
-                当前默认：{PROFILE_DISPLAY_NAME}
+                {selectedPlan?.description || '训练方案由后端统一配置'}
                 <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                  （{CONSISTENCY_TRAINING_PROFILE}）
+                  {selectedPlan
+                    ? `入口：${selectedPlan.execution.entrypoint}`
+                    : ''}
                 </Typography.Text>
               </span>
             }
+            rules={[{ required: true, message: '请选择训练方案' }]}
           >
             <Select
-              options={[
-                {
-                  value: CONSISTENCY_TRAINING_PROFILE,
-                  label: PROFILE_DISPLAY_NAME,
-                },
-              ]}
+              loading={plansLoading}
+              disabled={plansLoading || !trainingPlans.length}
+              options={trainingPlans.map((plan) => ({
+                value: plan.id,
+                label: `${plan.displayName} (${plan.id})`,
+              }))}
             />
           </Form.Item>
           <Form.Item name="remark" label="备注（可选）">
@@ -458,7 +502,9 @@ const TrainingCodeUpload: React.FC = () => {
                 },
               },
             ]}
-            extra="仅支持 .zip；允许 .py/.json/.jsonl/.yaml/.yml/.txt/.md，禁止脚本执行器与二进制可执行文件；须包含 scripts/training/train_fusion_baseline.py"
+            extra={`仅支持 .zip；允许 .py/.json/.jsonl/.yaml/.yml/.txt/.md，禁止脚本执行器与二进制可执行文件；须包含 ${
+              selectedPlan?.execution?.entrypoint || '所选方案入口脚本'
+            }`}
           >
             <Upload accept=".zip" maxCount={1} beforeUpload={() => false}>
               <Button icon={<UploadOutlined />}>选择训练代码 zip</Button>
