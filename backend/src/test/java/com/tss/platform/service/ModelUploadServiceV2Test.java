@@ -379,7 +379,9 @@ class ModelUploadServiceV2Test {
     private static byte[] zipBytes() throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(out)) {
-            zip.putNextEntry(new ZipEntry("model.onnx"));
+            ZipEntry entry = new ZipEntry("model.onnx");
+            entry.setTime(0L);
+            zip.putNextEntry(entry);
             zip.write(new byte[]{1, 2, 3});
             zip.closeEntry();
         }
