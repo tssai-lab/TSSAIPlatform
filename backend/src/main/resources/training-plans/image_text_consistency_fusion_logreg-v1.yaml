@@ -24,12 +24,18 @@ inputs:
     formats: [LEGACY_WEIGHT_ARCHIVE]
     taskTypes: [NLP]
     requiredEntries: []
+    formatGuide: |
+      本方案模型为训练代码内部生成，上传的基础模型包仅作参考。
+      consumed=false，训练过程不消费基础模型权重。
   dataset:
     required: true
     taskTypes: [NLP]
     cvTaskTypes: []
     annotationFormats: []
     requiredEntries: []
+    formatGuide: |
+      图文一致性融合方案，数据集为图文配对数据。
+      具体格式由训练代码 scripts/training/train_fusion_baseline.py 决定。
   code:
     required: true
     approvalRequired: true

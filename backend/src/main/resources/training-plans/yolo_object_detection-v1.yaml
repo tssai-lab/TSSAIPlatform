@@ -28,12 +28,27 @@ inputs:
     formats: [WEIGHT_ARCHIVE]
     taskTypes: [CV]
     requiredEntries: [yolo11n.pt]
+    formatGuide: |
+      压缩包内需包含 YOLO 预训练权重文件（.pt）。
+      例如：yolo11n.pt
   dataset:
     required: true
     taskTypes: [CV]
     cvTaskTypes: [OBJECT_DETECTION]
     annotationFormats: [YOLO]
     requiredEntries: [data.yaml]
+    formatGuide: |
+      压缩包内需包含 YOLO 格式数据集，至少包含 data.yaml 配置文件。
+      常见结构：
+        data.yaml          （train/val/test 路径与类别配置）
+        images/
+          train/  *.jpg
+          val/    *.jpg
+          test/   *.jpg
+        labels/
+          train/  *.txt    （每行：class x_center y_center width height）
+          val/    *.txt
+          test/   *.txt
   code:
     required: true
     approvalRequired: true

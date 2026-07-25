@@ -28,12 +28,32 @@ inputs:
     formats: [HF_MODEL_ARCHIVE]
     taskTypes: [CV]
     requiredEntries: [model.yaml]
+    formatGuide: |
+      压缩包内需包含 HuggingFace 模型文件，至少包含 model.yaml。
+      常见结构：
+        model.yaml
+        config.json
+        preprocessor_config.json
+        *.safetensors / *.bin（模型权重）
   dataset:
     required: true
     taskTypes: [CV]
     cvTaskTypes: [IMAGE_CLASSIFICATION, UNLABELED]
     annotationFormats: [FOLDER_CLASSIFICATION, OTHER]
     requiredEntries: [data/train, data/validation, data/test]
+    formatGuide: |
+      压缩包内需按 HuggingFace ImageFolder 标准结构组织：
+        data/
+          train/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+          validation/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+          test/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+      每个子目录名即为类别名，目录内放置该类别的图片。
   code:
     required: true
     approvalRequired: true
