@@ -97,7 +97,7 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
-    void flywayAppliesEveryAvailableMigrationThroughV45()
+    void flywayAppliesEveryAvailableMigration()
             throws SQLException {
         List<String> expectedVersions = new ArrayList<>(IntStream.rangeClosed(1, 30)
                 .mapToObj(Integer::toString)
@@ -111,7 +111,9 @@ class CodeAssetPostgresContainerTest {
                 "V37__server_metric_snapshot.sql",
                 "V38__task_queue_fields.sql",
                 "V39__server_metric_history.sql",
-                "V40__compute_server_capacity.sql"
+                "V40__compute_server_capacity.sql",
+                "V42__compute_server_labels_enabled.sql",
+                "V47__compute_server_gpu_count.sql"
         )) {
             if (Thread.currentThread()
                     .getContextClassLoader()
@@ -128,6 +130,7 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("44");
         expectedVersions.add("45");
         expectedVersions.add("46");
+        expectedVersions.add("47");
         List<String> installedVersions = queryStrings("""
                 SELECT version
                 FROM flyway_schema_history
@@ -136,7 +139,7 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("46", installedVersions.get(installedVersions.size() - 1));
+        assertEquals("47", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",
