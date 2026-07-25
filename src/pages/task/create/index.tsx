@@ -86,6 +86,107 @@ const isCodeApproved = (status?: string) => status === 'APPROVED';
 const resolveDatasetVersionId = (data: any): string | undefined =>
   data?.datasetVersionId || data?.id || data?.versionId;
 
+const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
+  const datasetEntries = plan.inputs?.dataset?.requiredEntries ?? [];
+  const datasetFormats = plan.inputs?.dataset?.annotationFormats ?? [];
+  const modelEntries = plan.inputs?.model?.requiredEntries ?? [];
+  const modelFormats = plan.inputs?.model?.formats ?? [];
+  const entrypoint = plan.execution?.entrypoint;
+  const codeRuntime = plan.inputs?.code?.runtime;
+  const params = plan.parameters ?? [];
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message={
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {plan.description ? (
+            <Typography.Paragraph style={{ marginBottom: 0 }}>
+              {plan.description}
+            </Typography.Paragraph>
+          ) : null}
+          <Descriptions
+            size="small"
+            column={1}
+            bordered
+            labelStyle={{ width: 120, fontWeight: 600 }}
+          >
+            <Descriptions.Item label="数据集格式">
+              {datasetEntries.length ? (
+                <Space direction="vertical" size={4}>
+                  <Typography.Text>压缩包内必须包含：</Typography.Text>
+                  <Space wrap>
+                    {datasetEntries.map((e) => (
+                      <Tag key={e}>{e}</Tag>
+                    ))}
+                  </Space>
+                  {datasetFormats.length ? (
+                    <Typography.Text type="secondary">
+                      标注格式：{datasetFormats.join('、')}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">
+                  无特殊目录要求
+                </Typography.Text>
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="模型格式">
+              {modelEntries.length ? (
+                <Space direction="vertical" size={4}>
+                  <Typography.Text>压缩包内必须包含：</Typography.Text>
+                  <Space wrap>
+                    {modelEntries.map((e) => (
+                      <Tag key={e}>{e}</Tag>
+                    ))}
+                  </Space>
+                  {modelFormats.length ? (
+                    <Typography.Text type="secondary">
+                      格式：{modelFormats.join('、')}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">
+                  无特殊条目要求
+                </Typography.Text>
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="训练代码">
+              <Space>
+                <Typography.Text>入口脚本必须为：</Typography.Text>
+                {entrypoint ? <Tag color="blue">{entrypoint}</Tag> : null}
+                {codeRuntime ? (
+                  <Typography.Text type="secondary">
+                    运行时：{codeRuntime}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            </Descriptions.Item>
+            {params.length ? (
+              <Descriptions.Item label="训练参数">
+                <Space wrap>
+                  {params.map((p) => (
+                    <Tag key={p.name}>
+                      {p.displayName || p.name}
+                      {p.defaultValue != null
+                        ? `（默认 ${String(p.defaultValue)}）`
+                        : ''}
+                    </Tag>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            ) : null}
+          </Descriptions>
+        </Space>
+      }
+    />
+  );
+};
+
 const TaskCreate: React.FC = () => {
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get('experimentId')?.trim() || '';
@@ -945,7 +1046,7 @@ const TaskCreate: React.FC = () => {
     }
   };
 
-  const validateStep2 = async () => {
+  const validateCodeStep = async () => {
     await form.validateFields(['trainingProfile']);
     await validateConfigSection();
     await validateCodeSection();
@@ -954,6 +1055,13 @@ const TaskCreate: React.FC = () => {
   const validateStep = async (step: number) => {
     if (step === 0) {
       await form.validateFields(['trainingProfile']);
+      if (!selectedTrainingPlan) {
+        message.error('请先选择训练方案');
+        throw new Error('missing training plan');
+      }
+      return;
+    }
+    if (step === 1) {
       if (!selectedTrainingPlan) {
         message.error('请先选择训练方案');
         throw new Error('missing training plan');
@@ -977,9 +1085,9 @@ const TaskCreate: React.FC = () => {
       }
       return;
     }
-    if (step === 1) {
+    if (step === 2) {
       if (!requiredDatasetType) {
-        message.error('请先在第一步选择或上传基础模型权重');
+        message.error('请先在第二步选择或上传基础模型权重');
         throw new Error('missing model type');
       }
       if (!selectedDatasetVersionId) {
@@ -1007,8 +1115,8 @@ const TaskCreate: React.FC = () => {
       }
       return;
     }
-    if (step === 2) {
-      await validateStep2();
+    if (step === 3) {
+      await validateCodeStep();
     }
   };
 
@@ -1031,7 +1139,7 @@ const TaskCreate: React.FC = () => {
         title: '训练代码校验未通过',
         content: (codeCheck.reasons || ['未知原因']).join('；'),
       });
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     if (
@@ -1043,7 +1151,7 @@ const TaskCreate: React.FC = () => {
           ? '自动审核可能失败，请回到训练配置步骤刷新后重试，或改选已 APPROVED 的版本。'
           : '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
       });
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     if (!selectedBaseModelVersionId || !selectedDatasetVersionId) {
@@ -1052,7 +1160,7 @@ const TaskCreate: React.FC = () => {
     }
     if (!selectedCodeVersionId) {
       message.error('请选择或上传训练代码');
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     const values = form.getFieldsValue(true);
@@ -1061,7 +1169,7 @@ const TaskCreate: React.FC = () => {
       hyperParams = JSON.parse(values.hyperParams || '{}');
     } catch {
       message.error('hyperParams JSON 格式不正确');
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
 
@@ -1113,7 +1221,8 @@ const TaskCreate: React.FC = () => {
   };
 
   const stepItems = [
-    { title: '训练方案与基础模型' },
+    { title: '训练方案' },
+    { title: '基础模型' },
     { title: '训练数据集' },
     { title: '训练配置与代码' },
     { title: '确认并提交' },
@@ -1253,6 +1362,14 @@ const TaskCreate: React.FC = () => {
                   )}
                 />
               </Form.Item>
+              {selectedTrainingPlan && (
+                <PlanFormatHint plan={selectedTrainingPlan} />
+              )}
+            </>
+          )}
+
+          {currentStep === 1 && (
+            <>
               <Radio.Group
                 value={modelInputMode}
                 onChange={(e) => setModelInputMode(e.target.value)}
@@ -1420,7 +1537,7 @@ const TaskCreate: React.FC = () => {
             </>
           )}
 
-          {currentStep === 1 && (
+          {currentStep === 2 && (
             <>
               {!requiredDatasetType ? (
                 <Alert
@@ -1649,7 +1766,7 @@ const TaskCreate: React.FC = () => {
             </>
           )}
 
-          {currentStep === 2 && (
+          {currentStep === 3 && (
             <>
               <Alert
                 type="info"
@@ -1869,7 +1986,7 @@ const TaskCreate: React.FC = () => {
             </>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 4 && (
             <>
               {(!codeCheck.passed ||
                 !isCodeApproved(
@@ -1942,7 +2059,7 @@ const TaskCreate: React.FC = () => {
               上一步
             </Button>
           )}
-          {currentStep < 3 ? (
+          {currentStep < 4 ? (
             <Button type="primary" htmlType="button" onClick={handleNext}>
               下一步
             </Button>
