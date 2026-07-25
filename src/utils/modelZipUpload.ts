@@ -14,6 +14,9 @@ export type UploadModelZipParams = {
   version: string;
   type: string;
   remark: string;
+  /** 不传则复用 remark */
+  commitInfo?: string;
+  hyperParams?: Record<string, unknown>;
   assetId?: string;
   onProgress?: (percent: number) => void;
   onUploadSession?: (payload: {
@@ -41,6 +44,8 @@ export async function uploadModelZipPackage(
     version,
     type,
     remark,
+    commitInfo: commitInfoInput,
+    hyperParams,
     assetId,
     onProgress,
     onUploadSession,
@@ -60,7 +65,10 @@ export async function uploadModelZipPackage(
     );
   }
 
-  const commitInfo = String(remark ?? '').trim();
+  const commitInfo = String(commitInfoInput ?? remark ?? '').trim();
+  if (!commitInfo) {
+    throw new Error('commitInfo 不能为空');
+  }
   const fileFingerprint = buildModelFileFingerprint(
     file,
     modelName,
@@ -73,6 +81,7 @@ export async function uploadModelZipPackage(
       fileSize: file.size,
       fileFingerprint,
       commitInfo,
+      ...(hyperParams ? { hyperParams } : {}),
     },
     requestOpts,
   );
@@ -121,8 +130,9 @@ export async function uploadModelZipPackage(
       modelName: modelName.trim(),
       version: version.trim(),
       type,
-      remark: commitInfo,
+      remark: String(remark ?? '').trim() || commitInfo,
       commitInfo,
+      ...(hyperParams ? { hyperParams } : {}),
       ...(assetId ? { assetId } : {}),
     },
     requestOpts,

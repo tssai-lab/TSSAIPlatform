@@ -5,6 +5,7 @@ import type { UploadFile } from 'antd';
 import {
   Alert,
   Button,
+  Checkbox,
   Form,
   Input,
   message,
@@ -34,6 +35,7 @@ import {
   datasetVersionFormRules,
   suggestNextDatasetVersion,
 } from '@/utils/datasetVersion';
+import { saveImportJobId } from '@/utils/importJobStorage';
 import {
   buildDatasetFileFingerprint,
   LS_DATASET_UPLOAD_FP,
@@ -204,6 +206,7 @@ const DatasetUpload: React.FC = () => {
       | MultimodalSampleGrouping
       | undefined;
     const manifestPath = values.manifestPath?.trim();
+    const strictManifest = Boolean(values.strictManifest);
     const annotationFormat = values.annotationFormat as
       | AnnotationFormat
       | undefined;
@@ -283,6 +286,11 @@ const DatasetUpload: React.FC = () => {
               (multimodalGrouping ?? 'AUTO_DIRECTORY') === 'MANIFEST'
                 ? manifestPath
                 : undefined,
+            strictManifest:
+              type === 'MULTIMODAL' &&
+              (multimodalGrouping ?? 'AUTO_DIRECTORY') === 'MANIFEST'
+                ? strictManifest
+                : undefined,
             fileFingerprint: fp,
             onProgress: (p) => setUploadPercent(p),
             onMergeStatus: (status) => {
@@ -297,6 +305,11 @@ const DatasetUpload: React.FC = () => {
         );
         createdAssetId = uploadRes?.data?.assetId;
         if (type === 'MULTIMODAL' && uploadRes?.data?.importJobId) {
+          const jobDatasetId =
+            assetId || createdAssetId || uploadRes?.data?.assetId;
+          if (jobDatasetId) {
+            saveImportJobId(jobDatasetId, uploadRes.data.importJobId);
+          }
           message.info(
             multimodalGrouping === 'MANIFEST'
               ? 'zip 上传完成，后台正在解析 manifest 并导入样本，请在详情页查看导入进度。'
@@ -393,6 +406,7 @@ const DatasetUpload: React.FC = () => {
           type: 'CV',
           version: 'v1.0.0',
           sampleGrouping: 'AUTO_DIRECTORY',
+          strictManifest: false,
         }}
       >
         <Form.Item
@@ -464,13 +478,22 @@ const DatasetUpload: React.FC = () => {
               </Select>
             </Form.Item>
             {sampleGrouping === 'MANIFEST' && (
-              <Form.Item
-                name="manifestPath"
-                label="Manifest 路径"
-                extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
-              >
-                <Input placeholder="例如 metadata/manifest.json" />
-              </Form.Item>
+              <>
+                <Form.Item
+                  name="manifestPath"
+                  label="Manifest 路径"
+                  extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
+                >
+                  <Input placeholder="例如 metadata/manifest.json" />
+                </Form.Item>
+                <Form.Item
+                  name="strictManifest"
+                  valuePropName="checked"
+                  extra="开启后，zip 内未被 manifest 声明的普通文件会导致导入失败"
+                >
+                  <Checkbox>严格 Manifest（strictManifest）</Checkbox>
+                </Form.Item>
+              </>
             )}
             {sampleGrouping === 'AUTO_DIRECTORY' && (
               <Alert

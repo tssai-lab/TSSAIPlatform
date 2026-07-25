@@ -16,6 +16,12 @@ declare namespace API {
     createdAt?: string;
     updatedAt?: string;
     assetId?: string;
+    /** 制品 SHA-256；历史版本可能为空 */
+    artifactSha256?: string;
+    commitInfo?: string;
+    hyperParams?: Record<string, unknown>;
+    isCurrent?: boolean;
+    status?: string;
   };
 
   type ModelVersionDetail = {
@@ -29,6 +35,13 @@ declare namespace API {
     sizeBytes?: number;
     size?: string;
     createdAt?: string;
+    updatedAt?: string;
+    remark?: string;
+    artifactSha256?: string;
+    commitInfo?: string;
+    hyperParams?: Record<string, unknown>;
+    isCurrent?: boolean;
+    status?: string;
     codeContent?: string;
     codeFileName?: string;
     codeFilePath?: string;
@@ -43,6 +56,8 @@ declare namespace API {
     createdAt?: string;
     updatedAt?: string;
     uploadTime?: string;
+    /** 资产当前推荐 READY 版本 */
+    currentVersionId?: string;
     latestVersion?: ModelVersionDetail;
     versions: ModelVersionDetail[];
     defaultVersionId?: string;
@@ -53,8 +68,9 @@ declare namespace API {
     fileName: string;
     fileSize: number;
     fileFingerprint?: string;
-    /** 复用页面“备注”，作为模型版本提交说明；须与 init/complete 一致且非空 */
+    /** 提交说明；须与 init/complete 一致且非空（1～1024） */
     commitInfo: string;
+    hyperParams?: Record<string, unknown>;
   };
 
   /** 分片上传进度 / 初始化响应 */
@@ -78,8 +94,9 @@ declare namespace API {
     version: string;
     type: string;
     remark: string;
-    /** 必须与上传初始化阶段保持一致；复用备注且非空 */
+    /** 必须与上传初始化阶段保持一致 */
     commitInfo: string;
+    hyperParams?: Record<string, unknown>;
   };
 
   /** GET /api/model/code-files 返回项（与 backend-api.md 对齐，兼容旧字段） */

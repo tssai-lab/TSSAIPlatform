@@ -16,6 +16,7 @@ import { storage } from '@/utils/storage';
 const DEFAULT_CONFIG: SystemConfig = {
   enableAuditLog: true,
   enableTrainingCodeAdminReview: false,
+  trainingCodeReviewMode: 'DIRECT_PASS',
 };
 
 const LOCAL_SYSTEM_CONFIG_KEY = 'SYSTEM_CONFIG_LOCAL';
@@ -40,6 +41,10 @@ function readLocalSystemConfig(): SystemConfig {
       cached?.enableTrainingCodeAdminReview ??
       review.enableTrainingCodeAdminReview ??
       false,
+    trainingCodeReviewMode:
+      cached?.trainingCodeReviewMode ||
+      review.trainingCodeReviewMode ||
+      'DIRECT_PASS',
   };
 }
 
@@ -48,12 +53,14 @@ function writeLocalSystemConfig(config: SystemConfig) {
   setTrainingCodeReviewLocalConfig({
     enableTrainingCodeAdminReview:
       config.enableTrainingCodeAdminReview ?? false,
+    trainingCodeReviewMode: config.trainingCodeReviewMode,
   });
 }
 
 /**
  * 系统配置页（仅超管）
- * 后端 /system/config 未就绪时，训练代码审核等开关落本机缓存仍可生效。
+ * 训练代码审核对接后端 trainingCodeReviewMode：
+ * DIRECT_PASS / STANDARD_REVIEW
  */
 const SystemConfigPage: React.FC = () => {
   const access = useAccess();
@@ -76,8 +83,9 @@ const SystemConfigPage: React.FC = () => {
         const next: SystemConfig = {
           enableAuditLog: res.data.enableAuditLog ?? true,
           enableTrainingCodeAdminReview:
-            res.data.enableTrainingCodeAdminReview ??
-            getTrainingCodeReviewLocalConfig().enableTrainingCodeAdminReview,
+            res.data.enableTrainingCodeAdminReview ?? false,
+          trainingCodeReviewMode:
+            res.data.trainingCodeReviewMode || 'DIRECT_PASS',
         };
         form.setFieldsValue(next);
         writeLocalSystemConfig(next);
@@ -112,6 +120,9 @@ const SystemConfigPage: React.FC = () => {
         enableAuditLog: values.enableAuditLog ?? true,
         enableTrainingCodeAdminReview:
           values.enableTrainingCodeAdminReview ?? false,
+        trainingCodeReviewMode: values.enableTrainingCodeAdminReview
+          ? 'STANDARD_REVIEW'
+          : 'DIRECT_PASS',
       };
       setSaving(true);
       try {
@@ -124,6 +135,9 @@ const SystemConfigPage: React.FC = () => {
             enableTrainingCodeAdminReview:
               res.data?.enableTrainingCodeAdminReview ??
               payload.enableTrainingCodeAdminReview,
+            trainingCodeReviewMode:
+              res.data?.trainingCodeReviewMode ||
+              payload.trainingCodeReviewMode,
           };
           form.setFieldsValue(saved);
           writeLocalSystemConfig(saved);
@@ -136,17 +150,19 @@ const SystemConfigPage: React.FC = () => {
           throw error;
         }
       }
-      // 后端未实现配置接口时：本机保存仍生效
       writeLocalSystemConfig(payload);
       form.setFieldsValue(payload);
       setUsingLocalFallback(true);
       message.success('已保存（当前后端未提供系统配置接口，已写入本机）');
-    } catch (error: unknown) {
+    } catch {
       const values = form.getFieldsValue();
       const payload: SystemConfig = {
         enableAuditLog: values.enableAuditLog ?? true,
         enableTrainingCodeAdminReview:
           values.enableTrainingCodeAdminReview ?? false,
+        trainingCodeReviewMode: values.enableTrainingCodeAdminReview
+          ? 'STANDARD_REVIEW'
+          : 'DIRECT_PASS',
       };
       writeLocalSystemConfig(payload);
       setUsingLocalFallback(true);
@@ -188,7 +204,7 @@ const SystemConfigPage: React.FC = () => {
               name="enableTrainingCodeAdminReview"
               label="训练代码管理员审核"
               valuePropName="checked"
-              extra="关闭（默认）：上传/发布新版本后自动审核通过，可直接用于训练。开启：需管理员在「待审核」中人工通过或拒绝。"
+              extra="关闭：后端 DIRECT_PASS，校验通过后自动批准。开启：后端 STANDARD_REVIEW，按风险策略进入待审/人工审核。"
             >
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
@@ -198,7 +214,7 @@ const SystemConfigPage: React.FC = () => {
               </Button>
               <Button
                 style={{ marginLeft: 8 }}
-                onClick={loadConfig}
+                onClick={() => loadConfig()}
                 disabled={loading || saving}
               >
                 重新加载

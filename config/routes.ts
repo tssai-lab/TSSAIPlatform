@@ -104,6 +104,12 @@ export default [
             hideInMenu: true,
           },
           {
+            path: '/task/code/admin-assets',
+            name: '代码资产管理',
+            component: './task/trainingCode/adminAssets',
+            access: 'isAdmin',
+          },
+          {
             path: '/task/code/upload',
             name: '上传训练代码',
             component: './task/trainingCode/upload',
