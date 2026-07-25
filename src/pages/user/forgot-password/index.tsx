@@ -141,7 +141,7 @@ const ForgotPassword: React.FC = () => {
               rules={[
                 { required: true, message: '请输入手机号！' },
                 {
-                  pattern: /^1\d{10}$/,
+                  pattern: /^1[3-9]\d{9}$/,
                   message: '手机号格式错误！',
                 },
               ]}
