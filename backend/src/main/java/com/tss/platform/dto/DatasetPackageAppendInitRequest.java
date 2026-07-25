@@ -10,4 +10,5 @@ public class DatasetPackageAppendInitRequest {
     private String sampleGrouping;
     private String manifestPath;
     private Boolean strictManifest;
+    private Long expectedWorkspaceRevision;
 }

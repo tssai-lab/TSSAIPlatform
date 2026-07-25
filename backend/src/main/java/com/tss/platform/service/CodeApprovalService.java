@@ -10,6 +10,7 @@ import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.model.CodeRiskAssessmentStatus;
 import com.tss.platform.model.CodeRiskDisposition;
 import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
@@ -396,6 +397,94 @@ public class CodeApprovalService {
     }
 
     @Transactional
+    public CodeApprovalRecord approveBySystemConfiguration(
+            String versionId,
+            String riskAssessmentId
+    ) {
+        String assetId = versionRepository.findAssetIdByIdAndDeletedFalse(versionId)
+                .orElseThrow(CodeAssetAccessException::new);
+        CodeAsset asset = assetRepository.findByIdAndDeletedFalseForUpdate(assetId)
+                .orElseThrow(CodeAssetAccessException::new);
+        CodeVersion version = versionRepository.findByIdAndDeletedFalseForUpdate(versionId)
+                .orElseThrow(CodeAssetAccessException::new);
+        CodeRiskAssessment assessment = riskAssessmentRepository
+                .findByIdAndVersionIdForUpdate(riskAssessmentId, versionId)
+                .orElseThrow(CodeAssetAccessException::new);
+        CodeValidationRun validationRun = validationRunRepository.findById(
+                assessment.getValidationRunId()
+        ).orElseThrow(() -> validation(
+                "VALIDATION_EVIDENCE_MISSING", "Validation evidence is missing"
+        ));
+        CodeValidationRun latestValidation = validationRunRepository
+                .findTopByVersionIdOrderByCreatedAtDescIdDesc(versionId)
+                .orElseThrow(() -> validation(
+                        "VALIDATION_EVIDENCE_MISSING", "Validation evidence is missing"
+                ));
+        if (!Objects.equals(asset.getId(), version.getAssetId())
+                || !Objects.equals(asset.getOwnerUserId(), version.getOwnerUserId())) {
+            throw new CodeAssetAccessException();
+        }
+        if (!"READY".equals(version.getStatus())) {
+            throw validation("VERSION_NOT_READY", "Code version is not ready");
+        }
+        if (CodeApprovalStatus.REJECTED.equals(version.getApprovalStatus())
+                || CodeApprovalStatus.REVOKED.equals(version.getApprovalStatus())) {
+            throw validation("APPROVAL_TERMINAL", "Code version approval is terminal");
+        }
+        if (!Objects.equals(latestValidation.getId(), validationRun.getId())) {
+            throw validation("VALIDATION_EVIDENCE_STALE", "Validation evidence is stale");
+        }
+        requireCurrentPassingEvidence(version, validationRun);
+        requireCurrentDirectPassEvidence(version, validationRun, assessment);
+        requireActualArtifact(version);
+
+        CodeApprovalRecord latest = approvalRecordRepository
+                .findTopByVersionIdOrderByCreatedAtDescIdDesc(versionId)
+                .orElse(null);
+        if (latest != null
+                && (CodeApprovalStatus.REJECTED.equals(latest.getDecision())
+                || CodeApprovalStatus.REVOKED.equals(latest.getDecision()))) {
+            throw validation("APPROVAL_TERMINAL", "Code version approval is terminal");
+        }
+        if (CodeApprovalStatus.APPROVED.equals(version.getApprovalStatus())
+                && exactDirectPassEvidence(
+                        latest,
+                        version,
+                        validationRun,
+                        assessment
+                )) {
+            return latest;
+        }
+
+        CodeApprovalRecord record = newRecord(
+                version,
+                CodeApprovalStatus.APPROVED,
+                "Approved without code review by system configuration",
+                validationRun,
+                assessment,
+                CodeApprovalDecisionSource.SYSTEM_CONFIG,
+                null
+        );
+        record.setApprovalPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_APPROVAL_POLICY_VERSION
+        );
+        approvalRecordRepository.saveAndFlush(record);
+        version.setApprovalStatus(CodeApprovalStatus.APPROVED);
+        version.setUpdatedAt(Instant.now());
+        versionRepository.saveAndFlush(version);
+        auditService.automaticDecision(
+                assetId,
+                versionId,
+                assessment.getId(),
+                "DIRECT_PASS_APPROVE",
+                version.getArtifactSha256(),
+                assessment.getRiskPolicyVersion(),
+                CodeApprovalDecisionSource.SYSTEM_CONFIG
+        );
+        return record;
+    }
+
+    @Transactional
     public CodeApprovalRecord decideAutomatically(
             String versionId,
             String riskAssessmentId,
@@ -481,6 +570,54 @@ public class CodeApprovalService {
                 CodeApprovalDecisionSource.AUTO_POLICY
         );
         return record;
+    }
+
+    private static void requireCurrentDirectPassEvidence(
+            CodeVersion version,
+            CodeValidationRun validationRun,
+            CodeRiskAssessment assessment
+    ) {
+        if (!CodeRiskAssessmentStatus.COMPLETED.equals(assessment.getStatus())
+                || !CodeRiskLevel.UNKNOWN.equals(assessment.getRiskLevel())
+                || !CodeRiskDisposition.DIRECT_PASS.equals(assessment.getDisposition())
+                || !TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION.equals(
+                        assessment.getRiskPolicyVersion())
+                || !Objects.equals(assessment.getId(), version.getLatestRiskAssessmentId())
+                || !Objects.equals(assessment.getValidationRunId(), validationRun.getId())
+                || !Objects.equals(assessment.getArtifactSha256(),
+                        version.getArtifactSha256())
+                || !Objects.equals(assessment.getStatus(), version.getRiskStatus())
+                || !Objects.equals(assessment.getRiskLevel(), version.getRiskLevel())
+                || !Objects.equals(assessment.getDisposition(),
+                        version.getReviewDisposition())
+                || !Objects.equals(assessment.getRiskPolicyVersion(),
+                        version.getRiskPolicyVersion())) {
+            throw validation(
+                    "DIRECT_PASS_EVIDENCE_STALE",
+                    "Direct-pass approval evidence is stale"
+            );
+        }
+    }
+
+    private static boolean exactDirectPassEvidence(
+            CodeApprovalRecord latest,
+            CodeVersion version,
+            CodeValidationRun validationRun,
+            CodeRiskAssessment assessment
+    ) {
+        return latest != null
+                && CodeApprovalStatus.APPROVED.equals(latest.getDecision())
+                && CodeApprovalDecisionSource.SYSTEM_CONFIG.equals(
+                        latest.getDecisionSource())
+                && Objects.equals(latest.getValidationRunId(), validationRun.getId())
+                && Objects.equals(latest.getArtifactSha256(), version.getArtifactSha256())
+                && Objects.equals(latest.getPolicyVersion(),
+                        CodeArtifactAssembler.POLICY_VERSION)
+                && Objects.equals(latest.getRiskAssessmentId(), assessment.getId())
+                && Objects.equals(
+                        latest.getApprovalPolicyVersion(),
+                        TrainingCodeReviewPolicy.DIRECT_PASS_APPROVAL_POLICY_VERSION
+                );
     }
 
     private static String sanitizeRequiredReason(String reason) {

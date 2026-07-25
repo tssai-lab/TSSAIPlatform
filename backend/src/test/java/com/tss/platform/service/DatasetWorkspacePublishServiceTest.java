@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.tss.platform.dto.DatasetWorkspacePublishDto;
+import com.tss.platform.dto.v2.V2DatasetPublishReadiness;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetVersion;
@@ -50,6 +51,7 @@ class DatasetWorkspacePublishServiceTest {
         assertEquals(fixture.draft.getId(), fixture.asset.getCurrentVersionId());
         assertEquals("READY", result.getStatus());
         assertEquals(fixture.draft.getId(), result.getCurrentVersionId());
+        assertEquals("1.0.3", result.getVersionLabel());
         assertEquals(parentStatus, fixture.parent.getStatus());
         assertEquals(parentPublishedAt, fixture.parent.getPublishedAt());
         verify(fixture.versionRepo).saveAndFlush(fixture.draft);
@@ -62,6 +64,53 @@ class DatasetWorkspacePublishServiceTest {
                 fixture.asset,
                 fixture.draft
         );
+    }
+
+    @Test
+    void readinessIsTheOnlyBusinessValidationSourceOnTheProductionPath() {
+        Fixture fixture = new Fixture();
+        fixture.stubLockedVersionAndAsset();
+        when(fixture.authContext.canAccessOwner(fixture.asset.getOwnerUserId()))
+                .thenReturn(true);
+        when(fixture.versionRepo.saveAndFlush(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fixture.assetRepo.saveAndFlush(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        DatasetWorkspaceReadinessService readinessService =
+                mock(DatasetWorkspaceReadinessService.class);
+        when(readinessService.evaluate(fixture.asset, fixture.draft))
+                .thenReturn(new V2DatasetPublishReadiness(
+                        true,
+                        0L,
+                        List.of()
+                ));
+        DatasetWorkspaceRawStorageService rawStorageService =
+                mock(DatasetWorkspaceRawStorageService.class);
+        DatasetWorkspacePublishService service =
+                new DatasetWorkspacePublishService(
+                        fixture.versionRepo,
+                        fixture.assetRepo,
+                        fixture.importJobRepo,
+                        fixture.versionPackageRepo,
+                        fixture.packageRepo,
+                        fixture.sampleRepo,
+                        fixture.dataRepo,
+                        fixture.annotationRepo,
+                        fixture.authContext,
+                        fixture.auditService,
+                        readinessService,
+                        rawStorageService
+                );
+
+        DatasetWorkspacePublishDto result = service.publish(fixture.draft.getId());
+
+        assertEquals("READY", result.getStatus());
+        verify(readinessService).evaluate(fixture.asset, fixture.draft);
+        verify(fixture.importJobRepo, never())
+                .findByDatasetVersionId(fixture.draft.getId());
+        verify(fixture.packageRepo, never()).findAllById(any());
+        verify(fixture.sampleRepo, never())
+                .findDuplicateExternalIdsByDatasetVersionId(fixture.draft.getId());
     }
 
     @Test
@@ -467,6 +516,8 @@ class DatasetWorkspacePublishServiceTest {
             version.setId("draft-3");
             version.setAssetId("asset-1");
             version.setParentVersionId("ready-2");
+            version.setVersion("1.0.3");
+            version.setVersionLabel("1.0.3");
             version.setVersionNo(3);
             version.setStatus("DRAFT");
             version.setDeleted(false);

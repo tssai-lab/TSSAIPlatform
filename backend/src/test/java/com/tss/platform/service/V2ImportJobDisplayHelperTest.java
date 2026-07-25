@@ -82,7 +82,7 @@ class V2ImportJobDisplayHelperTest {
     }
 
     @Test
-    void resolvesEditSessionDisplayStatusFromSharedImportRules() {
+    void resolvesWorkspaceDisplayStatusFromSharedImportRules() {
         assertEquals(
                 "IMPORT_PARTIAL",
                 V2ImportJobDisplayHelper.editSessionDisplayStatus(job("PARTIAL"))

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
+@Deprecated(forRemoval = false)
 public class DatasetWorkspaceSampleController {
 
     private final DatasetWorkspaceSampleService service;

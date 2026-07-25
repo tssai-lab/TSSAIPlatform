@@ -96,7 +96,7 @@ class V2DatasetUploadServiceTest {
                 org.mockito.ArgumentMatchers.eq("draft-2"),
                 any(DatasetUploadCompleteRequest.class)
         );
-        assertEquals("draft-2", result.getEditSessionId());
+        assertEquals("draft-2", result.getWorkspaceId());
     }
 
     @Test
@@ -150,7 +150,7 @@ class V2DatasetUploadServiceTest {
         V2DatasetUploadDto result = fixture.service.initAppend("draft-2", request);
 
         verify(fixture.uploadService).initAppendPackage("draft-2", request);
-        assertEquals("draft-2", result.getEditSessionId());
+        assertEquals("draft-2", result.getWorkspaceId());
     }
 
     @Test

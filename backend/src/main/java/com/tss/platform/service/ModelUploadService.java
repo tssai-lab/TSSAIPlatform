@@ -20,7 +20,6 @@ import com.tss.platform.repository.UploadChunkProgressSummary;
 import com.tss.platform.security.AuthContext;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
-import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.StatObjectArgs;
@@ -35,7 +34,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedInputStream;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,8 +45,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 @Service
 public class ModelUploadService {
@@ -57,9 +53,6 @@ public class ModelUploadService {
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
-    private static final int MAX_MODEL_ZIP_ENTRIES = 100_000;
-    private static final long MAX_MODEL_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
-
     private final MinioClient minioClient;
     private final String bucket;
     private final ModelUploadSessionRepository sessionRepo;
@@ -292,6 +285,9 @@ public class ModelUploadService {
                 removeObjectQuietly(plan.destName());
             }
             resetCompletingSessionQuietly(plan.session().getId());
+            if (AssetNamePolicy.isNameConstraintViolation(e)) {
+                throw new AssetNameConflictException("model");
+            }
             if (isDuplicateVersionError(e)) {
                 throw duplicateVersion(plan.target().assetId(), plan.version());
             }
@@ -437,7 +433,6 @@ public class ModelUploadService {
                             .sources(sources)
                             .build()
             );
-            validateModelObjectFormat(destName);
             return artifactIntegrityService.inspect(destName, expectedSize);
         } catch (Exception e) {
             removeObjectQuietly(destName);
@@ -466,7 +461,7 @@ public class ModelUploadService {
         ModelAsset asset = target.asset();
         if (target.createAsset()) {
             asset.setId(assetId);
-            asset.setName(req.getModelName().trim());
+            asset.setName(AssetNamePolicy.normalizeRequired(req.getModelName()));
             asset.setType(target.taskType());
             asset.setRemark(req.getRemark().trim());
             asset.setOwnerUserId(target.ownerUserId());
@@ -483,6 +478,8 @@ public class ModelUploadService {
         ver.setStoragePath(plan.destName());
         ver.setSizeBytes(plan.session().getFileSize());
         ver.setArtifactSha256(inspection.sha256());
+        ver.setArtifactAttestedSha256(inspection.sha256());
+        ver.setArtifactAttestedAt(now);
         ver.setCommitInfo(resolveCommitInfo(req, plan.session()));
         ver.setHyperParams(resolveHyperParams(req, plan.session()));
         ver.setOwnerUserId(target.ownerUserId());
@@ -524,7 +521,14 @@ public class ModelUploadService {
         requireText(req.getVersion(), "version 不能为空");
         String requestedAssetId = normalizeText(req.getAssetId());
         if (requestedAssetId == null) {
-            requireText(req.getModelName(), "modelName 不能为空");
+            String modelName = AssetNamePolicy.normalizeRequired(req.getModelName());
+            if (modelAssetRepo.existsActiveNormalizedName(
+                    session.getOwnerUserId(),
+                    modelName,
+                    null
+            )) {
+                throw new AssetNameConflictException("model");
+            }
             requireText(req.getRemark(), "remark 不能为空");
             String taskType = TaskType.normalize(req.getType());
             String assetId = "model-asset-" + UUID.randomUUID().toString().replace("-", "");
@@ -594,11 +598,14 @@ public class ModelUploadService {
     ) {
         String targetAssetId = normalizeText(req.getTargetAssetId());
         if (targetAssetId == null) {
-            requireText(req.getModelName(), "modelName 不能为空");
+            String modelName = AssetNamePolicy.normalizeRequired(req.getModelName());
+            if (modelAssetRepo.existsActiveNormalizedName(ownerUserId, modelName, null)) {
+                throw new AssetNameConflictException("model");
+            }
             requireText(req.getRemark(), "remark 不能为空");
             return new ModelBusinessMetadata(
                     null,
-                    req.getModelName().trim(),
+                    modelName,
                     TaskType.normalize(req.getTaskType()),
                     req.getRemark().trim()
             );
@@ -906,6 +913,13 @@ public class ModelUploadService {
     private V2BusinessException mapV2ModelUploadFailure(
             IllegalArgumentException exception
     ) {
+        if (exception instanceof AssetNameConflictException) {
+            return new V2BusinessException(
+                    HttpStatus.CONFLICT,
+                    "MODEL_NAME_CONFLICT",
+                    "同一用户下已存在同名模型资产"
+            );
+        }
         String message = exception.getMessage() == null ? "" : exception.getMessage();
         if (message.contains("already exists")) {
             return new V2BusinessException(
@@ -1010,54 +1024,6 @@ public class ModelUploadService {
         }
     }
 
-    private void validateModelObjectFormat(String objectName) throws Exception {
-        String lower = objectName == null ? "" : objectName.toLowerCase(Locale.ROOT);
-        if (!lower.endsWith(".zip")) {
-            StatObjectResponse stat = minioClient.statObject(
-                    StatObjectArgs.builder().bucket(bucket).object(objectName).build()
-            );
-            if (stat.size() <= 0 || stat.size() > ModelWeightZipValidator.MAX_SINGLE_FILE_BYTES) {
-                throw new IllegalArgumentException("model weight file size is invalid");
-            }
-            return;
-        }
-        try (InputStream is = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucket).object(objectName).build()
-        );
-             ZipInputStream zip = new ZipInputStream(new BufferedInputStream(is))) {
-            ModelWeightZipValidator.validate(zip);
-        }
-    }
-
-    private long drainZipEntry(ZipInputStream zip, long currentTotal, long maxTotal) throws Exception {
-        byte[] buffer = new byte[8192];
-        long total = currentTotal;
-        int len;
-        while ((len = zip.read(buffer)) != -1) {
-            total += len;
-            if (total > maxTotal) {
-                throw new IllegalArgumentException("zip 解压后体积过大");
-            }
-        }
-        return total;
-    }
-
-    private String normalizeZipEntryName(String name) {
-        return name == null ? "" : name.replace('\\', '/');
-    }
-
-    private boolean isSafeZipEntryPath(String path) {
-        if (path == null || path.isBlank() || path.startsWith("/") || path.matches("^[A-Za-z]:.*")) {
-            return false;
-        }
-        for (String part : path.split("/")) {
-            if ("..".equals(part) || part.contains("\u0000")) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private void removeObjectQuietly(String objectName) {
         if (objectName == null || objectName.isBlank()) {
             return;
@@ -1088,9 +1054,7 @@ public class ModelUploadService {
             String message = current.getMessage();
             if (message != null) {
                 String normalized = message.toLowerCase(Locale.ROOT);
-                if (normalized.contains("uk_model_version_asset_version")
-                        || normalized.contains("duplicate key")
-                        || normalized.contains("unique constraint")) {
+                if (normalized.contains("uk_model_version_asset_version")) {
                     return true;
                 }
             }

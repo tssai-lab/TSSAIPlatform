@@ -10,6 +10,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import java.time.Instant;
@@ -50,6 +51,14 @@ public class ModelVersion {
 
     @Column(name = "artifact_sha256", length = 64)
     private String artifactSha256;
+
+    @JsonIgnore
+    @Column(name = "artifact_attested_sha256", length = 64)
+    private String artifactAttestedSha256;
+
+    @JsonIgnore
+    @Column(name = "artifact_attested_at")
+    private Instant artifactAttestedAt;
 
     @Column(name = "commit_info", length = 1024)
     private String commitInfo;

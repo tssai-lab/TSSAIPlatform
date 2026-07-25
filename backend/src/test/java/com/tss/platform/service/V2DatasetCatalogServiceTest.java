@@ -2,7 +2,10 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.dto.PageResponse;
+import com.tss.platform.dto.v2.V2DatasetEditability;
 import com.tss.platform.dto.v2.V2DatasetListItem;
+import com.tss.platform.dto.v2.V2DatasetPublishBlocker;
+import com.tss.platform.dto.v2.V2DatasetPublishReadiness;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
@@ -23,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
@@ -53,9 +57,10 @@ class V2DatasetCatalogServiceTest {
         assertEquals("READY", item.getDisplayStatus());
         assertEquals(9L, item.getCurrentVersionFileCount());
         assertFalse(item.getHasDraft());
-        assertNull(item.getEditSessionId());
+        assertNull(item.getWorkspaceId());
+        assertNull(item.getPublishReadiness());
         assertTrue(item.getAvailableActions().contains("PREVIEW"));
-        assertTrue(item.getAvailableActions().contains("EDIT"));
+        assertTrue(item.getAvailableActions().contains("CREATE_WORKSPACE"));
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
 
         String json = new ObjectMapper().writeValueAsString(item);
@@ -88,8 +93,8 @@ class V2DatasetCatalogServiceTest {
 
         assertEquals("IMPORT_FAILED", item.getDisplayStatus());
         assertTrue(item.getHasDraft());
-        assertEquals(draft.getId(), item.getEditSessionId());
-        assertFalse(item.getCanPublish());
+        assertEquals(draft.getId(), item.getWorkspaceId());
+        assertFalse(item.getPublishReadiness().canPublish());
         assertEquals("DUPLICATE_SAMPLE", item.getUserError().getErrorCode());
         assertEquals("scene-1", item.getUserError().getDetails().get("sampleName"));
         assertTrue(item.getAvailableActions().contains("ADD_DATA"));
@@ -117,7 +122,7 @@ class V2DatasetCatalogServiceTest {
                 .get(0);
 
         assertEquals("IMPORT_PARTIAL", item.getDisplayStatus());
-        assertFalse(item.getCanPublish());
+        assertFalse(item.getPublishReadiness().canPublish());
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
         assertEquals("PARTIAL_IMPORT_FAILED", item.getUserError().getErrorCode());
         assertEquals(1, item.getUserError().getDetails().get("failedSamples"));
@@ -138,7 +143,7 @@ class V2DatasetCatalogServiceTest {
 
         assertEquals("IMPORTING", item.getDisplayStatus());
         assertEquals(45, item.getImportProgress());
-        assertFalse(item.getCanPublish());
+        assertFalse(item.getPublishReadiness().canPublish());
     }
 
     @Test
@@ -155,12 +160,12 @@ class V2DatasetCatalogServiceTest {
                 .getData()
                 .get(0);
 
-        assertFalse(item.getCanPublish());
+        assertFalse(item.getPublishReadiness().canPublish());
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
     }
 
     @Test
-    void singleModalDraftListExposesSameAddDataActionAsEditSession() {
+    void singleModalDraftListExposesWorkspaceAddDataAction() {
         Fixture fixture = new Fixture();
         DatasetAsset asset = fixture.asset();
         asset.setType("POINT_CLOUD");
@@ -173,8 +178,10 @@ class V2DatasetCatalogServiceTest {
                 .get(0);
 
         assertTrue(item.getHasDraft());
-        assertEquals(draft.getId(), item.getEditSessionId());
+        assertEquals(draft.getId(), item.getWorkspaceId());
         assertTrue(item.getAvailableActions().contains("ADD_DATA"));
+        verify(fixture.readinessService).evaluateCatalog(asset, draft);
+        verify(fixture.readinessService, never()).evaluate(asset, draft);
     }
 
     @Test
@@ -198,7 +205,7 @@ class V2DatasetCatalogServiceTest {
                 .getData()
                 .get(0);
 
-        assertFalse(item.getCanPublish());
+        assertFalse(item.getPublishReadiness().canPublish());
         assertEquals("IMPORT_FAILED", item.getDisplayStatus());
         assertEquals(0, item.getImportProgress());
         assertEquals("DUPLICATE_SAMPLE", item.getUserError().getErrorCode());
@@ -228,7 +235,7 @@ class V2DatasetCatalogServiceTest {
         assertEquals("IMPORTING", item.getDisplayStatus());
         assertEquals(45, item.getImportProgress());
         assertNull(item.getUserError());
-        assertFalse(item.getCanPublish());
+        assertFalse(item.getPublishReadiness().canPublish());
     }
 
     @Test
@@ -318,15 +325,58 @@ class V2DatasetCatalogServiceTest {
         private final DatasetVersionFileCountService fileCountService =
                 mock(DatasetVersionFileCountService.class);
         private final AuthContext authContext = mock(AuthContext.class);
+        private final DatasetWorkspaceReadinessService readinessService =
+                mock(DatasetWorkspaceReadinessService.class);
+        private final DatasetWorkspaceSourceInspector sourceInspector =
+                mock(DatasetWorkspaceSourceInspector.class);
+        private final DatasetCatalogQueryService catalogQueryService =
+                new DatasetCatalogQueryService(
+                        assetRepo,
+                        versionRepo,
+                        importJobRepo,
+                        fileCountService,
+                        authContext
+                );
         private final V2DatasetCatalogService service = new V2DatasetCatalogService(
-                assetRepo,
-                versionRepo,
-                importJobRepo,
-                sampleRepo,
-                fileCountService,
-                authContext,
-                new ObjectMapper()
+                catalogQueryService,
+                new ObjectMapper(),
+                readinessService,
+                sourceInspector
         );
+
+        private Fixture() {
+            when(readinessService.evaluateCatalog(
+                    any(DatasetAsset.class),
+                    any(DatasetVersion.class)
+            )).thenAnswer(invocation -> {
+                DatasetVersion draft = invocation.getArgument(1);
+                return new V2DatasetPublishReadiness(
+                        false,
+                        draft.getWorkspaceRevision() == null
+                                ? 0L
+                                : draft.getWorkspaceRevision(),
+                        List.of(new V2DatasetPublishBlocker(
+                                "TEST_BLOCKER",
+                                "not ready"
+                        ))
+                );
+            });
+            when(sourceInspector.inspect(
+                    any(DatasetAsset.class),
+                    nullable(DatasetVersion.class)
+            )).thenAnswer(invocation -> {
+                DatasetVersion ready = invocation.getArgument(1);
+                return ready == null
+                        ? new V2DatasetEditability(
+                                false,
+                                List.of(new V2DatasetPublishBlocker(
+                                        "READY_VERSION_REQUIRED",
+                                        "ready required"
+                                ))
+                        )
+                        : new V2DatasetEditability(true, List.of());
+            });
+        }
 
         private void stub(
                 List<DatasetAsset> assets,

@@ -134,13 +134,13 @@ GET /api/code/version/{codeVersionId}/training-check?trainingProfile=image_text_
 6. ZIP 通过 `CodeModelZipValidator` 路径/扩展名校验
 7. ZIP 包含固定入口脚本（fusion profile 要求 `scripts/training/train_fusion_baseline.py`）
 
-全部通过时后端自动将 `approval_status` 置为 `APPROVED`，并返回 `passed=true`；任一不通过则 `passed=false` 并返回 `reasons[]`。
+全部通过时返回 `passed=true`，任一不通过则返回 `passed=false` 和 `reasons[]`。真正的新通过证据随后进入系统审核模式分流：`DIRECT_PASS` 写入系统直通证据并自动成为 `APPROVED`；`STANDARD_REVIEW` 保持当前风险扫描和管理员审核方式。完全等价的既有校验证据会幂等复用，不重复改变审批状态。
 
 **注意**：`training-check` 仅适用于**训练代码包**，不适用于基础模型权重包。
 
-### 自动 APPROVED ≠ 代码安全审计
+### DIRECT_PASS ≠ 代码安全审计
 
-**重要**：`training-check` 自动写入的 `APPROVED` 只代表**结构、元数据、固定入口检查通过**，**不代表**已完成代码安全审计。
+**重要**：`DIRECT_PASS` 下的 `APPROVED` 只代表**结构、元数据、固定入口和实际制品完整性检查通过，并按系统配置免除代码审核**，**不代表**已完成代码安全审计。`STANDARD_REVIEW` 仍执行现有风险分流。
 
 ### 校验时机
 

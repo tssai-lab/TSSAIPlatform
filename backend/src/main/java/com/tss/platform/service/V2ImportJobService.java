@@ -3,6 +3,7 @@ package com.tss.platform.service;
 import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.ImportJobStatusDto;
 import com.tss.platform.dto.v2.V2ImportJobStatusDto;
+import com.tss.platform.dto.v2.V2ImportJobRetryRequest;
 import com.tss.platform.dto.v2.V2UserError;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -17,34 +18,42 @@ public class V2ImportJobService {
     private static final Set<String> IMPORTING_STATUSES = Set.of("PENDING", "RUNNING");
 
     private final ImportJobQueryService importJobQueryService;
+    private final DatasetWorkspaceImportRetryService workspaceRetryService;
 
-    public V2ImportJobService(ImportJobQueryService importJobQueryService) {
+    public V2ImportJobService(
+            ImportJobQueryService importJobQueryService,
+            DatasetWorkspaceImportRetryService workspaceRetryService
+    ) {
         this.importJobQueryService = importJobQueryService;
+        this.workspaceRetryService = workspaceRetryService;
     }
 
-    public V2ImportJobStatusDto retry(String importJobId, String mode) {
-        try {
-            return toV2(importJobQueryService.retry(importJobId, mode));
-        } catch (ImportJobQueryService.ImportJobAccessException exception) {
-            throw new V2BusinessException(
-                    HttpStatus.NOT_FOUND,
-                    "IMPORT_JOB_NOT_FOUND",
-                    "导入任务不存在或无权访问"
-            );
-        } catch (ImportJobQueryService.ImportJobRetryRejectedException exception) {
-            throw new V2BusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "IMPORT_JOB_NOT_RETRYABLE",
-                    "当前导入任务不可重试",
-                    reasonDetails(exception)
-            );
-        } catch (IllegalArgumentException exception) {
+    public V2ImportJobStatusDto retry(
+            String importJobId,
+            V2ImportJobRetryRequest request
+    ) {
+        if (request == null) {
             throw new V2BusinessException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_IMPORT_JOB_RETRY",
-                    "导入任务重试请求无效",
-                    reasonDetails(exception)
+                    "请求体不能为空"
             );
+        }
+        try {
+            DatasetWorkspaceImportRetryService.RetryResult result =
+                    workspaceRetryService.retry(
+                            importJobId,
+                            request.mode(),
+                            request.expectedWorkspaceRevision()
+                    );
+            V2ImportJobStatusDto dto = toV2(result.status());
+            dto.setWorkspaceId(result.workspaceId());
+            dto.setWorkspaceRevision(result.workspaceRevision());
+            return dto;
+        } catch (ImportJobQueryService.ImportJobAccessException exception) {
+            throw notFound();
+        } catch (ImportJobQueryService.ImportJobRetryRejectedException exception) {
+            throw notRetryable(exception);
         }
     }
 
@@ -149,5 +158,22 @@ public class V2ImportJobService {
 
     private int safeInt(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private V2BusinessException notFound() {
+        return new V2BusinessException(
+                HttpStatus.NOT_FOUND,
+                "IMPORT_JOB_NOT_FOUND",
+                "导入任务不存在或无权访问"
+        );
+    }
+
+    private V2BusinessException notRetryable(RuntimeException exception) {
+        return new V2BusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "IMPORT_JOB_NOT_RETRYABLE",
+                "当前导入任务不可重试",
+                reasonDetails(exception)
+        );
     }
 }

@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,6 +36,8 @@ class ModelArtifactAttestationServiceTest {
 
         assertEquals(sha('a'), result.sha256());
         assertEquals(sha('a'), scope.version.getArtifactSha256());
+        assertEquals(sha('a'), scope.version.getArtifactAttestedSha256());
+        assertNotNull(scope.version.getArtifactAttestedAt());
         verify(fixture.versionRepo).saveAndFlush(scope.version);
     }
 
@@ -90,6 +93,46 @@ class ModelArtifactAttestationServiceTest {
 
         assertEquals("DRAFT", scope.version.getStatus());
         assertNull(scope.asset.getCurrentVersionId());
+    }
+
+    @Test
+    void streamingVerificationBackfillsHistoricalShaWithoutClaimingZipAttestation() {
+        Fixture fixture = new Fixture();
+        Scope scope = fixture.scope(null);
+
+        fixture.service.recordStreamingVerification(
+                scope.version.getId(),
+                scope.version.getStoragePath(),
+                scope.version.getSizeBytes(),
+                sha('c')
+        );
+
+        assertEquals(sha('c'), scope.version.getArtifactSha256());
+        assertNull(scope.version.getArtifactAttestedSha256());
+        assertNull(scope.version.getArtifactAttestedAt());
+        verify(fixture.versionRepo).saveAndFlush(scope.version);
+    }
+
+    @Test
+    void streamingVerificationDoesNotOverwriteConcurrentLifecycleTransition() {
+        Fixture fixture = new Fixture();
+        Scope scope = fixture.scope(null);
+        scope.version.setStatus("DEPRECATED");
+
+        assertThrows(
+                ModelArtifactException.class,
+                () -> fixture.service.recordStreamingVerification(
+                        scope.version.getId(),
+                        scope.version.getStoragePath(),
+                        scope.version.getSizeBytes(),
+                        sha('c')
+                )
+        );
+
+        assertEquals("DEPRECATED", scope.version.getStatus());
+        assertEquals(scope.version.getId(), scope.asset.getCurrentVersionId());
+        verify(fixture.versionRepo, never()).saveAndFlush(any());
+        verify(fixture.assetRepo, never()).saveAndFlush(any());
     }
 
     private static String sha(char value) {

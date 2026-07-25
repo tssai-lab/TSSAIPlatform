@@ -100,6 +100,12 @@ public class DatasetVersion {
     @Column(name = "created_at")
     private Instant createdAt;
 
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    @Column(name = "workspace_revision", nullable = false)
+    private Long workspaceRevision = 0L;
+
     @Column(name = "deleted", nullable = false)
     private Boolean deleted = false;
 

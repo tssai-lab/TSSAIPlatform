@@ -622,6 +622,13 @@ class MultimodalDatasetLifecycleAcceptanceTest {
                             invocation.getArgument(0).equals(version.getAssetId())
                                     && invocation.getArgument(1).equals(version.getVersion())
                     ));
+            when(versionRepo.findByAssetIdAndVersion(anyString(), anyString()))
+                    .thenAnswer(invocation -> versions.values().stream()
+                            .filter(version -> invocation.getArgument(0)
+                                    .equals(version.getAssetId()))
+                            .filter(version -> invocation.getArgument(1)
+                                    .equals(version.getVersion()))
+                            .findFirst());
             when(versionRepo.findByAssetIdInAndDeletedFalse(anyCollection()))
                     .thenAnswer(invocation -> {
                         Collection<String> assetIds = invocation.getArgument(0);

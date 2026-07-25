@@ -60,6 +60,7 @@ public record V2CodeRiskAssessmentDetail(
             case "AUTO_APPROVE" -> "RISK_LOW";
             case "MANUAL_REVIEW" -> "RISK_REVIEW_REQUIRED";
             case "BLOCK" -> "RISK_POLICY_BLOCKED";
+            case "DIRECT_PASS" -> "REVIEW_BYPASSED_BY_SYSTEM_CONFIG";
             default -> "RISK_SCAN_IN_PROGRESS";
         };
     }

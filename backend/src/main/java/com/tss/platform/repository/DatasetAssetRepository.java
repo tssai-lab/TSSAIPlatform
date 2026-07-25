@@ -27,6 +27,20 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
 
     long countByCurrentVersionIdAndDeletedFalse(String currentVersionId);
 
+    @Query("""
+            select (count(a) > 0)
+            from DatasetAsset a
+            where a.deleted = false
+              and a.ownerUserId = :ownerUserId
+              and lower(trim(a.name)) = lower(:normalizedName)
+              and (:excludedId is null or a.id <> :excludedId)
+            """)
+    boolean existsActiveNormalizedName(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("normalizedName") String normalizedName,
+            @Param("excludedId") String excludedId
+    );
+
     @Query(
             value = """
                     select a

@@ -180,6 +180,53 @@ class DatasetZipValidatorContentTest {
         ));
     }
 
+    @TestFactory
+    Stream<DynamicTest> rejectsMalformedYoloLabelRows() throws Exception {
+        byte[] validPng = png();
+        List<String> invalidRows = List.of(
+                "0 0.5 0.5 1",
+                "0 0.5 0.5 1 1 extra",
+                "-1 0.5 0.5 1 1",
+                "1.5 0.5 0.5 1 1",
+                "2147483648 0.5 0.5 1 1",
+                "0 NaN 0.5 1 1",
+                "0 Infinity 0.5 1 1",
+                "0 -0.01 0.5 1 1",
+                "0 1.01 0.5 1 1",
+                "0 0.5 0.5 0 1",
+                "0 0.5 0.5 1 1.01"
+        );
+        return invalidRows.stream().map(row -> DynamicTest.dynamicTest(
+                "rejects-yolo-row-" + row,
+                () -> assertThrows(IllegalArgumentException.class, () -> validateZip(
+                        "CV",
+                        "YOLO",
+                        entry("images/cat.png", validPng),
+                        entry(
+                                "labels/cat.txt",
+                                row.getBytes(StandardCharsets.UTF_8)
+                        )
+                ))
+        ));
+    }
+
+    @Test
+    void acceptsMultipleYoloRowsAndFiniteScientificNotation() throws Exception {
+        assertDoesNotThrow(() -> validateZip(
+                "CV",
+                "YOLO",
+                entry("images/cat.png", png()),
+                entry(
+                        "labels/cat.txt",
+                        """
+                                0 0 1 1 1
+                                12 5e-1 0.25 1e-3 9.9E-1
+
+                                """.getBytes(StandardCharsets.UTF_8)
+                )
+        ));
+    }
+
     @Test
     void acceptsRootManifestForFolderClassificationDataset() throws Exception {
         assertDoesNotThrow(() -> validateZip(

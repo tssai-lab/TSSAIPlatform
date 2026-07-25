@@ -8,7 +8,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
+import java.util.Map;
 
 @Getter
 @Setter
@@ -106,6 +109,52 @@ public class DatasetUploadSession {
 
     @Column(name = "version_id", length = 64)
     private String versionId;
+
+    @Column(name = "workspace_base_revision")
+    private Long workspaceBaseRevision;
+
+    @Column(name = "target_kind", length = 32)
+    private String targetKind;
+
+    @Column(name = "target_operation", length = 16)
+    private String targetOperation;
+
+    @Column(name = "target_sample_id", length = 64)
+    private String targetSampleId;
+
+    @Column(name = "target_resource_id", length = 64)
+    private String targetResourceId;
+
+    @Column(name = "expected_sha256", length = 64)
+    private String expectedSha256;
+
+    @Column(name = "declared_format", length = 32)
+    private String declaredFormat;
+
+    @Column(name = "declared_content_type", length = 128)
+    private String declaredContentType;
+
+    @Column(name = "target_data_type", length = 32)
+    private String targetDataType;
+
+    @Column(name = "target_sensor", length = 64)
+    private String targetSensor;
+
+    @Column(name = "target_channel", length = 32)
+    private String targetChannel;
+
+    @Column(name = "target_seq")
+    private Integer targetSeq;
+
+    @Column(name = "target_sample_data_id", length = 64)
+    private String targetSampleDataId;
+
+    @Column(name = "target_annotation_type", length = 64)
+    private String targetAnnotationType;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "target_metadata", columnDefinition = "jsonb")
+    private Map<String, Object> targetMetadata;
 
     @Column(name = "owner_user_id")
     private Integer ownerUserId;

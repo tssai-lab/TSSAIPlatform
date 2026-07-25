@@ -52,6 +52,9 @@ public class DatasetPackage {
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
+    @Column(name = "storage_kind", nullable = false, length = 16)
+    private String storageKind = "ZIP";
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

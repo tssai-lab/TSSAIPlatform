@@ -68,6 +68,7 @@ class CodeAssetAuditServiceTest {
         assertEquals("asset-1", saved.getAssetId());
         assertEquals("workspace-1", saved.getWorkspaceId());
         assertEquals("FILE_UPSERTED", saved.getAction());
+        assertEquals("USER", saved.getActorType());
         assertEquals(7, saved.getActorUserId());
         assertTrue(saved.getMetadataJson().contains("\"revision\":3"));
         assertTrue(saved.getMetadataJson().contains("\"oldHash\""));
@@ -104,6 +105,20 @@ class CodeAssetAuditServiceTest {
         assertTrue(saved.getMetadataJson().contains("\"revision\":4"));
         assertTrue(saved.getMetadataJson().contains("\"reasonCode\":\"ASSET_DELETED\""));
         assertFalse(saved.getMetadataJson().toLowerCase().contains("storage"));
+    }
+
+    @Test
+    void administratorActionsUseExplicitAdminActorType() {
+        when(authContext.isAdmin()).thenReturn(true);
+
+        service.assetUpdated("asset-1", 5L);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(CodeAssetAuditLog.class);
+        verify(repository).save(captor.capture());
+        CodeAssetAuditLog saved = captor.getValue();
+        assertEquals("ADMIN", saved.getActorType());
+        assertEquals(7, saved.getActorUserId());
+        assertEquals("UPDATE", saved.getAction());
     }
 
     @Test

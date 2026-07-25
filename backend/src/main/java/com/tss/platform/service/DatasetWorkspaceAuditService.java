@@ -278,6 +278,30 @@ public class DatasetWorkspaceAuditService {
     }
 
     @Transactional
+    public void recordUserAction(
+            DatasetAsset asset,
+            DatasetVersion version,
+            String operation,
+            String targetType,
+            String targetId,
+            String packageId,
+            String sampleId,
+            Map<String, Object> details
+    ) {
+        appendUser(
+                asset,
+                version,
+                operation,
+                targetType,
+                targetId,
+                null,
+                packageId,
+                sampleId,
+                details == null ? Map.of() : details
+        );
+    }
+
+    @Transactional
     public void recordFullRetry(
             DatasetAsset asset,
             DatasetVersion version,

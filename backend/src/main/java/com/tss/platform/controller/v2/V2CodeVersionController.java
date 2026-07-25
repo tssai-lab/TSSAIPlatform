@@ -137,7 +137,7 @@ public class V2CodeVersionController {
         return service.archive(versionId);
     }
 
-    private static ResponseEntity<byte[]> download(
+    static ResponseEntity<byte[]> download(
             V2CodeVersionQueryService.Download download
     ) {
         byte[] bytes = download.bytes();

@@ -843,6 +843,8 @@ class ImportJobServiceTest {
             when(jobRepo.findById(job.getId())).thenReturn(Optional.of(job));
             when(jobRepo.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
+            when(versionRepo.findByIdAndDeletedFalseForUpdate(version.getId()))
+                    .thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId())).thenReturn(Optional.of(asset));
             when(sessionRepo.findByImportJobId(job.getId())).thenReturn(Optional.of(session));
             when(packageRepo.findByIdAndDeletedFalse(datasetPackage.getId()))

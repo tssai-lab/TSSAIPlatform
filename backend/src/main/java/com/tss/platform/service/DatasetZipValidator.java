@@ -23,10 +23,13 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -55,6 +58,10 @@ final class DatasetZipValidator {
     );
     private static final int MAX_DATASET_ZIP_ENTRIES = 100_000;
     private static final long MAX_DATASET_UNCOMPRESSED_BYTES = 50L * 1024 * 1024 * 1024;
+    private static final Pattern YOLO_CLASS_ID = Pattern.compile("[0-9]+");
+    private static final Pattern YOLO_DECIMAL = Pattern.compile(
+            "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?"
+    );
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
@@ -203,8 +210,9 @@ final class DatasetZipValidator {
         Set<String> paths = new HashSet<>();
         Set<String> yoloImages = new HashSet<>();
         Set<String> yoloLabels = new HashSet<>();
-        Set<String> yoloMetadataCandidates = new HashSet<>();
-        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(inputStream))) {
+        List<PendingYoloLabel> pendingYoloLabels = new ArrayList<>();
+        try {
+            try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(inputStream))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
                 entries += 1;
@@ -222,6 +230,8 @@ final class DatasetZipValidator {
                 if (!entry.isDirectory()) {
                     files += 1;
                     String ext = extensionOf(entryName);
+                    boolean pendingYoloLabel = false;
+                    String pendingYoloKey = null;
                     if ("CV".equals(taskType)) {
                         boolean datasetManifest = isCvDatasetManifest(
                                 annotationFormat, entryName
@@ -245,7 +255,8 @@ final class DatasetZipValidator {
                             if (".txt".equals(ext)) {
                                 String labelKey = yoloKey(entryName, "labels");
                                 if (isYoloMetadataCandidate(entryName)) {
-                                    yoloMetadataCandidates.add(labelKey);
+                                    pendingYoloLabel = true;
+                                    pendingYoloKey = labelKey;
                                 } else if (!yoloLabels.add(labelKey)) {
                                     throw new IllegalArgumentException(
                                             "YOLO zip contains duplicate label mapping: " + entryName
@@ -284,17 +295,34 @@ final class DatasetZipValidator {
                     }
 
                     Path temp = Files.createTempFile("dataset-entry-validation-", ".tmp");
+                    boolean retainTemp = false;
                     try {
                         long entryBytes = copyToTemp(zip, temp, totalUncompressedBytes);
                         totalUncompressedBytes += entryBytes;
                         validateDeclaredContent(taskType, annotationFormat, entryName, temp);
+                        if ("CV".equals(taskType)
+                                && "YOLO".equals(annotationFormat)
+                                && ".txt".equals(ext)) {
+                            if (pendingYoloLabel) {
+                                pendingYoloLabels.add(new PendingYoloLabel(
+                                        pendingYoloKey,
+                                        entryName,
+                                        temp
+                                ));
+                                retainTemp = true;
+                            } else {
+                                validateYoloLabel(entryName, temp);
+                            }
+                        }
                     } finally {
-                        Files.deleteIfExists(temp);
+                        if (!retainTemp) {
+                            Files.deleteIfExists(temp);
+                        }
                     }
                 }
                 zip.closeEntry();
             }
-        }
+            }
         if ("CV".equals(taskType)) {
             if (!foundCvImage) {
                 throw new IllegalArgumentException("CV zip dataset must contain image files");
@@ -305,11 +333,16 @@ final class DatasetZipValidator {
                 );
             }
             if ("YOLO".equals(annotationFormat)) {
-                for (String candidate : yoloMetadataCandidates) {
-                    if (yoloImages.contains(candidate) && !yoloLabels.add(candidate)) {
+                for (PendingYoloLabel candidate : pendingYoloLabels) {
+                    if (yoloImages.contains(candidate.key())
+                            && !yoloLabels.add(candidate.key())) {
                         throw new IllegalArgumentException(
-                                "YOLO zip contains duplicate label mapping: " + candidate
+                                "YOLO zip contains duplicate label mapping: "
+                                        + candidate.fileName()
                         );
+                    }
+                    if (yoloImages.contains(candidate.key())) {
+                        validateYoloLabel(candidate.fileName(), candidate.path());
                     }
                 }
             }
@@ -343,6 +376,11 @@ final class DatasetZipValidator {
             }
         }
         return files;
+        } finally {
+            for (PendingYoloLabel pending : pendingYoloLabels) {
+                Files.deleteIfExists(pending.path());
+            }
+        }
     }
 
     static boolean isCvImageExtension(String extension) {
@@ -511,6 +549,108 @@ final class DatasetZipValidator {
         }
     }
 
+    private static void validateYoloLabel(String fileName, Path file) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber += 1;
+                String normalized = line.strip();
+                if (normalized.isEmpty()) {
+                    continue;
+                }
+                String[] columns = normalized.split("\\s+");
+                if (columns.length != 5) {
+                    throw invalidYoloLabel(
+                            fileName,
+                            lineNumber,
+                            "expected exactly 5 columns"
+                    );
+                }
+                if (!YOLO_CLASS_ID.matcher(columns[0]).matches()) {
+                    throw invalidYoloLabel(
+                            fileName,
+                            lineNumber,
+                            "class id must be a non-negative integer"
+                    );
+                }
+                try {
+                    Integer.parseInt(columns[0]);
+                } catch (NumberFormatException exception) {
+                    throw invalidYoloLabel(
+                            fileName,
+                            lineNumber,
+                            "class id is out of range"
+                    );
+                }
+
+                double centerX = yoloNumber(columns[1], fileName, lineNumber);
+                double centerY = yoloNumber(columns[2], fileName, lineNumber);
+                double width = yoloNumber(columns[3], fileName, lineNumber);
+                double height = yoloNumber(columns[4], fileName, lineNumber);
+                if (!inClosedUnitInterval(centerX) || !inClosedUnitInterval(centerY)) {
+                    throw invalidYoloLabel(
+                            fileName,
+                            lineNumber,
+                            "center coordinates must be within [0, 1]"
+                    );
+                }
+                if (!inPositiveUnitInterval(width) || !inPositiveUnitInterval(height)) {
+                    throw invalidYoloLabel(
+                            fileName,
+                            lineNumber,
+                            "width and height must be within (0, 1]"
+                    );
+                }
+            }
+        }
+    }
+
+    private static double yoloNumber(
+            String value,
+            String fileName,
+            int lineNumber
+    ) {
+        if (!YOLO_DECIMAL.matcher(value).matches()) {
+            throw invalidYoloLabel(
+                    fileName,
+                    lineNumber,
+                    "coordinates must be decimal numbers"
+            );
+        }
+        try {
+            double parsed = Double.parseDouble(value);
+            if (!Double.isFinite(parsed)) {
+                throw new NumberFormatException("not finite");
+            }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw invalidYoloLabel(
+                    fileName,
+                    lineNumber,
+                    "coordinates must be finite decimal numbers"
+            );
+        }
+    }
+
+    private static boolean inClosedUnitInterval(double value) {
+        return value >= 0.0d && value <= 1.0d;
+    }
+
+    private static boolean inPositiveUnitInterval(double value) {
+        return value > 0.0d && value <= 1.0d;
+    }
+
+    private static IllegalArgumentException invalidYoloLabel(
+            String fileName,
+            int lineNumber,
+            String reason
+    ) {
+        return new IllegalArgumentException(
+                "invalid YOLO label at " + fileName + ":" + lineNumber + ": " + reason
+        );
+    }
+
     private static void rejectBinaryMagic(String fileName, Path file) throws IOException {
         byte[] prefix;
         try (InputStream input = Files.newInputStream(file)) {
@@ -647,5 +787,8 @@ final class DatasetZipValidator {
 
     private static String normalizeZipEntryName(String name) {
         return name == null ? "" : name.replace('\\', '/');
+    }
+
+    private record PendingYoloLabel(String key, String fileName, Path path) {
     }
 }

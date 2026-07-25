@@ -62,6 +62,7 @@ class TrainingModelPublishServiceTest {
                 versionRepo,
                 mock(MinioService.class),
                 mock(ArtifactDigestService.class),
+                mock(ModelArtifactIntegrityService.class),
                 mock(TrainingRunSpecCodec.class),
                 mock(PlatformTransactionManager.class)
         );

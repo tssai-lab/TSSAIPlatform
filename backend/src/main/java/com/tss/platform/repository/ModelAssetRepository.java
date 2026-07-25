@@ -26,5 +26,19 @@ public interface ModelAssetRepository extends JpaRepository<ModelAsset, String> 
     List<ModelAsset> findByOwnerUserId(Integer ownerUserId);
 
     List<ModelAsset> findByOwnerUserIdAndDeletedFalse(Integer ownerUserId);
+
+    @Query("""
+            select (count(a) > 0)
+            from ModelAsset a
+            where a.deleted = false
+              and a.ownerUserId = :ownerUserId
+              and lower(trim(a.name)) = lower(:normalizedName)
+              and (:excludedId is null or a.id <> :excludedId)
+            """)
+    boolean existsActiveNormalizedName(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("normalizedName") String normalizedName,
+            @Param("excludedId") String excludedId
+    );
 }
 

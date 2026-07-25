@@ -215,6 +215,7 @@ class ImportJobRetryServiceTest {
         );
 
         private Fixture() {
+            when(importJobRepo.findById(job.getId())).thenReturn(Optional.of(job));
             when(importJobRepo.findByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
             when(versionRepo.findByIdAndDeletedFalse(version.getId())).thenReturn(Optional.of(version));
             when(assetRepo.findByIdAndDeletedFalse(asset.getId())).thenReturn(Optional.of(asset));

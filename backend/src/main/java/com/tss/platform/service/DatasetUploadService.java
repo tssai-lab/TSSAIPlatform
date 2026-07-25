@@ -242,7 +242,9 @@ public class DatasetUploadService {
         DatasetAsset targetAsset = resolveTargetAsset(req.getAssetId(), taskType, cvTaskType, annotationFormat);
         Integer ownerUserId = targetAsset != null ? targetAsset.getOwnerUserId() : operatorUserId;
         String targetAssetId = targetAsset != null ? targetAsset.getId() : null;
-        String datasetName = targetAsset != null ? targetAsset.getName() : req.getDatasetName().trim();
+        String datasetName = targetAsset != null
+                ? targetAsset.getName()
+                : requireUniqueNewAssetName(operatorUserId, req.getDatasetName());
         Integer previewVersionNo = previewVersionNo(targetAssetId);
         boolean versionLabelGenerated = isVersionLabelGenerated(req.getVersionLabel(), req.getVersion());
         String requestedLabel = defaultVersionLabel(req.getVersionLabel(), req.getVersion(), previewVersionNo);
@@ -364,23 +366,39 @@ public class DatasetUploadService {
         return progress(saved);
     }
 
-    @Transactional
     public DatasetUploadProgressDto saveChunk(String uploadId, Integer partIndex, MultipartFile file) {
-        DatasetUploadSession session = getSession(uploadId);
-        if (STATUS_COMPLETED.equals(session.getStatus())) {
-            return progress(session);
+        DatasetUploadSession snapshot = getSession(uploadId);
+        if (STATUS_COMPLETED.equals(snapshot.getStatus())) {
+            return progress(snapshot);
         }
-        if (partIndex == null || partIndex < 0 || partIndex >= session.getTotalChunks()) {
+        if (!STATUS_UPLOADING.equals(snapshot.getStatus())) {
+            throw new IllegalArgumentException(
+                    "上传状态不允许继续上传分片: " + snapshot.getStatus()
+            );
+        }
+        if (partIndex == null || partIndex < 0 || partIndex >= snapshot.getTotalChunks()) {
             throw new IllegalArgumentException("partIndex 超出范围");
         }
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("分片文件不能为空");
         }
-        if (partIndex < session.getTotalChunks() - 1 && file.getSize() != session.getChunkSize()) {
-            throw new IllegalArgumentException("非末尾分片大小必须等于 chunkSize");
+        long expectedSize = partIndex < snapshot.getTotalChunks() - 1
+                ? snapshot.getChunkSize()
+                : snapshot.getFileSize()
+                        - (long) snapshot.getChunkSize()
+                        * (snapshot.getTotalChunks() - 1);
+        if (file.getSize() != expectedSize) {
+            throw new IllegalArgumentException(
+                    "分片大小必须等于预期大小: expected=" + expectedSize
+            );
         }
 
-        String objectName = "users/" + session.getOwnerUserId() + "/datasets/_uploads/" + uploadId + "/part-" + partIndex;
+        String objectName = "users/" + snapshot.getOwnerUserId()
+                + "/datasets/_uploads/" + uploadId
+                + "/part-" + partIndex + "-"
+                + UUID.randomUUID().toString().replace("-", "");
+        StatObjectResponse stat;
+        boolean objectUploaded = false;
         try (InputStream is = file.getInputStream()) {
             minioClient.putObject(
                     PutObjectArgs.builder()
@@ -390,27 +408,99 @@ public class DatasetUploadService {
                             .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
                             .build()
             );
-            StatObjectResponse stat = minioClient.statObject(
+            objectUploaded = true;
+            stat = minioClient.statObject(
                     StatObjectArgs.builder().bucket(bucket).object(objectName).build()
             );
-            DatasetUploadChunk chunk = chunkRepo.findByUploadIdAndPartIndex(uploadId, partIndex)
-                    .orElseGet(() -> {
-                        DatasetUploadChunk c = new DatasetUploadChunk();
-                        c.setId("dataset-chunk-" + UUID.randomUUID().toString().replace("-", ""));
-                        c.setUploadId(uploadId);
-                        c.setPartIndex(partIndex);
-                        c.setCreatedAt(Instant.now());
-                        return c;
-                    });
-            chunk.setObjectName(objectName);
-            chunk.setSizeBytes(file.getSize());
-            chunk.setEtag(stat.etag());
-            chunkRepo.save(chunk);
-            session.setUpdatedAt(Instant.now());
-            return progress(sessionRepo.save(session));
         } catch (Exception e) {
+            if (objectUploaded) {
+                removeObjectQuietly(objectName);
+            }
             throw new IllegalArgumentException("分片上传失败: " + e.getMessage());
         }
+        if (stat.size() != expectedSize) {
+            removeObjectQuietly(objectName);
+            throw new IllegalArgumentException("上传后分片大小与预期大小不一致");
+        }
+
+        try {
+            ChunkPersistenceResult result = transactionTemplate.execute(status ->
+                    persistUploadedChunk(
+                            uploadId,
+                            partIndex,
+                            expectedSize,
+                            objectName,
+                            stat.etag()
+                    )
+            );
+            if (result == null) {
+                throw new IllegalArgumentException("保存分片上传记录失败");
+            }
+            if (!result.persisted()) {
+                removeObjectQuietly(objectName);
+            }
+            return progress(result.session());
+        } catch (RuntimeException exception) {
+            removeObjectQuietly(objectName);
+            throw new IllegalArgumentException(
+                    "分片上传失败: " + rootMessage(exception)
+            );
+        }
+    }
+
+    private ChunkPersistenceResult persistUploadedChunk(
+            String uploadId,
+            Integer partIndex,
+            long sizeBytes,
+            String objectName,
+            String etag
+    ) {
+        DatasetUploadSession session = sessionRepo.findByIdForUpdate(uploadId)
+                .orElseThrow(() -> new IllegalArgumentException("uploadId 无效"));
+        authContext.requireOwnerAccess(
+                session.getOwnerUserId(),
+                "uploadId invalid or not accessible"
+        );
+        if (STATUS_COMPLETED.equals(session.getStatus())) {
+            return new ChunkPersistenceResult(session, false);
+        }
+        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+            throw new IllegalArgumentException(
+                    "上传状态不允许继续上传分片: " + session.getStatus()
+            );
+        }
+
+        DatasetUploadChunk chunk = chunkRepo
+                .findByUploadIdAndPartIndex(uploadId, partIndex)
+                .orElseGet(() -> {
+                    DatasetUploadChunk value = new DatasetUploadChunk();
+                    value.setId(
+                            "dataset-chunk-"
+                                    + UUID.randomUUID().toString().replace("-", "")
+                    );
+                    value.setUploadId(uploadId);
+                    value.setPartIndex(partIndex);
+                    value.setCreatedAt(Instant.now());
+                    return value;
+                });
+        String previousObjectName = chunk.getObjectName();
+        chunk.setObjectName(objectName);
+        chunk.setSizeBytes(sizeBytes);
+        chunk.setEtag(etag);
+        chunkRepo.save(chunk);
+        session.setUpdatedAt(Instant.now());
+        DatasetUploadSession saved = sessionRepo.save(session);
+        if (previousObjectName != null
+                && !previousObjectName.isBlank()
+                && !previousObjectName.equals(objectName)) {
+            minioDeleteTaskService.enqueueDefaultBucketDelete(
+                    previousObjectName,
+                    MinioDeleteTaskService.SOURCE_DATASET_UPLOAD_CHUNK,
+                    uploadId,
+                    session.getOwnerUserId()
+            );
+        }
+        return new ChunkPersistenceResult(saved, true);
     }
 
     @Transactional(readOnly = true)
@@ -618,7 +708,10 @@ public class DatasetUploadService {
         DatasetAsset asset = allocation.asset();
         if (createAsset) {
             asset.setId(assetId);
-            asset.setName(session.getDatasetName());
+            asset.setName(requireUniqueNewAssetName(
+                    session.getOwnerUserId(),
+                    session.getDatasetName()
+            ));
             asset.setType(session.getType());
             asset.setCvTaskType(session.getCvTaskType());
             asset.setAnnotationFormat(session.getAnnotationFormat());
@@ -627,7 +720,7 @@ public class DatasetUploadService {
             asset.setCreatedAt(now);
             asset.setUpdatedAt(now);
             asset.setDeleted(false);
-            assetRepo.saveAndFlush(asset);
+            saveNewAsset(asset);
         }
 
         DatasetVersion version = new DatasetVersion();
@@ -827,9 +920,22 @@ public class DatasetUploadService {
                 || session.getImportJobId().isBlank()) {
             return;
         }
-        importJobRepo.findById(session.getImportJobId())
+        String importJobId = session.getImportJobId();
+        Runnable launch = () -> importJobRepo.findById(importJobId)
                 .filter(job -> IMPORT_STATUS_PENDING.equals(job.getStatus()))
                 .ifPresent(job -> importJobLauncher.launch(job.getId()));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            launch.run();
+                        }
+                    }
+            );
+            return;
+        }
+        launch.run();
     }
 
     private ManifestReservation reserveManifestVersion(String uploadId) {
@@ -859,7 +965,10 @@ public class DatasetUploadService {
         DatasetAsset asset = allocation.asset();
         if (createAsset) {
             asset.setId(assetId);
-            asset.setName(session.getDatasetName());
+            asset.setName(requireUniqueNewAssetName(
+                    session.getOwnerUserId(),
+                    session.getDatasetName()
+            ));
             asset.setType(session.getType());
             asset.setCvTaskType(session.getCvTaskType());
             asset.setAnnotationFormat(session.getAnnotationFormat());
@@ -868,7 +977,7 @@ public class DatasetUploadService {
             asset.setCreatedAt(now);
             asset.setUpdatedAt(now);
             asset.setDeleted(false);
-            assetRepo.saveAndFlush(asset);
+            saveNewAsset(asset);
         }
 
         DatasetVersion version = new DatasetVersion();
@@ -1299,7 +1408,9 @@ public class DatasetUploadService {
         requireUniqueVersionLabel(assetId, allocation.versionLabel());
 
         Integer ownerUserId = createAsset ? operatorUserId : asset.getOwnerUserId();
-        String effectiveDatasetName = createAsset ? datasetName.trim() : asset.getName();
+        String effectiveDatasetName = createAsset
+                ? requireUniqueNewAssetName(ownerUserId, datasetName)
+                : asset.getName();
         String versionId = "dataset-ver-" + UUID.randomUUID().toString().replace("-", "");
         String fileName = sanitizeSegment(effectiveDatasetName)
                 + "-" + sanitizeSegment("v" + allocation.versionNo())
@@ -1321,7 +1432,7 @@ public class DatasetUploadService {
             asset.setCreatedAt(now);
             asset.setUpdatedAt(now);
             asset.setDeleted(false);
-            assetRepo.saveAndFlush(asset);
+            saveNewAsset(asset);
         }
 
         DatasetVersion version = new DatasetVersion();
@@ -2100,6 +2211,25 @@ public class DatasetUploadService {
         return "dataset asset already has an active DRAFT version: " + id;
     }
 
+    private String requireUniqueNewAssetName(Integer ownerUserId, String value) {
+        String normalized = AssetNamePolicy.normalizeRequired(value);
+        if (assetRepo.existsActiveNormalizedName(ownerUserId, normalized, null)) {
+            throw new AssetNameConflictException("dataset");
+        }
+        return normalized;
+    }
+
+    private DatasetAsset saveNewAsset(DatasetAsset asset) {
+        try {
+            return assetRepo.saveAndFlush(asset);
+        } catch (DataIntegrityViolationException exception) {
+            if (AssetNamePolicy.isNameConstraintViolation(exception)) {
+                throw new AssetNameConflictException("dataset");
+            }
+            throw exception;
+        }
+    }
+
     private String normalizeText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
@@ -2383,6 +2513,12 @@ public class DatasetUploadService {
     private record ManifestReservation(
             DatasetUploadSession session,
             String destinationObject
+    ) {
+    }
+
+    private record ChunkPersistenceResult(
+            DatasetUploadSession session,
+            boolean persisted
     ) {
     }
 }

@@ -5,6 +5,7 @@ import com.tss.platform.entity.CodeAssetAuditLog;
 import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeRiskFinding;
 import com.tss.platform.entity.CodeVersion;
+import com.tss.platform.entity.PlatformSystemConfig;
 import com.tss.platform.model.CodeApprovalDecisionSource;
 import com.tss.platform.model.CodeAuditActorType;
 import com.tss.platform.model.CodeRiskAssessmentStatus;
@@ -85,8 +86,24 @@ class CodeRiskAssessmentPersistenceContractTest {
     }
 
     @Test
+    void v42AddsTwoModeSystemConfigurationAndExplicitDirectPassEvidence() throws Exception {
+        String sql = migrationSql(
+                "db/migration/V43__training_code_review_mode.sql"
+        ).toLowerCase(Locale.ROOT);
+
+        assertEquals("platform_system_config", tableName(PlatformSystemConfig.class));
+        assertTrue(sql.contains("create table platform_system_config"));
+        assertTrue(sql.contains("'direct_pass', 'standard_review'"));
+        assertTrue(sql.contains("decision_source = 'system_config'"));
+        assertTrue(sql.contains("'training-code-direct-pass-approval-v1'"));
+        assertTrue(sql.contains("'direct_pass'"));
+    }
+
+    @Test
     void v30CreatesRiskEvidenceAndSafeFindingSchema() throws Exception {
-        String sql = migrationSql().toLowerCase(Locale.ROOT);
+        String sql = migrationSql(
+                "db/migration/V30__code_risk_assessment_and_review_queue.sql"
+        ).toLowerCase(Locale.ROOT);
 
         assertTrue(sql.contains("create table code_risk_assessment"));
         assertTrue(sql.contains("create table code_risk_finding"));
@@ -111,7 +128,9 @@ class CodeRiskAssessmentPersistenceContractTest {
 
     @Test
     void v30BindsAutomaticAndAdministrativeDecisionsToExplicitEvidence() throws Exception {
-        String sql = migrationSql().toLowerCase(Locale.ROOT);
+        String sql = migrationSql(
+                "db/migration/V30__code_risk_assessment_and_review_queue.sql"
+        ).toLowerCase(Locale.ROOT);
 
         assertTrue(sql.contains("add column decision_source"));
         assertTrue(sql.contains("add column risk_assessment_id"));
@@ -129,7 +148,9 @@ class CodeRiskAssessmentPersistenceContractTest {
 
     @Test
     void v30AddsReviewQueueSummaryAndTypedAuditActorWithoutTrainingMutation() throws Exception {
-        String sql = migrationSql().toLowerCase(Locale.ROOT);
+        String sql = migrationSql(
+                "db/migration/V30__code_risk_assessment_and_review_queue.sql"
+        ).toLowerCase(Locale.ROOT);
 
         assertTrue(sql.contains("add column latest_risk_assessment_id"));
         assertTrue(sql.contains("add column risk_status"));
@@ -146,14 +167,26 @@ class CodeRiskAssessmentPersistenceContractTest {
         assertFalse(sql.contains("k8s"));
     }
 
+    @Test
+    void v45AddsExplicitAdministratorAuditActorWithoutWeakeningSystemActor() throws Exception {
+        String sql = migrationSql(
+                "db/migration/V46__admin_code_asset_management.sql"
+        ).toLowerCase(Locale.ROOT);
+
+        assertTrue(sql.contains("drop constraint ck_code_asset_audit_log_actor"));
+        assertTrue(sql.contains("actor_type in ('user', 'admin')"));
+        assertTrue(sql.contains("actor_user_id is not null"));
+        assertTrue(sql.contains("actor_type = 'system'"));
+        assertTrue(sql.contains("actor_user_id is null"));
+    }
+
     private static String tableName(Class<?> entityType) {
         Table table = entityType.getAnnotation(Table.class);
         assertNotNull(table);
         return table.name();
     }
 
-    private static String migrationSql() throws Exception {
-        String resource = "db/migration/V30__code_risk_assessment_and_review_queue.sql";
+    private static String migrationSql(String resource) throws Exception {
         try (var input = Thread.currentThread().getContextClassLoader()
                 .getResourceAsStream(resource)) {
             assertNotNull(input, resource);

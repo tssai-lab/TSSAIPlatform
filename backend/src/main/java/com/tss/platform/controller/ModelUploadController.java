@@ -4,6 +4,8 @@ import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.ModelUploadProgressDto;
 import com.tss.platform.dto.UploadCompleteRequest;
 import com.tss.platform.dto.UploadInitRequest;
+import com.tss.platform.service.AssetNameConflictException;
+import com.tss.platform.service.AssetNameValidationException;
 import com.tss.platform.service.ModelUploadService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -61,6 +63,8 @@ public class ModelUploadController {
     public ApiResponse<Map<String, Object>> complete(@RequestBody UploadCompleteRequest req) {
         try {
             return ApiResponse.ok(service.complete(req));
+        } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            throw exception;
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

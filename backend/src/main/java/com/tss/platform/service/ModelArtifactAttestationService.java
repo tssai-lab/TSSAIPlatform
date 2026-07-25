@@ -6,9 +6,11 @@ import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.Objects;
 
 @Service
 public class ModelArtifactAttestationService {
@@ -31,6 +33,9 @@ public class ModelArtifactAttestationService {
         this.assetRepo = assetRepo;
         this.integrityService = integrityService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(
+                TransactionDefinition.PROPAGATION_REQUIRES_NEW
+        );
     }
 
     public AttestedArtifact attestReady(String versionId) {
@@ -64,8 +69,9 @@ public class ModelArtifactAttestationService {
             if (!READY.equals(current.getStatus())) {
                 return AttestedArtifact.failure("model version is not READY");
             }
-            if (!snapshot.getStoragePath().equals(current.getStoragePath())
-                    || !snapshot.getSizeBytes().equals(current.getSizeBytes())) {
+            if (!Objects.equals(snapshot.getStoragePath(), current.getStoragePath())
+                    || !Objects.equals(snapshot.getSizeBytes(), current.getSizeBytes())) {
+                demote(asset, current);
                 return AttestedArtifact.failure("model artifact metadata changed during verification");
             }
             if (current.getArtifactSha256() != null
@@ -75,8 +81,10 @@ public class ModelArtifactAttestationService {
             }
             if (current.getArtifactSha256() == null) {
                 current.setArtifactSha256(inspection.sha256());
-                versionRepo.saveAndFlush(current);
             }
+            current.setArtifactAttestedSha256(inspection.sha256());
+            current.setArtifactAttestedAt(Instant.now());
+            versionRepo.saveAndFlush(current);
             return AttestedArtifact.success(current, asset, inspection);
         });
         if (result == null || !result.successful()) {
@@ -103,9 +111,61 @@ public class ModelArtifactAttestationService {
         });
     }
 
+    public void recordStreamingVerification(
+            String versionId,
+            String expectedStoragePath,
+            long expectedSize,
+            String verifiedSha256
+    ) {
+        if (verifiedSha256 == null
+                || !verifiedSha256.matches("[0-9a-f]{64}")) {
+            throw new ModelArtifactException(
+                    "streaming model artifact SHA-256 is invalid",
+                    false
+            );
+        }
+        String failure = transactionTemplate.execute(status -> {
+            ModelVersion version = versionRepo.findByIdAndDeletedFalseForUpdate(versionId)
+                    .orElseThrow(() -> new ModelArtifactException(
+                            "model version disappeared during streaming verification",
+                            false
+                    ));
+            ModelAsset asset = assetRepo.findByIdAndDeletedFalseForUpdate(
+                            version.getAssetId()
+                    )
+                    .orElseThrow(() -> new ModelArtifactException(
+                            "model asset disappeared during streaming verification",
+                            false
+                    ));
+            if (!READY.equals(version.getStatus())) {
+                return "model version lifecycle changed during streaming verification";
+            }
+            if (!Objects.equals(expectedStoragePath, version.getStoragePath())
+                    || !Objects.equals(expectedSize, version.getSizeBytes())) {
+                demote(asset, version);
+                return "model artifact metadata changed during streaming verification";
+            }
+            if (version.getArtifactSha256() != null
+                    && !verifiedSha256.equals(version.getArtifactSha256())) {
+                demote(asset, version);
+                return "streamed model artifact SHA-256 does not match metadata";
+            }
+            if (version.getArtifactSha256() == null) {
+                version.setArtifactSha256(verifiedSha256);
+                versionRepo.saveAndFlush(version);
+            }
+            return null;
+        });
+        if (failure != null) {
+            throw new ModelArtifactException(failure, false);
+        }
+    }
+
     private void demote(ModelAsset asset, ModelVersion version) {
         version.setStatus(DRAFT);
         version.setPublishedAt(null);
+        version.setArtifactAttestedSha256(null);
+        version.setArtifactAttestedAt(null);
         versionRepo.saveAndFlush(version);
         if (version.getId().equals(asset.getCurrentVersionId())) {
             asset.setCurrentVersionId(null);

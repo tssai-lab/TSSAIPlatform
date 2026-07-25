@@ -28,8 +28,9 @@ dataset:
 
 code-assets:
   risk:
-    # Low-risk code is automatically approved after static scanning. High-risk
-    # code is still blocked instead of creating an administrator review queue.
+    # STANDARD_REVIEW delegates to this risk mode. ENFORCE automatically approves
+    # complete LOW evidence, sends reviewable findings to administrators, and
+    # rejects blocking findings. DIRECT_PASS is persisted in platform_system_config.
     mode: ${CODE_ASSET_RISK_MODE:ENFORCE}
     batch-size: ${CODE_ASSET_RISK_BATCH_SIZE:20}
     stale-after-seconds: ${CODE_ASSET_RISK_STALE_AFTER_SECONDS:600}

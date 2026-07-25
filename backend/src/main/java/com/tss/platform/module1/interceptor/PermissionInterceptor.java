@@ -86,7 +86,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
             !requestUri.startsWith("/api/log") &&
             !requestUri.startsWith("/api/role") &&
             !requestUri.startsWith("/api/system/user") &&
-            !requestUri.startsWith("/api/system/log")) {
+            !requestUri.startsWith("/api/system/log") &&
+            !requestUri.startsWith("/api/system/config")) {
             return false;
         }
         if (isPublicPath(requestUri)) {

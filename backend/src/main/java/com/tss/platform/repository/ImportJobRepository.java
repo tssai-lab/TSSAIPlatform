@@ -17,6 +17,12 @@ import java.util.Optional;
 public interface ImportJobRepository extends JpaRepository<ImportJob, String> {
     List<ImportJob> findByDatasetVersionId(String datasetVersionId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select j from ImportJob j where j.datasetVersionId = :datasetVersionId")
+    List<ImportJob> findByDatasetVersionIdForUpdate(
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
     Optional<ImportJob> findByDatasetVersionIdAndPackageId(
             String datasetVersionId,
             String packageId

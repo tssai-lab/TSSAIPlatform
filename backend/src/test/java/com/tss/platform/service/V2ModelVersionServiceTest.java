@@ -15,6 +15,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -22,8 +24,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -87,6 +94,78 @@ class V2ModelVersionServiceTest {
         verify(fixture.attestation).invalidate(fixture.version.getId());
     }
 
+    @Test
+    void attestedDownloadUsesOneStreamingIntegrityReadWithoutPrehash()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.version.setArtifactAttestedSha256(
+                fixture.version.getArtifactSha256()
+        );
+        byte[] content = new byte[]{1, 2, 3, 4};
+        when(fixture.integrity.openVerified(
+                eq(fixture.version.getStoragePath()),
+                eq(fixture.version.getSizeBytes()),
+                eq(fixture.version.getArtifactSha256()),
+                isNull(),
+                any(Runnable.class)
+        )).thenReturn(new ByteArrayInputStream(content));
+
+        V2ModelVersionService.Download download =
+                fixture.service.download(fixture.version.getId());
+
+        assertEquals(fixture.version.getArtifactSha256(), download.sha256());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(
+                content,
+                download.inputStream().readAllBytes()
+        );
+        verify(fixture.attestation, never()).attestReady(fixture.version.getId());
+        verify(fixture.integrity, times(1)).openVerified(
+                eq(fixture.version.getStoragePath()),
+                eq(fixture.version.getSizeBytes()),
+                eq(fixture.version.getArtifactSha256()),
+                isNull(),
+                any(Runnable.class)
+        );
+        verify(fixture.minio, never()).downloadStream(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void historicalDownloadComputesAndBackfillsShaWithoutASeparatePrehash()
+            throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.version.setArtifactSha256(null);
+        fixture.version.setArtifactAttestedSha256(null);
+        AtomicReference<Consumer<ModelArtifactIntegrityService.Inspection>> callback =
+                new AtomicReference<>();
+        when(fixture.integrity.openVerified(
+                eq(fixture.version.getStoragePath()),
+                eq(fixture.version.getSizeBytes()),
+                isNull(),
+                any(Consumer.class),
+                any(Runnable.class)
+        )).thenAnswer(invocation -> {
+            callback.set(invocation.getArgument(3));
+            return new ByteArrayInputStream(new byte[]{1, 2, 3, 4});
+        });
+
+        V2ModelVersionService.Download download =
+                fixture.service.download(fixture.version.getId());
+        callback.get().accept(new ModelArtifactIntegrityService.Inspection(
+                fixture.version.getSizeBytes(),
+                "b".repeat(64)
+        ));
+
+        assertEquals(null, download.sha256());
+        verify(fixture.attestation, never()).attestReady(fixture.version.getId());
+        verify(fixture.attestation).recordStreamingVerification(
+                fixture.version.getId(),
+                fixture.version.getStoragePath(),
+                fixture.version.getSizeBytes(),
+                "b".repeat(64)
+        );
+    }
+
     private static byte[] fileDirectoryConflictZip() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(output)) {
@@ -105,6 +184,8 @@ class V2ModelVersionServiceTest {
         private final ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
         private final ModelArtifactAttestationService attestation =
                 mock(ModelArtifactAttestationService.class);
+        private final ModelArtifactIntegrityService integrity =
+                mock(ModelArtifactIntegrityService.class);
         private final ModelVersionLifecycleService lifecycle =
                 mock(ModelVersionLifecycleService.class);
         private final ModelCodePreviewService preview = mock(ModelCodePreviewService.class);
@@ -146,6 +227,7 @@ class V2ModelVersionServiceTest {
                     versionRepo,
                     assetRepo,
                     attestation,
+                    integrity,
                     lifecycle,
                     preview,
                     minio,

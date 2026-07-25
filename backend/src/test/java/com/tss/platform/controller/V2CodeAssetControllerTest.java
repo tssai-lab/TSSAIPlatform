@@ -3,6 +3,7 @@ package com.tss.platform.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.controller.v2.V2CodeAssetController;
 import com.tss.platform.controller.v2.V2ExceptionHandler;
+import com.tss.platform.dto.v2.V2CodeAssetCreateRequest;
 import com.tss.platform.dto.v2.V2CodeAssetDto;
 import com.tss.platform.dto.v2.V2CodeAssetPatchRequest;
 import com.tss.platform.dto.v2.V2CodeWorkspaceDto;
@@ -13,12 +14,15 @@ import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.CodeAccessPolicy;
 import com.tss.platform.service.CodeAssetAuditService;
 import com.tss.platform.service.CodeAssetReferenceChecker;
 import com.tss.platform.service.CodePathPolicy;
 import com.tss.platform.service.CodeWorkspaceService;
 import com.tss.platform.service.CodeWorkspaceConflictException;
+import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.V2CodeAssetService;
+import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -28,6 +32,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -44,6 +49,55 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class V2CodeAssetControllerTest {
+
+    @Test
+    void createRejectsUnsupportedTrainingProfileBeforePersisting() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        TrainingPlanRegistry plans = mock(TrainingPlanRegistry.class);
+        when(plans.requireEnabled("unsupported-profile", null))
+                .thenThrow(new IllegalArgumentException("not found"));
+        V2CodeAssetService service = new V2CodeAssetService(
+                assets,
+                mock(CodeVersionRepository.class),
+                mock(CodeWorkspaceRepository.class),
+                mock(CodeWorkspaceService.class),
+                mock(CodeAssetReferenceChecker.class),
+                mock(CodeAssetAuditService.class),
+                new CodePathPolicy(),
+                plans,
+                new CodeAccessPolicy(mock(AuthContext.class))
+        );
+
+        CodeValidationException error = org.junit.jupiter.api.Assertions.assertThrows(
+                CodeValidationException.class,
+                () -> service.create(new V2CodeAssetCreateRequest(
+                        "Trainer",
+                        "unsupported-profile",
+                        "training",
+                        "python3.11",
+                        "src/train.py",
+                        "CUSTOM",
+                        "draft"
+                ))
+        );
+
+        org.assertj.core.api.Assertions.assertThat(error.getReasonCode())
+                .isEqualTo("UNSUPPORTED_TRAINING_PROFILE");
+        verify(assets, never()).saveAndFlush(any());
+
+        mvc(service).perform(post("/api/v2/code-assets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name":"Trainer",
+                                  "trainingProfile":"unsupported-profile"
+                                }
+                                """))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.errorCode").value("CODE_VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details.reasonCode")
+                        .value("UNSUPPORTED_TRAINING_PROFILE"));
+    }
 
     @Test
     void createsAndListsDedicatedAssetDtosWithoutInternalProperties() throws Exception {
@@ -209,6 +263,36 @@ class V2CodeAssetControllerTest {
         verify(assets, never()).saveAndFlush(any());
         verify(versions, never()).existsByAssetIdAndDeletedFalse(any());
         verify(audit, never()).assetUpdated(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void explicitAdminEntryPointCanManageCrossOwnerWithoutChangingOwnership() throws Exception {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        CodeVersionRepository versions = mock(CodeVersionRepository.class);
+        CodeWorkspaceRepository workspaces = mock(CodeWorkspaceRepository.class);
+        CodeAssetAuditService audit = mock(CodeAssetAuditService.class);
+        AuthContext auth = mock(AuthContext.class);
+        CodeAsset foreign = entity(7, 9L);
+        when(assets.findByIdAndDeletedFalse("asset-1")).thenReturn(Optional.of(foreign));
+        when(assets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(foreign));
+        when(assets.saveAndFlush(foreign)).thenAnswer(invocation -> {
+            foreign.setRowVersion(10L);
+            return foreign;
+        });
+        when(auth.isAdmin()).thenReturn(true);
+        V2CodeAssetService service = service(assets, versions, workspaces, audit, auth);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":9,\"name\":\"managed-by-admin\"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        assertEquals("asset-1", service.getAdmin("asset-1").id());
+        V2CodeAssetDto updated = service.patchAdmin("asset-1", patch);
+
+        assertEquals("managed-by-admin", updated.name());
+        assertEquals(7, foreign.getOwnerUserId());
+        verify(audit).assetUpdated("asset-1", 10L);
     }
 
     @Test
@@ -624,7 +708,8 @@ class V2CodeAssetControllerTest {
                 references,
                 audit,
                 new CodePathPolicy(),
-                auth
+                mock(TrainingPlanRegistry.class),
+                new CodeAccessPolicy(auth)
         );
     }
 

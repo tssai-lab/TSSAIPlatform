@@ -355,7 +355,7 @@ public class V2ExceptionHandler {
         return hasPathPrefix(path, "/api/v2/code-assets")
                 || hasPathPrefix(path, "/api/v2/code-workspaces")
                 || hasPathPrefix(path, "/api/v2/code-versions")
-                || hasPathPrefix(path, "/api/v2/admin/code-review-tasks");
+                || hasPathPrefix(path, "/api/v2/admin");
     }
 
     private static boolean hasPathPrefix(String path, String prefix) {

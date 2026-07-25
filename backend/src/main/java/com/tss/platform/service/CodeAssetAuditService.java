@@ -370,7 +370,9 @@ public class CodeAssetAuditService {
         auditLog.setVersionId(versionId);
         auditLog.setWorkspaceId(workspaceId);
         auditLog.setAction(action);
-        auditLog.setActorType(CodeAuditActorType.USER);
+        auditLog.setActorType(authContext.isAdmin()
+                ? CodeAuditActorType.ADMIN
+                : CodeAuditActorType.USER);
         auditLog.setActorUserId(authContext.currentUserId());
         auditLog.setMetadataJson(metadataJson);
         auditLog.setCreatedAt(Instant.now());
