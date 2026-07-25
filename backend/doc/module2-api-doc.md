@@ -121,7 +121,8 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 | `datasetVersionId` / `id` | 数据集版本 ID |
 | `codeAssetId` / `assetId` | 代码资产 ID |
 | `codeVersionId` / `versionId` | 不可变代码版本 ID |
-| `workspaceId` | 代码编辑工作区 ID |
+| `workspaceId`（数据集工作区接口） | 数据集版本工作区 ID，只在 DRAFT 生命周期中有效 |
+| `workspaceId`（代码工作区接口） | 代码编辑工作区 ID，只在草稿生命周期中有效 |
 | `experimentId` | 训练实验 ID |
 | `trainingVersionId` / `id` | 训练实验版本 ID |
 | `uploadId` | 上传会话 ID |
@@ -206,7 +207,7 @@ if (!response.ok || !result.success) {
 - CV 本地文件夹可使用 `/api/dataset/upload/folder` 一次提交，后端会打包为 zip；大文件仍建议使用分片流程。
 - CV/NLP/POINT_CLOUD/ROBOT 旧上传流程完成后，新版本为 `READY`，并自动成为资产的 `currentVersionId`。
 - `MULTIMODAL` 必须上传 zip。init 未传 `sampleGrouping` 时默认 `AUTO_DIRECTORY`；高级调用方可显式传 `MANIFEST`。complete 后先返回 `DRAFT` 版本和 `PENDING` ImportJob，后台随后解析 manifest 或按根级样本目录生成内存导入计划。
-- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`，V2 前端也可从上传和版本工作区 DTO 中读取 `importJobId` 作为失败重试句柄。
+- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`。V2 前端必须保留上传 DTO 返回的 `importJobId`，并将其作为后续状态查询和失败重试句柄；版本工作区 DTO 不能在任务失败后重新提供该 ID。
 - 上传到已有数据集时，`type`、`cvTaskType`、`annotationFormat` 必须和资产一致。
 
 #### 数据集预览
@@ -303,7 +304,7 @@ profile: 准备 baseModelVersionId、datasetVersionId、codeVersionId、training
 | `GET /api/dataset-versions/{id}` | 查询完整版本实体 | 预览和训练仍传这里返回的版本 `id` |
 | `GET /api/dataset-versions` | 获取版本历史 | 传 `assetId` 时按 `versionNo` 倒序；不传时当前无统一排序和分页 |
 | `PUT /api/dataset-versions/{id}` | 编辑版本标签和说明 | `fileName`、`storagePath`、`sizeBytes` 对所有角色都不可通过此接口修改 |
-| `PATCH /api/dataset-versions/{id}/status` | 发布、废弃或归档版本 | 跨域时受当前 CORS 缺少 `PATCH` 限制；当前版本不能废弃或归档 |
+| `PATCH /api/dataset-versions/{id}/status` | 发布、废弃或归档版本 | 当前版本不能废弃或归档 |
 | `DELETE /api/dataset-versions/{id}` | 删除非当前版本 | 当前版本或被训练引用的版本不能删除 |
 
 #### 训练、文件和预览接口
@@ -1170,7 +1171,7 @@ V2 请求体为
 - FULL 重试会清空 `errorCode`、`errorMessage`、`errorDetailsJson`，重置 `progress=0`、`importedSamples=0`，把状态置为 `PENDING`，并通过现有 ImportJob launcher 重新调度。
 - INCREMENTAL 重试会把未解决 failure row 标记为 `RETRYING`，任务置为 `PENDING`，保留已成功导入样本。
 
-Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，并增加 `workspaceId/workspaceRevision`；其余字段为 `importJobId`、`status`、`displayStatus`、`importProgress`、`totalSamples`、`importedSamples`、`failedSamples`、`retryable`、`retryModes` 和 `userError`。V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对不可重试状态或 mode 与状态不匹配返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID、缺少 revision 或非法请求格式返回 400。
+Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，并增加 `workspaceId/workspaceRevision`；其余字段为 `importJobId`、`status`、`displayStatus`、`importProgress`、`totalSamples`、`importedSamples`、`failedSamples`、`retryable`、`retryModes` 和 `userError`。V2 状态查询对不存在或无权限的任务返回 `404 / IMPORT_JOB_NOT_FOUND`；重试时，任务 ID 不存在返回同一错误，任务存在但工作区不存在、不再是 DRAFT 或无权访问时返回 `404 / DATASET_WORKSPACE_NOT_FOUND`。不可重试状态或 mode 与状态不匹配返回 `422 / IMPORT_JOB_NOT_RETRYABLE`；JSON 请求体为 `null` 返回 `400 / INVALID_IMPORT_JOB_RETRY`，请求体缺失、JSON 或字段类型无法解析返回 `400 / INVALID_REQUEST`，缺少 revision 返回 `400 / EXPECTED_WORKSPACE_REVISION_REQUIRED`，revision 过期返回 `409 / WORKSPACE_REVISION_CONFLICT`，工作区存在其他活动操作时返回 `409 / WORKSPACE_BUSY`。
 
 当前实现：
 
@@ -1804,7 +1805,7 @@ Content-Type: application/json
 - 该接口没有限制只能按固定状态机顺序流转，只限制目标状态和当前版本保护。
 - 由于手工创建 DRAFT 时又不能写入存储元数据，按当前公开接口创建的空 DRAFT 通常无法直接变为 READY。
 - 工作区不能通过该通用状态接口发布；必须调用 `POST /api/dataset-versions/{draftVersionId}/publish`，由专用服务执行完整性校验和 `currentVersionId` 更新。
-- 跨域部署需要注意当前 CORS 未允许 `PATCH`，建议经同源 Nginx 代理调用。
+- 当前 CORS 已允许 `PATCH`；跨域调用仍需匹配部署配置中的允许来源，并携带有效登录态或 `Authorization`。
 
 ### 9.13 删除数据集版本
 
@@ -1829,7 +1830,7 @@ DELETE /api/dataset-versions/{id}
 | `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员单独批准代码版本；要求当前制品 SHA 对应最新且通过的校验证据 |
 | `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验或幂等复用证据；真正的新证据进入系统审核模式分流 |
 
-`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.7 规范化为 `/`。结构校验通过后进入 `DIRECT_PASS` 或 `STANDARD_REVIEW` 系统审核模式；后者再按 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流。静态 LOW 或系统直通都不是完整安全审计证明。
+`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.8 规范化为 `/`。结构校验通过后进入 `DIRECT_PASS` 或 `STANDARD_REVIEW` 系统审核模式；后者再按 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流。静态 LOW 或系统直通都不是完整安全审计证明。
 
 当前启用的训练方案为 `image_text_consistency_fusion_logreg` 和
 `yolo_object_detection`；方案入口、数据集类型和运行参数以
@@ -2771,7 +2772,12 @@ V2 成功响应直接返回强类型 DTO 或分页对象。请求已经通过鉴
 }
 ```
 
-上述 V2 Controller 错误响应头同时返回 `X-Trace-Id`。未登录或被管理员权限规则拒绝时，请求在进入 Controller 前由 `PermissionInterceptor` 返回模块一 `Result` 格式，不包含 V2 `errorCode`、`traceId` 或 `X-Trace-Id`。V2 不向前端返回 MinIO objectName、ZIP offset、堆栈或内部异常类名。
+上述 V2 错误响应头同时返回 `X-Trace-Id`。未登录时，请求先由
+`PermissionInterceptor` 返回 HTTP `401` 和模块一 `Result` 格式，不包含 V2
+`errorCode`、`traceId` 或 `X-Trace-Id`。已经登录但缺少 `/api/v2/admin/**`
+管理员权限时，管理员拦截器抛出的异常由 V2 异常处理器转换为 HTTP `403` 的
+`V2ErrorResponse`，`errorCode=CODE_APPROVAL_FORBIDDEN`，并带 `X-Trace-Id`。V2
+不向前端返回 MinIO objectName、ZIP offset、堆栈或内部异常类名。
 
 常用 HTTP 状态：
 
@@ -2779,7 +2785,7 @@ V2 成功响应直接返回强类型 DTO 或分页对象。请求已经通过鉴
 | --- | --- |
 | `400` | 请求参数或 JSON 格式错误 |
 | `401` | 未登录；响应体为模块一 `Result` |
-| `403` | 管理员权限规则拒绝；响应体为模块一 `Result` |
+| `403` | V2 管理能力拒绝；响应体为 `V2ErrorResponse`，典型错误码为 `CODE_APPROVAL_FORBIDDEN` |
 | `404` | 资源不存在或无权限 |
 | `409` | 版本、样本或编辑状态冲突 |
 | `422` | 目录、Manifest、导入或发布完整性错误 |
@@ -2902,9 +2908,10 @@ GET /api/v2/datasets/dataset-xxx/version-allocation?versionLabel=1.0.2
 | `baseVersion` / `targetVersion` | 父 READY 与目标 DRAFT 的版本摘要 |
 | `status` / `workspaceRevision` | 生命周期状态和当前并发 revision |
 | `sampleCount` | 未删除样本数 |
-| `activeOperation` | 当前上传/导入任务摘要；没有活动任务时为 `null` |
+| `activeOperation` | 当前活动上传/导入摘要 `{type,id,status,progress}`；`type=UPLOAD` 时 `id` 为 `uploadId`，`type=IMPORT` 时 `id` 为 `importJobId`；没有活动任务时为 `null` |
 | `publishReadiness` | `{canPublish,evaluatedRevision,blockers[]}` |
 | `availableActions` | 当前允许的操作集合 |
+| `userError` | 最新 ImportJob 为 `FAILED` 或 `PARTIAL` 时的结构化用户错误；不包含 `importJobId`，其他状态为 `null` |
 
 发布成功直接返回：
 
@@ -3009,12 +3016,18 @@ offset。
 
 上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
 
-工作区的 `importJobId` 由当前 DRAFT 的 ImportJob 聚合得出：若最新任务为
-`PENDING` 或 `RUNNING`，返回该活动任务；否则优先返回最新未解决 `PARTIAL` 或
-`FAILED` 任务，作为发布阻塞原因和 V2 重试句柄；没有未解决任务时才返回最新终态任务。V2 selector 忽略 `SUPERSEDED` 作为 latest terminal，优先级为 `PENDING/RUNNING` > 未解决 `PARTIAL/FAILED` > latest terminal。V2 重试接口为
-`POST /api/v2/import-jobs/{importJobId}/retry`，请求体为
+工作区 DTO 不直接返回 `importJobId`。它只在上传或导入状态为活动状态时返回
+`activeOperation`：`type=UPLOAD` 时 `id` 是 `uploadId`，`type=IMPORT` 时 `id`
+是 `importJobId`。最新 ImportJob 进入 `FAILED` 或 `PARTIAL` 后，
+`activeOperation` 为 `null`，工作区仅通过 `userError` 展示结构化错误，而
+`userError` 不包含任务 ID。V2 数据集列表同样不返回 `importJobId`。
+
+因此需要失败重试的调用方必须保留上传完成或上传轮询响应中的 `importJobId`。V2
+重试接口为 `POST /api/v2/import-jobs/{importJobId}/retry`，请求体为
 `{"mode":"FULL|INCREMENTAL","expectedWorkspaceRevision":12}`，成功后返回
-`V2ImportJobStatusDto`，其中 `PARTIAL` 状态返回 `displayStatus=IMPORT_PARTIAL`、`retryable=true`、`retryModes=["INCREMENTAL"]`；前端继续轮询上传或版本工作区状态。
+`V2ImportJobStatusDto`；重试结果会返回新的 `workspaceRevision`，活动导入随后可在
+工作区的 `activeOperation` 中观察。`PARTIAL` 状态的查询结果返回
+`displayStatus=IMPORT_PARTIAL`、`retryable=true`、`retryModes=["INCREMENTAL"]`。
 
 Legacy `/api/dataset-versions/{draftVersionId}/workspace/samples` 和 `/api/dataset-samples/{sampleId}/workspace/**` 暂时保留 `ApiResponse` 包装并标记 deprecated；其删除/恢复命令复用工作区锁和 revision 核心。新前端不得再混用这些接口。
 
@@ -3223,7 +3236,7 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 - 本地训练器当前实际只支持 CV/YOLO 图片和 `labels/*.txt` 数据。
 - legacy 本地训练器主要有效超参数为 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）；profile 路径记录并传递 `hyperParams`，但不能覆盖固定训练命令。
 
-### 18.7 V2 代码资产、工作区与版本
+### 18.8 V2 代码资产、工作区与版本
 
 V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` 为稳定标识。稳定生命周期为 `CodeAsset -> CodeWorkspace -> CodeVersion -> ValidationRun -> RiskAssessment/RiskFinding -> ApprovalRecord`。成功响应直接返回 DTO、列表或下载流；JSON 失败响应为 `V2ErrorResponse`（`success=false`、`errorCode`、`errorMessage`、`details`、`traceId`），同时返回真实 HTTP 状态和 `X-Trace-Id`，不使用 legacy `ApiResponse`。
 
