@@ -74,8 +74,6 @@ const FUSION_HYPER_PARAMS_DEFAULT = {
   outputDir: 'outputs/fusion_baseline_logreg',
 };
 
-const PROFILE_DISPLAY_NAME = '图文一致性基线训练';
-
 type CheckState = {
   loading: boolean;
   passed?: boolean;
@@ -88,6 +86,168 @@ const isCodeApproved = (status?: string) => status === 'APPROVED';
 
 const resolveDatasetVersionId = (data: any): string | undefined =>
   data?.datasetVersionId || data?.id || data?.versionId;
+
+const FORMAT_LABELS: Record<string, string> = {
+  FOLDER_CLASSIFICATION: '文件夹分类式（每个子目录一个类别）',
+  HF_MODEL_ARCHIVE: 'HuggingFace 模型包',
+  LEGACY_WEIGHT_ARCHIVE: '权重文件包（兼容）',
+  OTHER: '其他',
+  WEIGHT_ARCHIVE: '权重文件包',
+  YOLO: 'YOLO 标注格式',
+};
+
+const friendlyFormat = (f: string) => FORMAT_LABELS[f] || f;
+
+const PRE_STYLE: React.CSSProperties = {
+  background: '#f6f8fa',
+  padding: 12,
+  borderRadius: 6,
+  fontSize: 12,
+  margin: 0,
+  overflowX: 'auto',
+  whiteSpace: 'pre-wrap',
+};
+
+const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
+  const dataset = plan.inputs?.dataset;
+  const model = plan.inputs?.model;
+  const code = plan.inputs?.code;
+  const entrypoint = plan.execution?.entrypoint;
+  const params = plan.parameters ?? [];
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message={
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          {plan.description ? (
+            <Typography.Paragraph style={{ marginBottom: 0 }}>
+              {plan.description}
+            </Typography.Paragraph>
+          ) : null}
+
+          <div>
+            <Typography.Text strong>数据集要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              {dataset?.requiredEntries?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>压缩包内必须包含以下路径：</Typography.Text>
+                  <Space wrap>
+                    {dataset.requiredEntries.map((e) => (
+                      <Tag key={e} color="blue">
+                        {e}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {dataset.annotationFormats?.length ? (
+                    <Typography.Text type="secondary">
+                      标注格式：
+                      {dataset.annotationFormats.map(friendlyFormat).join('、')}
+                    </Typography.Text>
+                  ) : null}
+                  {dataset.formatGuide ? (
+                    <pre style={PRE_STYLE}>{dataset.formatGuide.trim()}</pre>
+                  ) : null}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">
+                  无特殊目录要求
+                </Typography.Text>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <Typography.Text strong>模型要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              {model?.requiredEntries?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>压缩包内必须包含以下文件：</Typography.Text>
+                  <Space wrap>
+                    {model.requiredEntries.map((e) => (
+                      <Tag key={e} color="purple">
+                        {e}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {model.formats?.length ? (
+                    <Typography.Text type="secondary">
+                      格式：{model.formats.map(friendlyFormat).join('、')}
+                    </Typography.Text>
+                  ) : null}
+                  {model.formatGuide ? (
+                    <pre style={PRE_STYLE}>{model.formatGuide.trim()}</pre>
+                  ) : null}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">
+                  无特殊条目要求
+                </Typography.Text>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <Typography.Text strong>训练代码要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              <Space direction="vertical" size={4}>
+                <Space>
+                  <Typography.Text>入口脚本必须为：</Typography.Text>
+                  {entrypoint ? <Tag color="cyan">{entrypoint}</Tag> : null}
+                </Space>
+                {code?.runtime ? (
+                  <Typography.Text type="secondary">
+                    运行时：{code.runtime}
+                  </Typography.Text>
+                ) : null}
+                {code?.approvalRequired ? (
+                  <Typography.Text type="warning">
+                    上传后需管理员审核通过方可使用
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            </div>
+          </div>
+
+          {params.length ? (
+            <div>
+              <Typography.Text strong>训练参数</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {params.map((p) => (
+                    <div key={p.name}>
+                      <Space wrap>
+                        <Tag color="geekblue">{p.displayName || p.name}</Tag>
+                        {p.defaultValue != null ? (
+                          <Typography.Text type="secondary">
+                            默认 {String(p.defaultValue)}
+                          </Typography.Text>
+                        ) : null}
+                        {p.required ? (
+                          <Typography.Text type="danger">必填</Typography.Text>
+                        ) : null}
+                      </Space>
+                      {p.description ? (
+                        <Typography.Paragraph
+                          type="secondary"
+                          style={{ margin: '2px 0 0', fontSize: 12 }}
+                        >
+                          {p.description}
+                        </Typography.Paragraph>
+                      ) : null}
+                    </div>
+                  ))}
+                </Space>
+              </div>
+            </div>
+          ) : null}
+        </Space>
+      }
+    />
+  );
+};
 
 const TaskCreate: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -142,10 +302,6 @@ const TaskCreate: React.FC = () => {
   const [codeUploading, setCodeUploading] = useState(false);
 
   const [codeCheck, setCodeCheck] = useState<CheckState>({ loading: false });
-  /** 通用训练默认执行上传代码；旧版内置训练仍可选择兼容模式。 */
-  const [trainingConfigMode, setTrainingConfigMode] = useState<
-    'hyperParams' | 'code'
-  >('code');
 
   const selectedModel = useMemo(
     () => modelOptions.find((item) => item.id === selectedBaseModelVersionId),
@@ -178,16 +334,15 @@ const TaskCreate: React.FC = () => {
 
   const filteredModelSelectOptions = useMemo(() => {
     const allowed = selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
-    if (trainingConfigMode !== 'code' || !allowed.length)
-      return modelSelectOptions;
+    if (!allowed.length) return modelSelectOptions;
     return modelSelectOptions.filter((model) => allowed.includes(model.type));
-  }, [modelSelectOptions, selectedTrainingPlan, trainingConfigMode]);
+  }, [modelSelectOptions, selectedTrainingPlan]);
 
   /** 单一数据集类型的训练方案以方案声明为准；旧方案继续沿用模型类型约束。 */
   const planDatasetTypes =
     selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
   const requiredDatasetType = (
-    trainingConfigMode === 'code' && planDatasetTypes.length === 1
+    planDatasetTypes.length === 1
       ? planDatasetTypes[0]
       : (
           selectedModel ||
@@ -201,32 +356,22 @@ const TaskCreate: React.FC = () => {
     const planTypes = selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
     return datasetOptions.filter((d: API.DatasetItem) => {
       if (!d.versionId) return false;
-      if (
-        trainingConfigMode === 'code' &&
-        planTypes.length &&
-        !planTypes.includes(d.type)
-      ) {
+      if (planTypes.length && !planTypes.includes(d.type)) {
         return false;
       }
       if (!requiredDatasetType) return d.type !== 'MULTIMODAL';
       return d.type === requiredDatasetType;
     });
-  }, [
-    datasetOptions,
-    requiredDatasetType,
-    selectedTrainingPlan,
-    trainingConfigMode,
-  ]);
+  }, [datasetOptions, requiredDatasetType, selectedTrainingPlan]);
 
   const filteredCodeOptions = useMemo(
     () =>
       codeOptions.filter(
         (code) =>
-          trainingConfigMode !== 'code' ||
           !selectedTrainingPlanId ||
           code.trainingProfile === selectedTrainingPlanId,
       ),
-    [codeOptions, selectedTrainingPlanId, trainingConfigMode],
+    [codeOptions, selectedTrainingPlanId],
   );
 
   const resourceProfiles = useMemo(
@@ -464,7 +609,6 @@ const TaskCreate: React.FC = () => {
         }
 
         if (data.codeVersionId) {
-          setTrainingConfigMode('code');
           setSelectedCodeVersionId(data.codeVersionId);
           setSelectedCodeApprovalStatus('APPROVED');
           form.setFieldValue('codeVersionId', data.codeVersionId);
@@ -487,9 +631,6 @@ const TaskCreate: React.FC = () => {
           form.setFieldValue('name', `${data.name}-continue`);
         }
         if (data.hyperParams && typeof data.hyperParams === 'object') {
-          if (!data.codeVersionId) {
-            setTrainingConfigMode('hyperParams');
-          }
           form.setFieldValue(
             'hyperParams',
             JSON.stringify(data.hyperParams, null, 2),
@@ -516,7 +657,6 @@ const TaskCreate: React.FC = () => {
 
   useEffect(() => {
     if (!presetCodeVersionId) return;
-    setTrainingConfigMode('code');
     setCodeInputMode('select');
     setSelectedCodeVersionId(presetCodeVersionId);
     setSelectedCodeApprovalStatus('APPROVED');
@@ -636,7 +776,7 @@ const TaskCreate: React.FC = () => {
   }, [form, isExperimentContinue, presetBaseModelVersionId]);
 
   useEffect(() => {
-    if (trainingConfigMode !== 'code' || !selectedCodeVersionId) {
+    if (!selectedCodeVersionId) {
       setCodeCheck({ loading: false });
       return;
     }
@@ -686,31 +826,7 @@ const TaskCreate: React.FC = () => {
     selectedCodeApprovalStatus,
     selectedCodeVersionId,
     selectedTrainingPlanId,
-    trainingConfigMode,
   ]);
-
-  const switchTrainingConfigMode = (mode: 'hyperParams' | 'code') => {
-    setTrainingConfigMode(mode);
-    if (mode === 'hyperParams') {
-      setSelectedCodeVersionId(undefined);
-      setSelectedCodeApprovalStatus(undefined);
-      form.setFieldValue('codeVersionId', undefined);
-      setCodeCheck({ loading: false });
-      form.setFieldValue('trainingProfile', CONSISTENCY_TRAINING_PROFILE);
-      return;
-    }
-    const plan = selectedTrainingPlan ?? trainingPlans[0];
-    if (plan) {
-      setSelectedTrainingPlanId(plan.id);
-      form.setFieldsValue({
-        trainingProfile: plan.id,
-        planId: plan.id,
-        planVersion: plan.version,
-        trainingMode: plan.trainingModes[0],
-        resourceProfileId: plan.runtimes[0]?.resourceProfiles[0]?.id,
-      });
-    }
-  };
 
   const selectedCode = useMemo(
     () =>
@@ -1002,16 +1118,12 @@ const TaskCreate: React.FC = () => {
   };
 
   const validateConfigSection = async () => {
-    const fields =
-      trainingConfigMode === 'code'
-        ? [
-            'trainingProfile',
-            'trainingMode',
-            'resourceProfileId',
-            'hyperParams',
-          ]
-        : ['trainingProfile', 'hyperParams'];
-    await form.validateFields(fields);
+    await form.validateFields([
+      'trainingProfile',
+      'trainingMode',
+      'resourceProfileId',
+      'hyperParams',
+    ]);
   };
 
   const validateCodeSection = async () => {
@@ -1052,15 +1164,22 @@ const TaskCreate: React.FC = () => {
     }
   };
 
-  const validateStep2 = async () => {
+  const validateCodeStep = async () => {
     await form.validateFields(['trainingProfile']);
     await validateConfigSection();
-    if (trainingConfigMode === 'code') await validateCodeSection();
+    await validateCodeSection();
   };
 
   const validateStep = async (step: number) => {
     if (step === 0) {
       await form.validateFields(['trainingProfile']);
+      if (!selectedTrainingPlan) {
+        message.error('请先选择训练方案');
+        throw new Error('missing training plan');
+      }
+      return;
+    }
+    if (step === 1) {
       if (!selectedTrainingPlan) {
         message.error('请先选择训练方案');
         throw new Error('missing training plan');
@@ -1075,7 +1194,6 @@ const TaskCreate: React.FC = () => {
       const allowedModelTypes =
         selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
       if (
-        trainingConfigMode === 'code' &&
         model &&
         allowedModelTypes.length &&
         !allowedModelTypes.includes(model.type)
@@ -1085,9 +1203,9 @@ const TaskCreate: React.FC = () => {
       }
       return;
     }
-    if (step === 1) {
+    if (step === 2) {
       if (!requiredDatasetType) {
-        message.error('请先在第一步选择或上传基础模型权重');
+        message.error('请先在第二步选择或上传基础模型权重');
         throw new Error('missing model type');
       }
       if (!selectedDatasetVersionId) {
@@ -1106,7 +1224,6 @@ const TaskCreate: React.FC = () => {
       const allowedDatasetTypes =
         selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
       if (
-        trainingConfigMode === 'code' &&
         dataset &&
         allowedDatasetTypes.length &&
         !allowedDatasetTypes.includes(dataset.type)
@@ -1116,8 +1233,8 @@ const TaskCreate: React.FC = () => {
       }
       return;
     }
-    if (step === 2) {
-      await validateStep2();
+    if (step === 3) {
+      await validateCodeStep();
     }
   };
 
@@ -1135,16 +1252,15 @@ const TaskCreate: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    if (trainingConfigMode === 'code' && !codeCheck.passed) {
+    if (!codeCheck.passed) {
       Modal.error({
         title: '训练代码校验未通过',
         content: (codeCheck.reasons || ['未知原因']).join('；'),
       });
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     if (
-      trainingConfigMode === 'code' &&
       !isCodeApproved(selectedCodeApprovalStatus || codeCheck.approvalStatus)
     ) {
       Modal.warning({
@@ -1153,16 +1269,16 @@ const TaskCreate: React.FC = () => {
           ? '自动审核可能失败，请回到训练配置步骤刷新后重试，或改选已 APPROVED 的版本。'
           : '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
       });
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     if (!selectedBaseModelVersionId || !selectedDatasetVersionId) {
       message.error('请完成基础模型权重与数据集选择');
       return;
     }
-    if (trainingConfigMode === 'code' && !selectedCodeVersionId) {
+    if (!selectedCodeVersionId) {
       message.error('请选择或上传训练代码');
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
     const values = form.getFieldsValue(true);
@@ -1171,7 +1287,7 @@ const TaskCreate: React.FC = () => {
       hyperParams = JSON.parse(values.hyperParams || '{}');
     } catch {
       message.error('hyperParams JSON 格式不正确');
-      setCurrentStep(2);
+      setCurrentStep(3);
       return;
     }
 
@@ -1183,15 +1299,11 @@ const TaskCreate: React.FC = () => {
         datasetVersionId: selectedDatasetVersionId,
         remark: values.remark,
         hyperParams,
-        ...(trainingConfigMode === 'code'
-          ? {
-              codeVersionId: selectedCodeVersionId,
-              planId: selectedTrainingPlanId || values.trainingProfile,
-              planVersion: selectedTrainingPlan?.version || values.planVersion,
-              trainingMode: values.trainingMode,
-              resourceProfileId: values.resourceProfileId,
-            }
-          : {}),
+        codeVersionId: selectedCodeVersionId,
+        planId: selectedTrainingPlanId || values.trainingProfile,
+        planVersion: selectedTrainingPlan?.version || values.planVersion,
+        trainingMode: values.trainingMode,
+        resourceProfileId: values.resourceProfileId,
       };
       if (isExperimentContinue) {
         const res: any = await createExperimentVersion(experimentId, payload, {
@@ -1207,10 +1319,7 @@ const TaskCreate: React.FC = () => {
       } else {
         const taskPayload = {
           ...payload,
-          trainingProfile:
-            trainingConfigMode === 'code'
-              ? selectedTrainingPlanId || values.trainingProfile
-              : CONSISTENCY_TRAINING_PROFILE,
+          trainingProfile: selectedTrainingPlanId || values.trainingProfile,
         };
         const res: any = await createTask(taskPayload, {
           skipErrorHandler: true,
@@ -1230,7 +1339,8 @@ const TaskCreate: React.FC = () => {
   };
 
   const stepItems = [
-    { title: '训练方案与基础模型' },
+    { title: '训练方案' },
+    { title: '基础模型' },
     { title: '训练数据集' },
     { title: '训练配置与代码' },
     { title: '确认并提交' },
@@ -1337,12 +1447,47 @@ const TaskCreate: React.FC = () => {
                       hyperParams: '{}',
                     });
                   }}
-                  options={trainingPlans.map((plan) => ({
-                    value: plan.id,
-                    label: `${plan.displayName} (${plan.id})`,
-                  }))}
+                  options={Object.values(
+                    trainingPlans.reduce(
+                      (acc, plan) => {
+                        const cat =
+                          plan.inputs?.model?.taskTypes?.[0] ||
+                          plan.inputs?.dataset?.taskTypes?.[0] ||
+                          'OTHER';
+                        const groupLabel =
+                          cat === 'CV'
+                            ? 'CV · 计算机视觉'
+                            : cat === 'NLP'
+                              ? 'NLP · 自然语言'
+                              : '其他';
+                        if (!acc[groupLabel]) {
+                          acc[groupLabel] = { label: groupLabel, options: [] };
+                        }
+                        acc[groupLabel].options.push({
+                          value: plan.id,
+                          label: `${plan.displayName} (${plan.id})`,
+                        });
+                        return acc;
+                      },
+                      {} as Record<
+                        string,
+                        {
+                          label: string;
+                          options: { value: string; label: string }[];
+                        }
+                      >,
+                    ),
+                  )}
                 />
               </Form.Item>
+              {selectedTrainingPlan && (
+                <PlanFormatHint plan={selectedTrainingPlan} />
+              )}
+            </>
+          )}
+
+          {currentStep === 1 && (
+            <>
               <Radio.Group
                 value={modelInputMode}
                 onChange={(e) => setModelInputMode(e.target.value)}
@@ -1510,7 +1655,7 @@ const TaskCreate: React.FC = () => {
             </>
           )}
 
-          {currentStep === 1 && (
+          {currentStep === 2 && (
             <>
               {!requiredDatasetType ? (
                 <Alert
@@ -1739,312 +1884,259 @@ const TaskCreate: React.FC = () => {
             </>
           )}
 
-          {currentStep === 2 && (
+          {currentStep === 3 && (
             <>
               <Alert
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
                 message="通用训练配置"
-                description="通用训练需要同时选择训练方案、填写参数并选择已审核训练代码；旧版内置训练仅用于兼容现有演示。"
+                description="通用训练需要同时选择训练方案、填写参数并选择已审核训练代码。"
               />
               <Form.Item name="name" label="任务名称（可选）">
                 <Input placeholder="例如：fusion-k8s-train" />
               </Form.Item>
-              {trainingConfigMode === 'code' && (
-                <>
-                  <Form.Item
-                    name="trainingMode"
-                    label="训练类型"
-                    rules={[{ required: true, message: '请选择训练类型' }]}
-                  >
-                    <Select
-                      options={(selectedTrainingPlan?.trainingModes ?? []).map(
-                        (mode) => ({ value: mode, label: mode }),
-                      )}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="resourceProfileId"
-                    label="计算资源规格"
-                    extra="任务提交后等待训练容器启动时显示为“调度中”。"
-                    rules={[{ required: true, message: '请选择计算资源规格' }]}
-                  >
-                    <Select
-                      options={resourceProfiles.map((profile) => ({
-                        value: profile.id,
-                        label: `${profile.id} / GPU ${profile.gpuCount}`,
-                      }))}
-                    />
-                  </Form.Item>
-                </>
-              )}
+              <Form.Item
+                name="trainingMode"
+                label="训练类型"
+                rules={[{ required: true, message: '请选择训练类型' }]}
+              >
+                <Select
+                  options={(selectedTrainingPlan?.trainingModes ?? []).map(
+                    (mode) => ({ value: mode, label: mode }),
+                  )}
+                />
+              </Form.Item>
+              <Form.Item
+                name="resourceProfileId"
+                label="计算资源规格"
+                extra="任务提交后等待训练容器启动时显示为“调度中”。"
+                rules={[{ required: true, message: '请选择计算资源规格' }]}
+              >
+                <Select
+                  options={resourceProfiles.map((profile) => ({
+                    value: profile.id,
+                    label: `${profile.id} / GPU ${profile.gpuCount}`,
+                  }))}
+                />
+              </Form.Item>
               <Form.Item name="remark" label="备注（可选）">
                 <Input placeholder="例如：create-page k8s test" />
               </Form.Item>
 
+              <Form.Item
+                name="hyperParams"
+                label="训练参数（JSON）"
+                extra="参数由训练方案校验后写入运行规格，并传入训练程序。"
+                rules={[
+                  { required: true, message: '请输入训练参数 JSON' },
+                  {
+                    validator: async (_: any, value: string) => {
+                      try {
+                        JSON.parse(value || '{}');
+                        return Promise.resolve();
+                      } catch {
+                        return Promise.reject(new Error('JSON 格式不正确'));
+                      }
+                    },
+                  },
+                ]}
+              >
+                <Input.TextArea rows={6} />
+              </Form.Item>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="训练代码文件"
+                description={
+                  isTrainingCodeAutoApproveEnabled()
+                    ? '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行准入校验，并在管理员审核关闭时自动审核通过。'
+                    : '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。'
+                }
+              />
               <Radio.Group
-                value={trainingConfigMode}
-                onChange={(e) => switchTrainingConfigMode(e.target.value)}
+                value={codeInputMode}
+                onChange={(e) => setCodeInputMode(e.target.value)}
                 style={{ marginBottom: 16 }}
               >
-                <Radio.Button value="code">通用训练代码（推荐）</Radio.Button>
-                <Radio.Button value="hyperParams">
-                  兼容旧版内置训练
-                </Radio.Button>
+                <Radio.Button value="select">选择已有</Radio.Button>
+                <Radio.Button value="upload">上传新包</Radio.Button>
               </Radio.Group>
-
-              {trainingConfigMode === 'hyperParams' ? (
+              {codeInputMode === 'select' ? (
                 <Form.Item
-                  name="hyperParams"
-                  label="hyperParams（JSON）"
-                  extra="仅记录/预留，不能覆盖 Worker 固定训练命令"
-                  rules={[
-                    { required: true, message: '请输入 hyperParams JSON' },
-                    {
-                      validator: async (_: any, value: string) => {
-                        try {
-                          JSON.parse(value || '{}');
-                          return Promise.resolve();
-                        } catch {
-                          return Promise.reject(new Error('JSON 格式不正确'));
-                        }
-                      },
-                    },
-                  ]}
+                  name="codeVersionId"
+                  label="训练代码版本"
+                  extra="仅展示已审核（APPROVED）的训练代码版本"
                 >
-                  <Input.TextArea rows={8} />
+                  <Select
+                    placeholder="请选择训练代码版本"
+                    showSearch
+                    loading={codeLoading}
+                    optionFilterProp="label"
+                    value={selectedCodeVersionId}
+                    onChange={(value: string) => {
+                      setSelectedCodeVersionId(value);
+                      setSelectedCodeApprovalStatus('APPROVED');
+                      form.setFieldValue('codeVersionId', value);
+                    }}
+                    options={filteredCodeOptions.map((item: any) => ({
+                      value: item.codeVersionId,
+                      label: `${item.codeAssetName} / ${item.codeVersionId}`,
+                    }))}
+                  />
                 </Form.Item>
               ) : (
                 <>
                   <Form.Item
-                    name="hyperParams"
-                    label="训练参数（JSON）"
-                    extra="参数由训练方案校验后写入运行规格，并传入训练程序。"
+                    name="codeName"
+                    label="代码资产名称"
+                    rules={[{ required: true, message: '请输入代码名称' }]}
+                  >
+                    <Input placeholder="例如：consistency-train-code" />
+                  </Form.Item>
+                  <Form.Item name="codeRemark" label="备注（可选）">
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="例如：fusion 基线训练代码"
+                      maxLength={200}
+                      showCount
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="codeFile"
+                    label="训练代码 ZIP"
+                    valuePropName="fileList"
+                    getValueFromEvent={(e) => e?.fileList ?? []}
                     rules={[
-                      { required: true, message: '请输入训练参数 JSON' },
                       {
-                        validator: async (_: any, value: string) => {
-                          try {
-                            JSON.parse(value || '{}');
-                            return Promise.resolve();
-                          } catch {
-                            return Promise.reject(new Error('JSON 格式不正确'));
+                        required: true,
+                        validator: (_, value) => {
+                          const list = Array.isArray(value) ? value : [];
+                          if (
+                            !list.length ||
+                            !list.some((item: UploadFile) => item.originFileObj)
+                          ) {
+                            return Promise.reject(
+                              new Error('请选择训练代码 zip 文件'),
+                            );
                           }
+                          return Promise.resolve();
                         },
                       },
                     ]}
+                    extra="仅支持 .zip，须包含固定训练入口脚本"
                   >
-                    <Input.TextArea rows={6} />
-                  </Form.Item>
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                    message="训练代码文件"
-                    description={
-                      isTrainingCodeAutoApproveEnabled()
-                        ? '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行准入校验，并在管理员审核关闭时自动审核通过。'
-                        : '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。'
-                    }
-                  />
-                  <Radio.Group
-                    value={codeInputMode}
-                    onChange={(e) => setCodeInputMode(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                  >
-                    <Radio.Button value="select">选择已有</Radio.Button>
-                    <Radio.Button value="upload">上传新包</Radio.Button>
-                  </Radio.Group>
-                  {codeInputMode === 'select' ? (
-                    <Form.Item
-                      name="codeVersionId"
-                      label="训练代码版本"
-                      extra="仅展示已审核（APPROVED）的训练代码版本"
+                    <Upload
+                      beforeUpload={() => false}
+                      maxCount={1}
+                      accept=".zip"
+                      disabled={codeUploading}
                     >
-                      <Select
-                        placeholder="请选择训练代码版本"
-                        showSearch
-                        loading={codeLoading}
-                        optionFilterProp="label"
-                        value={selectedCodeVersionId}
-                        onChange={(value: string) => {
-                          setSelectedCodeVersionId(value);
-                          setSelectedCodeApprovalStatus('APPROVED');
-                          form.setFieldValue('codeVersionId', value);
-                        }}
-                        options={filteredCodeOptions.map((item: any) => ({
-                          value: item.codeVersionId,
-                          label: `${item.codeAssetName} / ${item.codeVersionId}`,
-                        }))}
-                      />
-                    </Form.Item>
-                  ) : (
-                    <>
-                      <Form.Item
-                        name="codeName"
-                        label="代码资产名称"
-                        rules={[{ required: true, message: '请输入代码名称' }]}
-                      >
-                        <Input placeholder="例如：consistency-train-code" />
-                      </Form.Item>
-                      <Form.Item name="codeRemark" label="备注（可选）">
-                        <Input.TextArea
-                          rows={2}
-                          placeholder="例如：fusion 基线训练代码"
-                          maxLength={200}
-                          showCount
-                        />
-                      </Form.Item>
-                      <Form.Item
-                        name="codeFile"
-                        label="训练代码 ZIP"
-                        valuePropName="fileList"
-                        getValueFromEvent={(e) => e?.fileList ?? []}
-                        rules={[
-                          {
-                            required: true,
-                            validator: (_, value) => {
-                              const list = Array.isArray(value) ? value : [];
-                              if (
-                                !list.length ||
-                                !list.some(
-                                  (item: UploadFile) => item.originFileObj,
-                                )
-                              ) {
-                                return Promise.reject(
-                                  new Error('请选择训练代码 zip 文件'),
-                                );
-                              }
-                              return Promise.resolve();
-                            },
-                          },
-                        ]}
-                        extra="仅支持 .zip，须包含固定训练入口脚本"
-                      >
-                        <Upload
-                          beforeUpload={() => false}
-                          maxCount={1}
-                          accept=".zip"
-                          disabled={codeUploading}
-                        >
-                          <Button
-                            icon={<UploadOutlined />}
-                            disabled={codeUploading}
-                          >
-                            选择训练代码 zip
-                          </Button>
-                        </Upload>
-                      </Form.Item>
                       <Button
-                        type="primary"
-                        loading={codeUploading}
-                        onClick={async () => {
-                          try {
-                            const values = await form.validateFields([
-                              'codeName',
-                              'codeFile',
-                            ]);
-                            await uploadTrainingCodeZip({
-                              codeName: values.codeName,
-                              remark: values.codeRemark,
-                              file: values.codeFile,
-                            });
-                          } catch (error: any) {
-                            message.error(getApiErrorMessage(error));
-                          }
-                        }}
+                        icon={<UploadOutlined />}
+                        disabled={codeUploading}
                       >
-                        上传并选用
+                        选择训练代码 zip
                       </Button>
-                    </>
-                  )}
-                  {selectedCode && (
-                    <Descriptions
-                      size="small"
-                      column={1}
-                      bordered
-                      style={{ marginTop: 16 }}
-                    >
-                      <Descriptions.Item label="codeVersionId">
-                        <Typography.Text copyable code>
-                          {selectedCode.codeVersionId}
-                        </Typography.Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="状态">
-                        <Space>
-                          <Tag
-                            color={
-                              selectedCode.status === 'READY'
-                                ? 'success'
-                                : 'default'
-                            }
-                          >
-                            {selectedCode.status}
-                          </Tag>
-                          <Tag
-                            color={
-                              selectedCodeApprovalStatus === 'APPROVED'
-                                ? 'success'
-                                : 'warning'
-                            }
-                          >
-                            {selectedCodeApprovalStatus || '-'}
-                          </Tag>
-                        </Space>
-                      </Descriptions.Item>
-                    </Descriptions>
-                  )}
-                  {renderCodeCheckAlert()}
+                    </Upload>
+                  </Form.Item>
+                  <Button
+                    type="primary"
+                    loading={codeUploading}
+                    onClick={async () => {
+                      try {
+                        const values = await form.validateFields([
+                          'codeName',
+                          'codeFile',
+                        ]);
+                        await uploadTrainingCodeZip({
+                          codeName: values.codeName,
+                          remark: values.codeRemark,
+                          file: values.codeFile,
+                        });
+                      } catch (error: any) {
+                        message.error(getApiErrorMessage(error));
+                      }
+                    }}
+                  >
+                    上传并选用
+                  </Button>
                 </>
               )}
+              {selectedCode && (
+                <Descriptions
+                  size="small"
+                  column={1}
+                  bordered
+                  style={{ marginTop: 16 }}
+                >
+                  <Descriptions.Item label="codeVersionId">
+                    <Typography.Text copyable code>
+                      {selectedCode.codeVersionId}
+                    </Typography.Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    <Space>
+                      <Tag
+                        color={
+                          selectedCode.status === 'READY'
+                            ? 'success'
+                            : 'default'
+                        }
+                      >
+                        {selectedCode.status}
+                      </Tag>
+                      <Tag
+                        color={
+                          selectedCodeApprovalStatus === 'APPROVED'
+                            ? 'success'
+                            : 'warning'
+                        }
+                      >
+                        {selectedCodeApprovalStatus || '-'}
+                      </Tag>
+                    </Space>
+                  </Descriptions.Item>
+                </Descriptions>
+              )}
+              {renderCodeCheckAlert()}
             </>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 4 && (
             <>
-              {trainingConfigMode === 'code' &&
-                (!codeCheck.passed ||
-                  !isCodeApproved(
-                    selectedCodeApprovalStatus || codeCheck.approvalStatus,
-                  )) && (
-                  <Alert
-                    type="error"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                    message={
-                      !codeCheck.passed
-                        ? '训练代码校验未通过，不能用于训练'
-                        : '训练代码尚未审核通过，不能用于训练'
-                    }
-                    description={
-                      !codeCheck.passed
-                        ? (codeCheck.reasons || []).join('；')
-                        : `approvalStatus=${selectedCodeApprovalStatus || codeCheck.approvalStatus || 'PENDING'}，请等待管理员审核。`
-                    }
-                  />
-                )}
+              {(!codeCheck.passed ||
+                !isCodeApproved(
+                  selectedCodeApprovalStatus || codeCheck.approvalStatus,
+                )) && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={
+                    !codeCheck.passed
+                      ? '训练代码校验未通过，不能用于训练'
+                      : '训练代码尚未审核通过，不能用于训练'
+                  }
+                  description={
+                    !codeCheck.passed
+                      ? (codeCheck.reasons || []).join('；')
+                      : `approvalStatus=${selectedCodeApprovalStatus || codeCheck.approvalStatus || 'PENDING'}，请等待管理员审核。`
+                  }
+                />
+              )}
               <Descriptions size="small" column={1} bordered>
-                <Descriptions.Item label="配置方式">
-                  {trainingConfigMode === 'hyperParams'
-                    ? '超参数配置'
-                    : '训练代码'}
-                </Descriptions.Item>
+                <Descriptions.Item label="配置方式">训练代码</Descriptions.Item>
                 <Descriptions.Item label="训练方案">
-                  {trainingConfigMode === 'code'
-                    ? selectedTrainingPlan?.displayName ||
-                      selectedTrainingPlanId ||
-                      '-'
-                    : PROFILE_DISPLAY_NAME}
+                  {selectedTrainingPlan?.displayName ||
+                    selectedTrainingPlanId ||
+                    '-'}
                   <Typography.Text
                     type="secondary"
                     style={{ marginLeft: 8, fontSize: 12 }}
                   >
-                    （
-                    {trainingConfigMode === 'code'
-                      ? selectedTrainingPlanId || '-'
-                      : CONSISTENCY_TRAINING_PROFILE}
-                    ）
+                    （{selectedTrainingPlanId || '-'}）
                   </Typography.Text>
                 </Descriptions.Item>
                 <Descriptions.Item label="baseModelVersionId">
@@ -2057,13 +2149,11 @@ const TaskCreate: React.FC = () => {
                     {selectedDatasetVersionId || '-'}
                   </Typography.Text>
                 </Descriptions.Item>
-                {trainingConfigMode === 'code' && (
-                  <Descriptions.Item label="codeVersionId">
-                    <Typography.Text copyable code>
-                      {selectedCodeVersionId || '-'}
-                    </Typography.Text>
-                  </Descriptions.Item>
-                )}
+                <Descriptions.Item label="codeVersionId">
+                  <Typography.Text copyable code>
+                    {selectedCodeVersionId || '-'}
+                  </Typography.Text>
+                </Descriptions.Item>
                 <Descriptions.Item label="hyperParams">
                   <code>{form.getFieldValue('hyperParams') || '{}'}</code>
                 </Descriptions.Item>
@@ -2071,9 +2161,7 @@ const TaskCreate: React.FC = () => {
                   Kubernetes Job
                 </Descriptions.Item>
                 <Descriptions.Item label="运行规格">
-                  {trainingConfigMode === 'code'
-                    ? `${form.getFieldValue('trainingMode') || '-'} / ${form.getFieldValue('resourceProfileId') || '-'}`
-                    : '旧版内置训练'}
+                  {`${form.getFieldValue('trainingMode') || '-'} / ${form.getFieldValue('resourceProfileId') || '-'}`}
                 </Descriptions.Item>
                 <Descriptions.Item label="模型权重目录">
                   /workspace/job/model（是否加载由训练方案和训练代码决定）
@@ -2089,7 +2177,7 @@ const TaskCreate: React.FC = () => {
               上一步
             </Button>
           )}
-          {currentStep < 3 ? (
+          {currentStep < 4 ? (
             <Button type="primary" htmlType="button" onClick={handleNext}>
               下一步
             </Button>
@@ -2098,11 +2186,10 @@ const TaskCreate: React.FC = () => {
               type="primary"
               htmlType="button"
               disabled={
-                trainingConfigMode === 'code' &&
-                (!codeCheck.passed ||
-                  !isCodeApproved(
-                    selectedCodeApprovalStatus || codeCheck.approvalStatus,
-                  ))
+                !codeCheck.passed ||
+                !isCodeApproved(
+                  selectedCodeApprovalStatus || codeCheck.approvalStatus,
+                )
               }
               onClick={handleSubmit}
             >

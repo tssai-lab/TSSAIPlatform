@@ -13,13 +13,36 @@ export type TrainingPlan = {
     arguments: string[];
   };
   inputs: {
-    model: { taskTypes: string[] };
+    model: {
+      taskTypes: string[];
+      requiredEntries?: string[];
+      formats?: string[];
+      formatGuide?: string;
+    };
     dataset: {
       taskTypes: string[];
       cvTaskTypes?: string[];
       annotationFormats?: string[];
+      requiredEntries?: string[];
+      formatGuide?: string;
+    };
+    code?: {
+      required: boolean;
+      approvalRequired?: boolean;
+      runtime?: string;
     };
   };
+  parameters?: Array<{
+    name: string;
+    displayName?: string;
+    description?: string;
+    type: string;
+    required?: boolean;
+    defaultValue?: unknown;
+    minimum?: number;
+    maximum?: number;
+    allowedValues?: unknown[];
+  }>;
   runtimes: Array<{
     id: string;
     deviceType: 'CPU' | 'NVIDIA_GPU';
