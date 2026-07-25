@@ -857,14 +857,21 @@ export async function fetchCodeVersionCodePreview(
 /**
  * 优先读取打开中的工作区草稿树；无草稿时回退到不可变版本树。
  * 用于详情页在新建/删除/重命名后能看到工作区变更。
+ *
+ * @param preferVersionSnapshot 为 true 时跳过工作区，直接读版本快照
+ * （发布新版本后应使用，避免仍读到未关闭的草稿）
  */
 export async function fetchCodeEditablePreview(
-  params: { codeVersionId: string; codeAssetId?: string },
+  params: {
+    codeVersionId: string;
+    codeAssetId?: string;
+    preferVersionSnapshot?: boolean;
+  },
   options?: { [key: string]: any },
 ) {
   const opts = { skipErrorHandler: true, ...(options || {}) };
   const assetId = params.codeAssetId?.trim();
-  if (assetId) {
+  if (assetId && !params.preferVersionSnapshot) {
     try {
       const listed = await listV2CodeWorkspaces(assetId, opts);
       const openWs = Array.isArray(listed)
@@ -935,12 +942,13 @@ export async function previewCodeEditableFile(
     codeVersionId: string;
     codeAssetId?: string;
     path: string;
+    preferVersionSnapshot?: boolean;
   },
   options?: { [key: string]: any },
 ) {
   const opts = { skipErrorHandler: true, ...(options || {}) };
   const assetId = params.codeAssetId?.trim();
-  if (assetId) {
+  if (assetId && !params.preferVersionSnapshot) {
     try {
       const listed = await listV2CodeWorkspaces(assetId, opts);
       const openWs = Array.isArray(listed)

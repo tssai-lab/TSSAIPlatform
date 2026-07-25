@@ -27,43 +27,79 @@ import {
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import React, { useCallback, useEffect, useState } from 'react';
 import MultimodalImportBanner from '@/pages/dataset/components/MultimodalImportBanner';
+import type { V2PublishReadiness } from '@/services/datasetV2';
 import {
-  deleteWorkspaceSample,
-  fetchWorkspaceSampleDetail,
-  fetchWorkspaceSamples,
+  createDatasetWorkspaceSample,
+  deleteDatasetWorkspaceSample,
+  extractActiveImportJobId,
+  formatPublishBlockers,
+  getDatasetWorkspace,
+  getDatasetWorkspaceReadiness,
+  getDatasetWorkspaceSample,
+  listDatasetWorkspaceSamples,
   MULTIMODAL_DATA_TYPE_LABEL,
   type MultimodalSampleDetail,
   type MultimodalSampleGrouping,
   type MultimodalSampleSummary,
-  publishDraftVersion,
-  publishV2EditSession,
-  restoreWorkspaceSample,
-  uploadDraftAppendPackage,
+  patchDatasetWorkspace,
+  patchDatasetWorkspaceSample,
+  publishDatasetWorkspace,
+  restoreDatasetWorkspaceSample,
+  uploadDatasetWorkspaceAppendPackage,
+  uploadDatasetWorkspaceFileComponent,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import type { WorkspaceEditableDatasetType } from '@/utils/datasetWorkspace';
+import { saveImportJobId } from '@/utils/importJobStorage';
 
 type MultimodalWorkspacePanelProps = {
-  draftVersionId: string;
+  /** V2 工作区 ID */
+  workspaceId: string;
+  workspaceRevision: number;
+  onWorkspaceRevisionChange?: (revision: number) => void;
+  /** 用于保留 append 产生的 importJobId */
+  datasetId?: string;
   datasetType?: WorkspaceEditableDatasetType;
   draftVersionLabel?: string;
   parentVersionLabel?: string;
-  onPublished?: () => void;
+  onPublished?: (publishedVersionId?: string) => void;
   onRefresh?: () => void;
   onCancelEdit?: () => void | Promise<void>;
+  /** 活动导入句柄发现时回调（写入详情侧 storage / banner） */
+  onImportJobDiscovered?: (importJobId: string) => void;
 };
 
+function mapSampleRow(row: Record<string, unknown>): MultimodalSampleSummary {
+  const sampleId = String(row.sampleId || row.id || '');
+  return {
+    sampleId,
+    sampleIndex: Number(row.sampleIndex ?? 0),
+    externalId: String(row.externalId || ''),
+    deleted: Boolean(row.deleted),
+    tags: (row.tags as Record<string, unknown>) || undefined,
+    dataCount: row.dataCount as number | undefined,
+    annotationCount: row.annotationCount as number | undefined,
+  };
+}
+
 const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
-  draftVersionId,
+  workspaceId,
+  workspaceRevision,
+  onWorkspaceRevisionChange,
+  datasetId,
   datasetType = 'MULTIMODAL',
   draftVersionLabel,
   parentVersionLabel,
   onPublished,
   onRefresh,
   onCancelEdit,
+  onImportJobDiscovered,
 }) => {
   const isMultimodalDataset = datasetType === 'MULTIMODAL';
   const itemLabel = isMultimodalDataset ? '样本' : '文件';
+  const [revision, setRevision] = useState(workspaceRevision);
+  const [readiness, setReadiness] = useState<V2PublishReadiness | null>(null);
+
   const [samples, setSamples] = useState<MultimodalSampleSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -84,6 +120,21 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     null,
   );
 
+  const [createSampleOpen, setCreateSampleOpen] = useState(false);
+  const [createSampleLoading, setCreateSampleLoading] = useState(false);
+  const [createSampleForm] = Form.useForm();
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaForm] = Form.useForm();
+  const [fileUploadOpen, setFileUploadOpen] = useState(false);
+  const [fileUploadLoading, setFileUploadLoading] = useState(false);
+  const [fileUploadPercent, setFileUploadPercent] = useState(0);
+  const [fileUploadForm] = Form.useForm();
+  const [editTagsOpen, setEditTagsOpen] = useState(false);
+  const [editTagsLoading, setEditTagsLoading] = useState(false);
+  const [editTagsForm] = Form.useForm();
+  const [editTagsSampleId, setEditTagsSampleId] = useState<string | null>(null);
+
   const [publishing, setPublishing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -91,18 +142,62 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     | MultimodalSampleGrouping
     | undefined;
 
+  const bumpRevision = useCallback(
+    (next: number) => {
+      setRevision(next);
+      onWorkspaceRevisionChange?.(next);
+    },
+    [onWorkspaceRevisionChange],
+  );
+
+  useEffect(() => {
+    setRevision(workspaceRevision);
+  }, [workspaceRevision, workspaceId]);
+
+  const refreshWorkspaceMeta = useCallback(async () => {
+    try {
+      const ws = await getDatasetWorkspace(workspaceId, {
+        skipErrorHandler: true,
+      });
+      bumpRevision(ws.workspaceRevision);
+      setReadiness(ws.publishReadiness ?? null);
+      const jobId = extractActiveImportJobId(ws);
+      if (jobId) {
+        setAppendImportJobId(jobId);
+        if (datasetId) {
+          saveImportJobId(datasetId, jobId);
+        }
+        onImportJobDiscovered?.(jobId);
+      }
+      return ws;
+    } catch {
+      try {
+        const r = await getDatasetWorkspaceReadiness(workspaceId, {
+          skipErrorHandler: true,
+        });
+        setReadiness(r);
+      } catch {
+        // ignore
+      }
+      return null;
+    }
+  }, [bumpRevision, workspaceId, datasetId, onImportJobDiscovered]);
+
   const loadSamples = useCallback(
     async (p = page, ps = pageSize) => {
       setListLoading(true);
       setListError(null);
       try {
-        const res = await fetchWorkspaceSamples(
-          draftVersionId,
+        const res = await listDatasetWorkspaceSamples(
+          workspaceId,
           { page: p, pageSize: ps, includeDeleted },
           { skipErrorHandler: true },
         );
         const data = res?.data;
-        setSamples(data?.data ?? []);
+        const rows = (data?.data ?? []).map((row) =>
+          mapSampleRow(row as Record<string, unknown>),
+        );
+        setSamples(rows);
         setTotal(data?.total ?? 0);
         setPage(data?.page ?? p);
         setPageSize(data?.pageSize ?? ps);
@@ -114,22 +209,31 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         setListLoading(false);
       }
     },
-    [draftVersionId, includeDeleted, page, pageSize],
+    [workspaceId, includeDeleted, page, pageSize],
   );
 
   useEffect(() => {
     void loadSamples(1, pageSize);
-  }, [draftVersionId, includeDeleted]);
+    void refreshWorkspaceMeta();
+  }, [workspaceId, includeDeleted]);
 
   const openDetail = async (sampleId: string) => {
     setDrawerOpen(true);
     setDetail(null);
     setDetailLoading(true);
     try {
-      const res = await fetchWorkspaceSampleDetail(sampleId, {
+      const res = await getDatasetWorkspaceSample(workspaceId, sampleId, {
         skipErrorHandler: true,
       });
-      setDetail(res?.data ?? null);
+      const raw = res?.data as MultimodalSampleDetail | null;
+      if (raw) {
+        setDetail({
+          ...raw,
+          sampleId: raw.sampleId || sampleId,
+        });
+      } else {
+        setDetail(null);
+      }
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
       setDrawerOpen(false);
@@ -140,38 +244,195 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
 
   const handleDelete = async (sampleId: string) => {
     try {
-      await deleteWorkspaceSample(sampleId, { skipErrorHandler: true });
-      message.success('样本已标记删除');
+      const result = await deleteDatasetWorkspaceSample(
+        workspaceId,
+        sampleId,
+        revision,
+        { skipErrorHandler: true },
+      );
+      bumpRevision(result.workspaceRevision);
+      message.success(`${itemLabel}已标记删除`);
       await loadSamples(page, pageSize);
+      void refreshWorkspaceMeta();
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
     }
   };
 
   const handleRestore = async (sampleId: string) => {
     try {
-      await restoreWorkspaceSample(sampleId, { skipErrorHandler: true });
-      message.success('样本已恢复');
+      const result = await restoreDatasetWorkspaceSample(
+        workspaceId,
+        sampleId,
+        revision,
+        { skipErrorHandler: true },
+      );
+      bumpRevision(result.workspaceRevision);
+      message.success(`${itemLabel}已恢复`);
+      await loadSamples(page, pageSize);
+      void refreshWorkspaceMeta();
+    } catch (e: unknown) {
+      message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
+    }
+  };
+
+  const handleCreateSample = async () => {
+    const values = await createSampleForm.validateFields();
+    setCreateSampleLoading(true);
+    try {
+      let tags: Record<string, unknown> | undefined;
+      const tagsRaw = String(values.tagsJson ?? '').trim();
+      if (tagsRaw) {
+        tags = JSON.parse(tagsRaw) as Record<string, unknown>;
+      }
+      const result = await createDatasetWorkspaceSample(
+        workspaceId,
+        {
+          expectedWorkspaceRevision: revision,
+          externalId: String(values.externalId).trim(),
+          ...(tags ? { tags } : {}),
+        },
+        { skipErrorHandler: true },
+      );
+      bumpRevision(result.workspaceRevision);
+      message.success(`已创建${itemLabel}`);
+      setCreateSampleOpen(false);
+      createSampleForm.resetFields();
+      await loadSamples(page, pageSize);
+      void refreshWorkspaceMeta();
+    } catch (e: unknown) {
+      message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
+    } finally {
+      setCreateSampleLoading(false);
+    }
+  };
+
+  const handlePatchMeta = async () => {
+    const values = await metaForm.validateFields();
+    setMetaLoading(true);
+    try {
+      const ws = await patchDatasetWorkspace(
+        workspaceId,
+        {
+          expectedWorkspaceRevision: revision,
+          description: values.description?.trim() || null,
+          changeLog: values.changeLog?.trim() || null,
+          cvTaskType: values.cvTaskType?.trim() || null,
+          annotationFormat: values.annotationFormat?.trim() || null,
+        },
+        { skipErrorHandler: true },
+      );
+      bumpRevision(ws.workspaceRevision);
+      message.success('工作区元数据已更新');
+      setMetaOpen(false);
+      void refreshWorkspaceMeta();
+      onRefresh?.();
+    } catch (e: unknown) {
+      message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
+    } finally {
+      setMetaLoading(false);
+    }
+  };
+
+  const handleEditTags = async () => {
+    if (!editTagsSampleId) return;
+    const values = await editTagsForm.validateFields();
+    setEditTagsLoading(true);
+    try {
+      const tagsRaw = String(values.tagsJson ?? '').trim();
+      const tags = tagsRaw
+        ? (JSON.parse(tagsRaw) as Record<string, unknown>)
+        : {};
+      const result = await patchDatasetWorkspaceSample(
+        workspaceId,
+        editTagsSampleId,
+        { expectedWorkspaceRevision: revision, tags },
+        { skipErrorHandler: true },
+      );
+      bumpRevision(result.workspaceRevision);
+      message.success('标签已更新');
+      setEditTagsOpen(false);
       await loadSamples(page, pageSize);
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
+    } finally {
+      setEditTagsLoading(false);
+    }
+  };
+
+  const handleFileComponentUpload = async () => {
+    const values = await fileUploadForm.validateFields();
+    const fileList = (values.file ?? []) as UploadFile[];
+    const file = fileList.map((f) => f.originFileObj).filter(Boolean)[0] as
+      | File
+      | undefined;
+    if (!file) {
+      message.error('请选择文件');
+      return;
+    }
+    setFileUploadLoading(true);
+    setFileUploadPercent(0);
+    try {
+      const res = await uploadDatasetWorkspaceFileComponent(
+        workspaceId,
+        file,
+        {
+          expectedWorkspaceRevision: revision,
+          operation: values.operation || 'CREATE',
+          target: values.target || 'DATA',
+          sampleId: String(values.sampleId).trim(),
+          resourceId: values.resourceId?.trim() || undefined,
+          dataType: values.dataType?.trim() || undefined,
+          format: values.format?.trim() || undefined,
+          onProgress: setFileUploadPercent,
+          onRevision: bumpRevision,
+        },
+        { skipErrorHandler: true },
+      );
+      if (typeof res.data.workspaceRevision === 'number') {
+        bumpRevision(res.data.workspaceRevision);
+      }
+      message.success('组件文件上传完成');
+      setFileUploadOpen(false);
+      fileUploadForm.resetFields();
+      await loadSamples(page, pageSize);
+      void refreshWorkspaceMeta();
+    } catch (e: unknown) {
+      message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
+    } finally {
+      setFileUploadLoading(false);
+      setFileUploadPercent(0);
     }
   };
 
   const handlePublish = async () => {
     setPublishing(true);
     try {
-      try {
-        await publishV2EditSession(draftVersionId, { skipErrorHandler: true });
-      } catch {
-        await publishDraftVersion(draftVersionId, { skipErrorHandler: true });
+      const ws = await refreshWorkspaceMeta();
+      const currentRevision = ws?.workspaceRevision ?? revision;
+      const readinessNow = ws?.publishReadiness ?? readiness;
+      if (readinessNow && readinessNow.canPublish === false) {
+        const reason = formatPublishBlockers(readinessNow);
+        throw new Error(reason || '当前工作区不可发布');
       }
-      message.success(
-        '已发布为新版本。请在详情预览的「本版本样本」中核对追加内容。',
+      const published = await publishDatasetWorkspace(
+        workspaceId,
+        currentRevision,
+        { skipErrorHandler: true },
       );
-      onPublished?.();
+      message.success(
+        `已发布为新版本 ${published?.currentVersion?.versionLabel || ''}`.trim(),
+      );
+      onPublished?.(published?.currentVersion?.versionId);
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
     } finally {
       setPublishing(false);
     }
@@ -206,10 +467,11 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     setAppendPercent(0);
     setAppendImportJobId(null);
     try {
-      const res = await uploadDraftAppendPackage(
-        draftVersionId,
+      const res = await uploadDatasetWorkspaceAppendPackage(
+        workspaceId,
         file,
         {
+          expectedWorkspaceRevision: revision,
           ...(isMultimodalDataset
             ? {
                 sampleGrouping:
@@ -218,11 +480,16 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
               }
             : {}),
           onProgress: setAppendPercent,
+          onRevision: bumpRevision,
         },
         { skipErrorHandler: true },
       );
       const jobId = res?.data?.importJobId ?? null;
       setAppendImportJobId(jobId);
+      // 上传完成响应可能带回 importJobId；失败后不能再从工作区详情重新发现
+      if (jobId && datasetId) {
+        saveImportJobId(datasetId, jobId);
+      }
       message.success(
         jobId
           ? `追加包上传完成，后台正在导入新${itemLabel}`
@@ -231,8 +498,11 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
       setAppendOpen(false);
       appendForm.resetFields();
       onRefresh?.();
+      await loadSamples(page, pageSize);
+      void refreshWorkspaceMeta();
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e));
+      void refreshWorkspaceMeta();
     } finally {
       setAppendUploading(false);
       setAppendPercent(0);
@@ -280,12 +550,26 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 280,
       render: (_, record) => (
         <Space size={0} onClick={(e) => e.stopPropagation()}>
           <Button type="link" onClick={() => openDetail(record.sampleId)}>
             详情
           </Button>
+          {!record.deleted && (
+            <Button
+              type="link"
+              onClick={() => {
+                setEditTagsSampleId(record.sampleId);
+                editTagsForm.setFieldsValue({
+                  tagsJson: JSON.stringify(record.tags ?? {}, null, 2),
+                });
+                setEditTagsOpen(true);
+              }}
+            >
+              编辑标签
+            </Button>
+          )}
           {record.deleted ? (
             <Button
               type="link"
@@ -296,7 +580,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
             </Button>
           ) : (
             <Popconfirm
-              title="确认从本版本草稿中删除该样本？发布前可恢复。"
+              title={`确认从版本工作区中删除该${itemLabel}？发布前可恢复。`}
               onConfirm={() => handleDelete(record.sampleId)}
             >
               <Button type="link" danger>
@@ -313,32 +597,38 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     void loadSamples(pagination.current ?? 1, pagination.pageSize ?? pageSize);
   };
 
+  const blockerText = formatPublishBlockers(readiness);
+
   return (
     <>
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="版本编辑草稿"
+        message="版本工作区（草稿）"
         description={
           <>
             {draftVersionLabel ? (
               <>
-                新版本 <strong>{draftVersionLabel}</strong>（草稿）基于
+                目标版本 <strong>{draftVersionLabel}</strong>（草稿）基于
               </>
             ) : (
               <>基于</>
             )}
             {parentVersionLabel ? `「${parentVersionLabel}」` : '当前正式版本'}
-            复制，<strong>尚未生效</strong>。请删除/恢复{itemLabel}或追加
-            zip；完成后「发布为新版本」保存，或「取消增删」放弃并回到编辑前。
-            {!isMultimodalDataset && (
+            派生，<strong>尚未生效</strong>
+            。请删除/恢复{itemLabel}或追加
+            zip；完成后「发布为新版本」，或「放弃工作区」。
+            <br />
+            并发 revision：{revision}
+            {blockerText ? (
               <>
                 <br />
-                发布后请在详情预览的「本版本样本」中核对追加是否生效；不会用主包
-                ZIP 文件树冒充当前版本内容。
+                <Typography.Text type="warning">
+                  发布阻塞：{blockerText}
+                </Typography.Text>
               </>
-            )}
+            ) : null}
           </>
         }
       />
@@ -346,10 +636,15 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
       {appendImportJobId && (
         <MultimodalImportBanner
           importJobId={appendImportJobId}
+          datasetId={datasetId}
+          workspaceId={workspaceId}
+          workspaceRevision={revision}
+          onWorkspaceRevisionChange={bumpRevision}
           onImportFinished={() => {
             setAppendImportJobId(null);
             void loadSamples(page, pageSize);
             onRefresh?.();
+            void refreshWorkspaceMeta();
           }}
         />
       )}
@@ -362,6 +657,18 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         >
           追加{itemLabel}
         </Button>
+        <Button onClick={() => setCreateSampleOpen(true)}>
+          创建{itemLabel}
+        </Button>
+        <Button onClick={() => setFileUploadOpen(true)}>上传组件文件</Button>
+        <Button
+          onClick={() => {
+            metaForm.resetFields();
+            setMetaOpen(true);
+          }}
+        >
+          编辑版本元数据
+        </Button>
         <Popconfirm
           title="确认发布？发布后将变为新的正式版本并对外生效。"
           onConfirm={handlePublish}
@@ -372,17 +679,20 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         </Popconfirm>
         {onCancelEdit && (
           <Popconfirm
-            title="放弃本次增删编辑？草稿版本将被删除，已删样本不会保存。"
+            title="放弃本次版本工作区？草稿将被废弃，已删样本不会保存。"
             onConfirm={() => void handleCancelEdit()}
           >
             <Button danger icon={<CloseCircleOutlined />} loading={cancelling}>
-              取消增删
+              放弃工作区
             </Button>
           </Popconfirm>
         )}
         <Button
           icon={<ReloadOutlined />}
-          onClick={() => loadSamples(page, pageSize)}
+          onClick={() => {
+            void loadSamples(page, pageSize);
+            void refreshWorkspaceMeta();
+          }}
         >
           刷新
         </Button>
@@ -412,7 +722,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         }}
         onChange={handleTableChange}
         locale={{
-          emptyText: listError ? '加载失败' : `编辑草稿中暂无${itemLabel}`,
+          emptyText: listError ? '加载失败' : `工作区中暂无${itemLabel}`,
         }}
         scroll={{ y: 360 }}
       />
@@ -438,143 +748,228 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
               <Descriptions.Item label="外部 ID">
                 {detail.externalId || '-'}
               </Descriptions.Item>
-              <Descriptions.Item label="序号">
-                {detail.sampleIndex}
-              </Descriptions.Item>
-              <Descriptions.Item label="状态">
-                {detail.deleted ? '已删除' : '正常'}
-              </Descriptions.Item>
             </Descriptions>
-            <div>
-              <Typography.Title level={5}>数据项</Typography.Title>
-              {detail.data?.length ? (
-                detail.data.map((item) => (
-                  <div
-                    key={item.sampleDataId}
-                    style={{
-                      border: '1px solid #f0f0f0',
-                      borderRadius: 8,
-                      padding: 12,
-                      marginBottom: 8,
-                    }}
-                  >
-                    <Space wrap>
-                      <Tag color="blue">
-                        {MULTIMODAL_DATA_TYPE_LABEL[item.dataType] ??
-                          item.dataType}
-                      </Tag>
-                      <Typography.Text type="secondary">
-                        {item.fileName}
-                        {item.sizeBytes != null ? ` · ${item.sizeBytes} B` : ''}
-                      </Typography.Text>
-                    </Space>
-                  </div>
-                ))
-              ) : (
-                <Typography.Text type="secondary">无数据项</Typography.Text>
-              )}
-            </div>
-            {!!detail.annotations?.length && (
+            {Array.isArray((detail as any).data) && (
               <div>
-                <Typography.Title level={5}>标注</Typography.Title>
-                {detail.annotations.map((a) => (
-                  <div key={a.annotationId} style={{ marginBottom: 8 }}>
-                    <Tag>{a.annotationType || a.format || '标注'}</Tag>
-                    <Typography.Text type="secondary">
-                      {' '}
-                      {a.fileName}
-                    </Typography.Text>
-                  </div>
+                <Typography.Title level={5}>数据组件</Typography.Title>
+                {((detail as any).data as any[]).map((d) => (
+                  <Tag key={d.dataId || d.id}>
+                    {MULTIMODAL_DATA_TYPE_LABEL[d.dataType] ||
+                      d.dataType ||
+                      d.fileName ||
+                      'data'}
+                  </Tag>
                 ))}
               </div>
             )}
-            {!detail.deleted && (
-              <Popconfirm
-                title="确认从本版本草稿中删除该样本？"
-                onConfirm={async () => {
-                  await handleDelete(detail.sampleId);
-                  setDrawerOpen(false);
-                }}
-              >
-                <Button danger>删除此样本</Button>
-              </Popconfirm>
-            )}
-            {detail.deleted && (
-              <Button
-                icon={<RollbackOutlined />}
-                onClick={async () => {
-                  await handleRestore(detail.sampleId);
-                  setDrawerOpen(false);
-                }}
-              >
-                恢复此样本
-              </Button>
+            {Array.isArray((detail as any).annotations) && (
+              <div>
+                <Typography.Title level={5}>标注</Typography.Title>
+                {((detail as any).annotations as any[]).map((a) => (
+                  <Tag key={a.annotationId || a.id}>
+                    {a.annotationType || a.format || '标注'}
+                  </Tag>
+                ))}
+              </div>
             )}
           </Space>
         )}
       </Drawer>
 
       <Modal
-        title={`追加${itemLabel}（上传 zip）`}
+        title={`追加上传 ${itemLabel}`}
         open={appendOpen}
         onCancel={() => !appendUploading && setAppendOpen(false)}
-        onOk={handleAppendSubmit}
+        onOk={() => void handleAppendSubmit()}
         confirmLoading={appendUploading}
         destroyOnClose
-        width={560}
       >
-        <Form
-          form={appendForm}
-          layout="vertical"
-          initialValues={
-            isMultimodalDataset
-              ? { sampleGrouping: 'AUTO_DIRECTORY' }
-              : undefined
-          }
-        >
+        <Form form={appendForm} layout="vertical">
           {isMultimodalDataset && (
             <>
               <Form.Item
                 name="sampleGrouping"
                 label="样本分组"
-                rules={[{ required: true }]}
+                initialValue="AUTO_DIRECTORY"
               >
-                <Select>
-                  <Select.Option value="AUTO_DIRECTORY">
-                    按目录自动识别（推荐）
-                  </Select.Option>
-                  <Select.Option value="MANIFEST">
-                    Manifest 索引文件
-                  </Select.Option>
-                </Select>
+                <Select
+                  options={[
+                    { value: 'AUTO_DIRECTORY', label: 'AUTO_DIRECTORY' },
+                    { value: 'MANIFEST', label: 'MANIFEST' },
+                  ]}
+                />
               </Form.Item>
               {sampleGrouping === 'MANIFEST' && (
                 <Form.Item name="manifestPath" label="Manifest 路径">
-                  <Input placeholder="默认 manifest.json" />
+                  <Input placeholder="例如 manifest.json" />
                 </Form.Item>
               )}
             </>
           )}
           <Form.Item
             name="file"
-            label="ZIP 文件"
+            label="追加 ZIP"
             valuePropName="fileList"
             getValueFromEvent={(e) => e?.fileList ?? []}
-            rules={[{ required: true, message: '请选择 zip 文件' }]}
+            rules={[{ required: true, message: '请选择 zip' }]}
           >
-            <Upload accept=".zip" maxCount={1} beforeUpload={() => false}>
-              <Button icon={<CloudUploadOutlined />}>选择 zip</Button>
+            <Upload beforeUpload={() => false} maxCount={1} accept=".zip">
+              <Button icon={<CloudUploadOutlined />}>选择文件</Button>
             </Upload>
           </Form.Item>
-          <Typography.Text type="secondary">
-            {isMultimodalDataset
-              ? '仅新增样本，不会修改已有样本；若 zip 内样本 ID 与草稿中已有样本冲突，导入会失败。'
-              : '仅追加 zip 内新文件，不会修改已有文件；追加包须符合当前数据集类型的文件格式要求。'}
-          </Typography.Text>
+          {appendUploading && <Progress percent={appendPercent} />}
         </Form>
-        {appendUploading && (
-          <Progress percent={appendPercent} style={{ marginTop: 16 }} />
-        )}
+      </Modal>
+
+      <Modal
+        title={`创建${itemLabel}`}
+        open={createSampleOpen}
+        onCancel={() => !createSampleLoading && setCreateSampleOpen(false)}
+        onOk={() => void handleCreateSample()}
+        confirmLoading={createSampleLoading}
+        destroyOnClose
+      >
+        <Form form={createSampleForm} layout="vertical">
+          <Form.Item
+            name="externalId"
+            label="externalId"
+            rules={[{ required: true, message: '必填' }]}
+          >
+            <Input placeholder="样本外部 ID，创建后不可改" />
+          </Form.Item>
+          <Form.Item
+            name="tagsJson"
+            label="tags（JSON，可选）"
+            extra='例如 {"scene":"indoor"}'
+          >
+            <Input.TextArea rows={3} placeholder="{}" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="编辑样本标签"
+        open={editTagsOpen}
+        onCancel={() => !editTagsLoading && setEditTagsOpen(false)}
+        onOk={() => void handleEditTags()}
+        confirmLoading={editTagsLoading}
+        destroyOnClose
+      >
+        <Form form={editTagsForm} layout="vertical">
+          <Form.Item
+            name="tagsJson"
+            label="tags（JSON）"
+            rules={[
+              {
+                validator: async (_, value) => {
+                  const raw = String(value ?? '').trim();
+                  if (!raw) return;
+                  JSON.parse(raw);
+                },
+              },
+            ]}
+          >
+            <Input.TextArea rows={6} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="编辑版本元数据（Merge Patch）"
+        open={metaOpen}
+        onCancel={() => !metaLoading && setMetaOpen(false)}
+        onOk={() => void handlePatchMeta()}
+        confirmLoading={metaLoading}
+        destroyOnClose
+      >
+        <Form form={metaForm} layout="vertical">
+          <Form.Item name="description" label="description">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item name="changeLog" label="changeLog">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item name="cvTaskType" label="cvTaskType">
+            <Input placeholder="可选" />
+          </Form.Item>
+          <Form.Item name="annotationFormat" label="annotationFormat">
+            <Input placeholder="可选" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="上传数据/标注组件文件"
+        open={fileUploadOpen}
+        onCancel={() => !fileUploadLoading && setFileUploadOpen(false)}
+        onOk={() => void handleFileComponentUpload()}
+        confirmLoading={fileUploadLoading}
+        destroyOnClose
+        width={560}
+      >
+        <Form
+          form={fileUploadForm}
+          layout="vertical"
+          initialValues={{ operation: 'CREATE', target: 'DATA' }}
+        >
+          <Form.Item
+            name="sampleId"
+            label="样本 ID"
+            rules={[{ required: true, message: '必填' }]}
+          >
+            <Input placeholder="目标 sampleId" />
+          </Form.Item>
+          <Form.Item name="operation" label="操作" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'CREATE', label: 'CREATE' },
+                { value: 'REPLACE', label: 'REPLACE' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="target" label="目标" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'DATA', label: 'DATA' },
+                { value: 'ANNOTATION', label: 'ANNOTATION' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, next) => prev.operation !== next.operation}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue('operation') === 'REPLACE' ? (
+                <Form.Item
+                  name="resourceId"
+                  label="resourceId"
+                  rules={[{ required: true, message: 'REPLACE 必填' }]}
+                >
+                  <Input />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+          <Form.Item name="dataType" label="dataType（可选）">
+            <Input placeholder="IMAGE / TEXT / ..." />
+          </Form.Item>
+          <Form.Item name="format" label="format（可选）">
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="file"
+            label="文件"
+            valuePropName="fileList"
+            getValueFromEvent={(e) => e?.fileList ?? []}
+            rules={[{ required: true, message: '请选择文件' }]}
+          >
+            <Upload beforeUpload={() => false} maxCount={1}>
+              <Button icon={<CloudUploadOutlined />}>选择文件</Button>
+            </Upload>
+          </Form.Item>
+          {fileUploadLoading && <Progress percent={fileUploadPercent} />}
+        </Form>
       </Modal>
     </>
   );

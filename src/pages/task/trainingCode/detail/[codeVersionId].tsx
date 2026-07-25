@@ -31,7 +31,13 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import CodeEditor from '@/components/CodeEditor';
 import CodePreview from '@/components/CodePreview';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
@@ -119,6 +125,8 @@ const TrainingCodeDetail: React.FC = () => {
     listRecord ? { ...listRecord } : null,
   );
   const [metaLoading, setMetaLoading] = useState(!listRecord);
+  /** 详情加载失败（含 404 / 无权限），用于展示统一拒绝页，避免空壳泄露 ID */
+  const [metaLoadFailed, setMetaLoadFailed] = useState(false);
   const [filesLoading, setFilesLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [codeFiles, setCodeFiles] = useState<API.ModelCodeFile[]>([]);
@@ -144,6 +152,10 @@ const TrainingCodeDetail: React.FC = () => {
   const [versionsLoading, setVersionsLoading] = useState(false);
   /** 是否存在打开中的工作区草稿（含文件增删改） */
   const [workspaceDraftOpen, setWorkspaceDraftOpen] = useState(false);
+  /** 发布后强制读版本快照，避免仍命中未关闭的工作区草稿 */
+  const preferVersionSnapshotRef = useRef(false);
+  /** 同资产发布新版本后刷新版本列表（codeAssetId 不变时也要重拉） */
+  const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
 
   const [editNameForm] = Form.useForm<EditNameFormValues>();
   const [newFileForm] = Form.useForm<NewFileFormValues>();
@@ -154,6 +166,7 @@ const TrainingCodeDetail: React.FC = () => {
   const loadMeta = useCallback(async () => {
     if (!codeVersionId) return;
     setMetaLoading(true);
+    setMetaLoadFailed(false);
     try {
       const res = await getCodeVersionDetail(codeVersionId, {
         skipErrorHandler: true,
@@ -165,12 +178,26 @@ const TrainingCodeDetail: React.FC = () => {
         return;
       }
       if (res?.data) {
-        setMeta((prev) => ({ ...prev, ...res.data }));
+        setMetaLoadFailed(false);
+        setMeta((prev) => {
+          // 切换版本时整页替换，避免残留旧 version / 审核状态
+          if (prev?.codeVersionId && prev.codeVersionId !== codeVersionId) {
+            return { ...res.data };
+          }
+          return { ...prev, ...res.data };
+        });
       }
     } catch (error: any) {
       if (!listRecord) {
-        message.error(getApiErrorMessage(error, '训练代码详情加载失败'));
         setMeta(null);
+        setMetaLoadFailed(true);
+        // 越权/不存在统一文案，避免把完整 API 路径与资源 ID 打在 toast 里
+        const status = error?.response?.status;
+        if (status === 404 || status === 403) {
+          message.error('未找到训练代码版本或无权访问');
+        } else {
+          message.error(getApiErrorMessage(error, '训练代码详情加载失败'));
+        }
       }
     } finally {
       setMetaLoading(false);
@@ -194,10 +221,10 @@ const TrainingCodeDetail: React.FC = () => {
     } finally {
       setVersionsLoading(false);
     }
-  }, [codeAssetId]);
+  }, [codeAssetId, versionsRefreshKey]);
 
   const loadPreview = useCallback(
-    async (path: string) => {
+    async (path: string, preferVersionSnapshot = false) => {
       if (!codeVersionId || !path) return;
       setSelectedPath(path);
       setPreviewLoading(true);
@@ -209,6 +236,7 @@ const TrainingCodeDetail: React.FC = () => {
             codeVersionId,
             codeAssetId: meta?.codeAssetId,
             path,
+            preferVersionSnapshot,
           },
           { skipErrorHandler: true },
         );
@@ -227,14 +255,17 @@ const TrainingCodeDetail: React.FC = () => {
   );
 
   const loadFiles = useCallback(async () => {
-    if (!codeVersionId) return;
+    if (!codeVersionId || metaLoadFailed) return;
     setFilesLoading(true);
     setFilesLoadError(undefined);
+    const preferVersionSnapshot = preferVersionSnapshotRef.current;
+    preferVersionSnapshotRef.current = false;
     try {
       const res = await fetchCodeEditablePreview(
         {
           codeVersionId,
           codeAssetId: meta?.codeAssetId,
+          preferVersionSnapshot,
         },
         { skipErrorHandler: true },
       );
@@ -250,7 +281,7 @@ const TrainingCodeDetail: React.FC = () => {
         setPreviewContent(res.data.codeContent);
         setOriginalPreviewContent(res.data.codeContent);
       } else if (files[0]?.path) {
-        await loadPreview(files[0].path);
+        await loadPreview(files[0].path, preferVersionSnapshot);
       } else {
         setSelectedPath(undefined);
         setPreviewContent('');
@@ -265,12 +296,17 @@ const TrainingCodeDetail: React.FC = () => {
     } finally {
       setFilesLoading(false);
     }
-  }, [codeVersionId, loadPreview, meta?.codeAssetId]);
+  }, [codeVersionId, loadPreview, meta?.codeAssetId, metaLoadFailed]);
 
   useEffect(() => {
-    loadMeta();
-    loadFiles();
-  }, [loadMeta, loadFiles]);
+    void loadMeta();
+  }, [loadMeta]);
+
+  useEffect(() => {
+    // 无权限/不存在时不继续拉目录树，避免多余 404 与空壳目录
+    if (!meta?.codeVersionId || metaLoadFailed) return;
+    void loadFiles();
+  }, [loadFiles, meta?.codeVersionId, meta?.codeAssetId, metaLoadFailed]);
 
   useEffect(() => {
     loadAssetVersions();
@@ -278,7 +314,8 @@ const TrainingCodeDetail: React.FC = () => {
 
   const handleSelectFile = (path: string) => {
     if (!codeVersionId || path === selectedPath) return;
-    loadPreview(path);
+    // 无工作区草稿时读版本快照，避免发布后仍命中残留工作区
+    loadPreview(path, !workspaceDraftOpen);
   };
 
   const handleResetPreviewContent = () => {
@@ -357,9 +394,8 @@ const TrainingCodeDetail: React.FC = () => {
                   { skipErrorHandler: true },
                 );
             const newId = res.data.publishedVersionId;
-            message.success(
-              `已发布新版本 ${res.data.publishedVersion || ''}`.trim(),
-            );
+            const publishedVersion = res.data.publishedVersion;
+            message.success(`已发布新版本 ${publishedVersion || ''}`.trim());
             if (publishFile) {
               setPreviewContent(content);
               setOriginalPreviewContent(content);
@@ -375,10 +411,30 @@ const TrainingCodeDetail: React.FC = () => {
                 source: 'publish',
               });
             }
-            history.replace(
-              `/task/code/detail/${encodeURIComponent(newId)}`,
-              locationState?.from ? { from: locationState.from } : undefined,
-            );
+            // 发布后直接展示新版本快照 + 刷新同资产版本列表，无需用户手动刷新
+            preferVersionSnapshotRef.current = true;
+            setVersionsRefreshKey((key) => key + 1);
+            if (meta) {
+              setMeta({
+                ...meta,
+                codeVersionId: newId,
+                version: publishedVersion || meta.version,
+              });
+            }
+            history.replace(`/task/code/detail/${encodeURIComponent(newId)}`, {
+              record: {
+                ...(meta || {}),
+                codeVersionId: newId,
+                version: publishedVersion || meta?.version || '',
+                codeAssetId: meta?.codeAssetId || '',
+                codeAssetName: getCodeUserDisplayName(meta ?? undefined),
+                fileName: meta?.fileName || '',
+                trainingProfile: meta?.trainingProfile || '',
+                approvalStatus: meta?.approvalStatus || 'APPROVED',
+                status: meta?.status || 'READY',
+              },
+              ...(locationState?.from ? { from: locationState.from } : {}),
+            });
           } catch (error: any) {
             message.error(getApiErrorMessage(error, '保存训练代码失败'));
             throw error;
@@ -662,8 +718,8 @@ const TrainingCodeDetail: React.FC = () => {
 
   const title = useMemo(() => {
     if (displayName !== '-') return displayName;
-    return metaLoading ? '训练代码详情' : codeVersionId || '训练代码详情';
-  }, [codeVersionId, displayName, metaLoading]);
+    return '训练代码详情';
+  }, [displayName]);
 
   const breadcrumbItems = useMemo(() => {
     const items: { title: React.ReactNode }[] = [
@@ -767,6 +823,41 @@ const TrainingCodeDetail: React.FC = () => {
         breadcrumb={{ items: breadcrumbItems }}
       >
         <Empty description="缺少 codeVersionId" />
+      </PageContainer>
+    );
+  }
+
+  if (metaLoading && !meta) {
+    return (
+      <PageContainer
+        title="训练代码详情"
+        onBack={() => history.push(backPath)}
+        breadcrumb={{ items: breadcrumbItems }}
+      >
+        <div style={{ textAlign: 'center', padding: 80 }}>
+          <Spin size="large" />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  if (!meta || metaLoadFailed) {
+    return (
+      <PageContainer
+        title="训练代码详情"
+        onBack={() => history.push(backPath)}
+        breadcrumb={{
+          items: [
+            {
+              title: (
+                <a onClick={() => history.push('/task/code/list')}>训练代码</a>
+              ),
+            },
+            { title: '训练代码详情' },
+          ],
+        }}
+      >
+        <Empty description="未找到训练代码版本或无权访问" />
       </PageContainer>
     );
   }
