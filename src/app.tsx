@@ -8,6 +8,7 @@ import React from 'react';
 import { AvatarDropdown, AvatarName, Question } from '@/components';
 import { syncTrainingCodeReviewConfigFromServer } from '@/constants/trainingCode';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
+import { redirectToLogin } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
 import '@ant-design/v5-patch-for-react-19';
@@ -110,12 +111,13 @@ export const layout: RunTimeLayoutConfig = ({
       const noLoginPaths = new Set([
         loginPath,
         '/user/register',
+        '/user/register-result',
         '/user/forgot-password',
         '/user/reset-password',
       ]);
       if (noLoginPaths.has(pathname)) return;
       if (!initialState?.currentUser) {
-        history.push(loginPath);
+        redirectToLogin();
       }
     },
     // 配置布局装饰背景图
@@ -222,7 +224,8 @@ export const request: RequestConfig = {
         switch (code) {
           case 401:
             notification.error({ message: '登录失效，请重新登录' });
-            history.push(loginPath);
+            storage.remove(STORAGE_KEYS.TOKEN);
+            redirectToLogin({ replace: true });
             break;
           case 403:
             msgApi.warning('暂无操作权限，请联系管理员');

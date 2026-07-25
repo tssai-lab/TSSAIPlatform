@@ -16,6 +16,9 @@ export const SYSTEM_STATUS = {
   DISABLED: '禁用',
 } as const;
 
+/** 系统新增用户/管理员时后端默认初始密码（页面成功提示用） */
+export const SYSTEM_DEFAULT_PASSWORD = '123456';
+
 export type SystemStatusLabel =
   (typeof SYSTEM_STATUS)[keyof typeof SYSTEM_STATUS];
 
