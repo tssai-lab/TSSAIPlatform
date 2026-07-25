@@ -65,7 +65,8 @@ public record TrainingPlanDefinition(
             Boolean consumed,
             List<String> formats,
             List<String> taskTypes,
-            List<String> requiredEntries
+            List<String> requiredEntries,
+            String formatGuide
     ) {
     }
 
@@ -74,7 +75,8 @@ public record TrainingPlanDefinition(
             List<String> taskTypes,
             List<String> cvTaskTypes,
             List<String> annotationFormats,
-            List<String> requiredEntries
+            List<String> requiredEntries,
+            String formatGuide
     ) {
     }
 

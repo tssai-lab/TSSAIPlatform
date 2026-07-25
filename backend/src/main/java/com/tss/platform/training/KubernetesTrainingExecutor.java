@@ -99,7 +99,21 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                     applyCmd, environmentService.resolveProjectRoot(), yaml, 120
             );
             if (!result.success()) {
-                throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + result.output());
+                String out = result.output() == null ? "" : result.output();
+                // A concurrent start (e.g. the JobScheduler dispatch loop racing with the
+                // afterCommit start) may have already created the same immutable Job, which
+                // makes kubectl apply fail with "AlreadyExists" / "field is immutable". If the
+                // Job already exists, treat the submission as successful and let the monitor
+                // reconcile the final status instead of marking the training as failed.
+                if (jobAlreadyExists(kubeconfig, trainingId)) {
+                    LOG.info("K8s Job already exists for trainingId={}; treating concurrent apply failure as submitted: {}",
+                            trainingId, out);
+                    updateStatus(trainingId, "queued", 0, null);
+                    LOG.info("K8s training Job already submitted: trainingId={}, plan={}, job={}",
+                            trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
+                    return;
+                }
+                throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + out);
             }
             updateStatus(trainingId, "queued", 0, null);
             LOG.info("K8s training Job submitted: trainingId={}, plan={}, job={}",
@@ -108,6 +122,18 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             LOG.error("K8s training Job submission failed: trainingId={}", trainingId, e);
             updateStatus(trainingId, "failed", 0, e.getMessage());
         }
+    }
+
+    private boolean jobAlreadyExists(Path kubeconfig, String trainingId) {
+        String jobName = KubernetesJobNaming.jobNameForTraining(trainingId);
+        List<String> cmd = environmentService.kubectlCommand(
+                kubeconfig, "get", "job", jobName,
+                "-n", properties.getNamespace(), "--ignore-not-found"
+        );
+        ShellCommandRunner.CommandResult r = shellCommandRunner.run(
+                cmd, environmentService.resolveProjectRoot(), 30
+        );
+        return r.success() && r.output() != null && !r.output().isBlank();
     }
 
     private ShellCommandRunner.CommandResult runWithStdin(
