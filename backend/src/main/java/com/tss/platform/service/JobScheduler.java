@@ -14,6 +14,9 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -47,13 +50,13 @@ public class JobScheduler {
     }
 
     /**
-     * 为训练任务分配节点。匹配 nodeSelector 的在线节点中选剩余资源最多的。
+     * 为训练任务分配节点。从 task.runSpecJson 读取资源需求，匹配 nodeSelector 的在线节点中选剩余最多的。
      * @return 分配的 nodeName，资源不足返回 null
      */
     public String assignNodeForTraining(TrainingExperimentVersion task, Map<String, String> nodeSelector) {
-        double cpuReq = parseCpuToCores(k8sProperties.getCpuRequest());
-        double memReq = parseMemToGib(k8sProperties.getMemoryRequest());
-        return assignNode(nodeSelector, cpuReq, memReq, null);
+        double[] req = resolveResourceRequest(task);
+        Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
+        return assignNode(nodeSelector, req[0], req[1], gpuReq);
     }
 
     /**
@@ -96,9 +99,9 @@ public class JobScheduler {
         for (TrainingExperimentVersion task : queued) {
             try {
                 Map<String, String> nodeSelector = resolveNodeSelector(task);
-                double cpuReq = parseCpuToCores(k8sProperties.getCpuRequest());
-                double memReq = parseMemToGib(k8sProperties.getMemoryRequest());
-                String node = assignNode(nodeSelector, cpuReq, memReq, null);
+                double[] req = resolveResourceRequest(task);
+                Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
+                String node = assignNode(nodeSelector, req[0], req[1], gpuReq);
                 if (node != null) {
                     bindTask(task, node);
                     executorRouter.start(task.getId());
@@ -120,7 +123,7 @@ public class JobScheduler {
      * 3. 算剩余容量 = 总容量 - 已分配
      * 4. 选剩余最多的，且能满足本次请求的
      */
-    private String assignNode(Map<String, String> nodeSelector, double cpuReq, double memReq, String excludeNode) {
+    private String assignNode(Map<String, String> nodeSelector, double cpuReq, double memReq, Integer gpuReq) {
         List<ComputeServer> candidates = computeServerRepo.findByDeletedFalse().stream()
                 .filter(n -> "online".equals(n.getStatus()) && Boolean.TRUE.equals(n.getEnabled()))
                 .collect(Collectors.toList());
@@ -134,21 +137,26 @@ public class JobScheduler {
                     .collect(Collectors.toList());
         }
 
-        // 统计每个节点的已分配资源
+        // 统计每个节点的已分配资源（从每个 running 任务的 runSpecJson 读取）
         Map<String, Double> allocatedCpu = new LinkedHashMap<>();
         Map<String, Double> allocatedMemGib = new LinkedHashMap<>();
+        Map<String, Integer> allocatedGpu = new LinkedHashMap<>();
         for (TrainingExperimentVersion t : trainingRepo.findByStatus("running")) {
             String ip = t.getServerIp();
             if (ip != null) {
-                allocatedCpu.merge(ip, parseCpuToCores(k8sProperties.getCpuRequest()), Double::sum);
-                allocatedMemGib.merge(ip, parseMemToGib(k8sProperties.getMemoryRequest()), Double::sum);
+                double[] req = resolveResourceRequest(t);
+                allocatedCpu.merge(ip, req[0], Double::sum);
+                allocatedMemGib.merge(ip, req[1], Double::sum);
+                if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
             }
         }
         for (InferenceTask t : inferenceRepo.findByStatus("running")) {
             String ip = t.getServerIp();
             if (ip != null) {
-                allocatedCpu.merge(ip, parseCpuToCores(k8sProperties.getCpuRequest()), Double::sum);
-                allocatedMemGib.merge(ip, parseMemToGib(k8sProperties.getMemoryRequest()), Double::sum);
+                double[] req = resolveResourceRequest(t);
+                allocatedCpu.merge(ip, req[0], Double::sum);
+                allocatedMemGib.merge(ip, req[1], Double::sum);
+                if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
             }
         }
 
@@ -156,17 +164,20 @@ public class JobScheduler {
         ComputeServer best = null;
         double bestRemaining = -1;
         for (ComputeServer node : candidates) {
-            if (node.getServerIp().equals(excludeNode)) continue;
             double usedCpu = allocatedCpu.getOrDefault(node.getServerIp(), 0.0);
             double usedMem = allocatedMemGib.getOrDefault(node.getServerIp(), 0.0);
+            int usedGpu = allocatedGpu.getOrDefault(node.getServerIp(), 0);
             double totalCpu = node.getCpuCores() != null ? node.getCpuCores() : 0;
             double totalMem = node.getMemoryGib() != null ? node.getMemoryGib() : 0;
+            int totalGpu = node.getGpuCount() != null ? node.getGpuCount() : 0;
 
             double remCpu = totalCpu - usedCpu;
             double remMem = totalMem - usedMem;
+            int remGpu = totalGpu - usedGpu;
             double remScore = Math.min(remCpu / Math.max(cpuReq, 0.001), remMem / Math.max(memReq, 0.001));
 
-            if (remCpu >= cpuReq && remMem >= memReq && remScore > bestRemaining) {
+            boolean gpuOk = gpuReq == null || remGpu >= gpuReq;
+            if (remCpu >= cpuReq && remMem >= memReq && gpuOk && remScore > bestRemaining) {
                 bestRemaining = remScore;
                 best = node;
             }
@@ -180,9 +191,8 @@ public class JobScheduler {
         // 如果有 runSpecJson，解析获取；否则按 trainingProfile 的默认值
         try {
             if (task.getRunSpecJson() != null && !task.getRunSpecJson().isBlank()) {
-                com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
-                com.fasterxml.jackson.databind.JsonNode runSpec = om.readTree(task.getRunSpecJson());
-                com.fasterxml.jackson.databind.JsonNode ns = runSpec.path("resources").path("nodeSelector");
+                JsonNode runSpec = new ObjectMapper().readTree(task.getRunSpecJson());
+                JsonNode ns = runSpec.path("resources").path("nodeSelector");
                 if (ns.isObject()) {
                     Map<String, String> map = new LinkedHashMap<>();
                     ns.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
@@ -194,13 +204,45 @@ public class JobScheduler {
         return Map.of("tss.ai/node-pool", "cpu");
     }
 
+    /** 从 task.runSpecJson 读取资源需求，读不到则 fallback 到 application.yml 全局配置 */
+    double[] resolveResourceRequest(TrainingExperimentVersion task) {
+        if (task.getRunSpecJson() != null && !task.getRunSpecJson().isBlank()) {
+            double[] req = parseResourcesFromRunSpecJson(task.getRunSpecJson());
+            if (req != null) return req;
+        }
+        return new double[]{
+                parseCpuToCores(k8sProperties.getCpuRequest()),
+                parseMemToGib(k8sProperties.getMemoryRequest()), 0
+        };
+    }
+
+    /** 推理任务暂用全局配置，后续可扩展 */
+    double[] resolveResourceRequest(InferenceTask task) {
+        return new double[]{
+                parseCpuToCores(k8sProperties.getCpuRequest()),
+                parseMemToGib(k8sProperties.getMemoryRequest()), 0
+        };
+    }
+
+    private double[] parseResourcesFromRunSpecJson(String json) {
+        try {
+            JsonNode runSpec = new ObjectMapper().readTree(json);
+            JsonNode resources = runSpec.path("resources");
+            double cpu = parseCpuToCores(resources.path("cpuRequest").asText("500m"));
+            double mem = parseMemToGib(resources.path("memoryRequest").asText("512Mi"));
+            double gpu = resources.path("gpuCount").asDouble(0);
+            return new double[]{cpu, mem, gpu};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private boolean matchesNodeSelector(ComputeServer node, Map<String, String> selector) {
         // 从 k8s_labels_json 解析 K8s 标签
         try {
             String labelsJson = node.getK8sLabelsJson();
             if (labelsJson == null || labelsJson.isBlank()) return true;
-            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode labels = om.readTree(labelsJson);
+            JsonNode labels = new ObjectMapper().readTree(labelsJson);
             for (Map.Entry<String, String> e : selector.entrySet()) {
                 String val = labels.has(e.getKey()) ? labels.get(e.getKey()).asText() : null;
                 if (!e.getValue().equals(val)) return false;

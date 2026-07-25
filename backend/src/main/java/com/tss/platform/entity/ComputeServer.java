@@ -43,6 +43,9 @@ public class ComputeServer {
     @Column(name = "memory_gib")
     private Double memoryGib;
 
+    @Column(name = "gpu_count")
+    private Integer gpuCount = 0;
+
     @Column(name = "k8s_node_name", length = 256)
     private String k8sNodeName;
 
