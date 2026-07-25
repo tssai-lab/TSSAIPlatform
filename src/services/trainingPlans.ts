@@ -17,12 +17,14 @@ export type TrainingPlan = {
       taskTypes: string[];
       requiredEntries?: string[];
       formats?: string[];
+      formatGuide?: string;
     };
     dataset: {
       taskTypes: string[];
       cvTaskTypes?: string[];
       annotationFormats?: string[];
       requiredEntries?: string[];
+      formatGuide?: string;
     };
     code?: {
       required: boolean;

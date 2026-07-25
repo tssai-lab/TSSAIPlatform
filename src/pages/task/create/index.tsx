@@ -86,13 +86,32 @@ const isCodeApproved = (status?: string) => status === 'APPROVED';
 const resolveDatasetVersionId = (data: any): string | undefined =>
   data?.datasetVersionId || data?.id || data?.versionId;
 
+const FORMAT_LABELS: Record<string, string> = {
+  FOLDER_CLASSIFICATION: '文件夹分类式（每个子目录一个类别）',
+  HF_MODEL_ARCHIVE: 'HuggingFace 模型包',
+  LEGACY_WEIGHT_ARCHIVE: '权重文件包（兼容）',
+  OTHER: '其他',
+  WEIGHT_ARCHIVE: '权重文件包',
+  YOLO: 'YOLO 标注格式',
+};
+
+const friendlyFormat = (f: string) => FORMAT_LABELS[f] || f;
+
+const PRE_STYLE: React.CSSProperties = {
+  background: '#f6f8fa',
+  padding: 12,
+  borderRadius: 6,
+  fontSize: 12,
+  margin: 0,
+  overflowX: 'auto',
+  whiteSpace: 'pre-wrap',
+};
+
 const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
-  const datasetEntries = plan.inputs?.dataset?.requiredEntries ?? [];
-  const datasetFormats = plan.inputs?.dataset?.annotationFormats ?? [];
-  const modelEntries = plan.inputs?.model?.requiredEntries ?? [];
-  const modelFormats = plan.inputs?.model?.formats ?? [];
+  const dataset = plan.inputs?.dataset;
+  const model = plan.inputs?.model;
+  const code = plan.inputs?.code;
   const entrypoint = plan.execution?.entrypoint;
-  const codeRuntime = plan.inputs?.code?.runtime;
   const params = plan.parameters ?? [];
 
   return (
@@ -101,31 +120,34 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
       showIcon
       style={{ marginBottom: 16 }}
       message={
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
           {plan.description ? (
             <Typography.Paragraph style={{ marginBottom: 0 }}>
               {plan.description}
             </Typography.Paragraph>
           ) : null}
-          <Descriptions
-            size="small"
-            column={1}
-            bordered
-            labelStyle={{ width: 120, fontWeight: 600 }}
-          >
-            <Descriptions.Item label="数据集格式">
-              {datasetEntries.length ? (
-                <Space direction="vertical" size={4}>
-                  <Typography.Text>压缩包内必须包含：</Typography.Text>
+
+          <div>
+            <Typography.Text strong>数据集要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              {dataset?.requiredEntries?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>压缩包内必须包含以下路径：</Typography.Text>
                   <Space wrap>
-                    {datasetEntries.map((e) => (
-                      <Tag key={e}>{e}</Tag>
+                    {dataset.requiredEntries.map((e) => (
+                      <Tag key={e} color="blue">
+                        {e}
+                      </Tag>
                     ))}
                   </Space>
-                  {datasetFormats.length ? (
+                  {dataset.annotationFormats?.length ? (
                     <Typography.Text type="secondary">
-                      标注格式：{datasetFormats.join('、')}
+                      标注格式：
+                      {dataset.annotationFormats.map(friendlyFormat).join('、')}
                     </Typography.Text>
+                  ) : null}
+                  {dataset.formatGuide ? (
+                    <pre style={PRE_STYLE}>{dataset.formatGuide.trim()}</pre>
                   ) : null}
                 </Space>
               ) : (
@@ -133,20 +155,29 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
                   无特殊目录要求
                 </Typography.Text>
               )}
-            </Descriptions.Item>
-            <Descriptions.Item label="模型格式">
-              {modelEntries.length ? (
-                <Space direction="vertical" size={4}>
-                  <Typography.Text>压缩包内必须包含：</Typography.Text>
+            </div>
+          </div>
+
+          <div>
+            <Typography.Text strong>模型要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              {model?.requiredEntries?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>压缩包内必须包含以下文件：</Typography.Text>
                   <Space wrap>
-                    {modelEntries.map((e) => (
-                      <Tag key={e}>{e}</Tag>
+                    {model.requiredEntries.map((e) => (
+                      <Tag key={e} color="purple">
+                        {e}
+                      </Tag>
                     ))}
                   </Space>
-                  {modelFormats.length ? (
+                  {model.formats?.length ? (
                     <Typography.Text type="secondary">
-                      格式：{modelFormats.join('、')}
+                      格式：{model.formats.map(friendlyFormat).join('、')}
                     </Typography.Text>
+                  ) : null}
+                  {model.formatGuide ? (
+                    <pre style={PRE_STYLE}>{model.formatGuide.trim()}</pre>
                   ) : null}
                 </Space>
               ) : (
@@ -154,33 +185,63 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
                   无特殊条目要求
                 </Typography.Text>
               )}
-            </Descriptions.Item>
-            <Descriptions.Item label="训练代码">
-              <Space>
-                <Typography.Text>入口脚本必须为：</Typography.Text>
-                {entrypoint ? <Tag color="blue">{entrypoint}</Tag> : null}
-                {codeRuntime ? (
+            </div>
+          </div>
+
+          <div>
+            <Typography.Text strong>训练代码要求</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              <Space direction="vertical" size={4}>
+                <Space>
+                  <Typography.Text>入口脚本必须为：</Typography.Text>
+                  {entrypoint ? <Tag color="cyan">{entrypoint}</Tag> : null}
+                </Space>
+                {code?.runtime ? (
                   <Typography.Text type="secondary">
-                    运行时：{codeRuntime}
+                    运行时：{code.runtime}
+                  </Typography.Text>
+                ) : null}
+                {code?.approvalRequired ? (
+                  <Typography.Text type="warning">
+                    上传后需管理员审核通过方可使用
                   </Typography.Text>
                 ) : null}
               </Space>
-            </Descriptions.Item>
-            {params.length ? (
-              <Descriptions.Item label="训练参数">
-                <Space wrap>
+            </div>
+          </div>
+
+          {params.length ? (
+            <div>
+              <Typography.Text strong>训练参数</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
                   {params.map((p) => (
-                    <Tag key={p.name}>
-                      {p.displayName || p.name}
-                      {p.defaultValue != null
-                        ? `（默认 ${String(p.defaultValue)}）`
-                        : ''}
-                    </Tag>
+                    <div key={p.name}>
+                      <Space wrap>
+                        <Tag color="geekblue">{p.displayName || p.name}</Tag>
+                        {p.defaultValue != null ? (
+                          <Typography.Text type="secondary">
+                            默认 {String(p.defaultValue)}
+                          </Typography.Text>
+                        ) : null}
+                        {p.required ? (
+                          <Typography.Text type="danger">必填</Typography.Text>
+                        ) : null}
+                      </Space>
+                      {p.description ? (
+                        <Typography.Paragraph
+                          type="secondary"
+                          style={{ margin: '2px 0 0', fontSize: 12 }}
+                        >
+                          {p.description}
+                        </Typography.Paragraph>
+                      ) : null}
+                    </div>
                   ))}
                 </Space>
-              </Descriptions.Item>
-            ) : null}
-          </Descriptions>
+              </div>
+            </div>
+          ) : null}
         </Space>
       }
     />
