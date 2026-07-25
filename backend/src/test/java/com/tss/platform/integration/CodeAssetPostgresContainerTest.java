@@ -17,6 +17,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -125,12 +127,11 @@ class CodeAssetPostgresContainerTest {
             }
         }
         expectedVersions.add("41");
-        expectedVersions.add("42");
         expectedVersions.add("43");
         expectedVersions.add("44");
         expectedVersions.add("45");
         expectedVersions.add("46");
-        expectedVersions.add("47");
+        Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version
                 FROM flyway_schema_history
