@@ -2,6 +2,7 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.v2.V2DatasetUploadDto;
+import com.tss.platform.dto.v2.V2DatasetUploadCompleteRequest;
 import com.tss.platform.service.V2DatasetUploadService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,7 +47,19 @@ public class V2DatasetUploadController {
     }
 
     @PostMapping("/{uploadId}/complete")
-    public V2DatasetUploadDto complete(@PathVariable String uploadId) {
-        return service.complete(uploadId);
+    public V2DatasetUploadDto complete(
+            @PathVariable String uploadId,
+            @RequestBody(required = false)
+            V2DatasetUploadCompleteRequest request
+    ) {
+        return service.complete(uploadId, request);
+    }
+
+    @PostMapping("/{uploadId}/cancel")
+    public V2DatasetUploadDto cancel(
+            @PathVariable String uploadId,
+            @RequestBody V2DatasetUploadCompleteRequest request
+    ) {
+        return service.cancel(uploadId, request);
     }
 }

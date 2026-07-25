@@ -8,6 +8,7 @@ import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.security.AuthContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.Optional;
 
@@ -33,7 +34,7 @@ class DatasetWorkspaceServiceTest {
                 .thenReturn(2);
         when(fixture.versionRepo.existsByAssetIdAndVersion(fixture.asset.getId(), "v3"))
                 .thenReturn(false);
-        when(fixture.versionRepo.save(any(DatasetVersion.class)))
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         DatasetWorkspaceDraftDto result =
@@ -47,7 +48,7 @@ class DatasetWorkspaceServiceTest {
         assertEquals(fixture.parent.getId(), fixture.asset.getCurrentVersionId());
 
         ArgumentCaptor<DatasetVersion> captor = ArgumentCaptor.forClass(DatasetVersion.class);
-        verify(fixture.versionRepo).save(captor.capture());
+        verify(fixture.versionRepo).saveAndFlush(captor.capture());
         DatasetVersion draft = captor.getValue();
         assertEquals(fixture.parent.getId(), draft.getParentVersionId());
         assertEquals(fixture.asset.getId(), draft.getAssetId());
@@ -69,6 +70,193 @@ class DatasetWorkspaceServiceTest {
     }
 
     @Test
+    void createsDraftWithNormalizedCustomVersionLabelAtomically() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedReady();
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v3"
+        )).thenReturn(false);
+        when(fixture.versionRepo.findByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "1.0.3"
+        )).thenReturn(Optional.empty());
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        DatasetWorkspaceDraftDto result = fixture.service.createDraft(
+                fixture.parent.getId(),
+                " 1.0.3 "
+        );
+
+        assertEquals(3, result.getVersionNo());
+        ArgumentCaptor<DatasetVersion> captor =
+                ArgumentCaptor.forClass(DatasetVersion.class);
+        verify(fixture.versionRepo).saveAndFlush(captor.capture());
+        assertEquals(3, captor.getValue().getVersionNo());
+        assertEquals("1.0.3", captor.getValue().getVersion());
+        assertEquals("1.0.3", captor.getValue().getVersionLabel());
+    }
+
+    @Test
+    void previewsDeletedLabelReservationAndNextDefaultLabel() {
+        Fixture fixture = new Fixture();
+        DatasetVersion deleted = new DatasetVersion();
+        deleted.setAssetId(fixture.asset.getId());
+        deleted.setVersion("1.0.2");
+        deleted.setVersionLabel("1.0.2");
+        deleted.setVersionNo(2);
+        deleted.setDeleted(true);
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v3"
+        )).thenReturn(false);
+        when(fixture.versionRepo.findByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "1.0.2"
+        )).thenReturn(Optional.of(deleted));
+
+        DatasetWorkspaceService.VersionAllocationPreview preview =
+                fixture.service.previewVersionAllocation(
+                        fixture.asset.getId(),
+                        " 1.0.2 "
+                );
+
+        assertEquals(3, preview.nextVersionNo());
+        assertEquals("v3", preview.defaultVersionLabel());
+        assertEquals("1.0.2", preview.requestedVersionLabel());
+        assertFalse(preview.requestedVersionLabelAvailable());
+        assertEquals(
+                DatasetWorkspaceService.DELETED_VERSION_RESERVED,
+                preview.unavailableReason()
+        );
+    }
+
+    @Test
+    void skipsReservedDefaultLabelWhenAllocatingNextInternalNumber() {
+        Fixture fixture = new Fixture();
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v3"
+        )).thenReturn(true);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v4"
+        )).thenReturn(false);
+
+        DatasetWorkspaceService.VersionAllocationPreview preview =
+                fixture.service.previewVersionAllocation(
+                        fixture.asset.getId(),
+                        null
+                );
+
+        assertEquals(4, preview.nextVersionNo());
+        assertEquals("v4", preview.defaultVersionLabel());
+        assertNull(preview.requestedVersionLabel());
+        assertNull(preview.requestedVersionLabelAvailable());
+        assertNull(preview.unavailableReason());
+    }
+
+    @Test
+    void rejectsReservedDeletedLabelBeforeSavingDraft() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedReady();
+        DatasetVersion deleted = new DatasetVersion();
+        deleted.setAssetId(fixture.asset.getId());
+        deleted.setVersion("1.0.2");
+        deleted.setVersionNo(2);
+        deleted.setDeleted(true);
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v3"
+        )).thenReturn(false);
+        when(fixture.versionRepo.findByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "1.0.2"
+        )).thenReturn(Optional.of(deleted));
+
+        DatasetWorkspaceService.VersionLabelConflictException error =
+                assertThrows(
+                        DatasetWorkspaceService.VersionLabelConflictException.class,
+                        () -> fixture.service.createDraft(
+                                fixture.parent.getId(),
+                                "1.0.2"
+                        )
+                );
+
+        assertEquals(
+                DatasetWorkspaceService.DELETED_VERSION_RESERVED,
+                error.getAllocation().unavailableReason()
+        );
+        verify(fixture.versionRepo, never())
+                .saveAndFlush(any(DatasetVersion.class));
+    }
+
+    @Test
+    void mapsConcurrentVersionLabelConstraintToTypedConflict() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedReady();
+        when(fixture.versionRepo.findMaxVersionNoByAssetId(fixture.asset.getId()))
+                .thenReturn(2);
+        when(fixture.versionRepo.existsByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "v3"
+        )).thenReturn(false);
+        when(fixture.versionRepo.findByAssetIdAndVersion(
+                fixture.asset.getId(),
+                "1.0.3"
+        )).thenReturn(Optional.empty());
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate key violates uk_dataset_version_asset_version"
+                ));
+
+        DatasetWorkspaceService.VersionLabelConflictException error =
+                assertThrows(
+                        DatasetWorkspaceService.VersionLabelConflictException.class,
+                        () -> fixture.service.createDraft(
+                                fixture.parent.getId(),
+                                "1.0.3"
+                        )
+                );
+
+        assertEquals(
+                DatasetWorkspaceService.ACTIVE_VERSION_EXISTS,
+                error.getAllocation().unavailableReason()
+        );
+        assertEquals("1.0.3", error.getAllocation().requestedVersionLabel());
+    }
+
+    @Test
+    void rejectsExplicitBlankAndOverlongVersionLabels() {
+        Fixture fixture = new Fixture();
+
+        assertThrows(
+                DatasetWorkspaceService.InvalidVersionLabelException.class,
+                () -> fixture.service.normalizeRequestedVersionLabel("   ")
+        );
+        assertThrows(
+                DatasetWorkspaceService.InvalidVersionLabelException.class,
+                () -> fixture.service.normalizeRequestedVersionLabel(
+                        "x".repeat(65)
+                )
+        );
+        assertNull(fixture.service.normalizeRequestedVersionLabel(null));
+        assertEquals(
+                "release",
+                fixture.service.normalizeRequestedVersionLabel(" release ")
+        );
+    }
+
+    @Test
     void propagatesMaterializationFailureSoDraftTransactionCanRollBack() {
         Fixture fixture = new Fixture();
         fixture.stubOwnedReady();
@@ -76,7 +264,7 @@ class DatasetWorkspaceServiceTest {
                 .thenReturn(2);
         when(fixture.versionRepo.existsByAssetIdAndVersion(fixture.asset.getId(), "v3"))
                 .thenReturn(false);
-        when(fixture.versionRepo.save(any(DatasetVersion.class)))
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         doThrow(new IllegalStateException("copy failed"))
                 .when(fixture.materializer)
@@ -106,7 +294,7 @@ class DatasetWorkspaceServiceTest {
                 .thenReturn(2);
         when(fixture.versionRepo.existsByAssetIdAndVersion(fixture.asset.getId(), "v3"))
                 .thenReturn(false);
-        when(fixture.versionRepo.save(any(DatasetVersion.class)))
+        when(fixture.versionRepo.saveAndFlush(any(DatasetVersion.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         DatasetWorkspaceDraftDto result =
@@ -140,7 +328,8 @@ class DatasetWorkspaceServiceTest {
                             + ", status=" + status,
                     error.getMessage()
             );
-            verify(fixture.versionRepo, never()).save(any(DatasetVersion.class));
+            verify(fixture.versionRepo, never())
+                    .saveAndFlush(any(DatasetVersion.class));
         }
     }
 
@@ -156,7 +345,8 @@ class DatasetWorkspaceServiceTest {
         );
 
         assertEquals("dataset version not found or no permission", error.getMessage());
-        verify(fixture.versionRepo, never()).save(any(DatasetVersion.class));
+        verify(fixture.versionRepo, never())
+                .saveAndFlush(any(DatasetVersion.class));
     }
 
     @Test
@@ -180,7 +370,43 @@ class DatasetWorkspaceServiceTest {
                 "dataset asset already has an active DRAFT version: draft-existing",
                 error.getMessage()
         );
-        verify(fixture.versionRepo, never()).save(any(DatasetVersion.class));
+        verify(fixture.versionRepo, never())
+                .saveAndFlush(any(DatasetVersion.class));
+    }
+
+    @Test
+    void v2CreateContinuesDraftThatAppearsAfterItsInitialRead() {
+        Fixture fixture = new Fixture();
+        fixture.stubOwnedReady();
+        DatasetVersion existingDraft = new DatasetVersion();
+        existingDraft.setId("draft-existing");
+        existingDraft.setAssetId(fixture.asset.getId());
+        existingDraft.setParentVersionId(fixture.parent.getId());
+        existingDraft.setVersionNo(3);
+        existingDraft.setVersion("1.0.3");
+        existingDraft.setVersionLabel("1.0.3");
+        existingDraft.setStatus("DRAFT");
+        when(fixture.versionRepo
+                .findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                        fixture.asset.getId(),
+                        "DRAFT"
+                )).thenReturn(Optional.of(existingDraft));
+
+        DatasetWorkspaceDraftDto result = fixture.service.createDraft(
+                fixture.parent.getId(),
+                "1.0.3"
+        );
+
+        assertEquals("draft-existing", result.getDraftVersionId());
+        assertEquals(3, result.getVersionNo());
+        assertEquals("workspace draft already exists", result.getMessage());
+        verify(fixture.versionRepo, never())
+                .saveAndFlush(any(DatasetVersion.class));
+        verify(fixture.materializer, never()).materialize(
+                any(),
+                any(),
+                any()
+        );
     }
 
     @Test
@@ -200,7 +426,8 @@ class DatasetWorkspaceServiceTest {
         );
 
         assertEquals("dataset version not found or no permission", error.getMessage());
-        verify(fixture.versionRepo, never()).save(any(DatasetVersion.class));
+        verify(fixture.versionRepo, never())
+                .saveAndFlush(any(DatasetVersion.class));
     }
 
     private static final class Fixture {

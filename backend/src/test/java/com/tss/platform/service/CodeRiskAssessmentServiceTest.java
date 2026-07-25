@@ -8,6 +8,8 @@ import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.model.CodeRiskAssessmentStatus;
 import com.tss.platform.model.CodeRiskDisposition;
 import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewMode;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeRiskFindingRepository;
@@ -50,6 +52,7 @@ class CodeRiskAssessmentServiceTest {
     private final CodeArtifactStorageService storageService =
             mock(CodeArtifactStorageService.class);
     private final CodeApprovalService approvalService = mock(CodeApprovalService.class);
+    private final SystemConfigService systemConfigService = mock(SystemConfigService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final PlatformTransactionManager transactionManager =
@@ -84,6 +87,8 @@ class CodeRiskAssessmentServiceTest {
         when(assessmentRepository.findByStatusOrderByCreatedAtDescIdDesc(
                 eq(CodeRiskAssessmentStatus.COMPLETED), any(Pageable.class)
         )).thenReturn(List.of());
+        when(systemConfigService.currentTrainingCodeReviewMode())
+                .thenReturn(TrainingCodeReviewMode.STANDARD_REVIEW);
         asset = asset();
         version = version();
         validation = validation();
@@ -97,6 +102,7 @@ class CodeRiskAssessmentServiceTest {
                 zipService,
                 scanner,
                 properties,
+                systemConfigService,
                 approvalService,
                 auditService,
                 authContext,
@@ -123,6 +129,43 @@ class CodeRiskAssessmentServiceTest {
                 "asset-1", "version-1", assessment.getId(),
                 CodeRiskLevel.UNKNOWN, CodeRiskDisposition.MANUAL_REVIEW,
                 "manual-review-only", 0
+        );
+    }
+
+    @Test
+    void directPassSkipsScannerAndApprovesOnlyAfterValidationEvidenceExists() {
+        when(systemConfigService.currentTrainingCodeReviewMode())
+                .thenReturn(TrainingCodeReviewMode.DIRECT_PASS);
+        when(versionRepository.findByIdAndDeletedFalseForUpdate("version-1"))
+                .thenReturn(Optional.of(version));
+        when(validationRepository.findById("validation-1"))
+                .thenReturn(Optional.of(validation));
+
+        CodeRiskAssessment assessment = service.enqueue("version-1", "validation-1", 7);
+
+        assertEquals(CodeRiskAssessmentStatus.COMPLETED, assessment.getStatus());
+        assertEquals(CodeRiskLevel.UNKNOWN, assessment.getRiskLevel());
+        assertEquals(CodeRiskDisposition.DIRECT_PASS, assessment.getDisposition());
+        assertEquals(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION,
+                assessment.getRiskPolicyVersion()
+        );
+        assertEquals(
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION,
+                assessment.getScannerVersion()
+        );
+        verify(approvalService).approveBySystemConfiguration(
+                "version-1",
+                assessment.getId()
+        );
+        verify(auditService).riskAssessmentCompleted(
+                "asset-1",
+                "version-1",
+                assessment.getId(),
+                CodeRiskLevel.UNKNOWN,
+                CodeRiskDisposition.DIRECT_PASS,
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION,
+                0
         );
     }
 

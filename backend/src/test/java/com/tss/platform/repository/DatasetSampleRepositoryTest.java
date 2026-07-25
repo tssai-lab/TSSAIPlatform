@@ -87,7 +87,9 @@ class DatasetSampleRepositoryTest {
                     crc32 bigint,
                     metadata varchar(4000),
                     created_at timestamp with time zone,
-                    updated_at timestamp with time zone
+                    updated_at timestamp with time zone,
+                    deleted boolean not null,
+                    deleted_at timestamp with time zone
                 )
                 """);
         jdbcTemplate.execute("""
@@ -111,7 +113,10 @@ class DatasetSampleRepositoryTest {
                     crc32 bigint,
                     content_type varchar(128),
                     metadata varchar(4000),
-                    created_at timestamp with time zone
+                    created_at timestamp with time zone,
+                    updated_at timestamp with time zone,
+                    deleted boolean not null,
+                    deleted_at timestamp with time zone
                 )
                 """);
     }

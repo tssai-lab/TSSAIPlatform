@@ -2,6 +2,7 @@ package com.tss.platform.integration;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -84,8 +85,19 @@ class CodeAssetPostgresContainerTest {
                 .migrate();
     }
 
+    @BeforeEach
+    void resetSystemConfiguration() throws SQLException {
+        executeUpdate("""
+                UPDATE platform_system_config
+                SET training_code_review_mode = 'STANDARD_REVIEW',
+                    updated_by_user_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 'GLOBAL'
+                """);
+    }
+
     @Test
-    void flywayAppliesEveryAvailableMigrationThroughV41()
+    void flywayAppliesEveryAvailableMigrationThroughV45()
             throws SQLException {
         List<String> expectedVersions = new ArrayList<>(IntStream.rangeClosed(1, 30)
                 .mapToObj(Integer::toString)
@@ -112,6 +124,10 @@ class CodeAssetPostgresContainerTest {
         }
         expectedVersions.add("41");
         expectedVersions.add("42");
+        expectedVersions.add("43");
+        expectedVersions.add("44");
+        expectedVersions.add("45");
+        expectedVersions.add("46");
         List<String> installedVersions = queryStrings("""
                 SELECT version
                 FROM flyway_schema_history
@@ -120,7 +136,7 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("42", installedVersions.get(installedVersions.size() - 1));
+        assertEquals("46", installedVersions.get(installedVersions.size() - 1));
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",
@@ -128,7 +144,8 @@ class CodeAssetPostgresContainerTest {
                 "code_approval_record",
                 "code_asset_audit_log",
                 "code_risk_assessment",
-                "code_risk_finding"
+                "code_risk_finding",
+                "platform_system_config"
         )) {
             assertEquals(
                     1L,
@@ -140,6 +157,54 @@ class CodeAssetPostgresContainerTest {
                     () -> "code asset table was not created: " + table
             );
         }
+        assertEquals(
+                List.of("STANDARD_REVIEW"),
+                queryStrings("""
+                        SELECT training_code_review_mode
+                        FROM platform_system_config
+                        WHERE id = 'GLOBAL'
+                        """)
+        );
+    }
+
+    @Test
+    void v44RejectsBlankNamesAndSerializesRapidDuplicateAssetCreation()
+            throws Exception {
+        assertCheckViolation(
+                "ck_model_asset_name_not_blank",
+                """
+                        INSERT INTO model_asset (
+                            id, name, type, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES (?, '   ', 'CV', 7,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                        """,
+                id("blank-model")
+        );
+        assertCheckViolation(
+                "ck_dataset_asset_name_not_blank",
+                """
+                        INSERT INTO dataset_asset (
+                            id, name, type, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES (?, E'\\t\\r\\n', 'NLP', 7,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                        """,
+                id("blank-dataset")
+        );
+
+        assertOneRapidAssetInsert(
+                "model_asset",
+                "uk_model_asset_owner_normalized_name",
+                "Rapid Model " + UUID.randomUUID()
+        );
+        assertOneRapidAssetInsert(
+                "dataset_asset",
+                "uk_dataset_asset_owner_normalized_name",
+                "Rapid Dataset " + UUID.randomUUID()
+        );
     }
 
     @Test
@@ -516,6 +581,120 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
+    void v42PersistsDirectPassConfigurationAndApprovalEvidence()
+            throws SQLException {
+        String assetId = id("direct-pass-asset");
+        String versionId = id("direct-pass-version");
+        String validationId = id("direct-pass-validation");
+        String assessmentId = id("direct-pass-risk");
+        String artifactSha256 = "d".repeat(64);
+
+        insertAsset(assetId);
+        insertVersion(versionId, assetId);
+        executeUpdate("""
+                UPDATE code_version
+                SET artifact_sha256 = ?,
+                    validation_status = 'PASSED',
+                    validation_policy_version = 'code-asset-policy-v1'
+                WHERE id = ?
+                """, artifactSha256, versionId);
+        executeUpdate("""
+                INSERT INTO code_validation_run (
+                    id, version_id, artifact_sha256, policy_version, status,
+                    requested_by_user_id, created_at, completed_at
+                )
+                VALUES (?, ?, ?, 'code-asset-policy-v1', 'PASSED', 7,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, validationId, versionId, artifactSha256);
+        executeUpdate("""
+                INSERT INTO code_risk_assessment (
+                    id, version_id, validation_run_id, artifact_sha256,
+                    risk_policy_version, scanner_version, status, risk_level,
+                    disposition, finding_count, requested_by_user_id,
+                    created_at, completed_at
+                )
+                VALUES (?, ?, ?, ?,
+                        'training-code-direct-pass-v1',
+                        'not-run-direct-pass',
+                        'COMPLETED', 'UNKNOWN', 'DIRECT_PASS', 0, 7,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, assessmentId, versionId, validationId, artifactSha256);
+        executeUpdate("""
+                UPDATE code_version
+                SET approval_status = 'APPROVED',
+                    latest_risk_assessment_id = ?,
+                    risk_status = 'COMPLETED',
+                    risk_level = 'UNKNOWN',
+                    review_disposition = 'DIRECT_PASS',
+                    risk_policy_version = 'training-code-direct-pass-v1'
+                WHERE id = ?
+                """, assessmentId, versionId);
+        executeUpdate("""
+                INSERT INTO code_approval_record (
+                    id, version_id, artifact_sha256, validation_run_id,
+                    policy_version, decision, decision_source,
+                    risk_assessment_id, approval_policy_version,
+                    reviewer_user_id, reason, created_at
+                )
+                VALUES (?, ?, ?, ?, 'code-asset-policy-v1',
+                        'APPROVED', 'SYSTEM_CONFIG', ?,
+                        'training-code-direct-pass-approval-v1',
+                        NULL, 'Approved without code review', CURRENT_TIMESTAMP)
+                """, id("direct-pass-approval"), versionId, artifactSha256,
+                validationId, assessmentId);
+        executeUpdate("""
+                UPDATE platform_system_config
+                SET training_code_review_mode = 'DIRECT_PASS',
+                    updated_by_user_id = 7,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 'GLOBAL'
+                """);
+
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM code_approval_record
+                WHERE version_id = ?
+                  AND decision_source = 'SYSTEM_CONFIG'
+                  AND risk_assessment_id = ?
+                """, versionId, assessmentId));
+        assertEquals(
+                List.of("DIRECT_PASS"),
+                queryStrings("""
+                        SELECT training_code_review_mode
+                        FROM platform_system_config
+                        WHERE id = 'GLOBAL'
+                        """)
+        );
+        assertCheckViolation(
+                "ck_platform_system_config_training_code_review_mode",
+                """
+                        UPDATE platform_system_config
+                        SET training_code_review_mode = 'SHADOW'
+                        WHERE id = 'GLOBAL'
+                        """
+        );
+        assertCheckViolation(
+                "ck_code_approval_record_reviewer",
+                """
+                        INSERT INTO code_approval_record (
+                            id, version_id, artifact_sha256, validation_run_id,
+                            policy_version, decision, decision_source,
+                            risk_assessment_id, approval_policy_version,
+                            reviewer_user_id, created_at
+                        )
+                        VALUES (?, ?, ?, ?, 'code-asset-policy-v1',
+                                'APPROVED', 'SYSTEM_CONFIG', NULL,
+                                'training-code-direct-pass-approval-v1',
+                                NULL, CURRENT_TIMESTAMP)
+                        """,
+                id("bad-direct-pass-approval"),
+                versionId,
+                artifactSha256,
+                validationId
+        );
+    }
+
+    @Test
     void v30RejectsMismatchedEvidenceInvalidRiskStatesAndSpoofedActors()
             throws SQLException {
         String assetId = id("bad-risk-asset");
@@ -607,6 +786,27 @@ class CodeAssetPostgresContainerTest {
                         """,
                 id("bad-user-actor"), assetId
         );
+        String adminAuditId = id("valid-admin-actor");
+        executeUpdate(
+                """
+                        INSERT INTO code_asset_audit_log (
+                            id, asset_id, action, actor_type,
+                            actor_user_id, created_at
+                        )
+                        VALUES (?, ?, 'ADMIN_UPDATE', 'ADMIN', 99,
+                                CURRENT_TIMESTAMP)
+                        """,
+                adminAuditId, assetId
+        );
+        assertEquals(1L, queryLong(
+                """
+                        SELECT COUNT(*)
+                        FROM code_asset_audit_log
+                        WHERE id = ? AND actor_type = 'ADMIN'
+                          AND actor_user_id = 99
+                        """,
+                adminAuditId
+        ));
     }
 
     @Test
@@ -644,6 +844,156 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
+    void v43AddsDatasetWorkspaceRevisionRawAndSoftDeleteContracts()
+            throws SQLException {
+        assertEquals(2L, queryLong("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'dataset_version'
+                  AND column_name IN ('workspace_revision', 'updated_at')
+                """));
+        assertEquals(3L, queryLong("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'dataset_sample_data'
+                  AND column_name IN ('deleted', 'deleted_at', 'updated_at')
+                """));
+        assertEquals(3L, queryLong("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'dataset_annotation'
+                  AND column_name IN ('deleted', 'deleted_at', 'updated_at')
+                """));
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'dataset_package'
+                  AND column_name = 'storage_kind'
+                """));
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname = 'uk_sd_sample_dt_sc_seq_active'
+                  AND indexdef ILIKE '%WHERE (deleted = false)%'
+                """));
+
+        List<String> workspaceConstraints = queryStrings("""
+                SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                WHERE t.relname IN (
+                    'dataset_version',
+                    'dataset_package',
+                    'dataset_version_package',
+                    'dataset_upload_session'
+                )
+                """);
+        assertTrue(workspaceConstraints.stream()
+                .anyMatch(value -> value.contains("ABANDONED")));
+        assertTrue(workspaceConstraints.stream()
+                .anyMatch(value -> value.contains("RAW")));
+        assertTrue(workspaceConstraints.stream()
+                .anyMatch(value -> value.contains("OVERLAY")));
+        assertTrue(workspaceConstraints.stream()
+                .anyMatch(value -> value.contains("WORKSPACE_FILE")));
+    }
+
+    @Test
+    void softDeletedDatasetVersionLabelRemainsReservedAndNextNumberIsUsable()
+            throws SQLException {
+        String assetId = id("dataset-label-asset");
+        String visibleVersionId = id("dataset-version-visible");
+        String deletedVersionId = id("dataset-version-deleted");
+        String nextVersionId = id("dataset-version-next");
+
+        executeUpdate("""
+                INSERT INTO dataset_asset (
+                    id, name, type, owner_user_id,
+                    created_at, updated_at, deleted
+                )
+                VALUES (?, 'Version allocation test', 'NLP', 7,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                """, assetId);
+        executeUpdate("""
+                INSERT INTO dataset_version (
+                    id, asset_id, version, version_no, version_label,
+                    status, owner_user_id, created_at, updated_at, deleted
+                )
+                VALUES (?, ?, '1.0.1', 1, '1.0.1',
+                        'READY', 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                """, visibleVersionId, assetId);
+        executeUpdate("""
+                INSERT INTO dataset_version (
+                    id, asset_id, version, version_no, version_label,
+                    status, owner_user_id, created_at, updated_at,
+                    deleted, deleted_at
+                )
+                VALUES (?, ?, '1.0.2', 2, '1.0.2',
+                        'ARCHIVED', 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        TRUE, CURRENT_TIMESTAMP)
+                """, deletedVersionId, assetId);
+
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM dataset_version
+                WHERE asset_id = ? AND deleted = FALSE
+                """, assetId));
+        assertEquals(2L, queryLong("""
+                SELECT MAX(version_no)
+                FROM dataset_version
+                WHERE asset_id = ?
+                """, assetId));
+
+        SQLException duplicateLabel = assertThrows(
+                SQLException.class,
+                () -> executeUpdate("""
+                        INSERT INTO dataset_version (
+                            id, asset_id, version, version_no, version_label,
+                            status, owner_user_id, created_at, updated_at, deleted
+                        )
+                        VALUES (?, ?, '1.0.2', 3, '1.0.2',
+                                'READY', 7, CURRENT_TIMESTAMP,
+                                CURRENT_TIMESTAMP, FALSE)
+                        """, nextVersionId, assetId)
+        );
+        assertEquals(UNIQUE_VIOLATION, duplicateLabel.getSQLState());
+        assertTrue(
+                lowerCaseMessage(duplicateLabel).contains(
+                        "uk_dataset_version_asset_version"
+                ),
+                duplicateLabel::getMessage
+        );
+
+        executeUpdate("""
+                INSERT INTO dataset_version (
+                    id, asset_id, version, version_no, version_label,
+                    status, owner_user_id, created_at, updated_at, deleted
+                )
+                VALUES (?, ?, '1.0.3', 3, '1.0.3',
+                        'READY', 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                """, nextVersionId, assetId);
+
+        assertEquals(3L, queryLong("""
+                SELECT MAX(version_no)
+                FROM dataset_version
+                WHERE asset_id = ?
+                """, assetId));
+        assertEquals(1L, queryLong("""
+                SELECT COUNT(*)
+                FROM dataset_version
+                WHERE asset_id = ?
+                  AND version_no = 3
+                  AND version_label = '1.0.3'
+                  AND deleted = FALSE
+                """, assetId));
+    }
+
+    @Test
     void workspaceRowLockMakesTheLosingTransitionObserveTheCommittedWinner() throws SQLException {
         String assetId = id("asset-workspace-lock");
         String workspaceId = id("workspace-transition");
@@ -676,6 +1026,97 @@ class CodeAssetPostgresContainerTest {
             assertEquals("PUBLISHED", committedWinner.status());
             assertEquals(1L, committedWinner.revision());
             retry.commit();
+        }
+    }
+
+    private static void assertOneRapidAssetInsert(
+            String table,
+            String constraint,
+            String displayName
+    ) throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Future<InsertAttempt> first = executor.submit(() -> concurrentAssetInsert(
+                table,
+                id("rapid-asset-a"),
+                displayName,
+                ready,
+                start
+        ));
+        Future<InsertAttempt> second = executor.submit(() -> concurrentAssetInsert(
+                table,
+                id("rapid-asset-b"),
+                "  " + displayName.toUpperCase(Locale.ROOT) + "  ",
+                ready,
+                start
+        ));
+        List<InsertAttempt> attempts;
+        try {
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            attempts = List.of(
+                    first.get(15, TimeUnit.SECONDS),
+                    second.get(15, TimeUnit.SECONDS)
+            );
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        assertEquals(1L, attempts.stream().filter(InsertAttempt::inserted).count());
+        InsertAttempt rejected = attempts.stream()
+                .filter(attempt -> !attempt.inserted())
+                .findFirst()
+                .orElseThrow();
+        assertEquals(UNIQUE_VIOLATION, rejected.sqlState());
+        assertTrue(rejected.message().contains(constraint), rejected.message());
+        assertEquals(1L, queryLong(
+                "SELECT COUNT(*) FROM " + table
+                        + " WHERE owner_user_id = 7"
+                        + " AND normalize_asset_name(name) = normalize_asset_name(?)"
+                        + " AND deleted = FALSE",
+                displayName
+        ));
+    }
+
+    private static InsertAttempt concurrentAssetInsert(
+            String table,
+            String assetId,
+            String name,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws Exception {
+        if (!"model_asset".equals(table) && !"dataset_asset".equals(table)) {
+            throw new IllegalArgumentException("unsupported asset table");
+        }
+        try (Connection connection = connection()) {
+            connection.setAutoCommit(false);
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent insert start signal timed out");
+            }
+            try {
+                executeUpdate(
+                        connection,
+                        "INSERT INTO " + table + " ("
+                                + "id, name, type, owner_user_id, "
+                                + "created_at, updated_at, deleted"
+                                + ") VALUES (?, ?, 'CV', 7, "
+                                + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)",
+                        assetId,
+                        name
+                );
+                connection.commit();
+                return new InsertAttempt(true, null, "");
+            } catch (SQLException exception) {
+                connection.rollback();
+                return new InsertAttempt(
+                        false,
+                        exception.getSQLState(),
+                        lowerCaseMessage(exception)
+                );
+            }
         }
     }
 

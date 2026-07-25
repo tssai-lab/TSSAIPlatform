@@ -25,6 +25,7 @@ public class DatasetWorkspaceSampleMutationService {
     private final DatasetAssetRepository assetRepo;
     private final AuthContext authContext;
     private final DatasetWorkspaceAuditService auditService;
+    private final DatasetWorkspaceCommandService commandService;
 
     @Autowired
     public DatasetWorkspaceSampleMutationService(
@@ -32,13 +33,15 @@ public class DatasetWorkspaceSampleMutationService {
             DatasetVersionRepository versionRepo,
             DatasetAssetRepository assetRepo,
             AuthContext authContext,
-            DatasetWorkspaceAuditService auditService
+            DatasetWorkspaceAuditService auditService,
+            DatasetWorkspaceCommandService commandService
     ) {
         this.sampleRepo = sampleRepo;
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
         this.authContext = authContext;
         this.auditService = auditService;
+        this.commandService = commandService;
     }
 
     DatasetWorkspaceSampleMutationService(
@@ -47,7 +50,31 @@ public class DatasetWorkspaceSampleMutationService {
             DatasetAssetRepository assetRepo,
             AuthContext authContext
     ) {
-        this(sampleRepo, versionRepo, assetRepo, authContext, null);
+        this(
+                sampleRepo,
+                versionRepo,
+                assetRepo,
+                authContext,
+                null,
+                null
+        );
+    }
+
+    DatasetWorkspaceSampleMutationService(
+            DatasetSampleRepository sampleRepo,
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            AuthContext authContext,
+            DatasetWorkspaceAuditService auditService
+    ) {
+        this(
+                sampleRepo,
+                versionRepo,
+                assetRepo,
+                authContext,
+                auditService,
+                null
+        );
     }
 
     @Transactional
@@ -60,6 +87,9 @@ public class DatasetWorkspaceSampleMutationService {
             sample.setDeletedAt(now);
             sample.setUpdatedAt(now);
             sample = sampleRepo.saveAndFlush(sample);
+            if (commandService != null) {
+                commandService.incrementRevision(context.version());
+            }
             if (auditService != null) {
                 auditService.recordSampleDeleted(
                         context.asset(),
@@ -80,6 +110,9 @@ public class DatasetWorkspaceSampleMutationService {
             sample.setDeletedAt(null);
             sample.setUpdatedAt(Instant.now());
             sample = sampleRepo.saveAndFlush(sample);
+            if (commandService != null) {
+                commandService.incrementRevision(context.version());
+            }
             if (auditService != null) {
                 auditService.recordSampleRestored(
                         context.asset(),
@@ -95,16 +128,41 @@ public class DatasetWorkspaceSampleMutationService {
         if (sampleId == null || sampleId.isBlank()) {
             throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }
-        DatasetSample sample = sampleRepo.findByIdForUpdate(sampleId)
-                .orElseThrow(() -> new IllegalArgumentException(SAMPLE_NOT_FOUND));
-        DatasetVersion version = versionRepo
-                .findByIdAndDeletedFalse(sample.getDatasetVersionId())
-                .orElseThrow(() -> new IllegalArgumentException(SAMPLE_NOT_FOUND));
+        DatasetWorkspaceCommandService.WorkspaceAccess access = null;
+        DatasetSample sample;
+        if (commandService == null) {
+            sample = sampleRepo.findByIdForUpdate(sampleId)
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(SAMPLE_NOT_FOUND)
+                    );
+        } else {
+            DatasetSample snapshot = sampleRepo.findById(sampleId)
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(SAMPLE_NOT_FOUND)
+                    );
+            access = commandService.lockForLegacyMutation(
+                    snapshot.getDatasetVersionId()
+            );
+            sample = sampleRepo.findByIdForUpdate(sampleId)
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(SAMPLE_NOT_FOUND)
+                    );
+        }
+        DatasetVersion version = access == null
+                ? versionRepo.findByIdAndDeletedFalse(sample.getDatasetVersionId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(SAMPLE_NOT_FOUND)
+                        )
+                : access.workspace();
         if (!"DRAFT".equals(version.getStatus())) {
             throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }
-        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException(SAMPLE_NOT_FOUND));
+        DatasetAsset asset = access == null
+                ? assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                        .orElseThrow(() ->
+                                new IllegalArgumentException(SAMPLE_NOT_FOUND)
+                        )
+                : access.asset();
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new IllegalArgumentException(SAMPLE_NOT_FOUND);
         }

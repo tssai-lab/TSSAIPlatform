@@ -9,7 +9,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
  * Runs before controller argument binding, so malformed admin requests cannot
- * use a 400/404 difference to probe code-review resources.
+ * use a 400/404 difference to probe code resources.
  */
 @Component
 public class CodeReviewAdminAuthorizationInterceptor implements HandlerInterceptor {

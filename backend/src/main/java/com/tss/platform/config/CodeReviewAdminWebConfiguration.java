@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/** Module-two authorization gate for the administrator code-review namespace. */
+/** Module-two authorization gate for every explicit administrator namespace. */
 @Configuration
 public class CodeReviewAdminWebConfiguration implements WebMvcConfigurer {
 
@@ -20,10 +20,7 @@ public class CodeReviewAdminWebConfiguration implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authorizationInterceptor)
-                .addPathPatterns(
-                        "/api/v2/admin/code-review-tasks",
-                        "/api/v2/admin/code-review-tasks/**"
-                )
+                .addPathPatterns("/api/v2/admin/**")
                 // The existing login interceptor uses the default order (0).
                 .order(10);
     }

@@ -42,6 +42,7 @@ class TrainingExperimentServiceApplyResultTest {
                 repo,
                 mock(ModelVersionRepository.class),
                 mock(ModelAssetRepository.class),
+                mock(ModelArtifactAttestationService.class),
                 mock(DatasetVersionRepository.class),
                 mock(DatasetAssetRepository.class),
                 mock(CodeVersionRepository.class),

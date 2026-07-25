@@ -462,7 +462,12 @@ public class ImportJobService {
             String executorId,
             List<ImportJobSampleFailure> retryFailures
     ) {
-        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(context.versionId())
+        DatasetAsset asset = assetRepo.findByIdAndDeletedFalseForUpdate(context.assetId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "dataset asset not found: " + context.assetId()
+                ));
+        DatasetVersion version = versionRepo
+                .findByIdAndDeletedFalseForUpdate(context.versionId())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "dataset version not found: " + context.versionId()
                 ));
@@ -471,10 +476,6 @@ public class ImportJobService {
                     "dataset version must remain DRAFT during import: " + version.getId()
             );
         }
-        DatasetAsset asset = assetRepo.findByIdAndDeletedFalseForUpdate(context.assetId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "dataset asset not found: " + context.assetId()
-                ));
 
         boolean incrementalRetry = retryFailures != null && !retryFailures.isEmpty();
         if (context.appendPackage() && !incrementalRetry) {
@@ -732,6 +733,7 @@ public class ImportJobService {
             setPackageStatus(context.packageId(), VERSION_READY);
         }
         if (context.appendPackage()) {
+            incrementWorkspaceRevision(version, now);
             versionRepo.saveAndFlush(version);
             supersedeOlderFailedAppendImports(context, now);
         } else {
@@ -774,6 +776,9 @@ public class ImportJobService {
         version.setStatus(VERSION_DRAFT);
         version.setPublishedAt(null);
         version.setFileCount(countPersistedFiles(version.getId()));
+        if (context.appendPackage()) {
+            incrementWorkspaceRevision(version, now);
+        }
         versionRepo.saveAndFlush(version);
         int progress = progress(importedSamples, totalSamples);
         int updated = jobRepo.markPartialIfOwned(
@@ -893,6 +898,12 @@ public class ImportJobService {
             String executorId,
             ImportFailure failure
     ) {
+        ImportJob job = jobRepo.findById(importJobId).orElse(null);
+        if (job == null) {
+            return;
+        }
+        TerminalWorkspaceContext workspaceContext =
+                lockTerminalWorkspace(job);
         if (failureRepo != null) {
             failureRepo.markStatusByImportJobId(
                     importJobId,
@@ -901,8 +912,7 @@ public class ImportJobService {
                     Instant.now()
             );
         }
-        ImportJob job = jobRepo.findById(importJobId).orElse(null);
-        if (job == null || job.getImportedSamples() == null || job.getImportedSamples() <= 0) {
+        if (job.getImportedSamples() == null || job.getImportedSamples() <= 0) {
             markFailed(importJobId, executorId, failure);
             return;
         }
@@ -915,7 +925,7 @@ public class ImportJobService {
         int totalSamples = job.getTotalSamples() == null
                 ? job.getImportedSamples() + failedSamples
                 : job.getTotalSamples();
-        jobRepo.markPartialIfOwned(
+        int updated = jobRepo.markPartialIfOwned(
                 importJobId,
                 executorId,
                 JOB_RUNNING,
@@ -927,6 +937,13 @@ public class ImportJobService {
                 failure.detailsJson(),
                 Instant.now()
         );
+        if (updated == 1
+                && workspaceContext != null
+                && PACKAGE_ROLE_APPEND.equals(workspaceContext.packageRole())
+                && VERSION_DRAFT.equals(workspaceContext.version().getStatus())) {
+            incrementWorkspaceRevision(workspaceContext.version(), Instant.now());
+            versionRepo.saveAndFlush(workspaceContext.version());
+        }
     }
 
     private void setPackageStatus(String packageId, String status) {
@@ -1073,6 +1090,12 @@ public class ImportJobService {
             String executorId,
             ImportFailure failure
     ) {
+        ImportJob snapshotJob = jobRepo.findById(importJobId).orElse(null);
+        if (snapshotJob == null) {
+            return;
+        }
+        TerminalWorkspaceContext workspaceContext =
+                lockTerminalWorkspace(snapshotJob);
         Instant now = Instant.now();
         int failed = jobRepo.markFailedIfOwned(
                 importJobId,
@@ -1090,26 +1113,24 @@ public class ImportJobService {
         if (job == null) {
             return;
         }
-        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(
-                job.getDatasetVersionId()
-        ).orElse(null);
-        DatasetAsset asset = null;
+        DatasetAsset asset = workspaceContext == null
+                ? null
+                : workspaceContext.asset();
+        DatasetVersion version = workspaceContext == null
+                ? null
+                : workspaceContext.version();
+        String packageRole = workspaceContext == null
+                ? null
+                : workspaceContext.packageRole();
         if (version != null) {
             version.setStatus(VERSION_DRAFT);
             version.setPublishedAt(null);
+            if (PACKAGE_ROLE_APPEND.equals(packageRole)) {
+                incrementWorkspaceRevision(version, now);
+            }
             versionRepo.saveAndFlush(version);
-            asset = assetRepo.findByIdAndDeletedFalseForUpdate(version.getAssetId())
-                    .orElse(null);
         }
-        String packageRole = null;
         if (job.getPackageId() != null) {
-            DatasetVersionPackage relation = versionPackageRepo
-                    .findByDatasetVersionIdAndPackageId(
-                            job.getDatasetVersionId(),
-                            job.getPackageId()
-                    )
-                    .orElse(null);
-            packageRole = relation == null ? null : relation.getPackageRole();
             packageRepo.findByIdAndDeletedFalse(job.getPackageId())
                     .ifPresent(datasetPackage -> {
                         datasetPackage.setStatus(JOB_FAILED);
@@ -1125,6 +1146,58 @@ public class ImportJobService {
                     failure.code()
             );
         }
+    }
+
+    private TerminalWorkspaceContext lockTerminalWorkspace(ImportJob job) {
+        if (job == null || job.getDatasetVersionId() == null) {
+            return null;
+        }
+        DatasetVersion snapshot = versionRepo
+                .findByIdAndDeletedFalse(job.getDatasetVersionId())
+                .orElse(null);
+        if (snapshot == null) {
+            return null;
+        }
+        DatasetAsset asset = assetRepo
+                .findByIdAndDeletedFalseForUpdate(snapshot.getAssetId())
+                .orElse(null);
+        DatasetVersion version = versionRepo
+                .findByIdAndDeletedFalseForUpdate(snapshot.getId())
+                .orElse(null);
+        if (asset == null || version == null) {
+            return null;
+        }
+        DatasetVersionPackage relation = job.getPackageId() == null
+                ? null
+                : versionPackageRepo
+                        .findByDatasetVersionIdAndPackageId(
+                                job.getDatasetVersionId(),
+                                job.getPackageId()
+                        )
+                        .orElse(null);
+        return new TerminalWorkspaceContext(
+                asset,
+                version,
+                relation == null ? null : relation.getPackageRole()
+        );
+    }
+
+    private static void incrementWorkspaceRevision(
+            DatasetVersion version,
+            Instant now
+    ) {
+        long current = version.getWorkspaceRevision() == null
+                ? 0L
+                : version.getWorkspaceRevision();
+        version.setWorkspaceRevision(current + 1L);
+        version.setUpdatedAt(now);
+    }
+
+    private record TerminalWorkspaceContext(
+            DatasetAsset asset,
+            DatasetVersion version,
+            String packageRole
+    ) {
     }
 
     private static DatasetSample toSample(

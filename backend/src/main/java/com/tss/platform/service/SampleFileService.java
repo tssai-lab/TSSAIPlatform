@@ -37,7 +37,11 @@ public class SampleFileService {
             "text/csv",
             "application/json",
             "application/xml",
-            "text/xml"
+            "text/xml",
+            "application/yaml",
+            "text/yaml",
+            "application/x-yaml",
+            "application/x-ndjson"
     );
 
     private final DatasetSampleDataRepository dataRepo;
@@ -91,7 +95,7 @@ public class SampleFileService {
                 DATA_NOT_FOUND
         );
         if (isVideo(data)) {
-            return openStoredVideoPreview(source.objectName(), data, rangeHeader);
+            return openVideoPreview(source, data, rangeHeader);
         }
         validatePreviewType(data);
         Long sizeBytes = effectiveSize(data.getUncompressedSize(), data.getSizeBytes());
@@ -107,8 +111,8 @@ public class SampleFileService {
                     "preview file exceeds 100MB limit"
             );
         }
-        return openIndexedStream(
-                source.objectName(),
+        return openResourceStream(
+                source,
                 data.getZipDataOffset(),
                 data.getCompressedSize(),
                 data.getUncompressedSize(),
@@ -132,8 +136,8 @@ public class SampleFileService {
                 data.getPackageId(),
                 DATA_NOT_FOUND
         );
-        return openIndexedStream(
-                source.objectName(),
+        return openResourceStream(
+                source,
                 data.getZipDataOffset(),
                 data.getCompressedSize(),
                 data.getUncompressedSize(),
@@ -157,8 +161,155 @@ public class SampleFileService {
                 annotation.getPackageId(),
                 ANNOTATION_NOT_FOUND
         );
-        return openIndexedStream(
-                source.objectName(),
+        return openResourceStream(
+                source,
+                annotation.getZipDataOffset(),
+                annotation.getCompressedSize(),
+                annotation.getUncompressedSize(),
+                annotation.getSizeBytes(),
+                annotation.getCompressionMethod(),
+                annotation.getFileName(),
+                annotation.getContentType()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public SampleFileStream openWorkspaceDataPreview(
+            String workspaceId,
+            String sampleId,
+            String dataId,
+            String rangeHeader
+    ) {
+        DatasetSampleData data = requireWorkspaceData(
+                workspaceId,
+                sampleId,
+                dataId
+        );
+        DatasetVersion workspace = requireDraftVersionForSample(
+                sampleId,
+                workspaceId,
+                DATA_NOT_FOUND
+        );
+        SampleFileSource source = resolveSampleFileSource(
+                workspace,
+                data.getPackageId(),
+                DATA_NOT_FOUND
+        );
+        if (isVideo(data)) {
+            return openVideoPreview(source, data, rangeHeader);
+        }
+        validatePreviewType(data);
+        Long sizeBytes = effectiveSize(data.getUncompressedSize(), data.getSizeBytes());
+        requirePreviewSize(sizeBytes);
+        return openResourceStream(
+                source,
+                data.getZipDataOffset(),
+                data.getCompressedSize(),
+                data.getUncompressedSize(),
+                data.getSizeBytes(),
+                data.getCompressionMethod(),
+                data.getFileName(),
+                data.getContentType()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public SampleFileStream openWorkspaceDataDownload(
+            String workspaceId,
+            String sampleId,
+            String dataId
+    ) {
+        DatasetSampleData data = requireWorkspaceData(
+                workspaceId,
+                sampleId,
+                dataId
+        );
+        DatasetVersion workspace = requireDraftVersionForSample(
+                sampleId,
+                workspaceId,
+                DATA_NOT_FOUND
+        );
+        return openResourceStream(
+                resolveSampleFileSource(
+                        workspace,
+                        data.getPackageId(),
+                        DATA_NOT_FOUND
+                ),
+                data.getZipDataOffset(),
+                data.getCompressedSize(),
+                data.getUncompressedSize(),
+                data.getSizeBytes(),
+                data.getCompressionMethod(),
+                data.getFileName(),
+                data.getContentType()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public SampleFileStream openWorkspaceAnnotationPreview(
+            String workspaceId,
+            String sampleId,
+            String annotationId
+    ) {
+        DatasetAnnotation annotation = requireWorkspaceAnnotation(
+                workspaceId,
+                sampleId,
+                annotationId
+        );
+        DatasetVersion workspace = requireDraftVersionForSample(
+                sampleId,
+                workspaceId,
+                ANNOTATION_NOT_FOUND
+        );
+        if (!isSafeOtherContentType(annotation.getContentType())) {
+            throw new SampleFileException(
+                    HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                    "annotation content type is not supported for preview"
+            );
+        }
+        Long sizeBytes = effectiveSize(
+                annotation.getUncompressedSize(),
+                annotation.getSizeBytes()
+        );
+        requirePreviewSize(sizeBytes);
+        return openResourceStream(
+                resolveSampleFileSource(
+                        workspace,
+                        annotation.getPackageId(),
+                        ANNOTATION_NOT_FOUND
+                ),
+                annotation.getZipDataOffset(),
+                annotation.getCompressedSize(),
+                annotation.getUncompressedSize(),
+                annotation.getSizeBytes(),
+                annotation.getCompressionMethod(),
+                annotation.getFileName(),
+                annotation.getContentType()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public SampleFileStream openWorkspaceAnnotationDownload(
+            String workspaceId,
+            String sampleId,
+            String annotationId
+    ) {
+        DatasetAnnotation annotation = requireWorkspaceAnnotation(
+                workspaceId,
+                sampleId,
+                annotationId
+        );
+        DatasetVersion workspace = requireDraftVersionForSample(
+                sampleId,
+                workspaceId,
+                ANNOTATION_NOT_FOUND
+        );
+        return openResourceStream(
+                resolveSampleFileSource(
+                        workspace,
+                        annotation.getPackageId(),
+                        ANNOTATION_NOT_FOUND
+                ),
                 annotation.getZipDataOffset(),
                 annotation.getCompressedSize(),
                 annotation.getUncompressedSize(),
@@ -173,18 +324,71 @@ public class SampleFileService {
         if (dataId == null || dataId.isBlank()) {
             throw new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND);
         }
-        return dataRepo.findById(dataId)
-                .orElseThrow(() -> new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND));
+        DatasetSampleData data = dataRepo.findById(dataId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        DATA_NOT_FOUND
+                ));
+        if (Boolean.TRUE.equals(data.getDeleted())) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND);
+        }
+        return data;
     }
 
     private DatasetAnnotation requireAnnotation(String annotationId) {
         if (annotationId == null || annotationId.isBlank()) {
             throw new SampleFileException(HttpStatus.NOT_FOUND, ANNOTATION_NOT_FOUND);
         }
-        return annotationRepo.findById(annotationId)
+        DatasetAnnotation annotation = annotationRepo.findById(annotationId)
                 .orElseThrow(() ->
                         new SampleFileException(HttpStatus.NOT_FOUND, ANNOTATION_NOT_FOUND)
                 );
+        if (Boolean.TRUE.equals(annotation.getDeleted())) {
+            throw new SampleFileException(
+                    HttpStatus.NOT_FOUND,
+                    ANNOTATION_NOT_FOUND
+            );
+        }
+        return annotation;
+    }
+
+    private DatasetSampleData requireWorkspaceData(
+            String workspaceId,
+            String sampleId,
+            String dataId
+    ) {
+        DatasetSampleData data = dataRepo
+                .findByIdAndDatasetVersionId(dataId, workspaceId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        DATA_NOT_FOUND
+                ));
+        if (!sampleId.equals(data.getSampleId())
+                || Boolean.TRUE.equals(data.getDeleted())) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, DATA_NOT_FOUND);
+        }
+        return data;
+    }
+
+    private DatasetAnnotation requireWorkspaceAnnotation(
+            String workspaceId,
+            String sampleId,
+            String annotationId
+    ) {
+        DatasetAnnotation annotation = annotationRepo
+                .findByIdAndDatasetVersionId(annotationId, workspaceId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        ANNOTATION_NOT_FOUND
+                ));
+        if (!sampleId.equals(annotation.getSampleId())
+                || Boolean.TRUE.equals(annotation.getDeleted())) {
+            throw new SampleFileException(
+                    HttpStatus.NOT_FOUND,
+                    ANNOTATION_NOT_FOUND
+            );
+        }
+        return annotation;
     }
 
     private DatasetVersion requireReadyVersionForSample(
@@ -223,6 +427,43 @@ public class SampleFileService {
         return version;
     }
 
+    private DatasetVersion requireDraftVersionForSample(
+            String sampleId,
+            String versionId,
+            String errorMessage
+    ) {
+        if (sampleId == null || sampleId.isBlank()
+                || versionId == null || versionId.isBlank()) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
+        }
+        DatasetSample sample = sampleRepo
+                .findByIdAndDatasetVersionId(sampleId, versionId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        errorMessage
+                ));
+        if (Boolean.TRUE.equals(sample.getDeleted())) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
+        }
+        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(versionId)
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        errorMessage
+                ));
+        if (!"DRAFT".equals(version.getStatus())) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
+        }
+        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .orElseThrow(() -> new SampleFileException(
+                        HttpStatus.NOT_FOUND,
+                        errorMessage
+                ));
+        if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
+            throw new SampleFileException(HttpStatus.NOT_FOUND, errorMessage);
+        }
+        return version;
+    }
+
     private SampleFileSource resolveSampleFileSource(
             DatasetVersion version,
             String packageId,
@@ -235,7 +476,7 @@ public class SampleFileService {
                         "sample file storage is unavailable"
                 );
             }
-            return new SampleFileSource(version.getStoragePath());
+            return new SampleFileSource(version.getStoragePath(), "ZIP");
         }
 
         DatasetPackage datasetPackage = packageRepo.findByIdAndDeletedFalse(packageId)
@@ -258,11 +499,14 @@ public class SampleFileService {
                     "sample file storage is unavailable"
             );
         }
-        return new SampleFileSource(datasetPackage.getStoragePath());
+        return new SampleFileSource(
+                datasetPackage.getStoragePath(),
+                datasetPackage.getStorageKind()
+        );
     }
 
-    private SampleFileStream openIndexedStream(
-            String objectName,
+    private SampleFileStream openResourceStream(
+            SampleFileSource source,
             Long zipDataOffset,
             Long compressedSize,
             Long uncompressedSize,
@@ -271,6 +515,14 @@ public class SampleFileService {
             String fileName,
             String contentType
     ) {
+        if ("RAW".equalsIgnoreCase(source.storageKind())) {
+            return openRawStream(
+                    source.objectName(),
+                    effectiveSize(uncompressedSize, sizeBytes),
+                    fileName,
+                    contentType
+            );
+        }
         validateIndex(zipDataOffset, compressedSize, compressionMethod);
         String method = compressionMethod.toUpperCase(Locale.ROOT);
         if (!"STORED".equals(method) && !"DEFLATED".equals(method)) {
@@ -285,7 +537,7 @@ public class SampleFileService {
             compressed = compressedSize == 0
                     ? InputStream.nullInputStream()
                     : minioService.downloadRange(
-                            objectName,
+                            source.objectName(),
                             zipDataOffset,
                             compressedSize
                     );
@@ -308,11 +560,40 @@ public class SampleFileService {
         );
     }
 
-    private SampleFileStream openStoredVideoPreview(
+    private SampleFileStream openRawStream(
             String objectName,
+            Long sizeBytes,
+            String fileName,
+            String contentType
+    ) {
+        InputStream inputStream;
+        try {
+            inputStream = sizeBytes != null && sizeBytes == 0
+                    ? InputStream.nullInputStream()
+                    : minioService.downloadStream(objectName);
+        } catch (Exception exception) {
+            throw new SampleFileException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "sample file stream could not be opened",
+                    exception
+            );
+        }
+        return new SampleFileStream(
+                inputStream,
+                fileName,
+                contentType,
+                sizeBytes
+        );
+    }
+
+    private SampleFileStream openVideoPreview(
+            SampleFileSource source,
             DatasetSampleData data,
             String rangeHeader
     ) {
+        if ("RAW".equalsIgnoreCase(source.storageKind())) {
+            return openRawVideoPreview(source.objectName(), data, rangeHeader);
+        }
         String compressionMethod = data.getCompressionMethod();
         if (compressionMethod == null || compressionMethod.isBlank()) {
             throw unsupportedVideoCompression();
@@ -363,9 +644,42 @@ public class SampleFileService {
                         "VIDEO ZIP entry offset is invalid"
                 );
             }
-            inputStream = openRange(objectName, actualOffset, range.length());
+            inputStream = openRange(
+                    source.objectName(),
+                    actualOffset,
+                    range.length()
+            );
         }
 
+        return new SampleFileStream(
+                inputStream,
+                data.getFileName(),
+                videoContentType(data.getContentType()),
+                range.length(),
+                true,
+                range.partial(),
+                range.start(),
+                range.end(),
+                range.total()
+        );
+    }
+
+    private SampleFileStream openRawVideoPreview(
+            String objectName,
+            DatasetSampleData data,
+            String rangeHeader
+    ) {
+        Long size = data.getSizeBytes();
+        if (size == null || size < 0) {
+            throw new SampleFileException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "RAW video size is unavailable"
+            );
+        }
+        ResolvedRange range = resolveRange(rangeHeader, size);
+        InputStream inputStream = range.length() == 0
+                ? InputStream.nullInputStream()
+                : openRange(objectName, range.start(), range.length());
         return new SampleFileStream(
                 inputStream,
                 data.getFileName(),
@@ -445,7 +759,7 @@ public class SampleFileService {
         return new ResolvedRange(start, end, total, true);
     }
 
-    private record SampleFileSource(String objectName) {
+    private record SampleFileSource(String objectName, String storageKind) {
     }
 
     private static long parseRangeNumber(String value, long total) {
@@ -543,6 +857,21 @@ public class SampleFileService {
             return uncompressedSize;
         }
         return sizeBytes != null && sizeBytes >= 0 ? sizeBytes : null;
+    }
+
+    private static void requirePreviewSize(Long sizeBytes) {
+        if (sizeBytes == null) {
+            throw new SampleFileException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "file size is unavailable"
+            );
+        }
+        if (sizeBytes > MAX_PREVIEW_BYTES) {
+            throw new SampleFileException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "preview file exceeds 100MB limit"
+            );
+        }
     }
 
     private static InputStream rawDeflateStream(InputStream compressed) {

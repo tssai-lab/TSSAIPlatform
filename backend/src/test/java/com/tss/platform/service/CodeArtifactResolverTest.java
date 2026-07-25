@@ -7,7 +7,11 @@ import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
+import com.tss.platform.model.CodeApprovalDecisionSource;
 import com.tss.platform.model.CodeApprovalStatus;
+import com.tss.platform.model.CodeRiskDisposition;
+import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
@@ -254,6 +258,42 @@ class CodeArtifactResolverTest {
         risk.setRiskPolicyVersion(CodeStaticRiskScanner.RISK_POLICY_VERSION);
         risk.setDisposition("BLOCK");
         assertReason("RISK_EVIDENCE_STALE");
+    }
+
+    @Test
+    void directPassApprovalRequiresExplicitSystemConfigurationEvidence() {
+        CodeRiskAssessment directPass = new CodeRiskAssessment();
+        directPass.setId("risk-direct");
+        directPass.setVersionId("version-1");
+        directPass.setValidationRunId("validation-1");
+        directPass.setArtifactSha256(version.getArtifactSha256());
+        directPass.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        directPass.setScannerVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION
+        );
+        directPass.setStatus("COMPLETED");
+        directPass.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        directPass.setDisposition(CodeRiskDisposition.DIRECT_PASS);
+        directPass.setFindingCount(0);
+        approval.setDecisionSource(CodeApprovalDecisionSource.SYSTEM_CONFIG);
+        approval.setRiskAssessmentId("risk-direct");
+        approval.setApprovalPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_APPROVAL_POLICY_VERSION
+        );
+        when(riskAssessmentRepository.findById("risk-direct"))
+                .thenReturn(Optional.of(directPass));
+
+        ResolvedCodeArtifact resolved = resolver.resolve("version-1", 7);
+
+        assertEquals(CodeApprovalDecisionSource.SYSTEM_CONFIG,
+                resolved.approvalSource());
+        assertEquals("risk-direct", resolved.riskAssessmentId());
+        assertEquals(CodeRiskLevel.UNKNOWN, resolved.riskLevel());
+
+        directPass.setDisposition(CodeRiskDisposition.MANUAL_REVIEW);
+        assertReason("DIRECT_PASS_EVIDENCE_STALE");
     }
 
     @Test

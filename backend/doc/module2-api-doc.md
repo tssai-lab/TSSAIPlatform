@@ -14,7 +14,7 @@
 | 文件上传请求头 | `Content-Type: multipart/form-data` |
 | 鉴权头 | `Authorization: Bearer <token>` |
 
-当前 `WebConfig` 会拦截全部 `/api/**` 请求，因此包括 `/api/files/health` 在内的模块二接口都需要登录态。普通用户只能访问自己的资源；`roleId` 为 `1` 或 `2` 的管理员通常可访问全部资源，但 V2 代码资产、工作区和源码读取仍为 owner-only，管理员能力仅在审批、历史制品恢复等显式端点开放，具体见对应章节。
+当前 `WebConfig` 会拦截全部 `/api/**` 请求，因此包括 `/api/files/health` 在内的模块二接口都需要登录态。普通用户只能访问自己的资源；`roleId` 为 `1` 或 `2` 的管理员通过显式 `/api/v2/admin/**` 管理面跨 owner 管理 V2 训练代码，普通 `/api/v2/code-*` 接口仍保持 owner-only，具体见对应章节。
 
 ### 1.2 统一响应格式
 
@@ -41,7 +41,7 @@
 例外：
 
 - `GET /api/files/download` 成功时直接返回文件流；失败时返回 JSON。
-- V2 代码资产接口（`/api/v2/code-assets/**`、`/api/v2/code-workspaces/**`、`/api/v2/code-versions/**`、`/api/v2/admin/code-review-tasks/**`）成功时直接返回 DTO、列表或文件流，不包裹 legacy `ApiResponse`；失败时返回 `V2ErrorResponse` 并使用真实 HTTP 状态，详见 18.7。
+- V2 数据集与代码资产接口成功时直接返回 DTO、列表或文件流，不包裹 legacy `ApiResponse`；失败时返回 `V2ErrorResponse` 并使用真实 HTTP 状态，详见第 18 节。
 - 未登录时，请求会先被拦截器拦截，HTTP 状态为 `401`，响应体是模块一 `Result` 格式，例如 `{"code":401,"message":"请先登录","data":null}`，不会进入模块二 Controller。
 - 图片流、点云流和通用下载接口成功时返回二进制流；失败时返回 JSON，前端不能固定按 JSON 解析这些接口。
 
@@ -137,10 +137,10 @@ CV 数据集未传 `cvTaskType` 时默认归一化为 `UNLABELED`，未传 `anno
 4. 文件流接口应使用 `blob` 或 `arrayBuffer` 接收。若响应 `Content-Type` 为 `application/json`，说明后端返回了错误对象，不应继续交给预览器解析。
 5. 前端保存和传递业务 ID 时要区分资产 ID 与版本 ID。训练、模型代码预览、数据集内容预览和点云预览都使用版本 ID。
 6. `previewUrl` 是受鉴权保护的相对 URL。使用 `<img>`、Three.js Loader 等不会自动附加 Axios 拦截器请求头的组件时，应先用带令牌的 `fetch`/请求库取得 `Blob` 或 `ArrayBuffer`，再交给组件解析。
-7. 一般列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。管理员代码审核队列是明确例外，其 `page` 从 `0` 开始。
+7. 一般列表接口中的 `page` 和 `current` 都从 `1` 开始；同时传入时 `current` 优先。模型和数据集主列表未传 `pageSize` 时会返回全部数据。管理员代码资产列表和审核队列是明确例外，其 `page` 从 `0` 开始。
 8. zip entry 路径入参可以使用 `/` 或 `\`，后端会统一规范化为 `/`；后端返回的 `path` 固定使用 `/`，作为查询参数时仍需 URL 编码，不要自行拼接。
-9. 当前 CORS 配置只允许 `GET`、`POST`、`PUT`、`DELETE`、`OPTIONS`，没有允许 `PATCH`。跨域前端调用 `PATCH /api/dataset-versions/{id}/status` 或 `PATCH /api/v2/code-assets/{assetId}` 会在预检阶段失败；当前部署应通过同源反向代理调用，或在后端补充 `PATCH` 后再开放跨域编辑。
-10. ImportJob 恢复、上传会话恢复、数据集生命周期维护、代码风险扫描和 MinIO 删除任务均为后台异步流程；前端应以状态查询、编辑会话和列表聚合结果为准，不假设扫描、物理文件清理或失败恢复已经在业务接口返回时完成。
+9. 当前 CORS 配置允许 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS`；Merge Patch 请求必须发送 `Content-Type: application/merge-patch+json`。
+10. ImportJob 恢复、上传会话恢复、数据集生命周期维护、代码风险扫描和 MinIO 删除任务均为后台异步流程；前端应以状态查询、版本工作区和列表聚合结果为准，不假设扫描、物理文件清理或失败恢复已经在业务接口返回时完成。
 
 登录示例：
 
@@ -206,7 +206,7 @@ if (!response.ok || !result.success) {
 - CV 本地文件夹可使用 `/api/dataset/upload/folder` 一次提交，后端会打包为 zip；大文件仍建议使用分片流程。
 - CV/NLP/POINT_CLOUD/ROBOT 旧上传流程完成后，新版本为 `READY`，并自动成为资产的 `currentVersionId`。
 - `MULTIMODAL` 必须上传 zip。init 未传 `sampleGrouping` 时默认 `AUTO_DIRECTORY`；高级调用方可显式传 `MANIFEST`。complete 后先返回 `DRAFT` 版本和 `PENDING` ImportJob，后台随后解析 manifest 或按根级样本目录生成内存导入计划。
-- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`，V2 前端也可从上传和编辑会话 DTO 中读取 `importJobId` 作为失败重试句柄。
+- 导入成功后 ImportJob 变为 `SUCCESS`、版本变为 `READY`，并按 `versionNo` 条件更新 `currentVersionId`；失败时 ImportJob 变为 `FAILED`，版本保持 `DRAFT`。前端可轮询 `/api/dataset-samples/import/{importJobId}/status`，V2 前端也可从上传和版本工作区 DTO 中读取 `importJobId` 作为失败重试句柄。
 - 上传到已有数据集时，`type`、`cvTaskType`、`annotationFormat` 必须和资产一致。
 
 #### 数据集预览
@@ -505,6 +505,7 @@ POST /api/model/upload/complete
 - 不传 `assetId` 时，后端创建新的模型资产和首个模型版本，保持原有上传行为。
 - 传入 `assetId` 时，后端只在该资产下创建新版本，不修改已有资产的名称、类型、备注和所有者。
 - 已有资产模式只允许资产所有者本人完成上传；管理员也不能通过该接口给其他用户的资产代上传版本。
+- 新建资产时，`modelName` 会去除首尾空白，去除后必须为 1～255 个字符；同一 owner 下未删除模型资产名称按去除首尾空白后、不区分大小写唯一。重名或并发重复 complete 返回 HTTP `409`，纯空白名称返回 HTTP `400`。
 - 同一模型资产下 `version` 唯一，包括已经软删除的历史版本；重复版本会返回明确错误。
 - 已完成的 `uploadId` 重复调用完成接口时，返回第一次完成生成的资产和版本，不会重复创建。
 - 完成上传会校验对象存在性、实际长度和完整 SHA-256；检查成功的 READY 版本自动成为资产当前版本。
@@ -561,7 +562,6 @@ GET /api/model/list
 | `type` | 任务类型 |
 | `remark` | 模型资产备注 |
 | `ownerUserId` | 归属用户 ID |
-| `storagePath` | 存储路径 |
 | `fileName` | 文件名 |
 | `sizeBytes` | 文件大小 |
 | `artifactSha256` | 模型制品 SHA-256；未校验的历史版本可为空 |
@@ -577,7 +577,8 @@ GET /api/model/list
 GET /api/model/detail?id={modelVersionId}
 ```
 
-返回指定模型版本详情。普通用户只能查询自己的模型版本。
+返回指定模型版本详情。普通用户只能查询自己的模型版本。列表和详情均不返回
+`storagePath`；需要制品内容时使用 `/api/v2/model-versions/{versionId}/download`。
 
 ### 3.3 查询模型代码文件
 
@@ -618,7 +619,8 @@ GET /api/model/previewCode?id={modelVersionId}&path={path}
 前端注意事项：
 
 - `path` 应直接使用 `/api/model/code-files` 返回值，并进行 URL 编码。
-- 后端按 UTF-8 文本读取；单个文件超过 `1MB` 会返回 `success=false`。
+- 后端严格按 UTF-8 文本读取；非法字节会返回 `success=false`，不会使用替换字符
+  `U+FFFD` 继续返回。单个文件超过 `1MB` 也会返回 `success=false`。
 - 前端代码编辑器应按纯文本展示，不应执行返回内容中的 HTML、脚本或命令。
 
 ### 3.5 删除模型版本
@@ -661,6 +663,11 @@ POST /api/model-assets
 该接口可以先创建一个没有版本的模型资产。前端随后上传模型文件时，在
 `POST /api/model/upload/complete` 中传入返回的 `id` 作为 `assetId`，即可为该资产创建首个或后续模型版本。
 
+模型资产名称会去除首尾空白，去除后必须为 1～255 个字符。同一 owner 下的未删除
+模型资产名称按去除首尾空白后、不区分大小写唯一；创建、重命名和上传创建资产均执行
+同一规则。纯空白或超长名称返回 HTTP `400`，重名以及快速重复提交的数据库竞争返回
+HTTP `409`。软删除资产不占用名称。
+
 ### 4.2 查询模型资产详情
 
 ```http
@@ -691,7 +698,7 @@ PUT /api/model-assets/{id}
 | `type` | string | 是 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
 | `remark` | string | 否 | 备注 |
 
-只更新 `name`、`type`、`remark` 和 `updatedAt`。
+只更新 `name`、`type`、`remark` 和 `updatedAt`。名称使用 4.1 的规范化和唯一性规则。
 
 该接口是完整 `PUT` 更新：前端应回传当前 `name`、`type` 和 `remark`，不要只提交单个改动字段。修改资产 `type` 会改变其全部模型版本的训练类型判断。
 
@@ -860,6 +867,12 @@ CV zip 中的非图片文件会按照 `annotationFormat` 过滤：
 | `VOC` | `.xml` | 是 |
 | `OTHER` | `.txt`、`.json`、`.xml`、`.csv`、`.yaml`、`.yml` | 否 |
 
+`annotationFormat=YOLO` 时，作为类别元数据的 YAML 文件不按标签行解析；每个其他
+`.txt` 标签文件必须是严格 UTF-8。空行允许；每个非空行必须恰好为
+`classId centerX centerY width height` 五列：`classId` 是 `0` 到
+`2147483647` 的十进制整数，四个坐标必须是有限十进制数，
+`centerX/centerY ∈ [0,1]`，`width/height ∈ (0,1]`。任一行不满足规则时拒绝上传。
+
 响应 `data` 字段与模型上传进度类似，额外包含 `cvTaskType`、`annotationFormat` 和 `strictManifest`。其中 `chunkSize` 是本次会话实际使用的动态分片大小。
 
 多模态初始化示例：
@@ -926,6 +939,9 @@ scene_002/
 版本管理补充：
 
 - `assetId`：初始化上传时可选。为空表示创建新的数据集资产；非空表示给已有数据集资产新增版本。
+- 新建资产时，`datasetName` 会去除首尾空白，去除后必须为 1～255 个字符；同一 owner
+  下未删除数据集资产名称按去除首尾空白后、不区分大小写唯一。纯空白名称返回 HTTP
+  `400`，重名或并发重复 complete 返回 HTTP `409`。
 - `versionNo`：后端生成的真实版本序号，同一 `assetId` 下从 `1` 递增。
 - `versionLabel`：展示标签；旧字段 `version` 作为兼容别名。客户端不应依赖 `version` 判断版本顺序。
 - `description`：当前版本说明。
@@ -1135,10 +1151,13 @@ GET /api/dataset-samples/import/{importJobId}/status
 
 ```http
 POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL
-POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL
 POST /api/dataset-samples/import/{importJobId}/retry?mode=INCREMENTAL
-POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL
+POST /api/v2/import-jobs/{importJobId}/retry
 ```
+
+V2 请求体为
+`{"mode":"FULL|INCREMENTAL","expectedWorkspaceRevision":12}`；Legacy
+仍使用 query 参数。
 
 约束：
 
@@ -1151,7 +1170,7 @@ POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL
 - FULL 重试会清空 `errorCode`、`errorMessage`、`errorDetailsJson`，重置 `progress=0`、`importedSamples=0`，把状态置为 `PENDING`，并通过现有 ImportJob launcher 重新调度。
 - INCREMENTAL 重试会把未解决 failure row 标记为 `RETRYING`，任务置为 `PENDING`，保留已成功导入样本。
 
-Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，字段为 `importJobId`、`status`、`displayStatus`、`importProgress`、`totalSamples`、`importedSamples`、`failedSamples`、`retryable`、`retryModes` 和 `userError`；V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对不可重试状态或 mode 与状态不匹配返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID 或非法请求格式返回 400 / `INVALID_IMPORT_JOB_RETRY`。
+Legacy 重试成功返回 `ApiResponse<ImportJobStatusDto>`。V2 重试成功返回 `V2ImportJobStatusDto`，并增加 `workspaceId/workspaceRevision`；其余字段为 `importJobId`、`status`、`displayStatus`、`importProgress`、`totalSamples`、`importedSamples`、`failedSamples`、`retryable`、`retryModes` 和 `userError`。V2 对不存在或无权限的 `importJobId` 返回 404 / `IMPORT_JOB_NOT_FOUND`，对不可重试状态或 mode 与状态不匹配返回 422 / `IMPORT_JOB_NOT_RETRYABLE`，对空 ID、缺少 revision 或非法请求格式返回 400。
 
 当前实现：
 
@@ -1478,6 +1497,11 @@ POST /api/dataset-assets
 
 该接口只创建数据集资产元数据，不会创建数据集版本或上传文件。前端创建后可将返回的 `id` 作为 `/api/dataset/upload/init` 或 `/api/dataset/upload/folder` 的 `assetId`。
 
+数据集资产名称会去除首尾空白，去除后必须为 1～255 个字符。同一 owner 下的未删除
+数据集资产名称按去除首尾空白后、不区分大小写唯一；创建、重命名和上传创建资产均执行
+同一规则。纯空白或超长名称返回 HTTP `400`，重名以及快速重复提交的数据库竞争返回
+HTTP `409`。模型资产和数据集资产分属不同命名空间，软删除资产不占用名称。
+
 ### 8.2 查询数据集资产详情
 
 ```http
@@ -1510,7 +1534,7 @@ PUT /api/dataset-assets/{id}
 
 前端注意事项：当前接口会直接修改资产级 `type`、`cvTaskType` 和 `annotationFormat`，不会同步改写历史版本。资产已有版本后，普通编辑页不建议随意开放类型修改。
 
-该接口是完整 `PUT` 更新，前端应回传当前名称、类型、CV 子任务、标注格式和备注，避免省略字段被清空或按默认值重新归一化。
+该接口是完整 `PUT` 更新，前端应回传当前名称、类型、CV 子任务、标注格式和备注，避免省略字段被清空或按默认值重新归一化。名称使用 8.1 的规范化和唯一性规则。
 
 ### 8.5 删除数据集资产
 
@@ -1579,7 +1603,7 @@ POST /api/dataset-versions/{readyVersionId}/draft
 - 若父 READY 已有 Sample/Data/Annotation 元数据，物化复制其中未删除的 DatasetSample、DatasetSampleData 和 DatasetAnnotation，复制记录使用新 ID，Annotation 的 sampleDataId 映射到 DRAFT 内的新 Data。
 - 复制父版本的 `dataset_version_package` 关系，复用同一批 `dataset_package` 和 ZIP 对象；不复制 MinIO ZIP。
 - ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 旧版本若没有 package 元数据，创建 DRAFT 时会把父 ZIP 登记为 `PRIMARY` package，并按 ZIP 非目录 entry 生成一文件一样本的 Sample/Data 元数据。
-- 非 ZIP 单模态旧版本不能创建维护工作区；需要先重新上传为 ZIP 数据集。
+- 非 ZIP 旧版本若能唯一推导单一对象或资源映射，只在新 DRAFT 中懒规范化为 RAW 主包并补齐资源引用；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，父 READY 不变。
 - DRAFT 的样本元数据是独立数据库记录，后续软删除、恢复或追加不会修改父 READY。
 - 不创建 ImportJob，不读取 manifest，不执行导入。
 - 不更新 DatasetAsset.currentVersionId；当前版本仍保持原 READY 版本。
@@ -1803,11 +1827,13 @@ DELETE /api/dataset-versions/{id}
 | `POST` | `/api/code/upload` | 上传训练代码 ZIP，生成 `codeAssetId` 和 `codeVersionId` |
 | `GET` | `/api/code/version/list` | 查询当前用户可用于训练的 `READY` + `APPROVED` 代码版本 |
 | `POST` | `/api/code/version/{codeVersionId}/approve` | 管理员单独批准代码版本；要求当前制品 SHA 对应最新且通过的校验证据 |
-| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验或幂等复用证据；接口本身不直接批准，真正的新证据进入风险分流 |
+| `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验或幂等复用证据；真正的新证据进入系统审核模式分流 |
 
-`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.7 规范化为 `/`。结构校验通过后仍需按当前 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流；静态 LOW 不是完整安全审计证明。
+`/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.7 规范化为 `/`。结构校验通过后进入 `DIRECT_PASS` 或 `STANDARD_REVIEW` 系统审核模式；后者再按 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流。静态 LOW 或系统直通都不是完整安全审计证明。
 
-当前唯一训练方案为 `image_text_consistency_fusion_logreg`（展示名：图文一致性基线训练），要求代码包包含固定入口 `scripts/training/train_fusion_baseline.py`，并要求训练数据集类型为 `NLP`。
+当前启用的训练方案为 `image_text_consistency_fusion_logreg` 和
+`yolo_object_detection`；方案入口、数据集类型和运行参数以
+`TrainingPlanRegistry` 加载的当前启用定义为准。
 
 ### 10.1 创建训练任务
 
@@ -1829,7 +1855,15 @@ POST /api/task/create
 | `params` | object/string | 否 | `hyperParams` 的兼容字段 |
 | `remark` | string | 否 | 备注 |
 
-后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且 `storagePath` 非空。legacy 和 profile 两条路径都要求模型版本为 `READY` 且 `storagePath` 非空；legacy 还校验模型类型与数据集类型一致，例如 `POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD` 之间错配会被拒绝。profile 路径会额外校验代码版本为 `READY` + `APPROVED`、冻结后的代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。模块二在首个未删除代码版本产生后禁止修改该字段，版本消费清单则返回发布时固化的 profile 快照。
+后端会校验数据集版本是否存在且当前用户可访问，数据集版本必须为 `READY` 且
+`storagePath` 非空。legacy 和 profile 两条路径都会对基础模型执行 READY 消费准入：
+校验对象存在、stat 实际大小、完整对象 SHA-256 和模型 ZIP 结构；历史空 SHA 在成功后
+原子回填。确定性损坏会把版本降为 `DRAFT` 并清除对应当前指针，临时 MinIO 故障拒绝
+本次创建但不降级版本。legacy 还校验模型类型与数据集类型一致，例如
+`POINT_CLOUD` 模型只能匹配 `POINT_CLOUD` 数据集，`CV`、`NLP`、`POINT_CLOUD`
+之间错配会被拒绝。profile 路径会额外校验代码版本为 `READY` + `APPROVED`、冻结后的
+代码资产 `trainingProfile` 与请求一致，并校验数据集类型符合该 profile 要求。模块二在
+首个未删除代码版本产生后禁止修改该字段，版本消费清单则返回发布时固化的 profile 快照。
 
 当前代码的额外行为：
 
@@ -1838,7 +1872,8 @@ POST /api/task/create
 - 当前本地训练器实际只解析 zip 中的图片和路径包含 `labels/` 的 YOLO `.txt` 标签。NLP、POINT_CLOUD 或其他 CV 格式即使通过类型匹配，也可能在异步训练阶段进入 `failed`。
 - `MULTIMODAL` 当前不属于模型或训练任务类型，不能用于创建训练。
 - legacy 本地训练器当前有效超参数主要是 `epochs`（1–100，默认 3）和 `lr0`（0.000001–1，默认 0.05）。profile 路径会记录并传递 `hyperParams`，但不能覆盖固定训练命令。
-- legacy 和 profile 路径创建阶段都会拒绝非 `READY` 或缺少 `storagePath` 的模型版本；完整对象长度和 SHA-256 校验由模型 V2 consumer manifest/下载接口执行。
+- legacy 和 profile 路径创建阶段都在启动执行器前完成基础模型的完整对象与 ZIP
+  结构复验，不依赖调用方预先访问 V2 consumer manifest 或下载接口。
 - 前端创建后应轮询 `/api/task/detail`，不能把创建接口返回的 `pending` 当成训练已经成功启动。
 
 响应 `data`：
@@ -2703,8 +2738,8 @@ Content-Type: application/json
 - 支持 STORED VIDEO 的单段 HTTP Range preview，DEFLATED VIDEO 仅支持 download。
 - 支持 `dataset_package` / `dataset_version_package`，一个版本可按 PRIMARY + APPEND 顺序使用多个物理 ZIP；PRIMARY 和 APPEND package 都支持随 ImportJob 进入 `PARTIAL`，但 `PARTIAL` package 不可 publish。
 - 支持基于 READY 创建 DRAFT，并物化继承 Sample/Data/Annotation；复用 package，不复制 ZIP，不改变当前 READY。
-- ZIP-backed 单模态旧版本创建 DRAFT 时可从父 ZIP 建立 PRIMARY package 和一文件一样本的 Sample/Data 元数据；非 ZIP 单模态旧版本不支持维护工作区。
-- 支持向 DRAFT 追加 ZIP、查看工作区样本、软删除/恢复样本，并发布为新的 READY 快照；多模态 APPEND 使用 `MANIFEST/AUTO_DIRECTORY`，单模态 APPEND 禁止 `sampleGrouping/manifestPath/strictManifest`。
+- ZIP-backed 单模态旧版本创建 DRAFT 时可从父 ZIP 建立 PRIMARY package 和一文件一样本的 Sample/Data 元数据；可唯一判定的非 ZIP 来源会在新 DRAFT 懒规范化为 RAW，歧义来源返回稳定 blocker。
+- 支持向 DRAFT 追加 ZIP，执行样本、数据组件和标注组件 CRUD，预览/下载 DRAFT 的 ZIP/RAW 文件，编辑版本元数据、放弃工作区并发布为新的 READY 快照；多模态 APPEND 使用 `MANIFEST/AUTO_DIRECTORY`，单模态 APPEND 禁止 `sampleGrouping/manifestPath/strictManifest`。
 - 支持 workspace append-only 审计日志：记录创建 DRAFT、APPEND init/complete、ImportJob 成功/失败/PARTIAL、样本删除/恢复、publish、FULL retry 和 INCREMENTAL retry；查询接口做 owner 权限校验，不返回存储定位字段。
 - 发布后 `currentVersionId` 指向新 READY，父 READY 保持不变，软删除样本不进入正式查询和文件访问。
 - 已提供 READY/DRAFT 生命周期断言，统一拒绝对 READY 的直接样本修改。
@@ -2771,10 +2806,12 @@ GET /api/v2/datasets?type=MULTIMODAL&keyword=&page=1&pageSize=20
 | `fileCount` | 当前 READY 文件数；兼容前端旧列名，语义与 `currentVersionFileCount` 一致 |
 | `displayStatus` | `EMPTY`、`READY`、`EDITING`、`IMPORTING`、`IMPORT_FAILED` 或 `IMPORT_PARTIAL` |
 | `hasDraft` | 是否存在活动 DRAFT |
-| `editSessionId` | 活动 DRAFT ID；前端不再将其解释为内部版本状态 |
+| `workspaceId` | 活动 DRAFT 对应的版本工作区 ID |
+| `workspaceRevision` | 活动工作区当前 revision；没有工作区时为 `null` |
 | `importProgress` | 最新导入进度 |
-| `canPublish` | 后端聚合后的发布可用性 |
-| `availableActions` | `VIEW`、`PREVIEW`、`EDIT`、`ADD_DATA`、`PUBLISH` 的可用子集 |
+| `publishReadiness` | `{canPublish,evaluatedRevision,blockers[]}`；没有工作区时为 `null` |
+| `editability` | 当前 READY 是否可派生工作区，以及历史来源歧义等稳定 blocker |
+| `availableActions` | `VIEW`、`PREVIEW`、`CREATE_WORKSPACE`、`OPEN_WORKSPACE`、`ADD_DATA`、`PUBLISH` 的可用子集 |
 | `userError` | 导入失败时的结构化用户错误 |
 
 状态优先级：
@@ -2785,30 +2822,154 @@ IMPORTING > IMPORT_PARTIAL / IMPORT_FAILED > EDITING > READY > EMPTY
 
 该接口不返回 `storagePath`、`ownerUserId`、`currentVersionId`、`latestDraftVersionId`、`importJobId` 或原始技术错误。
 
-### 18.2 数据集编辑会话
+### 18.2 数据集版本工作区
 
-V2 直接使用现有 DRAFT version ID 作为 `editSessionId`，不新增编辑会话表。编辑会话支持 `MULTIMODAL` 以及 ZIP-backed `CV`、`NLP`、`POINT_CLOUD`、`ROBOT`；非 ZIP 单模态旧版本需要重新上传为 ZIP 后再进入维护工作区。
+版本工作区从资产当前 READY 版本派生 DRAFT；已有活动 DRAFT 时，创建接口幂等返回同一个工作区。它编辑的是“下一版本”，不会修改父 READY。V2 不再提供 `dataset-edit-sessions` 路由别名，前端必须按后述路径同批迁移。
 
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/v2/dataset-uploads/init` | 初始化首次数据集 ZIP 上传；请求字段兼容原上传 init |
-| `POST /api/v2/dataset-uploads/{uploadId}/chunks` | 首次上传和 APPEND 共用的分片接口，multipart 参数为 `partIndex` 和 `file` |
+| `POST /api/v2/datasets/{datasetId}/workspaces` | 创建或继续该资产的版本工作区；可选请求体携带 `versionLabel` |
+| `GET /api/v2/datasets/{datasetId}/version-allocation` | 预检下一内部序号、默认标签及可选请求标签的占用情况 |
+| `GET /api/v2/dataset-workspaces/{workspaceId}` | 查询工作区、活动任务和发布 readiness |
+| `PATCH /api/v2/dataset-workspaces/{workspaceId}` | 以 Merge Patch 修改版本元数据 |
+| `DELETE /api/v2/dataset-workspaces/{workspaceId}` | 放弃工作区；重复调用幂等 |
+| `GET /api/v2/dataset-workspaces/{workspaceId}/readiness` | 在指定 revision 上执行完整发布前检查 |
+| `POST /api/v2/dataset-workspaces/{workspaceId}/publish` | 在相同锁和 revision 下重新检查并发布 |
+| `POST /api/v2/dataset-workspaces/{workspaceId}/file-uploads` | 初始化数据/标注组件的 `CREATE` 或 `REPLACE` 上传 |
+| `POST /api/v2/dataset-workspaces/{workspaceId}/package-uploads` | 初始化追加 ZIP 上传 |
+| `POST /api/v2/dataset-uploads/{uploadId}/chunks` | 首次、组件和追加 ZIP 上传共用的分片入口；multipart 参数为 `partIndex`、`file` |
 | `GET /api/v2/dataset-uploads/{uploadId}` | 查询上传及异步导入的聚合进度 |
-| `POST /api/v2/dataset-uploads/{uploadId}/complete` | 根据 upload session 自动选择首次上传或 DRAFT APPEND 完成流程 |
-| `POST /api/v2/datasets/{datasetId}/edit-sessions` | 获取或创建活动 DRAFT；已有 DRAFT 时幂等返回 |
-| `GET /api/v2/dataset-edit-sessions/{editSessionId}` | 聚合草稿、最新上传、ImportJob、样本数和可发布状态 |
-| `POST /api/v2/dataset-edit-sessions/{editSessionId}/uploads/init` | 初始化 DRAFT APPEND ZIP 上传 |
-| `POST /api/v2/dataset-edit-sessions/{editSessionId}/publish` | 校验并发布为新 READY |
+| `POST /api/v2/dataset-uploads/{uploadId}/complete` | 完成上传；工作区上传请求体必须带 `expectedWorkspaceRevision` |
+| `POST /api/v2/dataset-uploads/{uploadId}/cancel` | 取消上传；工作区上传请求体必须带 `expectedWorkspaceRevision` |
 | `GET /api/v2/dataset-versions/{datasetVersionId}/workspace/audit-logs` | 查询 workspace 审计日志；内部回溯用途，不作为训练侧消费契约 |
 
-publish 成功直接返回：
+创建工作区可省略请求体，也可传 `{}`、JSON `null` 或：
+
+```json
+{
+  "versionLabel": "1.0.3"
+}
+```
+
+显式标签会先 trim，长度必须为 1–64；显式空白或超长返回
+`400 / INVALID_VERSION_LABEL`，大小写比较规则保持现状。未传标签时，后端在资产行锁内按包含软删除记录的历史最大 `versionNo` 分配下一内部序号，并生成默认标签
+`v{nextVersionNo}`；若该默认标签已被任一历史版本占用，则继续向后寻找。最终标签会在首次保存时同时写入 `version` 和 `versionLabel`，V2 前端不需要再调用 Legacy PUT。
+
+已有活动 DRAFT 时，无标签或与现有工作区一致的标签会幂等返回原工作区；不同标签返回
+`409 / DATASET_VERSION_LABEL_CONFLICT`，`details` 额外包含
+`workspaceId/currentVersionLabel`。
+
+标签预检示例：
+
+```http
+GET /api/v2/datasets/dataset-xxx/version-allocation?versionLabel=1.0.2
+```
+
+```json
+{
+  "nextVersionNo": 3,
+  "defaultVersionLabel": "v3",
+  "requestedVersionLabel": "1.0.2",
+  "requestedVersionLabelAvailable": false,
+  "unavailableReason": "DELETED_VERSION_RESERVED"
+}
+```
+
+`unavailableReason` 只可能为 `ACTIVE_VERSION_EXISTS` 或
+`DELETED_VERSION_RESERVED`，不返回已删除版本 ID。不传 `versionLabel` 时仅返回
+`nextVersionNo/defaultVersionLabel`；预检只用于界面提示，POST 会在事务和资产行锁内重新校验。软删除版本的标签永久保留，版本列表继续过滤软删除记录。
+
+标签占用或并发唯一冲突统一返回 `409 / DATASET_VERSION_LABEL_CONFLICT`：
+
+```json
+{
+  "errorCode": "DATASET_VERSION_LABEL_CONFLICT",
+  "details": {
+    "reasonCode": "DELETED_VERSION_RESERVED",
+    "requestedVersionLabel": "1.0.2",
+    "nextVersionNo": 3,
+    "defaultVersionLabel": "v3"
+  }
+}
+```
+
+工作区 DTO 的固定字段为：
+
+| 字段 | 说明 |
+| --- | --- |
+| `workspaceId` / `datasetId` | 工作区和所属资产 ID |
+| `baseVersion` / `targetVersion` | 父 READY 与目标 DRAFT 的版本摘要 |
+| `status` / `workspaceRevision` | 生命周期状态和当前并发 revision |
+| `sampleCount` | 未删除样本数 |
+| `activeOperation` | 当前上传/导入任务摘要；没有活动任务时为 `null` |
+| `publishReadiness` | `{canPublish,evaluatedRevision,blockers[]}` |
+| `availableActions` | 当前允许的操作集合 |
+
+发布成功直接返回：
 
 | 字段 | 说明 |
 | --- | --- |
 | `datasetId` | 数据集资产 ID |
-| `currentVersion` | 展示标签，当前实现为 `v{versionNo}`，不是 datasetVersionId |
-| `status` | 发布后的版本状态，正常为 `READY` |
+| `currentVersion` | `{versionId,versionLabel,versionNo,status}`；`versionLabel` 是创建时实际持久化的标签，不根据 `versionNo` 临时拼接 |
 | `publishedAt` | 发布时间 |
+
+工作区内除只读查询外的所有命令都必须携带 `expectedWorkspaceRevision`；Merge Patch 将它作为控制字段置于 patch 对象中。revision 过期返回 `409 / WORKSPACE_REVISION_CONFLICT`，`details` 包含 expected/current revision。初始化、完成、取消、ImportJob 终态和任一资源修改均递增 revision；分片上传本身不递增。
+
+上传或 ZIP 导入活动期间实行单写者模式。除查询、轮询、取消和放弃以外的工作区命令返回 `409 / WORKSPACE_BUSY`。服务端统一按“资产 → 工作区 → 资源/上传任务”顺序加锁。
+
+#### 18.2.1 样本和组件
+
+样本接口：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET/POST /api/v2/dataset-workspaces/{workspaceId}/samples` | 分页列出或创建样本 |
+| `GET/PATCH/DELETE .../samples/{sampleId}` | 查询、Merge Patch 或软删除样本 |
+| `POST .../samples/{sampleId}/restore` | 恢复样本 |
+
+创建样本时 `externalId` 必填，创建后不可修改；`sampleIndex` 由服务端单调分配且不复用。样本 Patch 只接受 `tags`、`metadata` 和控制字段 `expectedWorkspaceRevision`。
+
+数据组件位于 `.../samples/{sampleId}/data`，标注组件位于 `.../samples/{sampleId}/annotations`：
+
+| 操作 | 路径与语义 |
+| --- | --- |
+| 创建小文本 | `POST .../data` 或 `POST .../annotations` |
+| 查询、修改描述、软删除 | `GET/PATCH/DELETE .../{resourceId}` |
+| 替换小文本 | `PUT .../{resourceId}/content` |
+| 恢复 | `POST .../{resourceId}/restore` |
+| 预览/下载 | `GET .../{resourceId}/preview`、`GET .../{resourceId}/download` |
+
+数据 Patch 仅接受 `dataType/sensor/channel/seq/format/fileName/contentType/metadata`；标注 Patch 仅接受 `sampleDataId/annotationType/format/fileName/contentType/metadata`。工作区 Patch 仅接受 `description/changeLog/cvTaskType/annotationFormat`。`sizeBytes/checksum/packageId/ZIP offsets` 由服务端生成，不能通过 Patch 覆盖。仍被有效标注引用的数据组件不能删除，返回 `409 / RESOURCE_IN_USE`。
+
+内联文本上限为 1 MiB，只接受 `.txt/.json/.jsonl/.xml/.csv/.yaml/.yml`，并校验 UTF-8、NUL、扩展名、MIME、format 和基础语法；XML 禁用外部实体，YAML 使用安全解析。大文件和二进制文件通过 `file-uploads` 创建或替换，成功后生成不可变 RAW 对象和 `OVERLAY` 包，不修改原 ZIP。
+
+ZIP 与 RAW 均可在 DRAFT 预览和下载。所有读取执行 owner、工作区、样本和资源归属校验，不返回 `storagePath`、objectName 或 ZIP offset；RAW 数据预览支持 Range。
+
+#### 18.2.2 Readiness、发布与放弃
+
+`publishReadiness` 固定为：
+
+```json
+{
+  "canPublish": false,
+  "evaluatedRevision": 12,
+  "blockers": [
+    {
+      "code": "ACTIVE_UPLOAD",
+      "message": "工作区仍有活动上传",
+      "resourceType": "UPLOAD",
+      "resourceId": "upload-xxx"
+    }
+  ]
+}
+```
+
+数据集列表、工作区详情和发布使用同一套 readiness 规则，覆盖空样本、上传/导入状态、包关系与顺序、重复 ID/索引、数据—标注关联、文件描述、版本元数据和父版本基线。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。发布在同一锁和 revision 下重新检查：业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`；父 READY 已变化返回 `409 / BASE_VERSION_STALE`。因此无状态变化时，某 revision 的 `canPublish=true` 保证发布不会再因同一业务规则返回 422。
+
+发布会物理清除草稿内已软删除的样本和组件，解除无引用的工作区独占 `OVERLAY` 包并排队清理对象，然后将 DRAFT 转为不可变 READY。放弃会把工作区转为 `ABANDONED`、上传转为 `DISCARDED`、导入转为 `SUPERSEDED`，只清理工作区独占对象并立即释放资产的活动 DRAFT 约束。
+
+历史非 ZIP READY 版本在创建 DRAFT 时懒规范化：来源可唯一推导时，仅在新工作区中创建或复用 RAW 主包并补齐资源引用，不修改父 READY；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，列表会在 `editability.blockers` 中预先展示。
 
 首次上传 init 示例：
 
@@ -2828,7 +2989,7 @@ publish 成功直接返回：
 默认 `false`，只有 `MANIFEST` 场景可设为 `true`；启用后未声明的普通
 ZIP entry 会以结构化 `userError` 暴露给 V2 调用方。
 
-单模态 APPEND init 请求：
+package APPEND init 请求：
 
 ```json
 {
@@ -2841,25 +3002,25 @@ ZIP entry 会以结构化 `userError` 暴露给 V2 调用方。
 单模态 APPEND 必须省略 `sampleGrouping`、`manifestPath` 和 `strictManifest`，并按数据集任务类型校验 ZIP 内容。`MULTIMODAL` APPEND 可继续传 `sampleGrouping=AUTO_DIRECTORY` 或 `MANIFEST`；未传时默认 `AUTO_DIRECTORY`。只有 `MANIFEST` 接受 `manifestPath`，未传时默认 `manifest.json`；`manifestPath` 可使用 `/` 或 `\` 并统一规范化为 `/`；`AUTO_DIRECTORY` 禁止传 `manifestPath`，也不支持 `strictManifest=true`。
 
 上传响应统一返回 `uploadId`、分片进度、`datasetId`、可选
-`editSessionId`、`versionLabel`、`displayStatus`、`importProgress`、
+`workspaceId`、`workspaceRevision`、`versionLabel`、`displayStatus`、`importProgress`、
 `importJobId` 和 `userError`。`importJobId` 只用于导入状态查询和失败重试；
 不返回 `storagePath`、owner ID、内部 package ID、MinIO objectName 或 ZIP
 offset。
 
 上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
 
-`canPublish` 要求 DRAFT 至少有一个未删除样本，并且该 DRAFT 历史上的所有
-ImportJob 均为 `SUCCESS` 或 `SUPERSEDED`，且所有关联 package 均为 `READY` 或 `SUPERSEDED`。`PARTIAL` 不满足 publish，也不会出现在 V2 `canPublish=true` 的状态下。最新 ImportJob 只用于展示进度和错误，不能覆盖
-更早的失败或 PARTIAL 任务。
-
-编辑会话的 `importJobId` 由当前 DRAFT 的 ImportJob 聚合得出：若最新任务为
+工作区的 `importJobId` 由当前 DRAFT 的 ImportJob 聚合得出：若最新任务为
 `PENDING` 或 `RUNNING`，返回该活动任务；否则优先返回最新未解决 `PARTIAL` 或
 `FAILED` 任务，作为发布阻塞原因和 V2 重试句柄；没有未解决任务时才返回最新终态任务。V2 selector 忽略 `SUPERSEDED` 作为 latest terminal，优先级为 `PENDING/RUNNING` > 未解决 `PARTIAL/FAILED` > latest terminal。V2 重试接口为
-`POST /api/v2/import-jobs/{importJobId}/retry?mode=FULL` 或
-`POST /api/v2/import-jobs/{importJobId}/retry?mode=INCREMENTAL`，成功后返回
-`V2ImportJobStatusDto`，其中 `PARTIAL` 状态返回 `displayStatus=IMPORT_PARTIAL`、`retryable=true`、`retryModes=["INCREMENTAL"]`；前端继续轮询上传或编辑会话状态。
+`POST /api/v2/import-jobs/{importJobId}/retry`，请求体为
+`{"mode":"FULL|INCREMENTAL","expectedWorkspaceRevision":12}`，成功后返回
+`V2ImportJobStatusDto`，其中 `PARTIAL` 状态返回 `displayStatus=IMPORT_PARTIAL`、`retryable=true`、`retryModes=["INCREMENTAL"]`；前端继续轮询上传或版本工作区状态。
 
-草稿修改实时持久化，不提供没有实际保存行为的“保存草稿”接口。
+Legacy `/api/dataset-versions/{draftVersionId}/workspace/samples` 和 `/api/dataset-samples/{sampleId}/workspace/**` 暂时保留 `ApiResponse` 包装并标记 deprecated；其删除/恢复命令复用工作区锁和 revision 核心。新前端不得再混用这些接口。
+
+前端迁移最小流程为：从列表读取 `workspaceId/workspaceRevision/publishReadiness`；需要提示标签占用时先调用 `GET .../version-allocation`；没有工作区时把用户标签直接放入 `POST .../workspaces`，不得再调用 Legacy PUT 修改标签；每次命令使用上一响应的新 revision；遇到 revision 或标签冲突重新获取提示和工作区；只根据 `publishReadiness.blockers` 呈现发布状态；发布后以 `currentVersion.versionId` 更新选择，并展示响应中的实际 `currentVersion.versionLabel`。界面文案使用“创建/继续版本工作区”，不再使用“编辑当前版本”。
+
+工作区修改实时持久化，不提供没有实际保存行为的“保存草稿”接口。
 
 ### 18.3 统一预览描述
 
@@ -3033,7 +3194,17 @@ init 请求：
 }
 ```
 
-清单不返回 bucket、`storagePath`、objectName 或签名 URL。上述接口每次调用前都会重新读取完整对象并核对长度与 SHA-256；历史空摘要在对象有效时原子回填。对象缺失、长度不符、摘要不符或 ZIP 文件树出现重复/非法路径时返回 `422 / MODEL_ARTIFACT_INVALID`，确定损坏的版本降为 `DRAFT` 并清除其当前指针。临时 MinIO 故障返回 `503 / MODEL_STORAGE_UNAVAILABLE`，不改变状态。
+清单不返回 bucket、`storagePath`、objectName 或签名 URL。切换当前版本、
+`consumer-manifest`、文件树和文本内容在交付前执行完整对象长度、SHA-256 与 ZIP
+结构校验；历史空摘要在对象有效时原子回填。下载接口先用 stat 校验长度，然后在向客户端
+发送的同一条 MinIO 流上计算字节数和 SHA-256，不再预读完整对象，因此每次下载只读取
+对象一次。已有摘要时响应携带 `X-Artifact-Sha256`；历史空摘要首次下载不伪造该响应头，
+而是在流完整读到 EOF 且校验通过后原子回填摘要。流式校验失败发生在响应已经开始后时，
+连接会以不完整下载结束，不能再改写为 JSON 错误。
+
+对象缺失、长度不符、摘要不符或 ZIP 文件树出现重复/非法路径时，能在响应提交前判定的
+请求返回 `422 / MODEL_ARTIFACT_INVALID`；确定损坏的版本降为 `DRAFT` 并清除其当前
+指针。临时 MinIO 故障返回 `503 / MODEL_STORAGE_UNAVAILABLE`，不改变状态。
 
 ### 18.7 训练对接边界
 
@@ -3044,7 +3215,8 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 - `datasetVersionId` 必须指向未删除、调用方可访问、具有存储路径的 `READY` 版本。
 - legacy 路径要求模型与数据集类型匹配；profile 路径要求数据集类型符合该 `trainingProfile` 的固定要求。
 - 当前 profile 兼容路径要求 `codeVersionId` 指向 `READY` + `APPROVED` 的代码版本，并且冻结后的代码资产 `trainingProfile` 与请求一致；模块二的稳定消费契约以版本中固化的 profile 快照为准。
-- 当前唯一 profile 为 `image_text_consistency_fusion_logreg`，展示名为“图文一致性基线训练”，要求代码入口 `scripts/training/train_fusion_baseline.py` 和 `NLP` 数据集。
+- 当前启用 profile 包括 `image_text_consistency_fusion_logreg` 和
+  `yolo_object_detection`；具体入口、数据集类型及训练模式由当前启用方案定义。
 - `MULTIMODAL` 当前不能进入训练任务类型。
 - 模块二向训练侧稳定交付 READY `datasetVersionId` 和 consumer manifest；训练侧负责 batch 组装、样本选择和多模态适配。
 - 训练侧不得依赖 `storagePath`、MinIO objectName、ZIP offset 或模块二数据库表结构。
@@ -3055,7 +3227,7 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 
 V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` 为稳定标识。稳定生命周期为 `CodeAsset -> CodeWorkspace -> CodeVersion -> ValidationRun -> RiskAssessment/RiskFinding -> ApprovalRecord`。成功响应直接返回 DTO、列表或下载流；JSON 失败响应为 `V2ErrorResponse`（`success=false`、`errorCode`、`errorMessage`、`details`、`traceId`），同时返回真实 HTTP 状态和 `X-Trace-Id`，不使用 legacy `ApiResponse`。
 
-普通 V2 代码资产、版本和工作区的读取与编辑均为 owner-only；跨用户访问统一隐藏为 `404 / CODE_ASSET_NOT_FOUND`。管理员身份不会获得普通 owner 接口的通用源码读取权。审批、历史制品恢复和 `/api/v2/admin/code-review-tasks/**` 审核中心是显式管理员能力，并且先检查管理员权限：无权限返回 `403 / CODE_APPROVAL_FORBIDDEN`。
+普通 V2 代码资产、版本和工作区的读取与编辑均为 owner-only；跨用户访问统一隐藏为 `404 / CODE_ASSET_NOT_FOUND`。管理员身份不会获得普通 owner 接口的隐式跨用户能力，必须使用 `/api/v2/admin/code-assets/**`、`/api/v2/admin/code-workspaces/**`、`/api/v2/admin/code-versions/**` 或审核中心。所有 `/api/v2/admin/**` 路径都在参数绑定和资源查询前检查管理员权限：无权限返回 `403 / CODE_APPROVAL_FORBIDDEN`。
 
 资产接口：
 
@@ -3071,9 +3243,15 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `GET` | `/api/v2/code-assets/{assetId}/workspaces` | 查询打开的工作区 |
 | `POST` | `/api/v2/code-assets/{assetId}/workspaces` | 打开工作区，可传 `baseVersionId`，成功为 `201` |
 
-`trainingProfile` 在该资产还没有任何未删除代码版本时可修改；首个版本产生后，改为不同值或显式置空均返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。传入与当前值相同的 profile 是幂等 no-op。发布或导入时，`trainingProfile` 会固化到 `CodeVersion`；consumer manifest 返回该版本快照，不回读可变资产元数据。这里描述的是模块二的稳定代码消费契约；本次修复不声明训练执行器已同步改造，包括训练在内的新消费者应通过 `codeVersionId` 使用版本快照。
+创建资产或在首个未删除代码版本产生前修改 `trainingProfile` 时，非空值必须能由
+`TrainingPlanRegistry` 解析为当前启用方案；未知、已禁用或带不受支持版本的值返回
+`422 / CODE_VALIDATION_FAILED`，`details.reasonCode=UNSUPPORTED_TRAINING_PROFILE`，
+且不会创建或更新资产。当前启用值包括 `image_text_consistency_fusion_logreg` 和
+`yolo_object_detection`。
 
-资产删除只允许 owner 调用，并在资产行锁内核对 `expectedAssetRevision`。revision 过期返回 `409 / ASSET_REVISION_CONFLICT`；存在 `OPEN` 工作区返回 `409 / OPEN_WORKSPACE_EXISTS`；已有其他模块的持久化引用返回 `409 / CODE_ASSET_IN_USE`。删除只软删除 `code_asset`，保留 `code_version`、ZIP、校验、风险、审批和审计证据；删除后 owner 接口和新的制品解析均不可再使用该资产。删除与发布竞争时二者使用同一资产锁，只允许一个操作在其前置条件下成功。已发布版本不提供物理删除接口，继续通过 `deprecate` 或 `archive` 管理生命周期。
+`trainingProfile` 在该资产还没有任何未删除代码版本时可修改；首个版本产生后，改为不同值或显式置空均返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=TRAINING_PROFILE_IMMUTABLE`。传入与当前值相同的 profile 是幂等 no-op。发布或导入时，`trainingProfile` 会固化到 `CodeVersion`；consumer manifest 返回该版本快照，不回读可变资产元数据。这里描述的是模块二的稳定代码消费契约；包括训练在内的新消费者应通过 `codeVersionId` 使用版本快照。
+
+普通资产删除只允许 owner 调用；管理员可通过显式管理员资产接口执行同一软删除操作。两条路径都在资产行锁内核对 `expectedAssetRevision`。revision 过期返回 `409 / ASSET_REVISION_CONFLICT`；存在 `OPEN` 工作区返回 `409 / OPEN_WORKSPACE_EXISTS`；已有其他模块的持久化引用返回 `409 / CODE_ASSET_IN_USE`。删除只软删除 `code_asset`，保留 `code_version`、ZIP、校验、风险、审批和审计证据；删除后 owner 接口和新的制品解析均不可再使用该资产。删除与发布竞争时二者使用同一资产锁，只允许一个操作在其前置条件下成功。已发布版本不提供物理删除接口，继续通过 `deprecate` 或 `archive` 管理生命周期。
 
 ZIP 导入同时适用于 V2 与委托同一服务的 legacy 上传。ZIP 条目名必须可严格按 UTF-8 解码；Windows 工具写入的 `\\` 会先规范化为 `/`，最终确定性 ZIP 内也只保存 `/`。规范化后仍拒绝控制字符、绝对路径、盘符路径、UNC、`.`、`..`、空路径段、超过 1024 字符的路径、符号链接、加密 ZIP 和压缩限制违规项。`src\\train.py` 与 `src/train.py` 规范化为同一路径时返回 `422`，`details.reasonCode=DUPLICATE_PATH`；文件与目录冲突返回 `TREE_CONFLICT`。路径规范化不修改文件内容、BOM 或换行，制品 SHA-256 仍针对实际保存的完整 ZIP 字节计算。
 
@@ -3116,13 +3294,74 @@ ZIP 导入同时适用于 V2 与委托同一服务的 legacy 上传。ZIP 条目
 | `POST` | `/api/v2/code-versions/{versionId}/deprecate` | 标记弃用 |
 | `POST` | `/api/v2/code-versions/{versionId}/archive` | 归档 |
 
-版本状态为 `READY`、`DEPRECATED`、`ARCHIVED`；校验状态为 `NOT_RUN`、`PASSED`、`FAILED`；审批状态为 `PENDING`、`APPROVED`、`REJECTED`、`REVOKED`。风险任务状态为 `QUEUED/RUNNING/COMPLETED/ERROR/CANCELED`，风险等级为 `LOW/MEDIUM/HIGH/UNKNOWN`，分流结论为 `AUTO_APPROVE/MANUAL_REVIEW/BLOCK`。版本 DTO 追加 `riskAssessmentId/riskStatus/riskLevel/reviewDisposition/riskPolicyVersion`，不追加任何存储路径。
+管理员跨 owner 管理接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/v2/admin/code-assets` | 分页查询全部有效代码资产；支持 `ownerUserId`、`keyword`、`trainingProfile` |
+| `GET/PATCH/DELETE` | `/api/v2/admin/code-assets/{assetId}` | 查看、CAS 修改或软删除任意 owner 的资产 |
+| `GET/POST` | `/api/v2/admin/code-assets/{assetId}/workspaces` | 查询或打开该资产唯一的 OPEN 工作区 |
+| `GET` | `/api/v2/admin/code-assets/{assetId}/versions` | 查询该资产的不可变版本 |
+| 多方法 | `/api/v2/admin/code-workspaces/{workspaceId}/**` | 镜像普通工作区的树、metadata、内容、下载、文件增删改、校验、发布和放弃能力 |
+| 多方法 | `/api/v2/admin/code-versions/{versionId}/**` | 版本详情、树、内容、文件/ZIP 下载、校验、弃用和归档 |
+
+管理员资产列表的 `page` 从 0 开始，`pageSize` 为 1–100，默认
+`page=0&pageSize=20&sortBy=UPDATED_AT&sortDirection=DESC`。`sortBy` 支持
+`UPDATED_AT/CREATED_AT/NAME/OWNER_USER_ID`。资产项比普通 DTO 多
+`ownerUserId`，但仍不返回 `storagePath`、MinIO 参数或下载 URL。
+
+管理员编辑不会转移资产：工作区、发布版本及 `users/{ownerUserId}/codes/**` 对象仍归
+原用户所有；管理员与用户共享同一个 OPEN 工作区并使用同一 revision/contentHash CAS。
+管理员操作在 append-only 审计中记录实际管理员用户 ID 和 `actorType=ADMIN`。审批、
+风险重扫和历史制品恢复继续复用既有显式管理员接口及证据规则。
+
+管理员管理能力不等于代码消费授权。`GET /api/code/version/list` 和内部
+`requireApprovedForTraining` 仍严格按当前登录用户过滤；管理员不会在训练候选列表中
+看到其他 owner 的版本，也不能直接使用他人的 `codeVersionId` 发起训练。管理员发布的
+版本在完成校验和审批后，由原 owner 正常选择训练。
+
+版本状态为 `READY`、`DEPRECATED`、`ARCHIVED`；校验状态为 `NOT_RUN`、`PASSED`、`FAILED`；审批状态为 `PENDING`、`APPROVED`、`REJECTED`、`REVOKED`。风险任务状态为 `QUEUED/RUNNING/COMPLETED/ERROR/CANCELED`，风险等级为 `LOW/MEDIUM/HIGH/UNKNOWN`，分流结论为 `AUTO_APPROVE/MANUAL_REVIEW/BLOCK/DIRECT_PASS`。版本 DTO 追加 `riskAssessmentId/riskStatus/riskLevel/reviewDisposition/riskPolicyVersion`，不追加任何存储路径。
+
+训练代码审核模式由数据库中的系统配置控制，默认值为 `STANDARD_REVIEW`。前端管理页使用以下管理员接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/system/config/get` | 查询当前训练代码审核模式 |
+| `POST` | `/api/system/config/update` | 更新训练代码审核模式 |
+
+更新请求示例：
+
+```json
+{
+  "trainingCodeReviewMode": "DIRECT_PASS"
+}
+```
+
+查询和更新均使用模块一通用响应结构：
+
+```json
+{
+  "code": 200,
+  "message": "查询成功",
+  "data": {
+    "trainingCodeReviewMode": "STANDARD_REVIEW",
+    "updatedAt": "2026-07-23T01:02:03Z"
+  }
+}
+```
+
+| 系统审核模式 | 行为 |
+| --- | --- |
+| `DIRECT_PASS` | 新的通过校验证据不运行静态风险扫描、不等待管理员审核，写入 `UNKNOWN + DIRECT_PASS` 风险证据和 `decisionSource=SYSTEM_CONFIG` 的系统批准后直接成为 `APPROVED` |
+| `STANDARD_REVIEW` | 保持现有审核链路，继续按 `CODE_ASSET_RISK_MODE` 的 `MANUAL_ONLY/SHADOW/ENFORCE` 行为分流 |
+
+`DIRECT_PASS` 只跳过代码风险扫描和人工决策，不跳过 ZIP 路径/扩展名/入口脚本校验，也不跳过实际对象名、SHA-256、长度和消费时重新读取核对。配置变更只影响此后产生的成功校验证据：不会批量批准既有 `PENDING` 版本，切回 `STANDARD_REVIEW` 也不会自动撤销此前证据完整的系统直通批准。两个配置接口均仅管理员可用；未登录返回 HTTP `401`，非管理员返回 HTTP `403`。
 
 V2 `validate` 和 legacy `training-check` 都先读取实际对象并核对 objectName、SHA-256 和长度。若当前策略、实际对象证据、版本的 `PASSED` 摘要和最新通过的 validation run 完全一致，响应 `reused=true`，不新增 validation run、不重复排队风险扫描、不写重复审计，也不改变既有 `APPROVED`。只有制品或策略证据确实变化时才创建新校验记录；新证据会把旧审批绑定置为 `PENDING`，通过后进入新的风险分流。失败结果不会自动放行。前端对已经批准且校验策略未变化的版本应隐藏普通“准入校验”按钮，或至少增加二次确认；即使误触等价校验，后端幂等保证状态不变。
 
 风险扫描只做有界、非执行式静态检查，不运行用户代码。当前规则检查 JSON/JSONL/YAML 语法、Python 词法结构、私钥和疑似凭据、动态执行、子进程、网络访问、原生库、危险反序列化、破坏性文件操作、运行期安装、外部依赖源、危险 YAML tag 和长编码载荷。Python 自动准入采用保守策略：只有安全导入白名单内且语法落在扫描器置信边界内的代码才有资格判为 `LOW`；高能力导入、未知导入以及超出语法置信边界的形式统一进入 `MANUAL_REVIEW`，绝不判为 `LOW`。单文件自动扫描上限为 1 MiB、单制品总扫描上限为 16 MiB、finding 最多 200；超过自动分析能力会转人工，不会视为安全。finding 只返回规则、等级、类别、文件路径、行号和安全描述，不保存/返回源码片段或检测到的密钥值。扫描前再次核对实际对象 SHA 和长度。
 
-部署模式由 `CODE_ASSET_RISK_MODE` 控制，默认 `MANUAL_ONLY`：
+当系统审核模式为 `STANDARD_REVIEW` 时，内部风险部署模式由 `CODE_ASSET_RISK_MODE` 控制；当前应用配置默认 `ENFORCE`：
 
 | 模式 | 行为 |
 | --- | --- |
@@ -3160,18 +3399,18 @@ owner 风险详情接口返回当前版本 SHA 绑定的 `id/versionId/validatio
 }
 ```
 
-`APPROVE` 和 `REJECT` 必须携带四个 `expected*` 字段；`expectedPolicyVersion` 指风险策略版本。证据已变化返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=APPROVAL_EVIDENCE_STALE` 或 `RISK_EVIDENCE_STALE`。批准还要求 `READY + PASSED`、最新风险评估已 `COMPLETED` 且非 `BLOCK`，并再次核对实际对象 SHA 和长度。`APPROVE` 的 reason 可选：空值按 `null` 处理，提供时会清除控制字符、把换行和制表符折叠为空格、合并连续空白、trim，并最多保存 1024 个字符；`REJECT`、`REVOKE` 的 reason 必填且使用相同清洗和上限。`REVOKE` 只允许作用于已批准版本且不要求 expected 字段。资产/版本行锁和证据 CAS 防止审核旧证据：相同证据的重复 `APPROVE` 幂等返回首次记录，因此不会用重试请求中的新 reason 覆盖原记录；证据变化或冲突决策返回 `409`。审批响应追加 `decisionSource/riskAssessmentId/approvalPolicyVersion`；自动策略记录的 `decisionSource=AUTO_POLICY`，人工为 `ADMIN`。
+`APPROVE` 和 `REJECT` 必须携带四个 `expected*` 字段；`expectedPolicyVersion` 指风险策略版本。证据已变化返回 `409 / CODE_ASSET_CONFLICT`，`details.reasonCode=APPROVAL_EVIDENCE_STALE` 或 `RISK_EVIDENCE_STALE`。批准还要求 `READY + PASSED`、最新风险评估已 `COMPLETED` 且非 `BLOCK`，并再次核对实际对象 SHA 和长度。`APPROVE` 的 reason 可选：空值按 `null` 处理，提供时会清除控制字符、把换行和制表符折叠为空格、合并连续空白、trim，并最多保存 1024 个字符；`REJECT`、`REVOKE` 的 reason 必填且使用相同清洗和上限。`REVOKE` 只允许作用于已批准版本且不要求 expected 字段。资产/版本行锁和证据 CAS 防止审核旧证据：相同证据的重复 `APPROVE` 幂等返回首次记录，因此不会用重试请求中的新 reason 覆盖原记录；证据变化或冲突决策返回 `409`。审批响应追加 `decisionSource/riskAssessmentId/approvalPolicyVersion`；自动策略记录的 `decisionSource=AUTO_POLICY`，人工为 `ADMIN`，系统直通为 `SYSTEM_CONFIG`。
 
 `consumer-manifest` 返回 `assetId`、`versionId`、`purpose`、`runtime`、`entryScript`、`trainingType`、`trainingProfile`、`artifactSha256`、`validationRunId`、`validationPolicyVersion`、`approvalRecordId`，并追加 `approvalSource/riskAssessmentId/riskLevel/riskPolicyVersion`；兼容历史批准时新增字段可为空。解析器要求 `READY + PASSED + APPROVED`，核对审批、校验和风险证据绑定，并在每次消费时实际读取对象，精确核对 objectName、数据库 SHA-256 和数据库 size；不一致或读取失败会拒绝交付，典型 reasonCode 为 `STORAGE_REFERENCE_INVALID`、`ARTIFACT_SHA256_MISMATCH`、`ARTIFACT_SIZE_MISMATCH`、`STORAGE_READ_FAILED`。manifest 不暴露 `storagePath`、MinIO 信息或可持久化 URL。
 
-`artifact-upgrade` 只处理一个 `versionId`，管理员鉴权先于资源查询。它仅接受精确匹配旧规则的 legacy 对象路径，复制到唯一的版本级 canonical 对象，按原始字节核对 SHA 和 size，在事务内更新证据并写审计，旧对象进入异步删除；失败会补偿清理新对象。成功后立即重新校验并先保持 `PENDING`，随后按当前 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流：前两种需要人工决策，`ENFORCE` 允许完整低风险证据由策略自动批准。对已经是 canonical 且证据一致的版本重试时幂等返回 `upgraded=false`。成功字段仅为 `versionId`、`artifactSha256`、`sizeBytes`、`approvalStatus`、`upgraded`、`validation`，不返回路径。失败使用 `403`、`404`、`409`、`422` 或 `503`；冲突/证据 reasonCode 包括 `ARTIFACT_UPGRADE_APPROVAL_CONFLICT`、`ARTIFACT_UPGRADE_CONFLICT`、`LEGACY_STORAGE_REFERENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_MISMATCH`、`ARTIFACT_STORAGE_EVIDENCE_INVALID`、`ARTIFACT_COPY_MISMATCH`。
+`artifact-upgrade` 只处理一个 `versionId`，管理员鉴权先于资源查询。它仅接受精确匹配旧规则的 legacy 对象路径，复制到唯一的版本级 canonical 对象，按原始字节核对 SHA 和 size，在事务内更新证据并写审计，旧对象进入异步删除；失败会补偿清理新对象。成功后立即重新校验并先保持 `PENDING`：`DIRECT_PASS` 写入系统直通证据后批准；`STANDARD_REVIEW` 再按 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流。对已经是 canonical 且证据一致的版本重试时幂等返回 `upgraded=false`。成功字段仅为 `versionId`、`artifactSha256`、`sizeBytes`、`approvalStatus`、`upgraded`、`validation`，不返回路径。失败使用 `403`、`404`、`409`、`422` 或 `503`；冲突/证据 reasonCode 包括 `ARTIFACT_UPGRADE_APPROVAL_CONFLICT`、`ARTIFACT_UPGRADE_CONFLICT`、`LEGACY_STORAGE_REFERENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_INVALID`、`CANONICAL_ARTIFACT_EVIDENCE_MISMATCH`、`ARTIFACT_STORAGE_EVIDENCE_INVALID`、`ARTIFACT_COPY_MISMATCH`。
 
 V2 代码顶层错误码：
 
 | HTTP | `errorCode` | 说明 |
 | --- | --- | --- |
 | `404` | `CODE_ASSET_NOT_FOUND` | 不存在或 owner 不匹配 |
-| `403` | `CODE_APPROVAL_FORBIDDEN` | 缺少审批/恢复管理员权限 |
+| `403` | `CODE_APPROVAL_FORBIDDEN` | 缺少代码管理、审批或恢复管理员权限 |
 | `409` | `CODE_ASSET_CONFLICT` | CAS、生命周期或恢复冲突，细分见 `details.reasonCode` |
 | `413` | `CODE_CONTENT_TOO_LARGE` | 超出在线内容上限 |
 | `422` | `CODE_VALIDATION_FAILED` | 代码包、证据或消费完整性校验失败 |

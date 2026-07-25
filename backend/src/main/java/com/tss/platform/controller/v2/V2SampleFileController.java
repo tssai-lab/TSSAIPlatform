@@ -46,6 +46,85 @@ public class V2SampleFileController {
         return stream(service.openAnnotationDownload(annotationId), false);
     }
 
+    @GetMapping(
+            "/dataset-workspaces/{workspaceId}/samples/{sampleId}"
+                    + "/data/{dataId}/preview"
+    )
+    public ResponseEntity<InputStreamResource> previewWorkspaceData(
+            @PathVariable String workspaceId,
+            @PathVariable String sampleId,
+            @PathVariable String dataId,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false)
+            String rangeHeader
+    ) {
+        return stream(
+                service.openWorkspaceDataPreview(
+                        workspaceId,
+                        sampleId,
+                        dataId,
+                        rangeHeader
+                ),
+                true
+        );
+    }
+
+    @GetMapping(
+            "/dataset-workspaces/{workspaceId}/samples/{sampleId}"
+                    + "/data/{dataId}/download"
+    )
+    public ResponseEntity<InputStreamResource> downloadWorkspaceData(
+            @PathVariable String workspaceId,
+            @PathVariable String sampleId,
+            @PathVariable String dataId
+    ) {
+        return stream(
+                service.openWorkspaceDataDownload(
+                        workspaceId,
+                        sampleId,
+                        dataId
+                ),
+                false
+        );
+    }
+
+    @GetMapping(
+            "/dataset-workspaces/{workspaceId}/samples/{sampleId}"
+                    + "/annotations/{annotationId}/preview"
+    )
+    public ResponseEntity<InputStreamResource> previewWorkspaceAnnotation(
+            @PathVariable String workspaceId,
+            @PathVariable String sampleId,
+            @PathVariable String annotationId
+    ) {
+        return stream(
+                service.openWorkspaceAnnotationPreview(
+                        workspaceId,
+                        sampleId,
+                        annotationId
+                ),
+                true
+        );
+    }
+
+    @GetMapping(
+            "/dataset-workspaces/{workspaceId}/samples/{sampleId}"
+                    + "/annotations/{annotationId}/download"
+    )
+    public ResponseEntity<InputStreamResource> downloadWorkspaceAnnotation(
+            @PathVariable String workspaceId,
+            @PathVariable String sampleId,
+            @PathVariable String annotationId
+    ) {
+        return stream(
+                service.openWorkspaceAnnotationDownload(
+                        workspaceId,
+                        sampleId,
+                        annotationId
+                ),
+                false
+        );
+    }
+
     private ResponseEntity<InputStreamResource> stream(
             SampleFileStream file,
             boolean inline

@@ -1,15 +1,20 @@
 package com.tss.platform.repository;
 
 import com.tss.platform.entity.DatasetAnnotation;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnotation, String> {
     long countByDatasetVersionId(String datasetVersionId);
+
+    long countByDatasetVersionIdAndDeletedFalse(String datasetVersionId);
 
     long countByDatasetVersionIdAndPackageIdIsNull(String datasetVersionId);
 
@@ -42,6 +47,29 @@ public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnota
     );
 
     List<DatasetAnnotation>
+            findBySampleIdAndDatasetVersionIdAndDeletedFalseOrderByCreatedAtAscIdAsc(
+                    String sampleId,
+                    String datasetVersionId
+            );
+
+    Optional<DatasetAnnotation> findByIdAndDatasetVersionId(
+            String id,
+            String datasetVersionId
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select a from DatasetAnnotation a
+            where a.id = :id and a.datasetVersionId = :datasetVersionId
+            """)
+    Optional<DatasetAnnotation> findByIdAndDatasetVersionIdForUpdate(
+            @Param("id") String id,
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
+    List<DatasetAnnotation> findByDatasetVersionId(String datasetVersionId);
+
+    List<DatasetAnnotation>
             findByDatasetVersionIdAndSampleIdInOrderBySampleIdAscCreatedAtAscIdAsc(
                     String datasetVersionId,
                     Collection<String> sampleIds
@@ -50,4 +78,21 @@ public interface DatasetAnnotationRepository extends JpaRepository<DatasetAnnota
     List<DatasetAnnotation> findBySampleIdInOrderBySampleIdAscCreatedAtAscIdAsc(
             Collection<String> sampleIds
     );
+
+    long countByDatasetVersionIdAndSampleDataIdAndDeletedFalse(
+            String datasetVersionId,
+            String sampleDataId
+    );
+
+    long countByDatasetVersionIdAndPackageIdAndDeletedFalse(
+            String datasetVersionId,
+            String packageId
+    );
+
+    long countByDatasetVersionIdAndPackageId(
+            String datasetVersionId,
+            String packageId
+    );
+
+    void deleteByDatasetVersionIdAndDeletedTrue(String datasetVersionId);
 }

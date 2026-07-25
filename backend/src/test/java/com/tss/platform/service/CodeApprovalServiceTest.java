@@ -7,6 +7,9 @@ import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.model.CodeApprovalDecisionSource;
+import com.tss.platform.model.CodeRiskDisposition;
+import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
@@ -267,6 +270,56 @@ class CodeApprovalServiceTest {
                 "asset-1", "version-1", "risk-1", "AUTO_APPROVE",
                 "a".repeat(64), CodeStaticRiskScanner.RISK_POLICY_VERSION,
                 CodeApprovalDecisionSource.AUTO_POLICY
+        );
+    }
+
+    @Test
+    void systemConfigurationDirectPassPersistsExplicitBypassEvidence() {
+        riskAssessment.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        riskAssessment.setScannerVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION
+        );
+        riskAssessment.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        riskAssessment.setDisposition(CodeRiskDisposition.DIRECT_PASS);
+        version.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        version.setReviewDisposition(CodeRiskDisposition.DIRECT_PASS);
+        version.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        when(riskAssessmentRepository.findByIdAndVersionIdForUpdate(
+                "risk-1",
+                "version-1"
+        )).thenReturn(Optional.of(riskAssessment));
+        when(validationRepository.findById("validation-1"))
+                .thenReturn(Optional.of(validation));
+
+        CodeApprovalRecord approved = service.approveBySystemConfiguration(
+                "version-1",
+                "risk-1"
+        );
+
+        assertEquals(CodeApprovalStatus.APPROVED, version.getApprovalStatus());
+        assertEquals(CodeApprovalStatus.APPROVED, approved.getDecision());
+        assertEquals(
+                CodeApprovalDecisionSource.SYSTEM_CONFIG,
+                approved.getDecisionSource()
+        );
+        assertEquals(null, approved.getReviewerUserId());
+        assertEquals("risk-1", approved.getRiskAssessmentId());
+        assertEquals(
+                TrainingCodeReviewPolicy.DIRECT_PASS_APPROVAL_POLICY_VERSION,
+                approved.getApprovalPolicyVersion()
+        );
+        verify(auditService).automaticDecision(
+                "asset-1",
+                "version-1",
+                "risk-1",
+                "DIRECT_PASS_APPROVE",
+                "a".repeat(64),
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION,
+                CodeApprovalDecisionSource.SYSTEM_CONFIG
         );
     }
 

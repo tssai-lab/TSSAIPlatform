@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -99,7 +102,7 @@ public class ModelCodePreviewService {
                     ModelCodePreviewDto dto = new ModelCodePreviewDto();
                     dto.setPath(entryPath);
                     dto.setFileName(fileNameOf(entryPath));
-                    dto.setContent(new String(bytes, StandardCharsets.UTF_8));
+                    dto.setContent(decodeUtf8(bytes));
                     dto.setSizeBytes(entry.getSize() >= 0 ? entry.getSize() : (long) bytes.length);
                     return dto;
                 }
@@ -151,6 +154,17 @@ public class ModelCodePreviewService {
             out.write(buffer, 0, len);
         }
         return out.toByteArray();
+    }
+
+    private String decodeUtf8(byte[] bytes) {
+        var decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+        try {
+            return decoder.decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException exception) {
+            throw new IllegalArgumentException("代码文件不是有效的 UTF-8 文本", exception);
+        }
     }
 
     private boolean isCodeFile(String path) {

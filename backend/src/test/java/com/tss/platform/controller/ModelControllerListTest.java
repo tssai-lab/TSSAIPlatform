@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -53,6 +54,7 @@ class ModelControllerListTest {
         version.setAssetId(asset.getId());
         version.setVersion("v1");
         version.setFileName("detector.zip");
+        version.setStoragePath("users/7/models/internal/detector.zip");
         version.setStatus("READY");
         version.setOwnerUserId(7);
         version.setCreatedAt(Instant.parse("2026-01-02T00:00:00Z"));
@@ -81,6 +83,7 @@ class ModelControllerListTest {
         assertEquals(1, data.size());
         assertEquals("model-ver-1", data.get(0).get("id"));
         assertEquals("Detector", data.get(0).get("name"));
+        assertFalse(data.get(0).containsKey("storagePath"));
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(versionRepo).searchVisibleCatalog(eq(7), eq("CV"), eq("%det%"), pageableCaptor.capture());
@@ -89,5 +92,38 @@ class ModelControllerListTest {
         verify(versionRepo, never()).findByDeletedFalse();
         verify(assetRepo, never()).findByDeletedFalse();
         verify(assetRepo, never()).findByOwnerUserIdAndDeletedFalse(any());
+    }
+
+    @Test
+    void detailDoesNotExposeInternalStoragePath() {
+        ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
+        ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        ModelController controller = new ModelController(
+                assetRepo,
+                versionRepo,
+                mock(ModelCodePreviewService.class),
+                authContext,
+                mock(ModelVersionLifecycleService.class)
+        );
+        ModelAsset asset = new ModelAsset();
+        asset.setId("asset-1");
+        asset.setName("Detector");
+        asset.setOwnerUserId(7);
+        ModelVersion version = new ModelVersion();
+        version.setId("model-ver-1");
+        version.setAssetId(asset.getId());
+        version.setStoragePath("users/7/models/internal/detector.zip");
+        version.setOwnerUserId(7);
+        when(versionRepo.findByIdAndDeletedFalse(version.getId()))
+                .thenReturn(java.util.Optional.of(version));
+        when(assetRepo.findByIdAndDeletedFalse(asset.getId()))
+                .thenReturn(java.util.Optional.of(asset));
+        when(authContext.canAccessOwner(7)).thenReturn(true);
+
+        ApiResponse<Map<String, Object>> response = controller.detail(version.getId());
+
+        assertTrue(response.isSuccess());
+        assertFalse(response.getData().containsKey("storagePath"));
     }
 }

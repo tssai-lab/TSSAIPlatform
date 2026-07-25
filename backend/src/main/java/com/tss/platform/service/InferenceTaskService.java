@@ -57,6 +57,7 @@ public class InferenceTaskService {
     private final InferenceTaskRepository taskRepo;
     private final ModelVersionRepository modelVersionRepo;
     private final ModelAssetRepository modelAssetRepo;
+    private final ModelArtifactAttestationService modelArtifactAttestationService;
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
     private final InferenceScriptService scriptService;
@@ -70,6 +71,7 @@ public class InferenceTaskService {
             InferenceTaskRepository taskRepo,
             ModelVersionRepository modelVersionRepo,
             ModelAssetRepository modelAssetRepo,
+            ModelArtifactAttestationService modelArtifactAttestationService,
             DatasetVersionRepository datasetVersionRepo,
             DatasetAssetRepository datasetAssetRepo,
             InferenceScriptService scriptService,
@@ -82,6 +84,7 @@ public class InferenceTaskService {
         this.taskRepo = taskRepo;
         this.modelVersionRepo = modelVersionRepo;
         this.modelAssetRepo = modelAssetRepo;
+        this.modelArtifactAttestationService = modelArtifactAttestationService;
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
         this.scriptService = scriptService;
@@ -316,12 +319,11 @@ public class InferenceTaskService {
                     .orElse(null);
         }
         authContext.requireOwnerAccess(ownerUserId, "no permission for modelVersionId: " + modelVersionId);
-        if (!"READY".equals(version.getStatus())) {
-            throw new IllegalArgumentException("模型版本必须是 READY 状态");
-        }
-        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("模型版本缺少存储路径");
-        }
+        ModelArtifactAttestationService.AttestedArtifact attested =
+                modelArtifactAttestationService.attestReady(version.getId());
+        version.setArtifactSha256(attested.sha256());
+        version.setArtifactAttestedSha256(attested.sha256());
+        version.setArtifactAttestedAt(attested.version().getArtifactAttestedAt());
         return version;
     }
 

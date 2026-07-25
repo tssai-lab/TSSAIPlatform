@@ -10,6 +10,8 @@ import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.model.CodeRiskAssessmentStatus;
 import com.tss.platform.model.CodeRiskDisposition;
 import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewMode;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
 import com.tss.platform.repository.CodeRiskFindingRepository;
@@ -51,6 +53,7 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
     private final CodeZipArchiveService zipArchiveService;
     private final CodeStaticRiskScanner scanner;
     private final CodeRiskProperties properties;
+    private final SystemConfigService systemConfigService;
     private final CodeApprovalService approvalService;
     private final CodeAssetAuditService auditService;
     private final AuthContext authContext;
@@ -66,6 +69,7 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             CodeZipArchiveService zipArchiveService,
             CodeStaticRiskScanner scanner,
             CodeRiskProperties properties,
+            SystemConfigService systemConfigService,
             CodeApprovalService approvalService,
             CodeAssetAuditService auditService,
             AuthContext authContext,
@@ -80,6 +84,7 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
         this.zipArchiveService = zipArchiveService;
         this.scanner = scanner;
         this.properties = properties;
+        this.systemConfigService = systemConfigService;
         this.approvalService = approvalService;
         this.auditService = auditService;
         this.authContext = authContext;
@@ -101,6 +106,19 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
                         "VALIDATION_EVIDENCE_MISSING", "Validation evidence is missing"
                 ));
         requireEvidence(version, validationRun);
+        if (systemConfigService.currentTrainingCodeReviewMode()
+                == TrainingCodeReviewMode.DIRECT_PASS) {
+            CodeRiskAssessment assessment = createDirectPassAssessment(
+                    version,
+                    validationRun,
+                    requestedByUserId
+            );
+            approvalService.approveBySystemConfiguration(
+                    version.getId(),
+                    assessment.getId()
+            );
+            return assessment;
+        }
         return createAssessment(version, validationRun, requestedByUserId, false);
     }
 
@@ -263,6 +281,44 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             version.setApprovalStatus(CodeApprovalStatus.PENDING);
             versionRepository.saveAndFlush(version);
         }
+        return assessment;
+    }
+
+    private CodeRiskAssessment createDirectPassAssessment(
+            CodeVersion version,
+            CodeValidationRun validationRun,
+            Integer requestedByUserId
+    ) {
+        Instant now = Instant.now();
+        CodeRiskAssessment assessment = new CodeRiskAssessment();
+        assessment.setId("code-risk-" + compactUuid());
+        assessment.setVersionId(version.getId());
+        assessment.setValidationRunId(validationRun.getId());
+        assessment.setArtifactSha256(version.getArtifactSha256());
+        assessment.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        assessment.setScannerVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION
+        );
+        assessment.setStatus(CodeRiskAssessmentStatus.COMPLETED);
+        assessment.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        assessment.setDisposition(CodeRiskDisposition.DIRECT_PASS);
+        assessment.setFindingCount(0);
+        assessment.setRequestedByUserId(requestedByUserId);
+        assessment.setCreatedAt(now);
+        assessment.setCompletedAt(now);
+        assessmentRepository.saveAndFlush(assessment);
+        updateVersionSummary(version, assessment, now);
+        auditService.riskAssessmentCompleted(
+                version.getAssetId(),
+                version.getId(),
+                assessment.getId(),
+                assessment.getRiskLevel(),
+                assessment.getDisposition(),
+                assessment.getScannerVersion(),
+                0
+        );
         return assessment;
     }
 

@@ -43,6 +43,7 @@ public class ImportJobQueryService {
     private final DatasetSampleRepository sampleRepo;
     private final ImportJobSampleFailureRepository failureRepo;
     private final DatasetWorkspaceAuditService auditService;
+    private DatasetWorkspaceCommandService commandService;
 
     @Autowired
     public ImportJobQueryService(
@@ -63,6 +64,11 @@ public class ImportJobQueryService {
         this.sampleRepo = sampleRepo;
         this.failureRepo = failureRepo;
         this.auditService = auditService;
+    }
+
+    @Autowired(required = false)
+    void setCommandService(DatasetWorkspaceCommandService commandService) {
+        this.commandService = commandService;
     }
 
     ImportJobQueryService(
@@ -118,12 +124,30 @@ public class ImportJobQueryService {
             );
         }
 
+        ImportJob snapshot = importJobRepo.findById(importJobId)
+                .orElseThrow(() -> new ImportJobAccessException(
+                        "importJob not found or no permission"
+                ));
+        DatasetWorkspaceCommandService.WorkspaceAccess access =
+                commandService == null
+                        ? null
+                        : commandService.lockForLegacyMutation(
+                                snapshot.getDatasetVersionId()
+                        );
         ImportJob job = importJobRepo.findByIdForUpdate(importJobId)
                 .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
-        DatasetVersion version = versionRepo.findByIdAndDeletedFalse(job.getDatasetVersionId())
-                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
-        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(() -> new ImportJobAccessException("importJob not found or no permission"));
+        DatasetVersion version = access == null
+                ? versionRepo.findByIdAndDeletedFalse(job.getDatasetVersionId())
+                        .orElseThrow(() -> new ImportJobAccessException(
+                                "importJob not found or no permission"
+                        ))
+                : access.workspace();
+        DatasetAsset asset = access == null
+                ? assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                        .orElseThrow(() -> new ImportJobAccessException(
+                                "importJob not found or no permission"
+                        ))
+                : access.asset();
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new ImportJobAccessException("importJob not found or no permission");
         }
@@ -164,6 +188,7 @@ public class ImportJobQueryService {
         job.setFinishedAt(null);
         job.setUpdatedAt(now);
         ImportJob saved = importJobRepo.saveAndFlush(job);
+        incrementWorkspaceRevision(version);
         if (auditService != null) {
             auditService.recordFullRetry(asset, version, saved);
         }
@@ -217,11 +242,18 @@ public class ImportJobQueryService {
         job.setFinishedAt(null);
         job.setUpdatedAt(now);
         ImportJob saved = importJobRepo.saveAndFlush(job);
+        incrementWorkspaceRevision(version);
         if (auditService != null) {
             auditService.recordIncrementalRetry(asset, version, saved, marked);
         }
         launchAfterCommit(saved.getId());
         return toDto(saved);
+    }
+
+    private void incrementWorkspaceRevision(DatasetVersion version) {
+        if (commandService != null) {
+            commandService.incrementRevision(version);
+        }
     }
 
     private boolean hasPersistedSamples(ImportJob job) {

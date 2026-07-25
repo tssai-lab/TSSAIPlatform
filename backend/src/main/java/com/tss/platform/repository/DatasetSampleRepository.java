@@ -25,7 +25,11 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
             Pageable pageable
     );
 
+    List<DatasetSample> findByDatasetVersionId(String datasetVersionId);
+
     Optional<DatasetSample> findByIdAndDeletedFalse(String id);
+
+    Optional<DatasetSample> findByIdAndDatasetVersionId(String id, String datasetVersionId);
 
     Page<DatasetSample> findByDatasetVersionIdInAndExternalIdAndDeletedFalse(
             Collection<String> datasetVersionIds,
@@ -40,6 +44,10 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
     Slice<DatasetSample> findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
             String datasetVersionId,
             Pageable pageable
+    );
+
+    List<DatasetSample> findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
+            String datasetVersionId
     );
 
     List<DatasetSample> findByDatasetVersionIdAndDeletedFalseAndExternalIdIn(
@@ -118,4 +126,20 @@ public interface DatasetSampleRepository extends JpaRepository<DatasetSample, St
     Integer findMaxSampleIndexByDatasetVersionIdAndDeletedFalse(
             @Param("datasetVersionId") String datasetVersionId
     );
+
+    @Query("""
+            select coalesce(max(s.sampleIndex), -1)
+            from DatasetSample s
+            where s.datasetVersionId = :datasetVersionId
+            """)
+    Integer findMaxSampleIndexByDatasetVersionId(
+            @Param("datasetVersionId") String datasetVersionId
+    );
+
+    boolean existsByDatasetVersionIdAndExternalId(
+            String datasetVersionId,
+            String externalId
+    );
+
+    void deleteByDatasetVersionIdAndDeletedTrue(String datasetVersionId);
 }

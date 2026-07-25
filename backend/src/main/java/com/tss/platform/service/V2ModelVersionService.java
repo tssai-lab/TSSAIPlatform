@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -34,6 +35,7 @@ public class V2ModelVersionService {
     private final ModelVersionRepository versionRepo;
     private final ModelAssetRepository assetRepo;
     private final ModelArtifactAttestationService attestationService;
+    private final ModelArtifactIntegrityService integrityService;
     private final ModelVersionLifecycleService lifecycleService;
     private final ModelCodePreviewService codePreviewService;
     private final MinioService minioService;
@@ -43,6 +45,7 @@ public class V2ModelVersionService {
             ModelVersionRepository versionRepo,
             ModelAssetRepository assetRepo,
             ModelArtifactAttestationService attestationService,
+            ModelArtifactIntegrityService integrityService,
             ModelVersionLifecycleService lifecycleService,
             ModelCodePreviewService codePreviewService,
             MinioService minioService,
@@ -51,6 +54,7 @@ public class V2ModelVersionService {
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
         this.attestationService = attestationService;
+        this.integrityService = integrityService;
         this.lifecycleService = lifecycleService;
         this.codePreviewService = codePreviewService;
         this.minioService = minioService;
@@ -98,20 +102,54 @@ public class V2ModelVersionService {
     }
 
     public Download download(String versionId) {
-        AttestedScope scope = attestOwnerVersion(versionId);
-        ModelVersion version = scope.artifact().version();
+        OwnerScope ownerScope = requireOwnerVersion(versionId);
+        ModelVersion version = ownerScope.version();
+        if (!"READY".equals(version.getStatus())) {
+            throw new V2BusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "MODEL_ARTIFACT_INVALID",
+                    "模型版本尚未通过 READY 准入"
+            );
+        }
+        String storagePath = version.getStoragePath();
+        Long sizeBytes = version.getSizeBytes();
+        String expectedSha256 = version.getArtifactSha256();
+        if (storagePath == null || storagePath.isBlank()
+                || sizeBytes == null || sizeBytes <= 0) {
+            attestationService.invalidate(versionId);
+            throw new V2BusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "MODEL_ARTIFACT_INVALID",
+                    "模型制品元数据不完整"
+            );
+        }
+        Consumer<ModelArtifactIntegrityService.Inspection> successHandler =
+                expectedSha256 == null
+                        ? inspection -> attestationService.recordStreamingVerification(
+                                versionId,
+                                storagePath,
+                                sizeBytes,
+                                inspection.sha256()
+                        )
+                        : null;
         try {
             return new Download(
                     safeFileName(version),
-                    scope.artifact().sizeBytes(),
-                    minioService.downloadStream(version.getStoragePath())
+                    sizeBytes,
+                    expectedSha256,
+                    integrityService.openVerified(
+                            storagePath,
+                            sizeBytes,
+                            expectedSha256,
+                            successHandler,
+                            () -> attestationService.invalidate(versionId)
+                    )
             );
-        } catch (Exception exception) {
-            throw new V2BusinessException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "MODEL_STORAGE_UNAVAILABLE",
-                    "模型存储暂时不可用"
-            );
+        } catch (ModelArtifactException exception) {
+            if (!exception.isStorageUnavailable()) {
+                attestationService.invalidate(version.getId());
+            }
+            throw artifactFailure(exception);
         }
     }
 
@@ -199,15 +237,11 @@ public class V2ModelVersionService {
     }
 
     private AttestedScope attestOwnerVersion(String versionId) {
-        ModelVersion version = versionRepo.findByIdAndDeletedFalse(versionId)
-                .orElseThrow(this::notFound);
-        ModelAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
-                .orElseThrow(this::notFound);
-        if (!authContext.canAccessOwner(effectiveOwner(version, asset))) {
-            throw notFound();
-        }
+        OwnerScope ownerScope = requireOwnerVersion(versionId);
         try {
-            return new AttestedScope(attestationService.attestReady(version.getId()));
+            return new AttestedScope(
+                    attestationService.attestReady(ownerScope.version().getId())
+            );
         } catch (ModelArtifactException exception) {
             throw artifactFailure(exception);
         } catch (IllegalArgumentException exception) {
@@ -217,6 +251,17 @@ public class V2ModelVersionService {
                     "模型版本尚不可消费"
             );
         }
+    }
+
+    private OwnerScope requireOwnerVersion(String versionId) {
+        ModelVersion version = versionRepo.findByIdAndDeletedFalse(versionId)
+                .orElseThrow(this::notFound);
+        ModelAsset asset = assetRepo.findByIdAndDeletedFalse(version.getAssetId())
+                .orElseThrow(this::notFound);
+        if (!authContext.canAccessOwner(effectiveOwner(version, asset))) {
+            throw notFound();
+        }
+        return new OwnerScope(version, asset);
     }
 
     private void invalidateAndReject(String versionId, String message) {
@@ -306,6 +351,14 @@ public class V2ModelVersionService {
     private record AttestedScope(ModelArtifactAttestationService.AttestedArtifact artifact) {
     }
 
-    public record Download(String fileName, long sizeBytes, InputStream inputStream) {
+    private record OwnerScope(ModelVersion version, ModelAsset asset) {
+    }
+
+    public record Download(
+            String fileName,
+            long sizeBytes,
+            String sha256,
+            InputStream inputStream
+    ) {
     }
 }

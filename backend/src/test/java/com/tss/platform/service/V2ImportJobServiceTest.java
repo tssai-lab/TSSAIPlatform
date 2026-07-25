@@ -3,6 +3,7 @@ package com.tss.platform.service;
 import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.ImportJobStatusDto;
 import com.tss.platform.dto.v2.V2ImportJobStatusDto;
+import com.tss.platform.dto.v2.V2ImportJobRetryRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -23,15 +24,27 @@ class V2ImportJobServiceTest {
         retryResult.setImportJobId("ijob-1");
         retryResult.setStatus("PENDING");
         retryResult.setProgress(0);
-        when(delegate.retry("ijob-1", "FULL")).thenReturn(retryResult);
-        V2ImportJobService service = new V2ImportJobService(delegate);
+        DatasetWorkspaceImportRetryService workspaceRetry =
+                mock(DatasetWorkspaceImportRetryService.class);
+        when(workspaceRetry.retry("ijob-1", "FULL", 3L))
+                .thenReturn(new DatasetWorkspaceImportRetryService.RetryResult(
+                        retryResult,
+                        "workspace-1",
+                        4L
+                ));
+        V2ImportJobService service = new V2ImportJobService(delegate, workspaceRetry);
 
-        V2ImportJobStatusDto result = service.retry("ijob-1", "FULL");
+        V2ImportJobStatusDto result = service.retry(
+                "ijob-1",
+                new V2ImportJobRetryRequest("FULL", 3L)
+        );
 
         assertEquals("ijob-1", result.getImportJobId());
         assertEquals("PENDING", result.getStatus());
         assertEquals("IMPORTING", result.getDisplayStatus());
         assertEquals(0, result.getImportProgress());
+        assertEquals("workspace-1", result.getWorkspaceId());
+        assertEquals(4L, result.getWorkspaceRevision());
         assertNull(result.getUserError());
     }
 
@@ -48,7 +61,10 @@ class V2ImportJobServiceTest {
         status.setErrorCode("PARTIAL_IMPORT_FAILED");
         status.setErrorMessage("部分样本导入失败，可增量重试");
         when(delegate.getStatus("ijob-1")).thenReturn(status);
-        V2ImportJobService service = new V2ImportJobService(delegate);
+        V2ImportJobService service = new V2ImportJobService(
+                delegate,
+                mock(DatasetWorkspaceImportRetryService.class)
+        );
 
         V2ImportJobStatusDto result = service.getStatus("ijob-1");
 
@@ -73,7 +89,10 @@ class V2ImportJobServiceTest {
         status.setErrorCode("IMPORT_FAILED");
         status.setErrorMessage("manifest validation failed");
         when(delegate.getStatus("ijob-2")).thenReturn(status);
-        V2ImportJobService service = new V2ImportJobService(delegate);
+        V2ImportJobService service = new V2ImportJobService(
+                delegate,
+                mock(DatasetWorkspaceImportRetryService.class)
+        );
 
         V2ImportJobStatusDto result = service.getStatus("ijob-2");
 
@@ -88,15 +107,20 @@ class V2ImportJobServiceTest {
     @Test
     void retryMapsMissingImportJobToV2NotFound() {
         ImportJobQueryService delegate = mock(ImportJobQueryService.class);
-        when(delegate.retry("ijob-missing", "FULL"))
+        DatasetWorkspaceImportRetryService workspaceRetry =
+                mock(DatasetWorkspaceImportRetryService.class);
+        when(workspaceRetry.retry("ijob-missing", "FULL", 3L))
                 .thenThrow(new ImportJobQueryService.ImportJobAccessException(
                         "importJob not found or no permission"
                 ));
-        V2ImportJobService service = new V2ImportJobService(delegate);
+        V2ImportJobService service = new V2ImportJobService(delegate, workspaceRetry);
 
         V2BusinessException error = assertThrows(
                 V2BusinessException.class,
-                () -> service.retry("ijob-missing", "FULL")
+                () -> service.retry(
+                        "ijob-missing",
+                        new V2ImportJobRetryRequest("FULL", 3L)
+                )
         );
 
         assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
@@ -106,15 +130,20 @@ class V2ImportJobServiceTest {
     @Test
     void retryMapsNonRetryableImportJobToV2BusinessError() {
         ImportJobQueryService delegate = mock(ImportJobQueryService.class);
-        when(delegate.retry("ijob-running", "FULL"))
+        DatasetWorkspaceImportRetryService workspaceRetry =
+                mock(DatasetWorkspaceImportRetryService.class);
+        when(workspaceRetry.retry("ijob-running", "FULL", 3L))
                 .thenThrow(new ImportJobQueryService.ImportJobRetryRejectedException(
                         "only FAILED ImportJob can be retried"
                 ));
-        V2ImportJobService service = new V2ImportJobService(delegate);
+        V2ImportJobService service = new V2ImportJobService(delegate, workspaceRetry);
 
         V2BusinessException error = assertThrows(
                 V2BusinessException.class,
-                () -> service.retry("ijob-running", "FULL")
+                () -> service.retry(
+                        "ijob-running",
+                        new V2ImportJobRetryRequest("FULL", 3L)
+                )
         );
 
         assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, error.getStatus());

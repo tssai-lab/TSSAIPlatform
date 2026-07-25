@@ -6,7 +6,11 @@ import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.model.TaskType;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.AssetNameConflictException;
+import com.tss.platform.service.AssetNamePolicy;
+import com.tss.platform.service.AssetNameValidationException;
 import com.tss.platform.service.ModelVersionLifecycleService;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,16 +46,26 @@ public class ModelAssetCrudController {
 
     @PostMapping
     public ApiResponse<ModelAsset> create(@RequestBody ModelAsset body) {
+        if (body == null) {
+            throw new AssetNameValidationException("request body cannot be empty");
+        }
+        String normalizedName = AssetNamePolicy.normalizeRequired(body.getName());
+        Integer ownerUserId = authContext.currentUserId();
+        requireUniqueName(ownerUserId, normalizedName, null);
         try {
             body.setType(TaskType.normalize(body.getType()));
+            body.setName(normalizedName);
             body.setId("model-asset-" + UUID.randomUUID().toString().replace("-", ""));
             body.setCurrentVersionId(null);
-            body.setOwnerUserId(authContext.currentUserId());
+            body.setOwnerUserId(ownerUserId);
             body.setCreatedAt(Instant.now());
             body.setUpdatedAt(Instant.now());
             body.setDeleted(false);
             body.setDeletedAt(null);
-            return ApiResponse.ok(repo.save(body));
+            return ApiResponse.ok(repo.saveAndFlush(body));
+        } catch (DataIntegrityViolationException exception) {
+            throwNameConflictOrRethrow(exception);
+            throw exception;
         } catch (IllegalArgumentException exception) {
             return ApiResponse.fail(exception.getMessage());
         }
@@ -89,15 +103,27 @@ public class ModelAssetCrudController {
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             return ApiResponse.fail("no permission: " + id);
         }
-        asset.setName(body.getName());
+        if (body == null) {
+            throw new AssetNameValidationException("request body cannot be empty");
+        }
+        String normalizedName = AssetNamePolicy.normalizeRequired(body.getName());
+        String normalizedType;
         try {
-            asset.setType(TaskType.normalize(body.getType()));
+            normalizedType = TaskType.normalize(body.getType());
         } catch (IllegalArgumentException exception) {
             return ApiResponse.fail(exception.getMessage());
         }
+        requireUniqueName(asset.getOwnerUserId(), normalizedName, id);
+        asset.setName(normalizedName);
+        asset.setType(normalizedType);
         asset.setRemark(body.getRemark());
         asset.setUpdatedAt(Instant.now());
-        return ApiResponse.ok(repo.save(asset));
+        try {
+            return ApiResponse.ok(repo.saveAndFlush(asset));
+        } catch (DataIntegrityViolationException exception) {
+            throwNameConflictOrRethrow(exception);
+            throw exception;
+        }
     }
 
     @PutMapping("/{id}/current-version")
@@ -121,6 +147,22 @@ public class ModelAssetCrudController {
             return ApiResponse.ok(lifecycleService.deleteAsset(id));
         } catch (IllegalArgumentException exception) {
             return ApiResponse.fail(exception.getMessage());
+        }
+    }
+
+    private void requireUniqueName(
+            Integer ownerUserId,
+            String normalizedName,
+            String excludedId
+    ) {
+        if (repo.existsActiveNormalizedName(ownerUserId, normalizedName, excludedId)) {
+            throw new AssetNameConflictException("model");
+        }
+    }
+
+    private void throwNameConflictOrRethrow(DataIntegrityViolationException exception) {
+        if (AssetNamePolicy.isNameConstraintViolation(exception)) {
+            throw new AssetNameConflictException("model");
         }
     }
 }

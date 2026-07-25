@@ -10,9 +10,13 @@ import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
+import com.tss.platform.service.AssetNameConflictException;
+import com.tss.platform.service.AssetNamePolicy;
+import com.tss.platform.service.AssetNameValidationException;
 import com.tss.platform.service.MinioDeleteTaskService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -52,19 +56,29 @@ public class DatasetAssetCrudController {
 
     @PostMapping
     public ApiResponse<DatasetAsset> create(@RequestBody DatasetAsset body) {
+        if (body == null) {
+            throw new AssetNameValidationException("request body cannot be empty");
+        }
+        String normalizedName = AssetNamePolicy.normalizeRequired(body.getName());
+        Integer ownerUserId = authContext.currentUserId();
+        requireUniqueName(ownerUserId, normalizedName, null);
         try {
             body.setType(DatasetTaskType.normalize(body.getType()));
             body.setCvTaskType(CvTaskType.normalizeForTask(body.getType(), body.getCvTaskType()));
             body.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(body.getType(), body.getAnnotationFormat()));
+            body.setName(normalizedName);
             body.setId("dataset-asset-" + UUID.randomUUID().toString().replace("-", ""));
-            body.setOwnerUserId(authContext.currentUserId());
+            body.setOwnerUserId(ownerUserId);
             if (body.getCreatedAt() == null) {
                 body.setCreatedAt(Instant.now());
             }
             body.setUpdatedAt(Instant.now());
             body.setDeleted(false);
             body.setDeletedAt(null);
-            return ApiResponse.ok(repo.save(body));
+            return ApiResponse.ok(repo.saveAndFlush(body));
+        } catch (DataIntegrityViolationException exception) {
+            throwNameConflictOrRethrow(exception);
+            throw exception;
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
@@ -97,17 +111,39 @@ public class DatasetAssetCrudController {
         if (!authContext.canAccessOwner(e.getOwnerUserId())) {
             return ApiResponse.fail("no permission: " + id);
         }
-        e.setName(body.getName());
+        if (body == null) {
+            throw new AssetNameValidationException("request body cannot be empty");
+        }
+        String normalizedName = AssetNamePolicy.normalizeRequired(body.getName());
+        String normalizedType;
+        String normalizedCvTaskType;
+        String normalizedAnnotationFormat;
         try {
-            e.setType(DatasetTaskType.normalize(body.getType()));
-            e.setCvTaskType(CvTaskType.normalizeForTask(e.getType(), body.getCvTaskType()));
-            e.setAnnotationFormat(CvAnnotationFormat.normalizeForTask(e.getType(), body.getAnnotationFormat()));
+            normalizedType = DatasetTaskType.normalize(body.getType());
+            normalizedCvTaskType = CvTaskType.normalizeForTask(
+                    normalizedType,
+                    body.getCvTaskType()
+            );
+            normalizedAnnotationFormat = CvAnnotationFormat.normalizeForTask(
+                    normalizedType,
+                    body.getAnnotationFormat()
+            );
         } catch (IllegalArgumentException ex) {
             return ApiResponse.fail(ex.getMessage());
         }
+        requireUniqueName(e.getOwnerUserId(), normalizedName, id);
+        e.setName(normalizedName);
+        e.setType(normalizedType);
+        e.setCvTaskType(normalizedCvTaskType);
+        e.setAnnotationFormat(normalizedAnnotationFormat);
         e.setRemark(body.getRemark());
         e.setUpdatedAt(Instant.now());
-        return ApiResponse.ok(repo.save(e));
+        try {
+            return ApiResponse.ok(repo.saveAndFlush(e));
+        } catch (DataIntegrityViolationException exception) {
+            throwNameConflictOrRethrow(exception);
+            throw exception;
+        }
     }
 
     @PutMapping("/{id}/current-version")
@@ -209,6 +245,22 @@ public class DatasetAssetCrudController {
         result.put("deleted", true);
         result.put("minioDeleteQueued", objectNames.size());
         return ApiResponse.ok(result);
+    }
+
+    private void requireUniqueName(
+            Integer ownerUserId,
+            String normalizedName,
+            String excludedId
+    ) {
+        if (repo.existsActiveNormalizedName(ownerUserId, normalizedName, excludedId)) {
+            throw new AssetNameConflictException("dataset");
+        }
+    }
+
+    private void throwNameConflictOrRethrow(DataIntegrityViolationException exception) {
+        if (AssetNamePolicy.isNameConstraintViolation(exception)) {
+            throw new AssetNameConflictException("dataset");
+        }
     }
 }
 

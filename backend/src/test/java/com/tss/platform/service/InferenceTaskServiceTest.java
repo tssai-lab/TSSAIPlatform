@@ -43,6 +43,10 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class InferenceTaskServiceTest {
 
@@ -53,6 +57,7 @@ class InferenceTaskServiceTest {
     private FakeExecutorRouter executorRouter;
     private FakeMinioService minioService;
     private FakeMinioDeleteTaskService minioDeleteTaskService;
+    private ModelArtifactAttestationService attestation;
     private InferenceTaskService service;
 
     @BeforeEach
@@ -64,11 +69,26 @@ class InferenceTaskServiceTest {
         executorRouter = new FakeExecutorRouter();
         minioService = new FakeMinioService();
         minioDeleteTaskService = new FakeMinioDeleteTaskService();
+        attestation = mock(ModelArtifactAttestationService.class);
+        when(attestation.attestReady(anyString())).thenAnswer(invocation -> {
+            ModelVersion version = modelVersionRepo.model;
+            if (version == null || !"READY".equals(version.getStatus())) {
+                throw new IllegalArgumentException("模型版本必须是 READY 状态");
+            }
+            return new ModelArtifactAttestationService.AttestedArtifact(
+                    version,
+                    new com.tss.platform.entity.ModelAsset(),
+                    1L,
+                    "a".repeat(64),
+                    null
+            );
+        });
 
         service = new InferenceTaskService(
                 taskRepo.proxy(),
                 modelVersionRepo.proxy(),
                 emptyProxy(ModelAssetRepository.class),
+                attestation,
                 datasetVersionRepo.proxy(),
                 emptyProxy(DatasetAssetRepository.class),
                 scriptService,
@@ -101,6 +121,7 @@ class InferenceTaskServiceTest {
         assertEquals("dataset-ver-1", dto.getDatasetVersionId());
         assertEquals("pending", dto.getStatus());
         assertEquals(dto.getId(), executorRouter.startedTaskId);
+        verify(attestation).attestReady("model-ver-1");
     }
 
     @Test

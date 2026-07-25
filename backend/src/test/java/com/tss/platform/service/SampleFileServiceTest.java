@@ -106,6 +106,96 @@ class SampleFileServiceTest {
     }
 
     @Test
+    void downloadsRawDataFromWholeObjectWithoutZipIndex() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetSampleData data = fixture.data("TEXT", null);
+        byte[] expected = "raw workspace data".getBytes(StandardCharsets.UTF_8);
+        data.setPackageId(fixture.datasetPackage.getId());
+        data.setSizeBytes((long) expected.length);
+        data.setZipDataOffset(null);
+        data.setCompressedSize(null);
+        data.setUncompressedSize(null);
+        fixture.datasetPackage.setStorageKind("RAW");
+        fixture.stubAuthorizedData(data);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadStream(
+                fixture.datasetPackage.getStoragePath()
+        )).thenReturn(new ByteArrayInputStream(expected));
+
+        SampleFileService.SampleFileStream result =
+                fixture.service.openDataDownload(data.getId());
+
+        assertArrayEquals(expected, result.inputStream().readAllBytes());
+        assertEquals((long) expected.length, result.sizeBytes());
+        verify(fixture.minioService).downloadStream(
+                fixture.datasetPackage.getStoragePath()
+        );
+        verify(fixture.minioService, never()).downloadRange(
+                any(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong()
+        );
+    }
+
+    @Test
+    void downloadsRawAnnotationFromWholeObjectWithoutZipIndex() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetAnnotation annotation = fixture.annotation(null);
+        byte[] expected = "{\"label\":1}".getBytes(StandardCharsets.UTF_8);
+        annotation.setPackageId(fixture.datasetPackage.getId());
+        annotation.setSizeBytes((long) expected.length);
+        annotation.setZipDataOffset(null);
+        annotation.setCompressedSize(null);
+        annotation.setUncompressedSize(null);
+        fixture.datasetPackage.setStorageKind("RAW");
+        fixture.stubAuthorizedAnnotation(annotation);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadStream(
+                fixture.datasetPackage.getStoragePath()
+        )).thenReturn(new ByteArrayInputStream(expected));
+
+        SampleFileService.SampleFileStream result =
+                fixture.service.openAnnotationDownload(annotation.getId());
+
+        assertArrayEquals(expected, result.inputStream().readAllBytes());
+        verify(fixture.minioService).downloadStream(
+                fixture.datasetPackage.getStoragePath()
+        );
+    }
+
+    @Test
+    void previewsRawVideoUsingObjectRange() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetSampleData data = fixture.data("VIDEO", null);
+        data.setPackageId(fixture.datasetPackage.getId());
+        data.setSizeBytes(1000L);
+        data.setZipDataOffset(null);
+        data.setCompressedSize(null);
+        data.setUncompressedSize(null);
+        fixture.datasetPackage.setStorageKind("RAW");
+        fixture.stubAuthorizedData(data);
+        fixture.stubPackageSource();
+        when(fixture.minioService.downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                100L,
+                100L
+        )).thenReturn(new ByteArrayInputStream(new byte[100]));
+
+        SampleFileService.SampleFileStream result =
+                fixture.service.openDataPreview(data.getId(), "bytes=100-199");
+
+        assertTrue(result.partial());
+        assertEquals(100L, result.rangeStart());
+        assertEquals(199L, result.rangeEnd());
+        assertEquals(1000L, result.totalSize());
+        verify(fixture.minioService).downloadRange(
+                fixture.datasetPackage.getStoragePath(),
+                100L,
+                100L
+        );
+    }
+
+    @Test
     void previewsPackageBackedStoredVideoRangeFromPackageStorage() throws Exception {
         Fixture fixture = new Fixture();
         DatasetSampleData data = fixture.data("VIDEO", "STORED");

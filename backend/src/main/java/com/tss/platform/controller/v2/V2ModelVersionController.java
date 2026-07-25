@@ -54,12 +54,15 @@ public class V2ModelVersionController {
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename(download.fileName(), StandardCharsets.UTF_8)
                 .build();
-        return ResponseEntity.ok()
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(download.sizeBytes())
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                .header("X-Content-Type-Options", "nosniff")
-                .body(new InputStreamResource(download.inputStream()));
+                .header("X-Content-Type-Options", "nosniff");
+        if (download.sha256() != null) {
+            response.header("X-Artifact-Sha256", download.sha256());
+        }
+        return response.body(new InputStreamResource(download.inputStream()));
     }
 
     @GetMapping("/model-versions/{versionId}/files")

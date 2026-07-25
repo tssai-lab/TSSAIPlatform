@@ -1,8 +1,12 @@
 package com.tss.platform.service;
 
 import com.tss.platform.dto.DatasetWorkspacePublishDto;
+import com.tss.platform.dto.v2.V2DatasetPublishReadiness;
+import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetPackage;
+import com.tss.platform.entity.DatasetSample;
+import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.ImportJob;
@@ -35,6 +39,7 @@ public class DatasetWorkspacePublishService {
     private static final String SUPERSEDED = "SUPERSEDED";
     private static final String PRIMARY = "PRIMARY";
     private static final String APPEND = "APPEND";
+    private static final String OVERLAY = "OVERLAY";
     private static final String NOT_FOUND =
             "dataset workspace version not found or no permission";
 
@@ -48,6 +53,8 @@ public class DatasetWorkspacePublishService {
     private final DatasetAnnotationRepository annotationRepo;
     private final AuthContext authContext;
     private final DatasetWorkspaceAuditService auditService;
+    private final DatasetWorkspaceReadinessService readinessService;
+    private final DatasetWorkspaceRawStorageService rawStorageService;
 
     @Autowired
     public DatasetWorkspacePublishService(
@@ -60,7 +67,9 @@ public class DatasetWorkspacePublishService {
             DatasetSampleDataRepository dataRepo,
             DatasetAnnotationRepository annotationRepo,
             AuthContext authContext,
-            DatasetWorkspaceAuditService auditService
+            DatasetWorkspaceAuditService auditService,
+            DatasetWorkspaceReadinessService readinessService,
+            DatasetWorkspaceRawStorageService rawStorageService
     ) {
         this.versionRepo = versionRepo;
         this.assetRepo = assetRepo;
@@ -72,6 +81,8 @@ public class DatasetWorkspacePublishService {
         this.annotationRepo = annotationRepo;
         this.authContext = authContext;
         this.auditService = auditService;
+        this.readinessService = readinessService;
+        this.rawStorageService = rawStorageService;
     }
 
     DatasetWorkspacePublishService(
@@ -95,6 +106,36 @@ public class DatasetWorkspacePublishService {
                 dataRepo,
                 annotationRepo,
                 authContext,
+                null,
+                null,
+                null
+        );
+    }
+
+    DatasetWorkspacePublishService(
+            DatasetVersionRepository versionRepo,
+            DatasetAssetRepository assetRepo,
+            ImportJobRepository importJobRepo,
+            DatasetVersionPackageRepository versionPackageRepo,
+            DatasetPackageRepository packageRepo,
+            DatasetSampleRepository sampleRepo,
+            DatasetSampleDataRepository dataRepo,
+            DatasetAnnotationRepository annotationRepo,
+            AuthContext authContext,
+            DatasetWorkspaceAuditService auditService
+    ) {
+        this(
+                versionRepo,
+                assetRepo,
+                importJobRepo,
+                versionPackageRepo,
+                packageRepo,
+                sampleRepo,
+                dataRepo,
+                annotationRepo,
+                authContext,
+                auditService,
+                null,
                 null
         );
     }
@@ -122,16 +163,34 @@ public class DatasetWorkspacePublishService {
             throw new IllegalArgumentException("dataset version must be DRAFT");
         }
 
-        validateLineage(asset, draft);
-        List<ImportJob> importJobs = validateImportJobs(draft.getId());
-        Set<String> linkedPackageIds = validatePackages(asset, draft);
-        validateImportJobPackages(importJobs, linkedPackageIds);
-        validateSamples(draft.getId());
-        validateMetadataPackageReferences(draft.getId(), linkedPackageIds);
+        if (readinessService != null) {
+            V2DatasetPublishReadiness readiness =
+                    readinessService.evaluate(asset, draft);
+            if (!readiness.canPublish()) {
+                throw new IllegalArgumentException(
+                        "DATASET_NOT_PUBLISHABLE: " + readiness.blockers()
+                );
+            }
+        } else {
+            validateLineage(asset, draft);
+            List<ImportJob> importJobs = validateImportJobs(draft.getId());
+            Set<String> linkedPackageIds = validatePackages(asset, draft);
+            validateImportJobPackages(importJobs, linkedPackageIds);
+            validateSamples(draft.getId());
+            validateMetadataPackageReferences(draft.getId(), linkedPackageIds);
+        }
+        purgeDeletedContent(asset, draft);
 
         Instant now = Instant.now();
         draft.setStatus(READY);
         draft.setPublishedAt(now);
+        draft.setUpdatedAt(now);
+        draft.setFileCount(
+                dataRepo.countByDatasetVersionIdAndDeletedFalse(draft.getId())
+                        + annotationRepo.countByDatasetVersionIdAndDeletedFalse(
+                                draft.getId()
+                        )
+        );
         versionRepo.saveAndFlush(draft);
 
         asset.setCurrentVersionId(draft.getId());
@@ -146,11 +205,19 @@ public class DatasetWorkspacePublishService {
         dto.setDatasetAssetId(asset.getId());
         dto.setParentVersionId(draft.getParentVersionId());
         dto.setVersionNo(draft.getVersionNo());
+        dto.setVersionLabel(displayVersionLabel(draft));
         dto.setStatus(draft.getStatus());
         dto.setPublishedAt(draft.getPublishedAt());
         dto.setCurrentVersionId(asset.getCurrentVersionId());
         dto.setMessage("dataset workspace published");
         return dto;
+    }
+
+    private String displayVersionLabel(DatasetVersion version) {
+        return version.getVersionLabel() == null
+                || version.getVersionLabel().isBlank()
+                ? version.getVersion()
+                : version.getVersionLabel();
     }
 
     private void validateLineage(DatasetAsset asset, DatasetVersion draft) {
@@ -242,7 +309,8 @@ public class DatasetWorkspacePublishService {
                 );
             }
             if (!PRIMARY.equals(relation.getPackageRole())
-                    && !APPEND.equals(relation.getPackageRole())) {
+                    && !APPEND.equals(relation.getPackageRole())
+                    && !OVERLAY.equals(relation.getPackageRole())) {
                 throw new IllegalArgumentException(
                         "dataset workspace package role is invalid: "
                                 + relation.getPackageRole()
@@ -263,7 +331,6 @@ public class DatasetWorkspacePublishService {
             packagesById.put(datasetPackage.getId(), datasetPackage);
         }
         Set<String> activePackageIds = new LinkedHashSet<>();
-        int primaryCount = 0;
         for (DatasetVersionPackage relation : relations) {
             String packageId = relation.getPackageId();
             DatasetPackage datasetPackage = packagesById.get(packageId);
@@ -278,7 +345,6 @@ public class DatasetWorkspacePublishService {
                 continue;
             }
             if (PRIMARY.equals(relation.getPackageRole())) {
-                primaryCount += 1;
                 if (relation.getPackageOrder() == null
                         || relation.getPackageOrder() != 0) {
                     throw new IllegalArgumentException(
@@ -299,11 +365,6 @@ public class DatasetWorkspacePublishService {
                 );
             }
             activePackageIds.add(packageId);
-        }
-        if (primaryCount != 1) {
-            throw new IllegalArgumentException(
-                    "dataset workspace must have exactly one PRIMARY package"
-            );
         }
         return activePackageIds;
     }
@@ -340,6 +401,61 @@ public class DatasetWorkspacePublishService {
             String draftVersionId,
             Set<String> linkedPackageIds
     ) {
+        if (readinessService == null) {
+            validateLegacyMetadataPackageReferences(
+                    draftVersionId,
+                    linkedPackageIds
+            );
+            return;
+        }
+        Set<String> referencedPackageIds = new LinkedHashSet<>();
+        Set<String> activeSampleIds = new LinkedHashSet<>(
+                sampleRepo.findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
+                        draftVersionId
+                ).stream().map(DatasetSample::getId).toList()
+        );
+        for (DatasetSampleData data : dataRepo.findByDatasetVersionId(
+                draftVersionId
+        )) {
+            if (Boolean.TRUE.equals(data.getDeleted())
+                    || !activeSampleIds.contains(data.getSampleId())) {
+                continue;
+            }
+            if (data.getPackageId() == null || data.getPackageId().isBlank()) {
+                throw new IllegalArgumentException(
+                        "dataset workspace sample data packageId is missing"
+                );
+            }
+            referencedPackageIds.add(data.getPackageId());
+        }
+        for (DatasetAnnotation annotation : annotationRepo
+                .findByDatasetVersionId(draftVersionId)) {
+            if (Boolean.TRUE.equals(annotation.getDeleted())
+                    || !activeSampleIds.contains(annotation.getSampleId())) {
+                continue;
+            }
+            if (annotation.getPackageId() == null
+                    || annotation.getPackageId().isBlank()) {
+                throw new IllegalArgumentException(
+                        "dataset workspace annotation packageId is missing"
+                );
+            }
+            referencedPackageIds.add(annotation.getPackageId());
+        }
+        for (String packageId : referencedPackageIds) {
+            if (!linkedPackageIds.contains(packageId)) {
+                throw new IllegalArgumentException(
+                        "dataset workspace metadata references unlinked package: "
+                                + packageId
+                );
+            }
+        }
+    }
+
+    private void validateLegacyMetadataPackageReferences(
+            String draftVersionId,
+            Set<String> linkedPackageIds
+    ) {
         if (sampleRepo.countByDatasetVersionIdAndCreatedByPackageIdIsNull(
                 draftVersionId
         ) > 0) {
@@ -347,7 +463,9 @@ public class DatasetWorkspacePublishService {
                     "dataset workspace sample packageId is missing"
             );
         }
-        if (dataRepo.countByDatasetVersionIdAndPackageIdIsNull(draftVersionId) > 0) {
+        if (dataRepo.countByDatasetVersionIdAndPackageIdIsNull(
+                draftVersionId
+        ) > 0) {
             throw new IllegalArgumentException(
                     "dataset workspace sample data packageId is missing"
             );
@@ -359,26 +477,70 @@ public class DatasetWorkspacePublishService {
                     "dataset workspace annotation packageId is missing"
             );
         }
-
-        Set<String> referencedPackageIds = new LinkedHashSet<>();
-        referencedPackageIds.addAll(
+        Set<String> referenced = new LinkedHashSet<>();
+        referenced.addAll(
                 sampleRepo.findDistinctCreatedByPackageIdsByDatasetVersionId(
                         draftVersionId
                 )
         );
-        referencedPackageIds.addAll(
+        referenced.addAll(
                 dataRepo.findDistinctPackageIdsByDatasetVersionId(draftVersionId)
         );
-        referencedPackageIds.addAll(
+        referenced.addAll(
                 annotationRepo.findDistinctPackageIdsByDatasetVersionId(
                         draftVersionId
                 )
         );
-        for (String packageId : referencedPackageIds) {
+        for (String packageId : referenced) {
             if (!linkedPackageIds.contains(packageId)) {
                 throw new IllegalArgumentException(
                         "dataset workspace metadata references unlinked package: "
                                 + packageId
+                );
+            }
+        }
+    }
+
+    private void purgeDeletedContent(
+            DatasetAsset asset,
+            DatasetVersion draft
+    ) {
+        Set<String> deletedSampleIds = new LinkedHashSet<>();
+        for (DatasetSample sample : sampleRepo.findByDatasetVersionId(
+                draft.getId()
+        )) {
+            if (Boolean.TRUE.equals(sample.getDeleted())) {
+                deletedSampleIds.add(sample.getId());
+            }
+        }
+        List<DatasetAnnotation> annotations = annotationRepo
+                .findByDatasetVersionId(draft.getId());
+        annotationRepo.deleteAll(annotations.stream()
+                .filter(annotation -> Boolean.TRUE.equals(annotation.getDeleted())
+                        || deletedSampleIds.contains(annotation.getSampleId()))
+                .toList());
+        annotationRepo.flush();
+        List<DatasetSampleData> data = dataRepo.findByDatasetVersionId(draft.getId());
+        dataRepo.deleteAll(data.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getDeleted())
+                        || deletedSampleIds.contains(item.getSampleId()))
+                .toList());
+        dataRepo.flush();
+        sampleRepo.deleteByDatasetVersionIdAndDeletedTrue(draft.getId());
+        sampleRepo.flush();
+
+        if (rawStorageService != null) {
+            List<String> overlayIds = versionPackageRepo
+                    .findByDatasetVersionIdOrderByPackageOrderAsc(draft.getId())
+                    .stream()
+                    .filter(relation -> OVERLAY.equals(relation.getPackageRole()))
+                    .map(DatasetVersionPackage::getPackageId)
+                    .toList();
+            for (String packageId : overlayIds) {
+                rawStorageService.releaseIfUnreferenced(
+                        draft,
+                        packageId,
+                        asset.getOwnerUserId()
                 );
             }
         }

@@ -14,9 +14,11 @@ public class V2DatasetListItem {
     private Long fileCount;
     private String displayStatus;
     private Boolean hasDraft;
-    private String editSessionId;
+    private String workspaceId;
+    private Long workspaceRevision;
+    private V2DatasetPublishReadiness publishReadiness;
+    private V2DatasetEditability editability;
     private Integer importProgress;
-    private Boolean canPublish;
     private List<String> availableActions;
     private V2UserError userError;
 }

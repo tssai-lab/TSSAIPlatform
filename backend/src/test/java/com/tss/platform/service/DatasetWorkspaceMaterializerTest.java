@@ -275,7 +275,7 @@ class DatasetWorkspaceMaterializerTest {
         );
 
         assertEquals(
-                "single-modal workspace requires ZIP-backed READY version: ready-2",
+                "DATASET_WORKSPACE_SOURCE_AMBIGUOUS: ready-2",
                 error.getMessage()
         );
         verify(fixture.sampleRepo, never())

@@ -22,6 +22,7 @@ import com.tss.platform.training.plan.TrainingRunSpecFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,6 +53,7 @@ class TrainingCodeVersionSecurityTest {
     private DatasetAssetRepository datasetAssetRepo;
     private ModelVersionRepository modelVersionRepo;
     private ModelAssetRepository modelAssetRepo;
+    private ModelArtifactAttestationService modelArtifactAttestationService;
 
     @BeforeEach
     void setUp() {
@@ -76,10 +78,12 @@ class TrainingCodeVersionSecurityTest {
         modelVersionRepo = mock(ModelVersionRepository.class);
         modelAssetRepo = mock(ModelAssetRepository.class);
         trainingRunSpecFactory = mock(TrainingRunSpecFactory.class);
+        modelArtifactAttestationService = mock(ModelArtifactAttestationService.class);
         trainingExperimentService = new TrainingExperimentService(
                 mock(TrainingExperimentVersionRepository.class),
                 modelVersionRepo,
                 modelAssetRepo,
+                modelArtifactAttestationService,
                 datasetVersionRepo,
                 datasetAssetRepo,
                 codeVersionRepo,
@@ -97,6 +101,24 @@ class TrainingCodeVersionSecurityTest {
         when(authContext.currentUserId()).thenReturn(1);
         when(codeArtifactResolver.resolve(anyString(), anyInt()))
                 .thenReturn(resolved("code-ver-approved"));
+        when(modelArtifactAttestationService.attestReady(anyString()))
+                .thenAnswer(invocation -> {
+                    String versionId = invocation.getArgument(0);
+                    ModelVersion version = modelVersionRepo
+                            .findByIdAndDeletedFalse(versionId)
+                            .orElseThrow();
+                    ModelAsset asset = modelAssetRepo
+                            .findByIdAndDeletedFalse(version.getAssetId())
+                            .orElseThrow();
+                    version.setArtifactAttestedAt(Instant.now());
+                    return new ModelArtifactAttestationService.AttestedArtifact(
+                            version,
+                            asset,
+                            1L,
+                            "a".repeat(64),
+                            null
+                    );
+                });
     }
 
     @Test
@@ -132,6 +154,22 @@ class TrainingCodeVersionSecurityTest {
                 () -> codeVersionService.requireApprovedForTraining("missing-code")
         );
         assertEquals("训练代码版本不存在或无权限", error.getMessage());
+    }
+
+    @Test
+    void administratorCannotRequireAnotherOwnersCodeForTraining() {
+        when(authContext.currentUserId()).thenReturn(99);
+        when(authContext.isAdmin()).thenReturn(true);
+        when(codeArtifactResolver.resolve("owner-7-version", 99))
+                .thenThrow(new CodeAssetAccessException());
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> codeVersionService.requireApprovedForTraining("owner-7-version")
+        );
+
+        assertEquals("训练代码版本不存在或无权限", error.getMessage());
+        verify(codeArtifactResolver).resolve("owner-7-version", 99);
     }
 
     @Test
@@ -215,6 +253,7 @@ class TrainingCodeVersionSecurityTest {
 
     @Test
     void approvedListUsesOnlyCurrentOwnerCandidatesAndResolverEligibility() {
+        when(authContext.isAdmin()).thenReturn(true);
         CodeAsset ownerAsset = codeAsset("asset-1");
         CodeVersion eligible = readyCodeVersion(
                 "code-ver-eligible", CodeApprovalStatus.APPROVED
@@ -338,6 +377,7 @@ class TrainingCodeVersionSecurityTest {
                 () -> trainingExperimentService.createExperiment(req)
         );
         assertEquals("dataset version does not exist", error.getMessage());
+        verify(modelArtifactAttestationService).attestReady(modelVersion.getId());
     }
 
     private static CodeVersion readyCodeVersion(String id, String approvalStatus) {

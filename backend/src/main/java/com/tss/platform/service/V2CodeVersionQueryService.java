@@ -26,7 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-/** Owner-scoped facade for immutable code-version resources. */
+/** Immutable code-version facade with explicit owner and administrator entry points. */
 @Service
 public class V2CodeVersionQueryService {
 
@@ -44,6 +44,7 @@ public class V2CodeVersionQueryService {
     private final CodeArtifactResolver artifactResolver;
     private final CodeAssetAuditService auditService;
     private final AuthContext authContext;
+    private final CodeAccessPolicy accessPolicy;
 
     public V2CodeVersionQueryService(
             CodeVersionRepository versionRepository,
@@ -56,7 +57,8 @@ public class V2CodeVersionQueryService {
             CodeApprovalService approvalService,
             CodeArtifactResolver artifactResolver,
             CodeAssetAuditService auditService,
-            AuthContext authContext
+            AuthContext authContext,
+            CodeAccessPolicy accessPolicy
     ) {
         this.versionRepository = versionRepository;
         this.assetRepository = assetRepository;
@@ -69,16 +71,38 @@ public class V2CodeVersionQueryService {
         this.artifactResolver = artifactResolver;
         this.auditService = auditService;
         this.authContext = authContext;
+        this.accessPolicy = accessPolicy;
     }
 
     @Transactional(readOnly = true)
     public V2CodeVersionDto get(String versionId) {
-        return V2CodeVersionDto.from(ownerVersion(versionId));
+        return get(versionId, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public V2CodeVersionDto getAdmin(String versionId) {
+        return get(versionId, CodeAccessScope.ADMIN);
+    }
+
+    private V2CodeVersionDto get(String versionId, CodeAccessScope scope) {
+        return V2CodeVersionDto.from(versionScope(versionId, false, scope).version());
     }
 
     @Transactional(readOnly = true)
     public List<V2CodeVersionDto> listForAsset(String assetId) {
-        CodeAsset asset = ownerAsset(assetId);
+        return listForAsset(assetId, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public List<V2CodeVersionDto> listForAssetAdmin(String assetId) {
+        return listForAsset(assetId, CodeAccessScope.ADMIN);
+    }
+
+    private List<V2CodeVersionDto> listForAsset(
+            String assetId,
+            CodeAccessScope scope
+    ) {
+        CodeAsset asset = asset(assetId, false, scope);
         return versionRepository
                 .findByAssetIdAndDeletedFalseOrderByCreatedAtDesc(asset.getId())
                 .stream()
@@ -90,7 +114,20 @@ public class V2CodeVersionQueryService {
 
     @Transactional(readOnly = true)
     public List<V2CodeFileNode> tree(String versionId, String prefix) {
-        CodeVersion version = ownerVersion(versionId);
+        return tree(versionId, prefix, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public List<V2CodeFileNode> treeAdmin(String versionId, String prefix) {
+        return tree(versionId, prefix, CodeAccessScope.ADMIN);
+    }
+
+    private List<V2CodeFileNode> tree(
+            String versionId,
+            String prefix,
+            CodeAccessScope scope
+    ) {
+        CodeVersion version = versionScope(versionId, false, scope).version();
         requirePreviewableVersion(version);
         requireStorageReference(version);
         String normalizedPrefix = pathPolicy.normalizeDirectoryPrefix(prefix);
@@ -131,7 +168,20 @@ public class V2CodeVersionQueryService {
 
     @Transactional(readOnly = true)
     public V2CodeFileContent content(String versionId, String path) {
-        CodeVersion version = ownerVersion(versionId);
+        return content(versionId, path, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public V2CodeFileContent contentAdmin(String versionId, String path) {
+        return content(versionId, path, CodeAccessScope.ADMIN);
+    }
+
+    private V2CodeFileContent content(
+            String versionId,
+            String path,
+            CodeAccessScope scope
+    ) {
+        CodeVersion version = versionScope(versionId, false, scope).version();
         requirePreviewableVersion(version);
         requireStorageReference(version);
         String normalizedPath = pathPolicy.normalizeFilePath(path);
@@ -151,7 +201,20 @@ public class V2CodeVersionQueryService {
 
     @Transactional(readOnly = true)
     public Download downloadFile(String versionId, String path) {
-        CodeVersion version = ownerVersion(versionId);
+        return downloadFile(versionId, path, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public Download downloadFileAdmin(String versionId, String path) {
+        return downloadFile(versionId, path, CodeAccessScope.ADMIN);
+    }
+
+    private Download downloadFile(
+            String versionId,
+            String path,
+            CodeAccessScope scope
+    ) {
+        CodeVersion version = versionScope(versionId, false, scope).version();
         requirePreviewableVersion(version);
         requireStorageReference(version);
         String normalizedPath = pathPolicy.normalizeFilePath(path);
@@ -174,7 +237,19 @@ public class V2CodeVersionQueryService {
      */
     @Transactional(readOnly = true)
     public Download downloadArchive(String versionId) {
-        CodeVersion version = ownerVersion(versionId);
+        return downloadArchive(versionId, CodeAccessScope.OWNER);
+    }
+
+    @Transactional(readOnly = true)
+    public Download downloadArchiveAdmin(String versionId) {
+        return downloadArchive(versionId, CodeAccessScope.ADMIN);
+    }
+
+    private Download downloadArchive(
+            String versionId,
+            CodeAccessScope scope
+    ) {
+        CodeVersion version = versionScope(versionId, false, scope).version();
         requireStorageReference(version);
         StoredCodeArtifact stored = storageService.read(version.getStoragePath());
         if (!Objects.equals(version.getStoragePath(), stored.objectName())) {
@@ -195,14 +270,25 @@ public class V2CodeVersionQueryService {
     }
 
     public V2CodeConsumerManifest consumerManifest(String versionId) {
-        ownerVersion(versionId);
+        versionScope(versionId, false, CodeAccessScope.OWNER);
         return artifactResolver
                 .resolve(versionId, currentUserId())
                 .toConsumerManifest();
     }
 
     public V2CodeValidationResult validate(String versionId) {
-        ownerVersion(versionId);
+        return validate(versionId, CodeAccessScope.OWNER);
+    }
+
+    public V2CodeValidationResult validateAdmin(String versionId) {
+        return validate(versionId, CodeAccessScope.ADMIN);
+    }
+
+    private V2CodeValidationResult validate(
+            String versionId,
+            CodeAccessScope scope
+    ) {
+        versionScope(versionId, false, scope);
         CodeValidationResult result = validationService.validateVersion(versionId);
         if (!result.passed()) {
             if ("STORAGE_READ_FAILED".equals(result.reasonCode())) {
@@ -255,7 +341,19 @@ public class V2CodeVersionQueryService {
 
     @Transactional
     public V2CodeVersionDto deprecate(String versionId) {
-        LockedVersion scope = ownerLockedVersion(versionId);
+        return deprecate(versionId, CodeAccessScope.OWNER);
+    }
+
+    @Transactional
+    public V2CodeVersionDto deprecateAdmin(String versionId) {
+        return deprecate(versionId, CodeAccessScope.ADMIN);
+    }
+
+    private V2CodeVersionDto deprecate(
+            String versionId,
+            CodeAccessScope accessScope
+    ) {
+        VersionScope scope = versionScope(versionId, true, accessScope);
         CodeVersion version = scope.version();
         if ("DEPRECATED".equals(version.getStatus())) {
             return V2CodeVersionDto.from(version);
@@ -274,7 +372,19 @@ public class V2CodeVersionQueryService {
 
     @Transactional
     public V2CodeVersionDto archive(String versionId) {
-        LockedVersion scope = ownerLockedVersion(versionId);
+        return archive(versionId, CodeAccessScope.OWNER);
+    }
+
+    @Transactional
+    public V2CodeVersionDto archiveAdmin(String versionId) {
+        return archive(versionId, CodeAccessScope.ADMIN);
+    }
+
+    private V2CodeVersionDto archive(
+            String versionId,
+            CodeAccessScope accessScope
+    ) {
+        VersionScope scope = versionScope(versionId, true, accessScope);
         CodeVersion version = scope.version();
         if ("ARCHIVED".equals(version.getStatus())) {
             return V2CodeVersionDto.from(version);
@@ -292,40 +402,41 @@ public class V2CodeVersionQueryService {
         return V2CodeVersionDto.from(version);
     }
 
-    private CodeVersion ownerVersion(String versionId) {
+    private VersionScope versionScope(
+            String versionId,
+            boolean lock,
+            CodeAccessScope accessScope
+    ) {
+        if (accessScope == CodeAccessScope.ADMIN) {
+            accessPolicy.requireAdministrator();
+        }
         String assetId = versionRepository.findAssetIdByIdAndDeletedFalse(versionId)
                 .orElseThrow(CodeAssetAccessException::new);
-        CodeAsset asset = ownerAsset(assetId);
-        CodeVersion version = versionRepository
-                .findByIdAndAssetIdAndDeletedFalse(versionId, asset.getId())
+        CodeAsset asset = asset(assetId, lock, accessScope);
+        CodeVersion version = (lock
+                ? versionRepository.findByIdAndDeletedFalseForUpdate(versionId)
+                : versionRepository.findByIdAndAssetIdAndDeletedFalse(
+                        versionId, asset.getId()
+                ))
                 .orElseThrow(CodeAssetAccessException::new);
         requireIdentity(asset, version);
-        return version;
+        return new VersionScope(asset, version);
     }
 
-    private CodeAsset ownerAsset(String assetId) {
-        CodeAsset asset = assetRepository.findByIdAndDeletedFalse(assetId)
-                .orElseThrow(CodeAssetAccessException::new);
-        if (asset.getOwnerUserId() == null
-                || !Objects.equals(asset.getOwnerUserId(), currentUserId())) {
-            throw new CodeAssetAccessException();
+    private CodeAsset asset(
+            String assetId,
+            boolean lock,
+            CodeAccessScope accessScope
+    ) {
+        if (accessScope == CodeAccessScope.ADMIN) {
+            accessPolicy.requireAdministrator();
         }
+        CodeAsset asset = (lock
+                ? assetRepository.findByIdAndDeletedFalseForUpdate(assetId)
+                : assetRepository.findByIdAndDeletedFalse(assetId))
+                .orElseThrow(CodeAssetAccessException::new);
+        accessPolicy.require(accessScope, asset.getOwnerUserId());
         return asset;
-    }
-
-    private LockedVersion ownerLockedVersion(String versionId) {
-        String assetId = versionRepository.findAssetIdByIdAndDeletedFalse(versionId)
-                .orElseThrow(CodeAssetAccessException::new);
-        CodeAsset asset = assetRepository.findByIdAndDeletedFalseForUpdate(assetId)
-                .orElseThrow(CodeAssetAccessException::new);
-        if (asset.getOwnerUserId() == null
-                || !Objects.equals(asset.getOwnerUserId(), currentUserId())) {
-            throw new CodeAssetAccessException();
-        }
-        CodeVersion version = versionRepository.findByIdAndDeletedFalseForUpdate(versionId)
-                .orElseThrow(CodeAssetAccessException::new);
-        requireIdentity(asset, version);
-        return new LockedVersion(asset, version);
     }
 
     private static void requireIdentity(CodeAsset asset, CodeVersion version) {
@@ -457,7 +568,7 @@ public class V2CodeVersionQueryService {
         );
     }
 
-    private record LockedVersion(CodeAsset asset, CodeVersion version) {
+    private record VersionScope(CodeAsset asset, CodeVersion version) {
     }
 
     public record Download(String fileName, String contentType, byte[] bytes) {

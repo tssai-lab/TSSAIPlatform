@@ -4,6 +4,8 @@ import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.DatasetUploadProgressDto;
+import com.tss.platform.service.AssetNameConflictException;
+import com.tss.platform.service.AssetNameValidationException;
 import com.tss.platform.service.DatasetUploadService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -26,6 +28,8 @@ public class DatasetUploadController {
     public ApiResponse<DatasetUploadProgressDto> init(@RequestBody DatasetUploadInitRequest req) {
         try {
             return ApiResponse.ok(service.init(req));
+        } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            throw exception;
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
@@ -57,6 +61,8 @@ public class DatasetUploadController {
     public ApiResponse<Map<String, Object>> complete(@RequestBody DatasetUploadCompleteRequest req) {
         try {
             return ApiResponse.ok(service.complete(req));
+        } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            throw exception;
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }
@@ -94,6 +100,8 @@ public class DatasetUploadController {
                     files,
                     paths
             ));
+        } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            throw exception;
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

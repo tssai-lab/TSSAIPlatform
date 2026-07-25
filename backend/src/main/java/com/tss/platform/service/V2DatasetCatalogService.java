@@ -3,17 +3,13 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.dto.PageResponse;
+import com.tss.platform.dto.v2.V2DatasetEditability;
 import com.tss.platform.dto.v2.V2DatasetListItem;
+import com.tss.platform.dto.v2.V2DatasetPublishReadiness;
 import com.tss.platform.dto.v2.V2DatasetVersionSummary;
 import com.tss.platform.dto.v2.V2UserError;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
-import com.tss.platform.repository.DatasetAssetRepository;
-import com.tss.platform.repository.DatasetSampleRepository;
-import com.tss.platform.repository.DatasetVersionRepository;
-import com.tss.platform.repository.ImportJobRepository;
-import com.tss.platform.security.AuthContext;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,44 +21,21 @@ import java.util.Map;
 @Service
 public class V2DatasetCatalogService {
 
-    private static final String IMPORT_SUCCESS = "SUCCESS";
-    private static final String IMPORT_SUPERSEDED = "SUPERSEDED";
-
     private final DatasetCatalogQueryService catalogQueryService;
-    private final DatasetSampleRepository sampleRepo;
     private final ObjectMapper objectMapper;
+    private final DatasetWorkspaceReadinessService readinessService;
+    private final DatasetWorkspaceSourceInspector sourceInspector;
 
-    @Autowired
     public V2DatasetCatalogService(
             DatasetCatalogQueryService catalogQueryService,
-            DatasetSampleRepository sampleRepo,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            DatasetWorkspaceReadinessService readinessService,
+            DatasetWorkspaceSourceInspector sourceInspector
     ) {
         this.catalogQueryService = catalogQueryService;
-        this.sampleRepo = sampleRepo;
         this.objectMapper = objectMapper;
-    }
-
-    V2DatasetCatalogService(
-            DatasetAssetRepository assetRepo,
-            DatasetVersionRepository versionRepo,
-            ImportJobRepository importJobRepo,
-            DatasetSampleRepository sampleRepo,
-            DatasetVersionFileCountService fileCountService,
-            AuthContext authContext,
-            ObjectMapper objectMapper
-    ) {
-        this(
-                new DatasetCatalogQueryService(
-                        assetRepo,
-                        versionRepo,
-                        importJobRepo,
-                        fileCountService,
-                        authContext
-                ),
-                sampleRepo,
-                objectMapper
-        );
+        this.readinessService = readinessService;
+        this.sourceInspector = sourceInspector;
     }
 
     @Transactional(readOnly = true)
@@ -94,18 +67,21 @@ public class V2DatasetCatalogService {
         ImportJob statusJob =
                 V2ImportJobStatusSelector.statusJobOf(catalogItem.latestDraftImportJobs());
         String displayStatus = displayStatus(ready, draft, statusJob);
-        boolean canPublish = draft != null
-                && sampleRepo.countByDatasetVersionIdAndDeletedFalse(draft.getId()) > 0
-                && catalogItem.latestDraftImportJobs().stream()
-                        .allMatch(job -> isPublishTerminalJobStatus(job.getStatus()));
+        V2DatasetPublishReadiness publishReadiness = draft == null
+                ? null
+                : readiness(catalogItem, draft);
+        boolean canPublish = publishReadiness != null
+                && publishReadiness.canPublish();
 
         List<String> actions = new ArrayList<>();
         actions.add("VIEW");
         if (ready != null) {
             actions.add("PREVIEW");
         }
-        if (ready != null || draft != null) {
-            actions.add("EDIT");
+        if (draft != null) {
+            actions.add("OPEN_WORKSPACE");
+        } else if (ready != null) {
+            actions.add("CREATE_WORKSPACE");
         }
         if (draft != null) {
             actions.add("ADD_DATA");
@@ -128,12 +104,36 @@ public class V2DatasetCatalogService {
         item.setFileCount(catalogItem.currentVersionFileCount());
         item.setDisplayStatus(displayStatus);
         item.setHasDraft(draft != null);
-        item.setEditSessionId(draft == null ? null : draft.getId());
+        item.setWorkspaceId(draft == null ? null : draft.getId());
+        item.setWorkspaceRevision(draft == null
+                ? null
+                : workspaceRevision(draft));
+        item.setPublishReadiness(publishReadiness);
+        item.setEditability(editability(catalogItem, ready));
         item.setImportProgress(statusJob == null ? null : statusJob.getProgress());
-        item.setCanPublish(canPublish);
         item.setAvailableActions(List.copyOf(actions));
         item.setUserError(userError(statusJob));
         return item;
+    }
+
+    private V2DatasetPublishReadiness readiness(
+            DatasetCatalogQueryService.CatalogItem catalogItem,
+            DatasetVersion draft
+    ) {
+        return readinessService.evaluateCatalog(catalogItem.asset(), draft);
+    }
+
+    private V2DatasetEditability editability(
+            DatasetCatalogQueryService.CatalogItem catalogItem,
+            DatasetVersion ready
+    ) {
+        return sourceInspector.inspect(catalogItem.asset(), ready);
+    }
+
+    private static long workspaceRevision(DatasetVersion version) {
+        return version.getWorkspaceRevision() == null
+                ? 0L
+                : version.getWorkspaceRevision();
     }
 
     private String displayStatus(
@@ -174,10 +174,6 @@ public class V2DatasetCatalogService {
                         : "数据导入失败，请检查上传内容后重试")
                 : job.getErrorMessage();
         return new V2UserError(code, message, parseDetails(job.getErrorDetailsJson()));
-    }
-
-    private static boolean isPublishTerminalJobStatus(String status) {
-        return IMPORT_SUCCESS.equals(status) || IMPORT_SUPERSEDED.equals(status);
     }
 
     private Map<String, Object> parseDetails(String json) {

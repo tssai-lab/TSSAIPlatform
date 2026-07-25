@@ -11,9 +11,10 @@ Flyway repair 或重新基线化。
 
 ## 当前迁移总览
 
-当前已使用的最高迁移版本为 `V41`。V1-V30 是本分支已有的连续基础链路；
+当前已使用的最高迁移版本为 `V42`。V1-V30 是本分支已有的连续基础链路；
 服务器分支已使用 V31-V40（其中 V35 当前无迁移文件），V41 在该服务器迁移链之后
-补充模型版本完整性与生命周期结构。合并后的全部已用迁移均应保留。
+补充模型版本完整性与生命周期结构，V42 增加训练代码审核模式配置及其显式审批证据。
+合并后的全部已用迁移均应保留。
 
 | 版本 | 主要职责 | 当前定位 |
 | --- | --- | --- |
@@ -58,6 +59,10 @@ Flyway repair 或重新基线化。
 | V39 | 服务器指标历史（服务器分支已有） | 算力监控历史 |
 | V40 | 计算服务器容量（服务器分支已有） | 算力容量管理 |
 | V41 | 模型当前版本、制品摘要和提交/超参数元数据 | 模型版本完整性与生命周期 |
+| V42 | 训练代码审核模式和系统直通证据 | 代码资产准入配置 |
+| V43 | 数据集版本工作区 | 数据集可变草稿与发布 |
+| V44 | 资产名称与模型复验标记 | 名称唯一性和模型消费准入 |
+| V45 | 管理员训练代码管理审计 | 跨 owner 管理操作审计 |
 
 其中服务器迁移链从 `V31__training_produced_model.sql` 开始，V31-V40 已存在于
 待合并的服务器分支。服务器的
@@ -216,6 +221,50 @@ Flyway repair 或重新基线化。
 - 为 `model_upload_session` 增加 `commit_info` 和 `hyper_params`，使断点续传和幂等恢复能够核对完整业务元数据。
 - 将缺少存储路径、文件名或正数文件大小的历史 `READY` 版本降为 `DRAFT`。
 - 增加 `READY` 制品元数据约束、SHA-256 小写十六进制格式约束，并限制模型版本及上传会话的 `hyper_params` 必须为 JSON 对象。
+
+## V43__training_code_review_mode.sql
+
+增加面向前端管理页的训练代码审核模式，并为无需人工审核的直通模式保留可追踪证据。
+
+- 创建单例 `platform_system_config`，默认 `training_code_review_mode=STANDARD_REVIEW`，只允许 `DIRECT_PASS` 或 `STANDARD_REVIEW`。
+- `STANDARD_REVIEW` 保持现有 `CODE_ASSET_RISK_MODE` 风险扫描、自动策略和管理员审核流程。
+- `DIRECT_PASS` 仍要求 ZIP 结构、固定入口、实际对象名、SHA-256 和长度校验通过；只跳过静态风险扫描及人工审核。
+- 扩展风险分流约束以支持 `DIRECT_PASS`，并扩展审批来源约束以支持 `SYSTEM_CONFIG`。
+- 系统直通批准必须绑定 validation run、制品 SHA、显式 direct-pass risk assessment 和固定审批策略版本，不能伪造管理员 reviewer。
+
+## V44__dataset_version_workspace.sql
+
+将数据集 DRAFT 完整化为带显式并发控制的版本工作区，并补齐 RAW 文件覆盖能力。
+
+- 为 `dataset_version` 增加 `workspace_revision`、`updated_at`，并允许工作区以 `ABANDONED` 终态释放活动 DRAFT。
+- 为 `dataset_package` 增加 `storage_kind=ZIP|RAW`，为版本包关系增加 `OVERLAY`。
+- 为数据、标注组件增加软删除和更新时间字段，并将数据组件唯一约束改为仅约束未删除记录。
+- 扩展 `dataset_upload_session`，记录工作区、目标资源、`CREATE|REPLACE` 操作、初始化 revision 以及创建资源需要的描述字段。
+- 增加 `WORKSPACE_FILE` 上传 purpose，支持数据/标注组件的大文件创建或替换；分片接口保持复用，完成和取消通过工作区 revision CAS。
+
+## V45__asset_name_and_model_attestation.sql
+
+统一模型/数据集资产名称约束，并增加模型 READY 消费复验标记。
+
+- 为模型、数据集资产增加 `normalized_name`，由 trigger 按去除首尾空白并转小写维护。
+- 为两类资产增加新写入非空白约束，以及 owner 范围内、仅针对未删除资产的规范化名称
+  唯一索引；数据库唯一索引负责串行化快速重复提交。
+- 历史重名数据不被迁移强制删除或改名：每组保留一个确定性代表占用规范化名称，其余
+  历史行保持可读，后续改名或重新启用时必须满足新规则。
+- 为 `model_version` 增加最近一次完整结构复验的 SHA-256 与时间字段，供 READY 训练、
+  推理和 V2 清单/文件消费记录准入证据；单次读取下载只校验并按需回填主 SHA 字段，
+  不把字节流校验冒充为 ZIP 结构复验。
+
+## V46__admin_code_asset_management.sql
+
+为显式 `/api/v2/admin/code-*` 跨 owner 管理补充可区分的审计身份。
+
+- 扩展 `code_asset_audit_log.actor_type` 约束，允许 `ADMIN` 与真实
+  `actor_user_id` 组合。
+- `USER` 和 `ADMIN` actor 均必须绑定用户 ID；`SYSTEM` actor 仍必须保持用户 ID
+  为空。
+- 不改变审计表 append-only trigger，也不修改代码资产、工作区、版本或对象存储的
+  owner。
 
 ## 维护规则
 

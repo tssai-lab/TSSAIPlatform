@@ -207,6 +207,28 @@ class CodeWorkspacePublishServiceTest {
     }
 
     @Test
+    void administratorPublishKeepsOriginalOwnerNamespaceAndRecordsAdministratorRequester() {
+        when(authContext.isAdmin()).thenReturn(true);
+        when(authContext.currentUserId()).thenReturn(99);
+        when(deltaRepository.findByWorkspaceIdOrderByPathAsc("workspace-1"))
+                .thenReturn(List.of(upsert("train.py", "print('admin update')\n")));
+
+        CodeVersion published = service.publish("workspace-1", 3L, "admin-v1");
+
+        assertEquals(7, published.getOwnerUserId());
+        assertTrue(published.getStoragePath().startsWith(
+                "users/7/codes/asset-1/versions/" + published.getId() + "/"
+        ));
+        org.mockito.ArgumentCaptor<CodeValidationRun> runCaptor =
+                org.mockito.ArgumentCaptor.forClass(CodeValidationRun.class);
+        verify(validationRunRepository).saveAndFlush(runCaptor.capture());
+        assertEquals(99, runCaptor.getValue().getRequestedByUserId());
+        verify(riskAssessmentService).enqueue(
+                published.getId(), runCaptor.getValue().getId(), 7
+        );
+    }
+
+    @Test
     void snapshotDefensivelyCopiesDeltaBytesBeforeStorageIo() {
         CodeWorkspaceFileDelta train = upsert("train.py", "print('snapshot')\n");
         byte[] original = Arrays.copyOf(train.getContentBytes(), train.getContentBytes().length);

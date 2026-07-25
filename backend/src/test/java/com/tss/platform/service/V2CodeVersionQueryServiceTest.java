@@ -76,7 +76,8 @@ class V2CodeVersionQueryServiceTest {
                 approvalService,
                 resolver,
                 auditService,
-                authContext
+                authContext,
+                new CodeAccessPolicy(authContext)
         );
     }
 
@@ -95,6 +96,26 @@ class V2CodeVersionQueryServiceTest {
 
         verify(versionRepository, never())
                 .findByIdAndAssetIdAndDeletedFalse("version-1", "asset-1");
+    }
+
+    @Test
+    void explicitAdministratorEntryPointReadsCrossOwnerVersion() {
+        CodeVersion version = version();
+        CodeAsset asset = asset();
+        when(authContext.isAdmin()).thenReturn(true);
+        when(authContext.currentUserId()).thenReturn(999);
+        when(versionRepository.findAssetIdByIdAndDeletedFalse("version-1"))
+                .thenReturn(Optional.of("asset-1"));
+        when(assetRepository.findByIdAndDeletedFalse("asset-1"))
+                .thenReturn(Optional.of(asset));
+        when(versionRepository.findByIdAndAssetIdAndDeletedFalse(
+                "version-1", "asset-1"
+        )).thenReturn(Optional.of(version));
+
+        var result = service.getAdmin("version-1");
+
+        assertEquals("version-1", result.id());
+        assertEquals(7, version.getOwnerUserId());
     }
 
     @Test
@@ -445,6 +466,26 @@ class V2CodeVersionQueryServiceTest {
         order.verify(versionRepository).findAssetIdByIdAndDeletedFalse("version-1");
         order.verify(assetRepository).findByIdAndDeletedFalseForUpdate("asset-1");
         order.verify(versionRepository).findByIdAndDeletedFalseForUpdate("version-1");
+    }
+
+    @Test
+    void explicitAdministratorLifecyclePreservesForeignOwner() {
+        CodeVersion version = version();
+        CodeAsset asset = asset();
+        when(authContext.isAdmin()).thenReturn(true);
+        when(authContext.currentUserId()).thenReturn(99);
+        when(versionRepository.findAssetIdByIdAndDeletedFalse("version-1"))
+                .thenReturn(Optional.of("asset-1"));
+        when(assetRepository.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(asset));
+        when(versionRepository.findByIdAndDeletedFalseForUpdate("version-1"))
+                .thenReturn(Optional.of(version));
+
+        var deprecated = service.deprecateAdmin("version-1");
+
+        assertEquals("DEPRECATED", deprecated.status());
+        assertEquals(7, version.getOwnerUserId());
+        verify(auditService).deprecated("asset-1", "version-1");
     }
 
     @Test

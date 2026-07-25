@@ -7,6 +7,8 @@ import java.util.List;
 @Data
 public class V2ImportJobStatusDto {
     private String importJobId;
+    private String workspaceId;
+    private Long workspaceRevision;
     private String status;
     private String displayStatus;
     private Integer importProgress;

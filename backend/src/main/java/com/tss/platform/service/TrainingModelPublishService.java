@@ -39,6 +39,7 @@ public class TrainingModelPublishService {
     private final ModelVersionRepository modelVersionRepo;
     private final MinioService minioService;
     private final ArtifactDigestService artifactDigestService;
+    private final ModelArtifactIntegrityService modelArtifactIntegrityService;
     private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
 
@@ -48,6 +49,7 @@ public class TrainingModelPublishService {
             ModelVersionRepository modelVersionRepo,
             MinioService minioService,
             ArtifactDigestService artifactDigestService,
+            ModelArtifactIntegrityService modelArtifactIntegrityService,
             TrainingRunSpecCodec runSpecCodec,
             PlatformTransactionManager transactionManager
     ) {
@@ -56,6 +58,7 @@ public class TrainingModelPublishService {
         this.modelVersionRepo = modelVersionRepo;
         this.minioService = minioService;
         this.artifactDigestService = artifactDigestService;
+        this.modelArtifactIntegrityService = modelArtifactIntegrityService;
         this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -144,18 +147,12 @@ public class TrainingModelPublishService {
         String fileName = leafName(contract.path());
         String targetPath = "users/" + snapshot.getOwnerUserId()
                 + "/models/" + assetId + "/" + versionName + "/" + fileName;
-        if (minioService.objectExists(targetPath)) {
-            ArtifactDigestService.DigestResult existing = artifactDigestService.digest(
-                    targetPath, minioService.stat(targetPath).size()
-            );
-            if (!existing.sha256().equals(source.sha256())) {
-                throw new IllegalStateException("published model object exists with another SHA-256");
-            }
-        } else {
+        if (!minioService.objectExists(targetPath)) {
             minioService.copyObject(sourcePath, targetPath);
         }
         long targetSize = minioService.stat(targetPath).size();
-        ArtifactDigestService.DigestResult target = artifactDigestService.digest(targetPath, targetSize);
+        ModelArtifactIntegrityService.Inspection target =
+                modelArtifactIntegrityService.inspect(targetPath, targetSize);
         if (!target.sha256().equals(source.sha256())) {
             throw new IllegalStateException("published model artifact SHA-256 mismatch");
         }
@@ -196,7 +193,7 @@ public class TrainingModelPublishService {
         if (asset == null) {
             asset = new ModelAsset();
             asset.setId(assetId);
-            asset.setName(limit(defaultModelName(training), 255));
+            asset.setName(publishedAssetName(training, assetId));
             asset.setType(taskType);
             asset.setRemark(limit("published from training " + training.getExperimentId(), 1024));
             asset.setOwnerUserId(training.getOwnerUserId());
@@ -222,6 +219,8 @@ public class TrainingModelPublishService {
             modelVersion.setStoragePath(targetPath);
             modelVersion.setSizeBytes(targetSize);
             modelVersion.setArtifactSha256(artifact.sha256());
+            modelVersion.setArtifactAttestedSha256(artifact.sha256());
+            modelVersion.setArtifactAttestedAt(now);
             modelVersion.setDescription(limit("published from RunSpec training " + trainingId + ", format=" + contract.format(), 2048));
             modelVersion.setChangeLog("plan=" + runSpec.plan().id() + ", datasetVersionId="
                     + training.getDatasetVersionId() + ", codeVersionId=" + training.getCodeVersionId()
@@ -289,6 +288,11 @@ public class TrainingModelPublishService {
                 ? training.getExperimentId()
                 : training.getName().trim();
         return name + "-训练模型";
+    }
+
+    private String publishedAssetName(TrainingExperimentVersion training, String assetId) {
+        String suffix = "-" + assetId.substring(Math.max(0, assetId.length() - 8));
+        return limit(defaultModelName(training), 255 - suffix.length()) + suffix;
     }
 
     private String deterministicId(String prefix, String value) {

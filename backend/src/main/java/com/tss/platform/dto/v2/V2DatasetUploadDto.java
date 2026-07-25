@@ -18,7 +18,11 @@ public class V2DatasetUploadDto {
     private List<Integer> uploadedPartIndexes;
     private String importJobId;
     private String datasetId;
-    private String editSessionId;
+    private String workspaceId;
+    private Long workspaceRevision;
+    private String targetKind;
+    private String targetOperation;
+    private String targetResourceId;
     private String versionLabel;
     private Boolean strictManifest;
     private String displayStatus;

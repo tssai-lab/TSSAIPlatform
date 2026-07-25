@@ -5,7 +5,12 @@ import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeRiskAssessment;
 import com.tss.platform.entity.CodeValidationRun;
 import com.tss.platform.entity.CodeVersion;
+import com.tss.platform.model.CodeApprovalDecisionSource;
 import com.tss.platform.model.CodeApprovalStatus;
+import com.tss.platform.model.CodeRiskAssessmentStatus;
+import com.tss.platform.model.CodeRiskDisposition;
+import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeRiskAssessmentRepository;
@@ -160,6 +165,10 @@ public class CodeArtifactResolver {
             CodeValidationRun validationRun,
             CodeApprovalRecord approval
     ) {
+        if (CodeApprovalDecisionSource.SYSTEM_CONFIG.equals(
+                approval.getDecisionSource())) {
+            return requireDirectPassEvidence(version, validationRun, approval);
+        }
         if (approval.getRiskAssessmentId() == null) {
             require(approval.getApprovalPolicyVersion() == null,
                     "APPROVAL_EVIDENCE_STALE", "Code approval evidence is stale");
@@ -181,6 +190,43 @@ public class CodeArtifactResolver {
                         && CodeApprovalService.APPROVAL_POLICY_VERSION.equals(
                                 approval.getApprovalPolicyVersion()),
                 "RISK_EVIDENCE_STALE", "Code risk evidence is stale");
+        return assessment;
+    }
+
+    private CodeRiskAssessment requireDirectPassEvidence(
+            CodeVersion version,
+            CodeValidationRun validationRun,
+            CodeApprovalRecord approval
+    ) {
+        require(approval.getRiskAssessmentId() != null,
+                "DIRECT_PASS_EVIDENCE_MISSING",
+                "Direct-pass approval evidence is missing");
+        CodeRiskAssessment assessment = riskAssessmentRepository.findById(
+                approval.getRiskAssessmentId()
+        ).orElseThrow(() -> validation(
+                "DIRECT_PASS_EVIDENCE_MISSING",
+                "Direct-pass approval evidence is missing"
+        ));
+        require(CodeRiskAssessmentStatus.COMPLETED.equals(assessment.getStatus())
+                        && CodeRiskLevel.UNKNOWN.equals(assessment.getRiskLevel())
+                        && CodeRiskDisposition.DIRECT_PASS.equals(
+                                assessment.getDisposition())
+                        && TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION.equals(
+                                assessment.getRiskPolicyVersion())
+                        && Objects.equals(assessment.getVersionId(), version.getId())
+                        && Objects.equals(
+                                assessment.getValidationRunId(),
+                                validationRun.getId()
+                        )
+                        && Objects.equals(
+                                assessment.getArtifactSha256(),
+                                version.getArtifactSha256()
+                        )
+                        && TrainingCodeReviewPolicy
+                                .DIRECT_PASS_APPROVAL_POLICY_VERSION
+                                .equals(approval.getApprovalPolicyVersion()),
+                "DIRECT_PASS_EVIDENCE_STALE",
+                "Direct-pass approval evidence is stale");
         return assessment;
     }
 

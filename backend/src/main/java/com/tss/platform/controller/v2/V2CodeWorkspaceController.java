@@ -240,7 +240,7 @@ public class V2CodeWorkspaceController {
         );
     }
 
-    private static V2CodeFileContent toContent(
+    static V2CodeFileContent toContent(
             CodeWorkspaceContent source,
             boolean workspaceReadOnly
     ) {
@@ -266,20 +266,20 @@ public class V2CodeWorkspaceController {
         );
     }
 
-    private static long requiredRevision(Long revision) {
+    static long requiredRevision(Long revision) {
         if (revision == null || revision < 0) {
             throw badRequest("EXPECTED_WORKSPACE_REVISION_REQUIRED");
         }
         return revision;
     }
 
-    private static void requireRequest(Object request) {
+    static void requireRequest(Object request) {
         if (request == null) {
             throw badRequest("REQUEST_BODY_REQUIRED");
         }
     }
 
-    private static String safeReasonCode(String value) {
+    static String safeReasonCode(String value) {
         return value != null && REASON_CODE.matcher(value).matches()
                 ? value
                 : "VALIDATION_FAILED";

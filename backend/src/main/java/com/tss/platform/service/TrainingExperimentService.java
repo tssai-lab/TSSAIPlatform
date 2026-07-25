@@ -61,6 +61,7 @@ public class TrainingExperimentService {
     private final TrainingExperimentVersionRepository repo;
     private final ModelVersionRepository modelVersionRepo;
     private final ModelAssetRepository modelAssetRepo;
+    private final ModelArtifactAttestationService modelArtifactAttestationService;
     private final DatasetVersionRepository datasetVersionRepo;
     private final DatasetAssetRepository datasetAssetRepo;
     private final CodeVersionRepository codeVersionRepo;
@@ -77,6 +78,7 @@ public class TrainingExperimentService {
             TrainingExperimentVersionRepository repo,
             ModelVersionRepository modelVersionRepo,
             ModelAssetRepository modelAssetRepo,
+            ModelArtifactAttestationService modelArtifactAttestationService,
             DatasetVersionRepository datasetVersionRepo,
             DatasetAssetRepository datasetAssetRepo,
             CodeVersionRepository codeVersionRepo,
@@ -92,6 +94,7 @@ public class TrainingExperimentService {
         this.repo = repo;
         this.modelVersionRepo = modelVersionRepo;
         this.modelAssetRepo = modelAssetRepo;
+        this.modelArtifactAttestationService = modelArtifactAttestationService;
         this.datasetVersionRepo = datasetVersionRepo;
         this.datasetAssetRepo = datasetAssetRepo;
         this.codeVersionRepo = codeVersionRepo;
@@ -125,6 +128,7 @@ public class TrainingExperimentService {
         );
         requireText(baseModelVersionId, "baseModelVersionId 不能为空");
         approvedCodeArtifact = codeVersionService.requireApprovedForTraining(req.getCodeVersionId().trim());
+        validateBaseModelVersion(baseModelVersionId);
         if (initialParams == null) {
             initialParams = Map.of();
         }
@@ -198,6 +202,7 @@ public class TrainingExperimentService {
         version.setTrainingMode(firstText(req.getTrainingMode(), latest.getTrainingMode()));
         requireText(resolvedModelVersionId, "baseModelVersionId 不能为空");
         ResolvedCodeArtifact approvedCodeArtifact = codeVersionService.requireApprovedForTraining(version.getCodeVersionId());
+        validateBaseModelVersion(resolvedModelVersionId);
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
         version.setStatus(STATUS_PENDING);
         version.setProgress(progressOf(STATUS_PENDING));
@@ -828,7 +833,9 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
-        requireReadyModelArtifact(version);
+        ModelArtifactAttestationService.AttestedArtifact attested =
+                modelArtifactAttestationService.attestReady(version.getId());
+        applyAttestation(version, attested);
     }
 
     private String resolveBaseModelVersionId(String baseModelVersionId, String modelVersionId) {
@@ -858,17 +865,19 @@ public class TrainingExperimentService {
                 .orElseThrow(() -> new IllegalArgumentException("模型资产不存在: " + version.getAssetId()));
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         authContext.requireOwnerAccess(ownerUserId, "model version not found or no permission");
-        requireReadyModelArtifact(version);
+        ModelArtifactAttestationService.AttestedArtifact attested =
+                modelArtifactAttestationService.attestReady(version.getId());
+        applyAttestation(version, attested);
         return TaskType.normalize(asset.getType());
     }
 
-    private void requireReadyModelArtifact(ModelVersion version) {
-        if (!"READY".equals(version.getStatus())) {
-            throw new IllegalArgumentException("model version must be READY for training");
-        }
-        if (version.getStoragePath() == null || version.getStoragePath().isBlank()) {
-            throw new IllegalArgumentException("model version storage path is required for training");
-        }
+    private void applyAttestation(
+            ModelVersion version,
+            ModelArtifactAttestationService.AttestedArtifact attested
+    ) {
+        version.setArtifactSha256(attested.sha256());
+        version.setArtifactAttestedSha256(attested.sha256());
+        version.setArtifactAttestedAt(attested.version().getArtifactAttestedAt());
     }
 
     private String resolveDatasetTaskType(String datasetVersionId) {
