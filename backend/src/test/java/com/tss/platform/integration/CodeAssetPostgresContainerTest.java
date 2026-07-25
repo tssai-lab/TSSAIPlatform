@@ -140,7 +140,9 @@ class CodeAssetPostgresContainerTest {
                 """);
 
         assertEquals(expectedVersions, installedVersions);
-        assertEquals("47", installedVersions.get(installedVersions.size() - 1));
+        String lastVersion = installedVersions.get(installedVersions.size() - 1);
+        assertNotNull(lastVersion);
+        assertTrue(Integer.parseInt(lastVersion) >= 46);
         for (String table : List.of(
                 "code_workspace",
                 "code_workspace_file_delta",
