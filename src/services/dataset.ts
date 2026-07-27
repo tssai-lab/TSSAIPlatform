@@ -865,10 +865,16 @@ export async function fetchDatasetList(options?: {
       list = list.map((item) => {
         const v1 = v1ById.get(item.assetId || item.id);
         if (!v1) return item;
+        // V2 常无 sizeBytes，formatBytes 会得到 '-'；'-' 为真值会挡住 V1 补全
+        const sizeMissing =
+          item.sizeBytes == null ||
+          item.size == null ||
+          item.size === '' ||
+          item.size === '-';
         return {
           ...item,
           fileName: item.fileName || v1.fileName,
-          size: item.size || v1.size,
+          size: sizeMissing ? v1.size || item.size : item.size,
           sizeBytes: item.sizeBytes ?? v1.sizeBytes,
           versionRemark: item.versionRemark || v1.versionRemark,
           uploadTime: item.uploadTime || v1.uploadTime,

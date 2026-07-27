@@ -335,10 +335,11 @@ const ModelUpload: React.FC = () => {
             },
             { max: 200, message: '备注不能超过 200 个字符' },
           ]}
+          extra="资产级说明：整份模型资产的用途/来源备注，会一直挂在资产上（不是某个版本专属）。"
         >
           <Input.TextArea
             rows={3}
-            placeholder="资产备注（必填）"
+            placeholder="例如：ImageNet 预训练权重，供 CV 检测任务使用"
             maxLength={200}
             showCount
           />
@@ -360,11 +361,11 @@ const ModelUpload: React.FC = () => {
               },
             },
           ]}
-          extra="后端必填字段 commitInfo，用于版本提交说明；与备注分开保存。"
+          extra="本版本提交说明：只描述「这一次上传/这个版本」改了什么（类似 Git commit message），与上方资产备注分开保存。"
         >
           <Input.TextArea
             rows={2}
-            placeholder="例如：train: imagenet baseline"
+            placeholder="例如：v1 基线权重；或 fix: 调整学习率后重训"
             maxLength={1024}
             showCount
           />
@@ -372,7 +373,7 @@ const ModelUpload: React.FC = () => {
         <Form.Item
           name="hyperParamsJson"
           label="超参（JSON，可选）"
-          extra='对象格式，例如 {"imageSize":224,"epochs":3}；不填则按空对象上传。'
+          extra='训练超参快照（可选）：须为 JSON 对象，例如 {"lr":0.001,"epochs":10}。不填则按空对象上传，不影响上传成功。'
           rules={[
             {
               validator: async (_, value) => {
@@ -394,7 +395,10 @@ const ModelUpload: React.FC = () => {
             },
           ]}
         >
-          <Input.TextArea rows={4} placeholder="{}" />
+          <Input.TextArea
+            rows={4}
+            placeholder='可选，例如 {"imageSize":224,"epochs":3}'
+          />
         </Form.Item>
         <Form.Item
           name="file"

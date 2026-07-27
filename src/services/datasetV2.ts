@@ -588,7 +588,8 @@ export async function initDatasetWorkspaceFileUpload(
   body: {
     expectedWorkspaceRevision: number;
     operation: 'CREATE' | 'REPLACE';
-    target: 'DATA' | 'ANNOTATION';
+    /** 后端契约字段名为 targetKind（DATA / ANNOTATION） */
+    targetKind: 'DATA' | 'ANNOTATION';
     sampleId: string;
     resourceId?: string;
     fileName: string;
@@ -640,7 +641,7 @@ export async function uploadDatasetWorkspaceFileComponent(
   params: {
     expectedWorkspaceRevision: number;
     operation: 'CREATE' | 'REPLACE';
-    target: 'DATA' | 'ANNOTATION';
+    targetKind: 'DATA' | 'ANNOTATION';
     sampleId: string;
     resourceId?: string;
     dataType?: string;
@@ -664,7 +665,7 @@ export async function uploadDatasetWorkspaceFileComponent(
     {
       expectedWorkspaceRevision: revision,
       operation: params.operation,
-      target: params.target,
+      targetKind: params.targetKind,
       sampleId: params.sampleId,
       resourceId: params.resourceId,
       fileName: file.name,

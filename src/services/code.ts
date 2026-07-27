@@ -1151,19 +1151,41 @@ async function ensureEditableCodeWorkspace(
   options?: { [key: string]: any },
 ) {
   const opts = { skipErrorHandler: true, ...(options || {}) };
-  try {
-    const listed = await listV2CodeWorkspaces(assetId, opts);
+  const pickMatchingOpen = (
+    listed: Awaited<ReturnType<typeof listV2CodeWorkspaces>> | undefined,
+  ) => {
     const openList = Array.isArray(listed)
       ? listed.filter((ws) => isOpenWorkspace(ws) && ws.id)
       : [];
-    const matched =
-      openList.find((ws) => ws.baseVersionId === baseVersionId) ||
-      openList[0];
+    const matched = openList.find((ws) => ws.baseVersionId === baseVersionId);
     if (matched?.id) {
+      return { matched, openList };
+    }
+    return { matched: undefined, openList };
+  };
+
+  try {
+    const listed = await listV2CodeWorkspaces(assetId, opts);
+    const { matched, openList } = pickMatchingOpen(listed);
+    if (matched) {
       return matched;
     }
-  } catch {
-    // 继续尝试新建
+    // 不可复用「其它基线版本」的打开工作区，否则从旧版再发易触发资产/revision 冲突
+    if (openList.length > 0) {
+      const otherLabel =
+        openList[0]?.baseVersionId || openList[0]?.id || '未知版本';
+      throw new Error(
+        `该代码资产已有基于其他版本的编辑工作区（${otherLabel}）。请先在该工作区发布或放弃后，再从当前版本编辑；或打开对应版本继续编辑。`,
+      );
+    }
+  } catch (error: any) {
+    if (
+      typeof error?.message === 'string' &&
+      error.message.includes('已有基于其他版本的编辑工作区')
+    ) {
+      throw error;
+    }
+    // 列表失败时继续尝试新建
   }
 
   try {
@@ -1173,21 +1195,34 @@ async function ensureEditableCodeWorkspace(
       opts,
     );
   } catch (error: any) {
-    // 已有打开工作区时，复用列表中的工作区
+    // 已有打开工作区时，仅复用「同一 baseVersionId」的工作区
     const listed = await listV2CodeWorkspaces(assetId, opts).catch(
       () => undefined,
     );
-    const openList = Array.isArray(listed)
-      ? listed.filter((ws) => isOpenWorkspace(ws) && ws.id)
-      : [];
-    const matched =
-      openList.find((ws) => ws.baseVersionId === baseVersionId) ||
-      openList[0];
+    const { matched, openList } = pickMatchingOpen(listed);
     if (matched?.id) {
       return matched;
     }
+    if (openList.length > 0) {
+      const otherLabel =
+        openList[0]?.baseVersionId || openList[0]?.id || '未知版本';
+      throw new Error(
+        `该代码资产已有基于其他版本的编辑工作区（${otherLabel}）。请先在该工作区发布或放弃后，再从当前版本编辑；或打开对应版本继续编辑。`,
+      );
+    }
     throw error;
   }
+}
+
+function mapCodeWorkspaceConflictMessage(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  if (/ASSET_REVISION_CONFLICT|资产已变更|已被.*更新/i.test(raw)) {
+    return '代码资产版本已变化。请刷新页面后从最新版本打开工作区再发布；勿在过期的旧版详情上继续提交。';
+  }
+  if (/WORKSPACE_REVISION_CONFLICT|workspaceRevision/i.test(raw)) {
+    return '工作区内容已被更新，请刷新后重试，或放弃当前工作区后重新打开。';
+  }
+  return undefined;
 }
 
 export type SaveCodeVersionFileResult = {
@@ -1332,7 +1367,9 @@ export async function saveCodeVersionFileAndPublish(
     };
   } catch (error: any) {
     const msg = await errorMessageFromV2(error);
-    const err = new Error(msg || '保存训练代码失败');
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '保存训练代码失败';
+    const err = new Error(tip);
     (err as any).cause = error;
     throw err;
   }
@@ -1416,7 +1453,9 @@ export async function publishCodeWorkspaceDraft(
     };
   } catch (error: any) {
     const msg = await errorMessageFromV2(error);
-    const err = new Error(msg || '发布工作区草稿失败');
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '发布工作区草稿失败';
+    const err = new Error(tip);
     (err as any).cause = error;
     throw err;
   }
