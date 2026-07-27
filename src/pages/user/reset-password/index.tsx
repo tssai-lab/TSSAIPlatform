@@ -51,9 +51,9 @@ const ResetPassword: React.FC = () => {
   const { message: messageApi } = App.useApp();
   const intl = useIntl();
 
-  // 从URL参数获取手机号
+  // 从路由 query 获取手机号（hash 模式下参数在 # 后，不能用 window.location.search）
   const getPhoneFromUrl = () => {
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = new URLSearchParams(history.location.search || '');
     return urlParams.get('phone') || '';
   };
   const phoneFromUrl = getPhoneFromUrl();
@@ -231,7 +231,7 @@ const ResetPassword: React.FC = () => {
               rules={[
                 { required: true, message: '请输入手机号！' },
                 {
-                  pattern: /^1\d{10}$/,
+                  pattern: /^1[3-9]\d{9}$/,
                   message: '手机号格式错误！',
                 },
               ]}

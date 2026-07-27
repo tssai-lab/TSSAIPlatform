@@ -5,7 +5,7 @@ import {
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { history, useAccess } from '@umijs/max';
+import { history, useAccess, useModel } from '@umijs/max';
 import {
   Button,
   Form,
@@ -19,6 +19,7 @@ import {
 import dayjs from 'dayjs';
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  SYSTEM_DEFAULT_PASSWORD,
   SYSTEM_ROLE_OPTIONS_NORMAL_ADMIN,
   SYSTEM_ROLE_OPTIONS_SUPER,
   SYSTEM_ROLES,
@@ -37,6 +38,11 @@ import {
   type UserListParams,
 } from '@/services/system';
 import { toProTableFail, toProTableSuccess, withIndex } from '@/utils/proTable';
+import {
+  guardDeleteCurrentAccount,
+  guardDisableCurrentAccount,
+  isCurrentLoginAccount,
+} from '../guardSelfAccount';
 import { notifyRequestError } from '../notifyRequestError';
 
 /**
@@ -46,6 +52,8 @@ import { notifyRequestError } from '../notifyRequestError';
  */
 const UserManagement: React.FC = () => {
   const access = useAccess();
+  const { initialState } = useModel('@@initialState');
+  const currentUser = initialState?.currentUser;
   const [form] = Form.useForm();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
@@ -193,6 +201,9 @@ const UserManagement: React.FC = () => {
           message.error('不支持在用户管理中将用户设置为超管');
           return;
         }
+        if (!guardDisableCurrentAccount(editingUser, status, currentUser)) {
+          return;
+        }
         const response = await editUser({
           id: editingUser.id,
           username,
@@ -228,10 +239,21 @@ const UserManagement: React.FC = () => {
           status,
         });
         if (response.code === 200) {
-          message.success('新增成功');
           setModalVisible(false);
           form.resetFields();
           actionRef.current?.reload();
+          Modal.success({
+            title: '新增成功',
+            content: (
+              <div>
+                <p>
+                  初始密码是
+                  <strong>{SYSTEM_DEFAULT_PASSWORD}</strong>
+                  ，可通过登录页【忘记密码】（手机验证码）进行修改密码。
+                </p>
+              </div>
+            ),
+          });
           return;
         }
         message.error(response.message || '新增失败');
@@ -264,6 +286,9 @@ const UserManagement: React.FC = () => {
       message.warning('无权限执行该操作');
       return;
     }
+    if (!guardDeleteCurrentAccount(record, currentUser)) {
+      return;
+    }
     if (
       record.role === SYSTEM_ROLES.SUPER_ADMIN ||
       record.role === SYSTEM_ROLES.NORMAL_ADMIN
@@ -284,6 +309,9 @@ const UserManagement: React.FC = () => {
   };
 
   const handleToggleStatus = async (record: UserItem, newStatus: string) => {
+    if (!guardDisableCurrentAccount(record, newStatus, currentUser)) {
+      return;
+    }
     if (
       record.role === SYSTEM_ROLES.SUPER_ADMIN ||
       record.role === SYSTEM_ROLES.NORMAL_ADMIN
@@ -409,66 +437,83 @@ const UserManagement: React.FC = () => {
       width: 220,
       align: 'center',
       hideInSearch: true,
-      render: (_, record) => (
-        <Space>
-          {isSuperAdmin && record.role === SYSTEM_ROLES.USER && (
-            <Popconfirm
-              title={`将「${record.username}」设为普通管理员？`}
-              description="该用户将获得与普通管理员相同的管理权限（仍低于超级管理员）。"
-              okText="确定"
-              cancelText="取消"
-              onConfirm={() => handlePromoteToAdmin(record)}
+      render: (_, record) => {
+        const isSelf = isCurrentLoginAccount(record, currentUser);
+        return (
+          <Space>
+            {isSuperAdmin && record.role === SYSTEM_ROLES.USER && (
+              <Popconfirm
+                title={`将「${record.username}」设为普通管理员？`}
+                description="该用户将获得与普通管理员相同的管理权限（仍低于超级管理员）。"
+                okText="确定"
+                cancelText="取消"
+                onConfirm={() => handlePromoteToAdmin(record)}
+              >
+                <Button type="link" size="small" icon={<UserSwitchOutlined />}>
+                  设为管理员
+                </Button>
+              </Popconfirm>
+            )}
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record)}
             >
-              <Button type="link" size="small" icon={<UserSwitchOutlined />}>
-                设为管理员
-              </Button>
-            </Popconfirm>
-          )}
-          <Button
-            type="link"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          >
-            编辑
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            onClick={() =>
-              handleToggleStatus(
-                record,
-                record.status === SYSTEM_STATUS.ENABLED
-                  ? SYSTEM_STATUS.DISABLED
-                  : SYSTEM_STATUS.ENABLED,
-              )
-            }
-          >
-            {record.status === SYSTEM_STATUS.ENABLED
-              ? SYSTEM_STATUS.DISABLED
-              : SYSTEM_STATUS.ENABLED}
-          </Button>
-          {canDelete && (
-            <Popconfirm
-              title={`确定删除用户「${record.username}」吗？`}
-              description={
-                record.role === SYSTEM_ROLES.SUPER_ADMIN ||
-                record.role === SYSTEM_ROLES.NORMAL_ADMIN
-                  ? '该账号为管理员，删除后不可恢复，请谨慎操作。'
-                  : '删除后不可恢复'
+              编辑
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              disabled={isSelf && record.status === SYSTEM_STATUS.ENABLED}
+              title={
+                isSelf && record.status === SYSTEM_STATUS.ENABLED
+                  ? '不能禁用当前登录账号'
+                  : undefined
               }
-              onConfirm={() => handleDelete(record)}
-              okText="确认"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
+              onClick={() =>
+                handleToggleStatus(
+                  record,
+                  record.status === SYSTEM_STATUS.ENABLED
+                    ? SYSTEM_STATUS.DISABLED
+                    : SYSTEM_STATUS.ENABLED,
+                )
+              }
             >
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                删除
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+              {record.status === SYSTEM_STATUS.ENABLED
+                ? SYSTEM_STATUS.DISABLED
+                : SYSTEM_STATUS.ENABLED}
+            </Button>
+            {canDelete && (
+              <Popconfirm
+                title={`确定删除用户「${record.username}」吗？`}
+                description={
+                  record.role === SYSTEM_ROLES.SUPER_ADMIN ||
+                  record.role === SYSTEM_ROLES.NORMAL_ADMIN
+                    ? '该账号为管理员，删除后不可恢复，请谨慎操作。'
+                    : '删除后不可恢复'
+                }
+                onConfirm={() => handleDelete(record)}
+                okText="确认"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+                disabled={isSelf}
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={isSelf}
+                  title={isSelf ? '不能删除当前登录账号' : undefined}
+                >
+                  删除
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -528,7 +573,7 @@ const UserManagement: React.FC = () => {
             label="手机号"
             rules={[
               { required: true, message: '手机号不能为空' },
-              { pattern: /^1\d{10}$/, message: '手机号格式错误' },
+              { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误' },
             ]}
           >
             <Input placeholder="请输入手机号" maxLength={11} />
@@ -549,10 +594,20 @@ const UserManagement: React.FC = () => {
             label="状态"
             rules={[{ required: true, message: '请选择状态' }]}
             initialValue={SYSTEM_STATUS.ENABLED}
+            extra={
+              editingUser && isCurrentLoginAccount(editingUser, currentUser)
+                ? '不能将当前登录账号改为禁用'
+                : undefined
+            }
           >
             <Select
               placeholder="请选择状态"
               options={SYSTEM_STATUS_OPTIONS as any}
+              disabled={
+                !!(
+                  editingUser && isCurrentLoginAccount(editingUser, currentUser)
+                )
+              }
             />
           </Form.Item>
         </Form>

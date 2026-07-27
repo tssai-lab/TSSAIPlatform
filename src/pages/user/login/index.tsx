@@ -25,6 +25,7 @@ import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { login } from '@/services/ant-design-pro/api';
 import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { getLoginRedirectTarget } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import Settings from '../../../../config/defaultSettings';
 
@@ -156,7 +157,10 @@ const Login: React.FC = () => {
           (msg as any)?.data?.accessToken ??
           (msg as any)?.token;
         if (token) {
-          storage.set(STORAGE_KEYS.TOKEN, token);
+          // 勾选自动登录 → localStorage；不勾选 → sessionStorage
+          storage.set(STORAGE_KEYS.TOKEN, token, {
+            persist: Boolean(values.autoLogin),
+          });
         }
         const defaultLoginSuccessMessage = intl.formatMessage({
           id: 'pages.login.success',
@@ -164,11 +168,9 @@ const Login: React.FC = () => {
         });
         message.success(defaultLoginSuccessMessage);
         await fetchUserInfo();
-        const urlParams = new URL(window.location.href).searchParams;
-        const redirect = urlParams.get('redirect') || '/dashboard';
-        // 使用 history.push 而不是 window.location.href，避免页面刷新
+        const redirect = getLoginRedirectTarget('/dashboard');
         setTimeout(() => {
-          window.location.href = redirect;
+          history.push(redirect);
         }, 100);
         return;
       }
@@ -344,7 +346,7 @@ const Login: React.FC = () => {
                     ),
                   },
                   {
-                    pattern: /^1\d{10}$/,
+                    pattern: /^1[3-9]\d{9}$/,
                     message: (
                       <FormattedMessage
                         id="pages.login.phoneNumber.invalid"

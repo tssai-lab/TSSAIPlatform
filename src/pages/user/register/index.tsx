@@ -114,6 +114,7 @@ const Register: React.FC = () => {
   const handleSubmit = async (values: any) => {
     try {
       const response = await registerByMobile({
+        username: values.username,
         password: values.password,
         confirmPassword: values.confirmPassword,
         mobile: values.phone,
@@ -246,7 +247,7 @@ const Register: React.FC = () => {
               name="phone"
               rules={[
                 { required: true, message: '请输入手机号！' },
-                { pattern: /^1\d{10}$/, message: '手机号格式错误！' },
+                { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误！' },
               ]}
             >
               <Input

@@ -4,7 +4,7 @@ import type {
   ProColumns,
 } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { history, useModel } from '@umijs/max';
+import { useModel } from '@umijs/max';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
 import React, { useEffect, useRef } from 'react';
@@ -13,6 +13,7 @@ import {
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
+import { redirectToLogin } from '@/utils/loginRedirect';
 
 /**
  * 个人中心 - 我的操作记录
@@ -25,7 +26,7 @@ const MyOperationLogs: React.FC = () => {
 
   useEffect(() => {
     if (!currentUser) {
-      history.replace('/user/login');
+      redirectToLogin({ replace: true });
     }
   }, [currentUser]);
 
