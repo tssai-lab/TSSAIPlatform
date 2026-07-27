@@ -246,22 +246,29 @@ export async function getDatasetVersionAllocation(
 
 /**
  * POST /api/v2/datasets/{datasetId}/workspaces
- * 创建或继续活动工作区；可选 versionLabel（创建时写入，无需再 Legacy PUT）
+ * 创建或继续活动工作区。
+ * - versionLabel：创建时写入目标草稿标签（无需再 Legacy PUT）
+ * - baseVersionId：期望基线 READY 版本（方案 A；后端待支持，前端先传）
  */
 export async function createOrOpenDatasetWorkspace(
   datasetId: string,
-  body?: { versionLabel?: string } | null,
+  body?: { versionLabel?: string; baseVersionId?: string } | null,
   options?: { [key: string]: unknown },
 ) {
   const label = body?.versionLabel?.trim();
+  const baseVersionId = body?.baseVersionId?.trim();
+  const data: Record<string, string> = {};
+  if (label) data.versionLabel = label;
+  if (baseVersionId) data.baseVersionId = baseVersionId;
+  const hasBody = Object.keys(data).length > 0;
   const raw = await request<unknown>(
     `/v2/datasets/${encodeURIComponent(datasetId)}/workspaces`,
     {
       method: 'POST',
-      ...(label
+      ...(hasBody
         ? {
             headers: { 'Content-Type': 'application/json' },
-            data: { versionLabel: label },
+            data,
           }
         : {}),
       ...(options || {}),
@@ -965,11 +972,14 @@ export function formatPublishBlockers(
 export async function getOrCreateV2EditSession(
   datasetId: string,
   options?: { [key: string]: unknown },
-  meta?: { versionLabel?: string; version?: string },
+  meta?: { versionLabel?: string; version?: string; baseVersionId?: string },
 ) {
   const ws = await createOrOpenDatasetWorkspace(
     datasetId,
-    { versionLabel: meta?.versionLabel || meta?.version },
+    {
+      versionLabel: meta?.versionLabel || meta?.version,
+      baseVersionId: meta?.baseVersionId,
+    },
     options,
   );
   return {

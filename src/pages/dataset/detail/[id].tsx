@@ -568,9 +568,20 @@ const DatasetDetail: React.FC = () => {
       try {
         const ws = knownId
           ? await getDatasetWorkspace(knownId, { skipErrorHandler: true })
-          : await createOrOpenDatasetWorkspace(datasetInfo.id, null, {
-              skipErrorHandler: true,
-            });
+          : await createOrOpenDatasetWorkspace(
+              datasetInfo.id,
+              sourceId ? { baseVersionId: sourceId } : null,
+              { skipErrorHandler: true },
+            );
+        const baseId = ws.baseVersion?.versionId;
+        if (sourceId && baseId && baseId !== sourceId) {
+          message.warning(
+            `当前活动工作区基线不是所选版本（基线 ${ws.baseVersion?.versionLabel || baseId}）。请先发布或「放弃工作区」后，再基于所选版本重新创建。`,
+          );
+          applyWorkspaceState(ws);
+          scrollToWorkspace();
+          return;
+        }
         applyWorkspaceState(ws);
         scrollToWorkspace();
       } catch (error: any) {
@@ -703,9 +714,22 @@ const DatasetDetail: React.FC = () => {
             datasetInfo.workspaceId || datasetInfo.editSessionId || undefined;
           const ws = knownId
             ? await getDatasetWorkspace(knownId, { skipErrorHandler: true })
-            : await createOrOpenDatasetWorkspace(assetId, null, {
-                skipErrorHandler: true,
-              });
+            : await createOrOpenDatasetWorkspace(
+                assetId,
+                { baseVersionId: sourceId },
+                { skipErrorHandler: true },
+              );
+          const baseId = ws.baseVersion?.versionId;
+          if (baseId && baseId !== sourceId) {
+            message.warning(
+              `当前活动工作区基线不是所选版本（基线 ${ws.baseVersion?.versionLabel || baseId}）。请先发布或「放弃工作区」后，再基于所选版本重新创建。`,
+            );
+            applyWorkspaceState(ws);
+            setWorkspaceEditSourceVersionId(sourceId);
+            setVersionModalOpen(false);
+            scrollToWorkspace();
+            return;
+          }
           applyWorkspaceState(ws);
           setWorkspaceEditSourceVersionId(sourceId);
           setVersionModalOpen(false);
@@ -752,7 +776,7 @@ const DatasetDetail: React.FC = () => {
             }
             ws = await createOrOpenDatasetWorkspace(
               assetId,
-              { versionLabel: label },
+              { versionLabel: label, baseVersionId: sourceId },
               { skipErrorHandler: true },
             );
             applied = ws.targetVersion?.versionLabel || label;
@@ -1065,11 +1089,17 @@ const DatasetDetail: React.FC = () => {
             <>
               <strong>上传新版本</strong>：替换整包数据，适合大批量更换。
               <br />
-              <strong>创建/继续版本工作区</strong>：基于 zip
-              格式的正式版创建或继续版本工作区，可删除/恢复
+              <strong>创建/继续版本工作区</strong>：基于所点 zip
+              正式版创建或继续版本工作区（请求会传 baseVersionId），可删除/恢复
               {isMultimodal ? '样本' : '文件'}、追加 zip
               {isMultimodal ? '新增样本' : '新增文件'}
-              ，完成后「发布为新版本」才生效。
+              ，完成后「发布为新版本」才生效。同一资产同时只能有一个活动工作区；基线不同时请先发布或放弃后再开。
+              <br />
+              <Typography.Text type="secondary">
+                联调说明：前端已传 baseVersionId；后端需按所选 READY
+                版派生基线（见
+                BUG-DA-BE-07）。在后端落地前，实际基线仍可能是资产「当前」正式版。
+              </Typography.Text>
             </>
           }
         />
@@ -1556,13 +1586,14 @@ const DatasetDetail: React.FC = () => {
             <Alert
               type="info"
               showIcon
-              message="将基于当前正式版本创建版本工作区"
+              message="将基于所选正式版本创建版本工作区"
               description={
                 <>
-                  版本号在创建时写入目标草稿，资产内唯一；
+                  请求会携带所点版本的 <strong>baseVersionId</strong>
+                  （后端落地后基线即为该版）。版本号在创建时写入目标草稿，资产内唯一；
                   <strong>已取消/软删的草稿标签仍占用</strong>
                   ，列表里可能看不到。若提示被占用，请改用 v3、v1.0.3
-                  等更大号；前端也会自动尝试跳号。同一资产同时只能有一个活动工作区。
+                  等更大号；前端也会自动尝试跳号。同一资产同时只能有一个活动工作区；若已有其它基线的工作区，请先发布或放弃。
                 </>
               }
             />
