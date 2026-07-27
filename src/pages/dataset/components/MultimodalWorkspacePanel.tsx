@@ -383,7 +383,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         file,
         {
           expectedWorkspaceRevision: revision,
-          operation: values.operation || 'CREATE',
+          targetOperation: values.targetOperation || 'CREATE',
           targetKind: values.targetKind || 'DATA',
           sampleId: String(values.sampleId).trim(),
           resourceId: values.resourceId?.trim() || undefined,
@@ -910,7 +910,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         <Form
           form={fileUploadForm}
           layout="vertical"
-          initialValues={{ operation: 'CREATE', targetKind: 'DATA' }}
+          initialValues={{ targetOperation: 'CREATE', targetKind: 'DATA' }}
         >
           <Form.Item
             name="sampleId"
@@ -919,11 +919,16 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
           >
             <Input placeholder="目标 sampleId" />
           </Form.Item>
-          <Form.Item name="operation" label="操作" rules={[{ required: true }]}>
+          <Form.Item
+            name="targetOperation"
+            label="操作"
+            rules={[{ required: true, message: '请选择操作' }]}
+            extra="对应后端字段 targetOperation：CREATE / REPLACE"
+          >
             <Select
               options={[
-                { value: 'CREATE', label: 'CREATE' },
-                { value: 'REPLACE', label: 'REPLACE' },
+                { value: 'CREATE', label: 'CREATE（新建）' },
+                { value: 'REPLACE', label: 'REPLACE（替换）' },
               ]}
             />
           </Form.Item>
