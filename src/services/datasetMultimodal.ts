@@ -34,6 +34,10 @@ export type MultimodalImportJob = {
   retryable?: boolean;
   retryModes?: ImportRetryMode[];
   errorMessage?: string | null;
+  /** Legacy ImportJob 结构化错误码（与 userError.errorCode 可能同源） */
+  errorCode?: string | null;
+  /** Legacy ImportJob 详情 JSON 文本 */
+  errorDetailsJson?: string | null;
   userError?: {
     errorCode?: string;
     errorMessage?: string;
@@ -90,6 +94,13 @@ function unwrapImportJob(raw: unknown): MultimodalImportJob {
       (data.errorMessage as string | null | undefined) ??
       userError?.errorMessage ??
       null,
+    errorCode:
+      (data.errorCode as string | null | undefined) ??
+      userError?.errorCode ??
+      null,
+    errorDetailsJson:
+      (data.errorDetailsJson as string | null | undefined) ??
+      (userError?.details ? JSON.stringify(userError.details) : null),
     userError,
     createdAt: data.createdAt as string | undefined,
     startedAt: (data.startedAt as string | null | undefined) ?? null,

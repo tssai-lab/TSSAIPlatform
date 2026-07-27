@@ -1,8 +1,8 @@
-import type { ProColumns } from '@ant-design/pro-components';
+import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import { Button, message, Popconfirm, Space } from 'antd';
-import React from 'react';
+import React, { useRef } from 'react';
 import { MODEL_TYPE_VALUE_ENUM } from '@/constants/model';
 import {
   deleteModelAsset,
@@ -13,6 +13,8 @@ import {
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
 const ModelList: React.FC = () => {
+  const actionRef = useRef<ActionType>(null);
+
   const fetchModelList = async (params: any, sort: any) => {
     try {
       const sortEntry = Object.entries(sort || {})[0] as
@@ -52,7 +54,7 @@ const ModelList: React.FC = () => {
         await deleteModelVersion(record.id);
       }
       message.success('删除成功');
-      window.location.reload();
+      actionRef.current?.reload();
     } catch (error: any) {
       message.error(error?.info?.message || error?.message || '删除失败');
     }
@@ -174,6 +176,7 @@ const ModelList: React.FC = () => {
       }
     >
       <ProTable
+        actionRef={actionRef}
         columns={columns}
         request={fetchModelList}
         rowKey="id"

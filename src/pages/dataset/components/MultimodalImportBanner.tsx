@@ -317,6 +317,12 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
   }
 
   if (status === 'FAILED') {
+    const errorCode = job?.errorCode || job?.userError?.errorCode;
+    const errorDetails =
+      job?.errorDetailsJson ||
+      (job?.userError?.details
+        ? JSON.stringify(job.userError.details, null, 2)
+        : null);
     return (
       <Alert
         type="error"
@@ -328,6 +334,20 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
               {errorMessage ||
                 '请检查 manifest / 目录结构与 zip 内容后重试（FULL）。'}
             </span>
+            {(errorCode || errorDetails) && (
+              <Typography.Paragraph
+                copyable
+                style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}
+                type="secondary"
+              >
+                {[
+                  errorCode ? `errorCode: ${errorCode}` : null,
+                  errorDetails ? `details: ${errorDetails}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n')}
+              </Typography.Paragraph>
+            )}
             <Space>
               {canRetry && (
                 <Button

@@ -384,7 +384,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         {
           expectedWorkspaceRevision: revision,
           operation: values.operation || 'CREATE',
-          target: values.target || 'DATA',
+          targetKind: values.targetKind || 'DATA',
           sampleId: String(values.sampleId).trim(),
           resourceId: values.resourceId?.trim() || undefined,
           dataType: values.dataType?.trim() || undefined,
@@ -910,7 +910,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
         <Form
           form={fileUploadForm}
           layout="vertical"
-          initialValues={{ operation: 'CREATE', target: 'DATA' }}
+          initialValues={{ operation: 'CREATE', targetKind: 'DATA' }}
         >
           <Form.Item
             name="sampleId"
@@ -927,11 +927,16 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
               ]}
             />
           </Form.Item>
-          <Form.Item name="target" label="目标" rules={[{ required: true }]}>
+          <Form.Item
+            name="targetKind"
+            label="目标种类"
+            rules={[{ required: true, message: '请选择目标种类' }]}
+            extra="对应后端字段 targetKind：DATA=数据组件，ANNOTATION=标注组件"
+          >
             <Select
               options={[
-                { value: 'DATA', label: 'DATA' },
-                { value: 'ANNOTATION', label: 'ANNOTATION' },
+                { value: 'DATA', label: 'DATA（数据）' },
+                { value: 'ANNOTATION', label: 'ANNOTATION（标注）' },
               ]}
             />
           </Form.Item>
