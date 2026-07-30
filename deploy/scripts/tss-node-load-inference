@@ -67,7 +67,15 @@ if [[ $actual_image_id != "$expected_image_id" ]]; then
 fi
 
 ctr --namespace k8s.io images import "$archive" >/dev/null
-ctr --namespace k8s.io images inspect "$image" >/dev/null
+ready_image="$(
+  ctr --namespace k8s.io images check --quiet "name==${image}" \
+    | grep -F -x "$image" \
+    || true
+)"
+if [[ $ready_image != "$image" ]]; then
+  echo "Imported image is not ready in Kubernetes containerd." >&2
+  exit 1
+fi
 
 cp -a "$runtime_env" "$runtime_env_backup"
 runtime_env_candidate="$(mktemp "${TSS_PLATFORM_DIR}/backend/.env.runtime.XXXXXX")"
