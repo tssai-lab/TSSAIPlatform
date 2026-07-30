@@ -32,6 +32,7 @@ backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
 postgres_container="${TSS_POSTGRES_CONTAINER:-tss-postgres}"
 minio_container="${TSS_MINIO_CONTAINER:-tss-minio}"
 backend_image_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
+inference_image_repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
 backend_health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
 cluster_name="${TSS_CLUSTER_NAME:-tss-training-${node_id}}"
 server_address="${TSS_SERVER_ADDRESS:-127.0.0.1}"
@@ -59,7 +60,7 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
   inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-$inference_worker_image}"
 fi
 
-for command_name in curl docker gzip openssl visudo; do
+for command_name in ctr curl docker flock gzip openssl visudo; do
   command -v "$command_name" >/dev/null
 done
 docker compose version >/dev/null
@@ -157,6 +158,7 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_COMPOSE_OVERLAY=%q\n' "${platform_dir}/compose.backend.yml"
   printf 'TSS_BACKEND_CONTAINER=%q\n' "$backend_container"
   printf 'TSS_BACKEND_IMAGE_REPOSITORY=%q\n' "$backend_image_repository"
+  printf 'TSS_INFERENCE_IMAGE_REPOSITORY=%q\n' "$inference_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
 } > /etc/tss-platform/node-runtime.env
@@ -167,6 +169,10 @@ cat > /usr/local/sbin/tss-node-activate-backend <<'EOF'
 set -Eeuo pipefail
 
 source /etc/tss-platform/node-runtime.env
+
+install -d -m 755 /run/lock
+exec 9>/run/lock/tss-node-deploy.lock
+flock 9
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <repository>:<40-character-commit-sha>" >&2
@@ -261,6 +267,11 @@ exec /usr/local/sbin/tss-node-activate-backend "$image"
 EOF
 chmod 700 /usr/local/sbin/tss-node-load-backend
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install -m 700 \
+  "${script_dir}/tss-node-load-inference" \
+  /usr/local/sbin/tss-node-load-inference
+
 if [[ ${TSS_REMOVE_LEGACY_HELPERS:-false} == true ]]; then
   rm -f \
     /usr/local/sbin/tss-main-login-ghcr \
@@ -272,6 +283,7 @@ fi
 
 cat > /etc/sudoers.d/tss-node-backend-deployer <<EOF
 ${deploy_user} ALL=(root) NOPASSWD: /usr/local/sbin/tss-node-load-backend *
+${deploy_user} ALL=(root) NOPASSWD: /usr/local/sbin/tss-node-load-inference *
 EOF
 chmod 440 /etc/sudoers.d/tss-node-backend-deployer
 visudo -cf /etc/sudoers.d/tss-node-backend-deployer >/dev/null

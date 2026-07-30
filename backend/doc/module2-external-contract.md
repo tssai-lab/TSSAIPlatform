@@ -96,7 +96,8 @@ V2 代码接口使用真实 HTTP 状态：`403` 表示管理员能力不足，`4
 | `datasetAssetId` / `assetId` | 数据集资产 ID，表示同一数据集的逻辑集合 | 稳定 |
 | `codeAssetId` / `assetId` | 代码资产 ID，表示同一代码资产的逻辑集合 | 稳定 |
 | `codeVersionId` / `versionId` | 已发布、不可变代码版本 ID | 稳定 |
-| `codeWorkspaceId` / `workspaceId` | 代码编辑工作区 ID，只在草稿生命周期中有效 | 临时 |
+| `workspaceId`（数据集工作区接口） | 数据集版本工作区 ID，只在 DRAFT 生命周期中有效 | 临时 |
+| `workspaceId`（代码工作区接口） | 代码编辑工作区 ID，只在草稿生命周期中有效 | 临时 |
 | `artifactSha256` | 已发布代码制品原始字节的 SHA-256 证据 | 版本级稳定证据 |
 | `experimentId` | 训练实验 ID，包含多个实验版本 | 稳定 |
 | `trainingVersionId` | 训练实验版本 ID | 稳定 |
@@ -377,6 +378,7 @@ V2 重试返回稳定字段：
 | 字段 | 说明 |
 | --- | --- |
 | `importJobId` | 被重试的导入任务句柄 |
+| `workspaceId` / `workspaceRevision` | 所属版本工作区 ID 和重试后递增的 revision；只读状态查询当前不填充这两个字段 |
 | `status` | ImportJob 原始状态 |
 | `displayStatus` | V2 展示状态：`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY` |
 | `importProgress` | 当前导入进度 |
@@ -388,9 +390,14 @@ V2 重试错误语义：
 
 | HTTP | `errorCode` | 场景 |
 | --- | --- | --- |
-| `404` | `IMPORT_JOB_NOT_FOUND` | `importJobId` 不存在或调用方无权访问 |
-| `422` | `IMPORT_JOB_NOT_RETRYABLE` | mode 与任务状态不匹配、版本不是 `DRAFT`、FULL retry 已存在导入样本、INCREMENTAL 无未解决失败样本、或同版本仍有活动 ImportJob |
-| `400` | `INVALID_IMPORT_JOB_RETRY` | `importJobId` 为空或请求格式不合法 |
+| `404` | `IMPORT_JOB_NOT_FOUND` | 状态查询时任务不存在或无权访问；重试时任务 ID 不存在 |
+| `404` | `DATASET_WORKSPACE_NOT_FOUND` | 重试任务存在，但所属工作区不存在、不再是 DRAFT 或调用方无权访问 |
+| `422` | `IMPORT_JOB_NOT_RETRYABLE` | mode 与任务状态不匹配、FULL retry 已存在导入样本，或 INCREMENTAL 无未解决失败样本 |
+| `400` | `INVALID_IMPORT_JOB_RETRY` | JSON 请求体为 `null` |
+| `400` | `INVALID_REQUEST` | 请求体缺失、JSON 或字段类型无法解析 |
+| `400` | `EXPECTED_WORKSPACE_REVISION_REQUIRED` | 缺少 `expectedWorkspaceRevision` |
+| `409` | `WORKSPACE_REVISION_CONFLICT` | `expectedWorkspaceRevision` 已过期 |
+| `409` | `WORKSPACE_BUSY` | 工作区存在其他活动上传或导入 |
 
 ### 6.1.2 数据集版本工作区
 
@@ -544,7 +551,7 @@ V2 数据集版本工作区的稳定路径为：
 
 `dataset-edit-sessions` V2 别名不再保留。Legacy 样本工作区接口暂时保留 `ApiResponse` 并标记 deprecated，新 V2 前端不得调用。
 
-工作区 DTO 固定返回 `workspaceId/datasetId/baseVersion/targetVersion/status/workspaceRevision/sampleCount/activeOperation/publishReadiness/availableActions`。所有工作区写请求都携带 `expectedWorkspaceRevision`；过期返回 `409 / WORKSPACE_REVISION_CONFLICT` 和 expected/current revision。活动上传或导入期间除读取、轮询、取消和放弃外返回 `409 / WORKSPACE_BUSY`。
+工作区 DTO 固定返回 `workspaceId/datasetId/baseVersion/targetVersion/status/workspaceRevision/sampleCount/activeOperation/publishReadiness/availableActions/userError`。`activeOperation` 固定为 `{type,id,status,progress}`：`type=UPLOAD` 时 `id` 为 `uploadId`，`type=IMPORT` 时 `id` 为 `importJobId`，且只在对应任务仍处于活动状态时返回；没有活动任务时为 `null`。最新 ImportJob 为 `FAILED` 或 `PARTIAL` 时，`userError` 返回结构化用户错误，但不包含任务 ID。所有工作区写请求都携带 `expectedWorkspaceRevision`；过期返回 `409 / WORKSPACE_REVISION_CONFLICT` 和 expected/current revision。活动上传或导入期间除读取、轮询、取消和放弃外返回 `409 / WORKSPACE_BUSY`。
 
 `PATCH` 使用 `application/merge-patch+json`。样本只允许 `tags/metadata`；数据只允许 `dataType/sensor/channel/seq/format/fileName/contentType/metadata`；标注只允许 `sampleDataId/annotationType/format/fileName/contentType/metadata`；工作区只允许 `description/changeLog/cvTaskType/annotationFormat`。存储 ID、大小、校验和、包 ID 和 ZIP offset 均不可写。
 
@@ -571,15 +578,15 @@ V2 数据集版本工作区的稳定路径为：
 
 放弃工作区幂等转入 `ABANDONED`，上传转 `DISCARDED`，导入转 `SUPERSEDED`，仅清理工作区独占对象。历史非 ZIP READY 来源可唯一推导时只在新 DRAFT 懒规范化为 RAW；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，并由列表 `editability.blockers` 提前展示。
 
-V2 上传和工作区 DTO 会返回 `importJobId`，用于导入失败后的 V2 重试：
+V2 上传、状态查询和重试 DTO 会返回 `importJobId`，用于导入失败后的 V2 重试。工作区 DTO 不提供失败任务的持久重试句柄：
 
 | DTO / 接口 | 字段 | 说明 |
 | --- | --- | --- |
 | `V2DatasetUploadDto`：`POST /api/v2/dataset-uploads/{uploadId}/complete`、`GET /api/v2/dataset-uploads/{uploadId}` | `importJobId` | 当前上传触发的 ImportJob 重试句柄；普通非导入上传或尚未创建任务时为 `null` |
-| `V2DatasetWorkspaceDto`：`GET /api/v2/dataset-workspaces/{workspaceId}` | `activeOperation.importJobId` | 当前工作区导入任务句柄；若最新任务仍为 `PENDING`/`RUNNING` 则返回活动任务，否则优先展示最新未解决 `PARTIAL`/`FAILED` |
+| `V2DatasetWorkspaceDto`：`GET /api/v2/dataset-workspaces/{workspaceId}` | `activeOperation.id` / `userError` | 仅活动导入的 `activeOperation.id` 是 `importJobId`；进入 `FAILED`/`PARTIAL` 后 `activeOperation` 为 `null`，`userError` 不包含任务 ID |
 | `V2ImportJobStatusDto`：`GET /api/v2/import-jobs/{importJobId}`、`POST /api/v2/import-jobs/{importJobId}/retry` | `importJobId` | 被查询或重试的 ImportJob 句柄；重试请求体必须包含 `mode` 和 `expectedWorkspaceRevision`，`PARTIAL` 仅返回 `retryModes=["INCREMENTAL"]` |
 
-调用方只能使用自己有权限访问的 `importJobId` 调用 V2 重试端点；无权限或不存在按 404 处理。`importJobId` 不允许被当作数据库外键、存储路径或跨资源枚举入口。
+调用方如果需要在失败后重试，必须保留上传完成或上传轮询响应中的 `importJobId`；V2 数据集列表和失败后的工作区详情都不能重新发现该句柄。调用方只能使用自己有权限访问的 `importJobId` 调用 V2 重试端点；无权限或不存在按 404 处理。`importJobId` 不允许被当作数据库外键、存储路径或跨资源枚举入口。
 
 前端迁移顺序：用 `workspaceId/workspaceRevision/publishReadiness` 取代 `editSessionId/canPublish`；需要标签提示时调用 `version-allocation`；把用户标签直接放入创建工作区请求，不再通过 Legacy PUT 二次改名；每次命令使用上一响应的 revision；冲突后重新拉取；仅以 blockers 展示发布原因；发布后使用 `currentVersion.versionId` 并展示实际 `currentVersion.versionLabel`。界面文案为“创建/继续版本工作区”，不是“编辑当前版本”。
 
@@ -927,8 +934,8 @@ MinIO objectName
 `latestDraftVersionId`；这些字段只服务现有页面兼容，不作为新模块的稳定集成契约。
 Legacy 模型 `/api/model/list` 与 `/api/model/detail` 已不再返回 `storagePath`。V2 代码
 DTO、`consumer-manifest` 和 `artifact-upgrade` 响应永不返回存储路径。`importJobId` 已在
-V2 中重分类为导入状态查询和失败重试句柄，稳定暴露于 V2 上传、版本工作区、状态查询和
-重试结果；新模块应使用 `GET /api/v2/import-jobs/{importJobId}` 和请求体携带
+V2 中重分类为导入状态查询和失败重试句柄，稳定暴露于 V2 上传、状态查询和重试结果；
+版本工作区只在导入活动期间通过 `activeOperation.id` 暴露它，失败后不能重新发现。新模块应保留上传响应中的句柄，并使用 `GET /api/v2/import-jobs/{importJobId}` 和请求体携带
 mode/revision 的 `POST /api/v2/import-jobs/{importJobId}/retry`，而不是 Legacy retry
 路径。
 
