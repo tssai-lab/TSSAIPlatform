@@ -5,6 +5,7 @@ WORKDIR /app
 
 ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG TORCH_CPU_WHEEL_URL=https://mirrors.aliyun.com/pytorch-wheels/cpu/torch-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl
+ARG TORCHVISION_CPU_WHEEL_URL=https://mirrors.aliyun.com/pytorch-wheels/cpu/torchvision-0.21.0%2Bcpu-cp311-cp311-linux_x86_64.whl
 
 RUN useradd -r -u 10001 -m worker 2>/dev/null || true \
     && mkdir -p /workspace/job \
@@ -18,6 +19,7 @@ RUN python -m pip uninstall -y opencv-python opencv-contrib-python opencv-contri
     && python -m pip install --no-cache-dir \
     -i "${PYPI_INDEX_URL}" \
     "${TORCH_CPU_WHEEL_URL}" \
+    "${TORCHVISION_CPU_WHEEL_URL}" \
     && python -m pip install --no-cache-dir -r requirements-ml-cpu.txt \
     -i "${PYPI_INDEX_URL}"
 
