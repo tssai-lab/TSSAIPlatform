@@ -228,6 +228,13 @@ export default [
   },
   { path: '/dashboard', name: '首页', icon: 'home', component: './dashboard' },
   {
+    path: '/user-manual',
+    name: '用户手册',
+    icon: 'book',
+    component: './user-manual',
+    hideInMenu: true,
+  },
+  {
     path: '/api-doc',
     name: 'OpenAPI文档',
     icon: 'link',
