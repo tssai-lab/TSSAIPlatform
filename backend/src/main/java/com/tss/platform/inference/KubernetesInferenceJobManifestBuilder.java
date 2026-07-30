@@ -31,6 +31,12 @@ public class KubernetesInferenceJobManifestBuilder {
     @Value("${inference.kubernetes.memory-limit:4Gi}")
     private String memoryLimit;
 
+    @Value("${inference.kubernetes.ephemeral-storage-request:2Gi}")
+    private String ephemeralStorageRequest;
+
+    @Value("${inference.kubernetes.ephemeral-storage-limit:12Gi}")
+    private String ephemeralStorageLimit;
+
     public KubernetesInferenceJobManifestBuilder(TrainingKubernetesProperties properties) {
         this.properties = properties;
     }
@@ -133,9 +139,11 @@ public class KubernetesInferenceJobManifestBuilder {
                             requests:
                               cpu: "%s"
                               memory: "%s"
+                              ephemeral-storage: "%s"
                             limits:
                               cpu: "%s"
                               memory: "%s"
+                              ephemeral-storage: "%s"
                           securityContext:
                             allowPrivilegeEscalation: false
                             capabilities:
@@ -171,8 +179,10 @@ public class KubernetesInferenceJobManifestBuilder {
                 escapeYaml(outputObjectPrefix(task)),
                 cpuRequest,
                 memoryRequest,
+                ephemeralStorageRequest,
                 cpuLimit,
-                memoryLimit
+                memoryLimit,
+                ephemeralStorageLimit
         );
     }
 

@@ -27,6 +27,7 @@ SCRIPT_DIR = WORKSPACE / "script"
 INPUT_DIR = WORKSPACE / "input"
 OUTPUT_DIR = WORKSPACE / "output"
 LOG_FILE = WORKSPACE / "infer.log"
+DEFAULT_PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def env(name: str, default: str = "") -> str:
@@ -112,6 +113,84 @@ def materialize_object(data: bytes, object_name: str, dest: Path) -> Path:
     target = dest / file_name
     target.write_bytes(data)
     return target
+
+
+def truthy_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "")
+    try:
+        return int(raw.strip()) if raw.strip() else default
+    except ValueError:
+        return default
+
+
+def append_process_output(output: str | None) -> None:
+    if not output:
+        return
+    with LOG_FILE.open("a", encoding="utf-8") as file:
+        file.write(output)
+        if not output.endswith("\n"):
+            file.write("\n")
+
+
+def install_script_requirements() -> None:
+    if not truthy_env("INFERENCE_INSTALL_REQUIREMENTS", True):
+        log("script requirements installation disabled")
+        return
+
+    requirements_name = env("INFERENCE_REQUIREMENTS_FILE", "requirements.txt")
+    requirements_path = SCRIPT_DIR / requirements_name
+    if not requirements_path.exists() or not requirements_path.is_file():
+        log(f"script requirements not found: {requirements_name}")
+        return
+
+    timeout_seconds = int_env("INFERENCE_PIP_TIMEOUT_SECONDS", 1800)
+    retries = int_env("INFERENCE_PIP_RETRIES", 3)
+    index_url = env("INFERENCE_PIP_INDEX_URL", DEFAULT_PIP_INDEX_URL)
+    extra_index_url = env("INFERENCE_PIP_EXTRA_INDEX_URL")
+    trusted_host = env("INFERENCE_PIP_TRUSTED_HOST", "pypi.tuna.tsinghua.edu.cn")
+
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--user",
+        "--no-cache-dir",
+        "--timeout",
+        str(max(timeout_seconds, 60)),
+        "--retries",
+        str(max(retries, 0)),
+        "--prefer-binary",
+        "-r",
+        str(requirements_path),
+    ]
+    if index_url:
+        command.extend(["-i", index_url])
+    if extra_index_url:
+        command.extend(["--extra-index-url", extra_index_url])
+    if trusted_host:
+        command.extend(["--trusted-host", trusted_host])
+
+    log(f"install script requirements: {requirements_name}")
+    completed = subprocess.run(
+        command,
+        cwd=str(SCRIPT_DIR),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        timeout=timeout_seconds,
+    )
+    append_process_output(completed.stdout)
+    if completed.returncode != 0:
+        raise RuntimeError(f"pip install failed with exit code {completed.returncode}")
 
 
 def prepare_workspace(client: Minio, bucket: str) -> Path:
@@ -203,6 +282,8 @@ def run_user_script(input_path: Path) -> None:
     if not entry_path.exists() or not entry_path.is_file():
         raise FileNotFoundError(f"entryFile not found: {entry_file}")
     child_env = os.environ.copy()
+    user_base = Path.home() / ".local"
+    child_env["PATH"] = str(user_base / "bin") + os.pathsep + child_env.get("PATH", "")
     child_env.update(
         {
             "MODEL_DIR": str(MODEL_DIR),
@@ -239,6 +320,8 @@ def main() -> int:
         callback("running", 10)
         input_path = prepare_workspace(client, bucket)
         callback("running", 35)
+        install_script_requirements()
+        callback("running", 55)
         run_user_script(input_path)
         callback("running", 85)
         result = read_result()
