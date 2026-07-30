@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source /etc/tss-platform/node-runtime.env
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <repository>:<commit-sha> sha256:<image-id>" >&2
+  exit 1
+fi
+
+image="$1"
+expected_image_id="$2"
+repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+prefix="${repository}:"
+runtime_env="${TSS_PLATFORM_DIR}/backend/.env.runtime"
+runtime_images_env="${TSS_PLATFORM_DIR}/runtime-images.env"
+
+if [[ $image != "${prefix}"* ]]; then
+  echo "Refusing an image outside the configured inference repository." >&2
+  exit 1
+fi
+tag="${image#${prefix}}"
+if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Refusing an inference image without an immutable Git SHA tag." >&2
+  exit 1
+fi
+if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Refusing an invalid image identifier." >&2
+  exit 1
+fi
+if [[ ! -f $runtime_env ]]; then
+  echo "Backend runtime environment does not exist." >&2
+  exit 1
+fi
+
+for command_name in awk ctr curl docker flock gzip; do
+  command -v "$command_name" >/dev/null
+done
+docker compose version >/dev/null
+
+install -d -m 755 /run/lock
+exec 9>/run/lock/tss-node-deploy.lock
+flock 9
+
+archive="$(mktemp /var/tmp/tss-inference-image.XXXXXX.tar)"
+runtime_env_backup="$(mktemp /var/tmp/tss-runtime-env.XXXXXX)"
+runtime_images_backup=""
+runtime_env_candidate=""
+runtime_images_candidate=""
+
+cleanup() {
+  rm -f \
+    "$archive" \
+    "$runtime_env_backup" \
+    "$runtime_images_backup" \
+    "$runtime_env_candidate" \
+    "$runtime_images_candidate"
+}
+trap cleanup EXIT
+
+gzip -dc > "$archive"
+docker load -i "$archive" >/dev/null
+actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+if [[ $actual_image_id != "$expected_image_id" ]]; then
+  echo "Loaded image identifier does not match the runner image." >&2
+  exit 1
+fi
+
+ctr --namespace k8s.io images import "$archive" >/dev/null
+ctr --namespace k8s.io images inspect "$image" >/dev/null
+
+cp -a "$runtime_env" "$runtime_env_backup"
+runtime_env_candidate="$(mktemp "${TSS_PLATFORM_DIR}/backend/.env.runtime.XXXXXX")"
+awk -v value="$image" '
+  BEGIN { updated = 0 }
+  /^INFERENCE_KUBERNETES_WORKER_IMAGE=/ {
+    print "INFERENCE_KUBERNETES_WORKER_IMAGE=" value
+    updated = 1
+    next
+  }
+  { print }
+  END {
+    if (!updated) {
+      print "INFERENCE_KUBERNETES_WORKER_IMAGE=" value
+    }
+  }
+' "$runtime_env" > "$runtime_env_candidate"
+chmod 600 "$runtime_env_candidate"
+
+if [[ -f $runtime_images_env ]]; then
+  runtime_images_backup="$(mktemp /var/tmp/tss-runtime-images-env.XXXXXX)"
+  cp -a "$runtime_images_env" "$runtime_images_backup"
+  runtime_images_candidate="$(mktemp "${TSS_PLATFORM_DIR}/runtime-images.env.XXXXXX")"
+  awk -v value="$image" '
+    BEGIN { updated = 0 }
+    /^TSS_INFERENCE_WORKER_IMAGE=/ {
+      print "TSS_INFERENCE_WORKER_IMAGE=" value
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) {
+        print "TSS_INFERENCE_WORKER_IMAGE=" value
+      }
+    }
+  ' "$runtime_images_env" > "$runtime_images_candidate"
+  chmod 600 "$runtime_images_candidate"
+fi
+
+mv -f "$runtime_env_candidate" "$runtime_env"
+runtime_env_candidate=""
+if [[ -n $runtime_images_candidate ]]; then
+  mv -f "$runtime_images_candidate" "$runtime_images_env"
+  runtime_images_candidate=""
+fi
+
+current_backend_image="$(
+  docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true
+)"
+if [[ -z $current_backend_image ]]; then
+  echo "The backend container is not running; refusing to update runtime configuration." >&2
+  cp -a "$runtime_env_backup" "$runtime_env"
+  if [[ -n $runtime_images_backup ]]; then
+    cp -a "$runtime_images_backup" "$runtime_images_env"
+  fi
+  exit 1
+fi
+
+export TSS_BACKEND_IMAGE="$current_backend_image"
+export TSS_MLFLOW_IMAGE
+
+rollback_runtime() {
+  cp -a "$runtime_env_backup" "$runtime_env"
+  if [[ -n $runtime_images_backup ]]; then
+    cp -a "$runtime_images_backup" "$runtime_images_env"
+  fi
+  docker compose \
+    -f "$TSS_COMPOSE_BASE" \
+    -f "$TSS_COMPOSE_OVERLAY" \
+    up -d --no-deps backend >/dev/null || true
+}
+
+if ! docker compose \
+  -f "$TSS_COMPOSE_BASE" \
+  -f "$TSS_COMPOSE_OVERLAY" \
+  up -d --no-deps backend; then
+  echo "Backend restart failed after inference image update; restoring configuration." >&2
+  rollback_runtime
+  exit 1
+fi
+
+for _ in $(seq 1 60); do
+  if curl --fail --silent --show-error --max-time 5 "$TSS_BACKEND_HEALTH_URL" >/dev/null; then
+    echo "Inference runtime deployment is healthy: node=$TSS_NODE_ID image=$image"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "Backend did not become ready after inference image update; restoring configuration." >&2
+docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
+rollback_runtime
+exit 1
