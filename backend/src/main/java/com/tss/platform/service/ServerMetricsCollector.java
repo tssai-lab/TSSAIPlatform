@@ -67,8 +67,9 @@ public class ServerMetricsCollector {
     public void collectMetrics() {
         if (!isK8sReady()) return;
 
-        // 获取各节点容量（CPU总核数/内存总量）
+        // 获取各节点容量（CPU/内存/GPU）和 OS 信息
         Map<String, double[]> capacities = fetchNodeCapacities();
+        Map<String, String> osInfo = fetchNodeOsInfo();
 
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
@@ -80,10 +81,24 @@ public class ServerMetricsCollector {
         for (ComputeServer server : servers) {
             try {
                 double[] cap = capacities.get(server.getServerIp());
-                if (cap != null && (server.getCpuCores() == null || server.getCpuCores() <= 0)) {
-                    server.setCpuCores(cap[0]);
-                    server.setMemoryGib(cap[1]);
-                    serverRepo.save(server);
+                if (cap != null) {
+                    boolean updated = false;
+                    if (server.getCpuCores() == null || server.getCpuCores() <= 0) {
+                        server.setCpuCores(cap[0]);
+                        updated = true;
+                    }
+                    if (server.getMemoryGib() == null || server.getMemoryGib() <= 0) {
+                        server.setMemoryGib(cap[1]);
+                        updated = true;
+                    }
+                    // 同步 GPU 数量
+                    if (cap.length > 2 && cap[2] > 0 && (server.getGpuCount() == null || server.getGpuCount() <= 0)) {
+                        server.setGpuCount((int) cap[2]);
+                        updated = true;
+                    }
+                    if (updated) {
+                        serverRepo.save(server);
+                    }
                 }
                 collectOne(server, topMetrics.get(server.getServerIp()), cap);
             } catch (Exception e) {
@@ -95,7 +110,8 @@ public class ServerMetricsCollector {
         for (String name : topMetrics.keySet()) {
             if (!ipMap.containsKey(name)) {
                 double[] cap = capacities.get(name);
-                autoRegisterK8sNode(name, cap);
+                String osImage = osInfo.get(name);
+                autoRegisterK8sNode(name, cap, osImage);
             }
         }
 
@@ -128,16 +144,21 @@ public class ServerMetricsCollector {
             snap.setMemRate(0.0);
         }
 
-        // GPU from DCGM
-        snap.setGpuRate(0.0);
-        snap.setGpuMemRate(0.0);
-        snap.setGpuTemp(0.0);
-        snap.setNetworkIn(0.0);
-        snap.setNetworkOut(0.0);
-        snap.setDiskRate(0.0);
+        // GPU / 网络 / 磁盘：仅新快照设默认 0，已有数据保留上次的值
+        if (snap.getGpuRate() == null) snap.setGpuRate(0.0);
+        if (snap.getGpuMemRate() == null) snap.setGpuMemRate(0.0);
+        if (snap.getGpuTemp() == null) snap.setGpuTemp(0.0);
+        if (snap.getNetworkIn() == null) snap.setNetworkIn(0.0);
+        if (snap.getNetworkOut() == null) snap.setNetworkOut(0.0);
+        if (snap.getDiskRate() == null) snap.setDiskRate(0.0);
 
+        // GPU metrics from DCGM exporter (overwrites defaults if available)
         String specGpu = server.getSpecGpu();
         if (specGpu != null && !specGpu.isEmpty()) {
+            collectGpu(server.getServerIp(), snap);
+        }
+        // Also try DCGM if the node has GPU capacity but no spec string
+        if ((specGpu == null || specGpu.isEmpty()) && server.getGpuCount() != null && server.getGpuCount() > 0) {
             collectGpu(server.getServerIp(), snap);
         }
 
@@ -163,7 +184,7 @@ public class ServerMetricsCollector {
         historyRepo.save(hist);
     }
 
-    private void autoRegisterK8sNode(String name, double[] capacity) {
+    private void autoRegisterK8sNode(String name, double[] capacity, String osImage) {
         ComputeServer s = new ComputeServer();
         s.setServerIp(name);
         s.setHostname(name);
@@ -173,14 +194,21 @@ public class ServerMetricsCollector {
         if (capacity != null) {
             s.setCpuCores(capacity[0] > 0 ? capacity[0] : null);
             s.setMemoryGib(capacity[1] > 0 ? capacity[1] : null);
+            if (capacity.length > 2 && capacity[2] > 0) {
+                s.setGpuCount((int) capacity[2]);
+            }
+        }
+        // 从 K8s 节点信息获取 OS，format: "Ubuntu 22.04.5 LTS"
+        if (osImage != null && !osImage.isEmpty()) {
+            s.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
         }
         s.setCreatedAt(Instant.now());
         s.setUpdatedAt(Instant.now());
         serverRepo.save(s);
-        LOG.info("自动注册K8s节点: {}", name);
+        LOG.info("自动注册K8s节点: {} (GPU={}, OS={})", name, s.getGpuCount(), s.getSpecOs());
     }
 
-    /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数和内存总量(GiB) */
+    /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数、内存总量(GiB)、GPU 数量和 OS 信息 */
     Map<String, double[]> fetchNodeCapacities() {
         Map<String, double[]> caps = new LinkedHashMap<>();
         try {
@@ -195,13 +223,43 @@ public class ServerMetricsCollector {
                     JsonNode cap = item.path("status").path("capacity");
                     double cpu = parseCpu(cap.path("cpu").asText());
                     double memGiB = parseMemToBytes(cap.path("memory").asText()) / (1024.0 * 1024.0 * 1024.0);
-                    caps.put(name, new double[]{cpu, memGiB});
+                    // GPU count from nvidia.com/gpu capacity
+                    double gpuCount = 0;
+                    String gpuStr = cap.path("nvidia.com/gpu").asText();
+                    if (!gpuStr.isEmpty()) {
+                        try { gpuCount = Double.parseDouble(gpuStr); } catch (NumberFormatException ignored) {}
+                    }
+                    caps.put(name, new double[]{cpu, memGiB, gpuCount});
                 }
             }
         } catch (Exception e) {
             LOG.warn("获取节点容量失败: {}", e.getMessage());
         }
         return caps;
+    }
+
+    /** 从 kubectl get nodes -o json 获取每个节点的 OS 镜像信息 */
+    Map<String, String> fetchNodeOsInfo() {
+        Map<String, String> osMap = new LinkedHashMap<>();
+        try {
+            Path kubectl = envService.resolveKubectl();
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (r.success()) {
+                JsonNode root = objectMapper.readTree(r.output());
+                for (JsonNode item : root.path("items")) {
+                    String name = item.path("metadata").path("name").asText();
+                    String osImage = item.path("status").path("nodeInfo").path("osImage").asText();
+                    if (!osImage.isEmpty()) {
+                        osMap.put(name, osImage);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("获取节点OS信息失败: {}", e.getMessage());
+        }
+        return osMap;
     }
 
     // ── top / GPU ──
