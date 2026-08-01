@@ -8,9 +8,10 @@ import { history, useAccess } from '@umijs/max';
 import { message } from 'antd';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   getLogList,
+  getOperationTypeValueEnum,
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
@@ -18,12 +19,15 @@ import { notifyRequestError } from '../notifyRequestError';
 
 /**
  * 日志管理页（操作日志）
- * 超管：全部操作人（含管理员）、IP
- * 普管：仅普通用户操作日志、无 IP 列
+ * 数据范围由后端按角色控制；筛选条件全部进 Body
+ * 超管可展示 IP 列；普管可不展示（后端也可不返回 IP）
  */
 const LogManagement: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType>(null);
+  const [operateTypeEnum, setOperateTypeEnum] = useState<
+    Record<string, { text: string }>
+  >({});
 
   const isSuperAdmin = access.canLogViewAdminAndIp;
 
@@ -33,7 +37,9 @@ const LogManagement: React.FC = () => {
     }
   }, [access.canAccessSystemLog]);
 
-  const currentUserRole = isSuperAdmin ? 'super_admin' : 'normal_admin';
+  useEffect(() => {
+    void getOperationTypeValueEnum().then(setOperateTypeEnum);
+  }, []);
 
   const fetchLogList = async (
     params: ParamsType & {
@@ -44,6 +50,7 @@ const LogManagement: React.FC = () => {
       operateTime?: [string, string];
       ip?: string;
       result?: string;
+      content?: string;
     },
     _sort: Record<string, SortOrder>,
     _filter: Record<string, (string | number)[] | null>,
@@ -57,6 +64,7 @@ const LogManagement: React.FC = () => {
         operateTime,
         ip,
         result,
+        content,
       } = params as {
         current?: number;
         pageSize?: number;
@@ -65,6 +73,7 @@ const LogManagement: React.FC = () => {
         operateTime?: [string, string];
         ip?: string;
         result?: string;
+        content?: string;
       };
 
       let operateTimeRange: string[] = [];
@@ -76,8 +85,8 @@ const LogManagement: React.FC = () => {
         operateTime[1]
       ) {
         operateTimeRange = [
-          dayjs(operateTime[0]).format('YYYY-MM-DD HH:mm:ss'),
-          dayjs(operateTime[1]).format('YYYY-MM-DD HH:mm:ss'),
+          dayjs(operateTime[0]).format('YYYY-MM-DDTHH:mm:ss'),
+          dayjs(operateTime[1]).format('YYYY-MM-DDTHH:mm:ss'),
         ];
       }
 
@@ -89,7 +98,7 @@ const LogManagement: React.FC = () => {
         operateTime: operateTimeRange,
         ip: ip ?? '',
         result: result ?? '',
-        currentUserRole,
+        content: content ?? '',
       };
 
       const response = await getLogList(requestParams);
@@ -140,16 +149,8 @@ const LogManagement: React.FC = () => {
       key: 'operateType',
       align: 'center',
       valueType: 'select',
-      valueEnum: {
-        登录: { text: '登录' },
-        用户管理: { text: '用户管理' },
-        审计日志: { text: '审计日志' },
-        数据查询: { text: '数据查询' },
-        数据上传: { text: '数据上传' },
-        任务创建: { text: '任务创建' },
-        系统配置: { text: '系统配置' },
-      },
-      fieldProps: { placeholder: '请选择操作类型' },
+      valueEnum: operateTypeEnum,
+      fieldProps: { placeholder: '请选择操作类型', allowClear: true },
     },
     {
       title: '操作时间',
@@ -182,7 +183,8 @@ const LogManagement: React.FC = () => {
       key: 'content',
       align: 'center',
       ellipsis: true,
-      hideInSearch: true,
+      hideInSearch: false,
+      fieldProps: { placeholder: '操作内容关键词' },
     },
     {
       title: '结果',
@@ -209,7 +211,6 @@ const LogManagement: React.FC = () => {
         pagination={{
           defaultPageSize: 10,
           showSizeChanger: true,
-          showQuickJumper: true,
         }}
         toolBarRender={false}
         dateFormatter="string"
