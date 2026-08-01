@@ -388,10 +388,22 @@ public class ServerMetricsCollector {
             String path = "/api/v1/nodes/" + nodeName + "/proxy/stats/summary";
             List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "--raw", path);
             ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 15);
-            if (!r.success() || r.output().isBlank()) return null;
+            if (!r.success()) {
+                LOG.warn("kubelet stats 命令失败 node={}, exit={}, err={}", nodeName, r.exitCode(), r.errorMessage());
+                return null;
+            }
+            if (r.output().isBlank()) {
+                LOG.warn("kubelet stats 返回空 node={}", nodeName);
+                return null;
+            }
 
             JsonNode root = objectMapper.readTree(r.output());
             JsonNode nodeStats = root.path("node");
+            if (nodeStats.isMissingNode()) {
+                LOG.warn("kubelet stats 缺少 node 字段 node={}, 开头100字符: {}", nodeName,
+                        r.output().length() > 100 ? r.output().substring(0, 100) : r.output());
+                return null;
+            }
 
             // 磁盘：fs used / capacity → 百分比
             JsonNode fs = nodeStats.path("fs");
@@ -424,10 +436,12 @@ public class ServerMetricsCollector {
                 }
             }
 
+            LOG.info("kubelet stats 采集成功 node={}, disk={}%, rx={}MB/s, tx={}MB/s",
+                    nodeName, diskRate, rxRate, txRate);
             return new NodeStats(diskRate, rxRate, txRate,
                     rxBytes / (1024 * 1024), txBytes / (1024 * 1024));  // 累计字节转为 MB 存储
         } catch (Exception e) {
-            LOG.debug("kubelet stats 采集失败 node={}: {}", nodeName, e.getMessage());
+            LOG.warn("kubelet stats 采集异常 node={}: {}", nodeName, e.getMessage());
             return null;
         }
     }
