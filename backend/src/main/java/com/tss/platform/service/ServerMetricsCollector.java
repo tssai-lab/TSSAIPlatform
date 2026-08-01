@@ -431,6 +431,8 @@ public class ServerMetricsCollector {
             return null;
         }
     }
+
+    private double extractValue(String line) {
         int lastSpace = line.lastIndexOf(' ');
         if (lastSpace < 0) return 0;
         try { return Double.parseDouble(line.substring(lastSpace + 1).trim()); }
