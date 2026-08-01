@@ -151,21 +151,24 @@ public class ServerMetricsCollector {
             snap.setMemRate(0.0);
         }
 
-        // 磁盘使用率：ephemeral-storage usage / capacity
-        if (top != null && top.diskBytes() > 0 && capacity != null && capacity.length > 3 && capacity[3] > 0) {
-            double diskGiB = capacity[3];
-            snap.setDiskRate(Math.round(top.diskBytes() * 1000.0 / (diskGiB * 1024 * 1024 * 1024)) / 10.0);
-        } else if (snap.getDiskRate() == null) {
-            snap.setDiskRate(0.0);
+        // 磁盘 / 网络：从 kubelet stats summary 接口采集
+        NodeStats nodeStats = collectNodeStats(
+                server.getK8sNodeName() != null ? server.getK8sNodeName() : server.getServerIp(),
+                server.getServerIp());
+        if (nodeStats != null) {
+            if (nodeStats.diskRate() > 0) snap.setDiskRate(nodeStats.diskRate());
+            if (nodeStats.networkRxRate() > 0) snap.setNetworkIn(nodeStats.networkRxRate());
+            if (nodeStats.networkTxRate() > 0) snap.setNetworkOut(nodeStats.networkTxRate());
         }
+        // 首次采集或采集失败时，保留已有值；仅在全新快照时设默认 0
+        if (snap.getDiskRate() == null) snap.setDiskRate(0.0);
+        if (snap.getNetworkIn() == null) snap.setNetworkIn(0.0);
+        if (snap.getNetworkOut() == null) snap.setNetworkOut(0.0);
 
-        // GPU / 网络：仅新快照设默认 0，已有数据保留上次的值
+        // GPU：仅新快照设默认 0，已有数据保留上次的值
         if (snap.getGpuRate() == null) snap.setGpuRate(0.0);
         if (snap.getGpuMemRate() == null) snap.setGpuMemRate(0.0);
         if (snap.getGpuTemp() == null) snap.setGpuTemp(0.0);
-        if (snap.getNetworkIn() == null) snap.setNetworkIn(0.0);
-        if (snap.getNetworkOut() == null) snap.setNetworkOut(0.0);
-        if (snap.getDiskRate() == null) snap.setDiskRate(0.0);
 
         // GPU metrics from DCGM exporter (overwrites defaults if available)
         String specGpu = server.getSpecGpu();
@@ -184,7 +187,7 @@ public class ServerMetricsCollector {
         snap.setUpdatedAt(now);
         snapshotRepo.save(snap);
 
-        // history
+        // history — 注意：networkIn/Out 存累计字节(MB)，供下次增量计算，不是速率
         ServerMetricHistory hist = new ServerMetricHistory();
         hist.setServerIp(server.getServerIp());
         hist.setCpuRate(snap.getCpuRate());
@@ -192,8 +195,8 @@ public class ServerMetricsCollector {
         hist.setGpuRate(snap.getGpuRate());
         hist.setGpuMemRate(snap.getGpuMemRate());
         hist.setDiskRate(snap.getDiskRate());
-        hist.setNetworkIn(snap.getNetworkIn());
-        hist.setNetworkOut(snap.getNetworkOut());
+        hist.setNetworkIn(nodeStats != null ? (double) nodeStats.rawRxBytes() : 0.0);
+        hist.setNetworkOut(nodeStats != null ? (double) nodeStats.rawTxBytes() : 0.0);
         hist.setGpuTemp(snap.getGpuTemp());
         hist.setCollectedAt(now);
         historyRepo.save(hist);
@@ -377,7 +380,57 @@ public class ServerMetricsCollector {
         } catch (Exception ignored) {}
     }
 
-    private double extractValue(String line) {
+    /** 通过 kubelet stats summary API 采集节点磁盘和网络指标 */
+    private NodeStats collectNodeStats(String nodeName, String serverIp) {
+        try {
+            Path kubectl = envService.resolveKubectl();
+            Path kubeconfig = envService.resolveKubeconfig();
+            String path = "/api/v1/nodes/" + nodeName + "/proxy/stats/summary";
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "--raw", path);
+            ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 15);
+            if (!r.success() || r.output().isBlank()) return null;
+
+            JsonNode root = objectMapper.readTree(r.output());
+            JsonNode nodeStats = root.path("node");
+
+            // 磁盘：fs used / capacity → 百分比
+            JsonNode fs = nodeStats.path("fs");
+            long fsUsed = fs.path("usedBytes").asLong(0);
+            long fsCapacity = fs.path("capacityBytes").asLong(0);
+            double diskRate = fsCapacity > 0
+                    ? Math.round(fsUsed * 1000.0 / fsCapacity) / 10.0 : 0;
+
+            // 网络：累计字节 → 计算速率
+            JsonNode net = nodeStats.path("network");
+            long rxBytes = net.path("rxBytes").asLong(0);
+            long txBytes = net.path("txBytes").asLong(0);
+            double rxRate = 0, txRate = 0;
+
+            if (rxBytes > 0 || txBytes > 0) {
+                Instant now = Instant.now();
+                ServerMetricHistory prev = historyRepo.findFirstByServerIpOrderByCollectedAtDesc(serverIp);
+                if (prev != null && prev.getCollectedAt() != null) {
+                    // history 中 networkIn/Out 存的是上次的累计字节（MB）
+                    long prevRx = (long)(prev.getNetworkIn() != null ? prev.getNetworkIn() : 0);
+                    long prevTx = (long)(prev.getNetworkOut() != null ? prev.getNetworkOut() : 0);
+                    double elapsedSec = Math.max(1,
+                            (now.toEpochMilli() - prev.getCollectedAt().toEpochMilli()) / 1000.0);
+                    if (prevRx > 0 && rxBytes > prevRx) {
+                        rxRate = Math.round((rxBytes - prevRx) * 10.0 / (1024 * 1024 * elapsedSec)) / 10.0;
+                    }
+                    if (prevTx > 0 && txBytes > prevTx) {
+                        txRate = Math.round((txBytes - prevTx) * 10.0 / (1024 * 1024 * elapsedSec)) / 10.0;
+                    }
+                }
+            }
+
+            return new NodeStats(diskRate, rxRate, txRate,
+                    rxBytes / (1024 * 1024), txBytes / (1024 * 1024));  // 累计字节转为 MB 存储
+        } catch (Exception e) {
+            LOG.debug("kubelet stats 采集失败 node={}: {}", nodeName, e.getMessage());
+            return null;
+        }
+    }
         int lastSpace = line.lastIndexOf(' ');
         if (lastSpace < 0) return 0;
         try { return Double.parseDouble(line.substring(lastSpace + 1).trim()); }
@@ -414,4 +467,7 @@ public class ServerMetricsCollector {
     }
 
     record TopData(double cpuUsed, long memBytes, double cpuPct, double memPct, long diskBytes) {}
+
+    record NodeStats(double diskRate, double networkRxRate, double networkTxRate,
+                     long rawRxBytes, long rawTxBytes) {}
 }
