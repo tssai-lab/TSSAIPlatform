@@ -30,7 +30,7 @@ import {
   fetchResourceMonitorServers,
   fetchResourceMonitorSummary,
 } from '@/services/platform';
-import { getUsageColor, getUsageStatus } from './constants';
+import { getUsageColor } from './constants';
 
 const { Search } = Input;
 const { Text } = Typography;
@@ -120,7 +120,6 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
               showInfo={false}
               size="small"
               strokeColor={getUsageColor(item.value)}
-              status={getUsageStatus(item.value)}
             />
           </div>
         ))}

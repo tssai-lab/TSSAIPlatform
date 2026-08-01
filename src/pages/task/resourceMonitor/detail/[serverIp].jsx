@@ -35,7 +35,6 @@ import {
 import {
   getIntervalSpanLabel,
   getUsageColor,
-  getUsageStatus,
   TIME_INTERVAL_OPTIONS,
 } from '../constants';
 import ResourceTrendChart from '../ResourceTrendChart';
@@ -382,7 +381,7 @@ const ServerDetail = () => {
               <Progress
                 percent={item.value}
                 strokeColor={getUsageColor(item.value)}
-                status={getUsageStatus(item.value)}
+                format={() => `${item.value}%`}
                 style={{ marginTop: 8 }}
               />
             </Card>
