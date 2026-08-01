@@ -345,10 +345,21 @@ public class ResourceMonitorService {
         }
 
         ServerSpecs specs = new ServerSpecs();
-        specs.setCpu(server.getSpecCpu());
-        specs.setMemory(server.getSpecMemory());
-        specs.setGpu(server.getSpecGpu());
-        specs.setOs(server.getSpecOs());
+        // spec_* 字段优先（手动添加的服务器），为空时从 K8s 自动采集的容量字段兜底
+        specs.setCpu(server.getSpecCpu() != null && !server.getSpecCpu().isBlank()
+                ? server.getSpecCpu()
+                : (server.getCpuCores() != null && server.getCpuCores() > 0
+                   ? String.format("%.0f 核", server.getCpuCores()) : null));
+        specs.setMemory(server.getSpecMemory() != null && !server.getSpecMemory().isBlank()
+                ? server.getSpecMemory()
+                : (server.getMemoryGib() != null && server.getMemoryGib() > 0
+                   ? String.format("%.0f GiB", server.getMemoryGib()) : null));
+        specs.setGpu(server.getSpecGpu() != null && !server.getSpecGpu().isBlank()
+                ? server.getSpecGpu()
+                : (server.getGpuCount() != null && server.getGpuCount() > 0
+                   ? server.getGpuCount() + " × GPU" : null));
+        specs.setOs(server.getSpecOs() != null && !server.getSpecOs().isBlank()
+                ? server.getSpecOs() : null);
         item.setSpecs(specs);
 
         if (includeTasks) {
