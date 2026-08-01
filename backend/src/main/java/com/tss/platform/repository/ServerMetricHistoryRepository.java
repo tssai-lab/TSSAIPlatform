@@ -20,4 +20,6 @@ public interface ServerMetricHistoryRepository extends JpaRepository<ServerMetri
     @Modifying
     @Query("DELETE FROM ServerMetricHistory h WHERE h.collectedAt < :before")
     int deleteByCollectedAtBefore(@Param("before") Instant before);
+
+    ServerMetricHistory findFirstByServerIpOrderByCollectedAtDesc(String serverIp);
 }
