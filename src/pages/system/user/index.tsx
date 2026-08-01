@@ -566,7 +566,7 @@ const UserManagement: React.FC = () => {
             ]}
             validateTrigger={['onBlur', 'onSubmit']}
           >
-            <Input placeholder="请输入用户名" disabled={!!editingUser} />
+            <Input placeholder="请输入用户名" />
           </Form.Item>
           <Form.Item
             name="phone"

@@ -13,6 +13,7 @@ import { useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
+  Collapse,
   Descriptions,
   Drawer,
   Form,
@@ -30,6 +31,7 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import InferenceResultVisual from '@/components/inference/ResultVisual';
 import {
   createInferenceTask,
   deleteInferenceScript,
@@ -38,6 +40,7 @@ import {
   fetchDatasetList,
   fetchModelList,
   formatInferenceBytes,
+  getInferenceTaskResult,
   type InferenceInputMode,
   type InferenceScriptVersion,
   type InferenceTask,
@@ -136,6 +139,33 @@ const InferenceWorkbench: React.FC = () => {
     useState<InferenceInputMode>('SINGLE_OBJECT');
   const [selectedTask, setSelectedTask] = useState<InferenceTask>();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const openTaskResult = async (task: InferenceTask) => {
+    setSelectedTask(task);
+    setDrawerOpen(true);
+    try {
+      const res = await getInferenceTaskResult(task.id, {
+        skipErrorHandler: true,
+      });
+      const latest = res?.data;
+      if (!latest) return;
+      setSelectedTask((prev) =>
+        prev && prev.id === task.id
+          ? {
+              ...prev,
+              status: latest.status ?? prev.status,
+              progress: latest.progress ?? prev.progress,
+              result: latest.result ?? prev.result,
+              logPath: latest.logPath ?? prev.logPath,
+              outputPath: latest.outputPath ?? prev.outputPath,
+              errorMessage: latest.errorMessage ?? prev.errorMessage,
+            }
+          : prev,
+      );
+    } catch {
+      // 列表中的 result 仍可展示
+    }
+  };
 
   const modelSelectOptions = useMemo(
     () =>
@@ -318,8 +348,7 @@ const InferenceWorkbench: React.FC = () => {
       });
       actionRef.current?.reload();
       if (res?.data) {
-        setSelectedTask(res.data);
-        setDrawerOpen(true);
+        void openTaskResult(res.data);
       }
     } catch (error: any) {
       message.error(error?.message || '创建推理任务失败');
@@ -455,8 +484,7 @@ const InferenceWorkbench: React.FC = () => {
               type="link"
               icon={<FileSearchOutlined />}
               onClick={() => {
-                setSelectedTask(record);
-                setDrawerOpen(true);
+                void openTaskResult(record);
               }}
             >
               结果
@@ -827,7 +855,7 @@ const InferenceWorkbench: React.FC = () => {
       <Drawer
         title="推理结果"
         open={drawerOpen}
-        width={680}
+        width={860}
         onClose={() => setDrawerOpen(false)}
         extra={selectedTask ? statusTag(selectedTask.status) : null}
       >
@@ -871,12 +899,12 @@ const InferenceWorkbench: React.FC = () => {
                 </Descriptions.Item>
               )}
               <Descriptions.Item label="输出目录">
-                <Typography.Text copyable ellipsis style={{ maxWidth: 480 }}>
+                <Typography.Text copyable ellipsis style={{ maxWidth: 560 }}>
                   {selectedTask.outputPath || '-'}
                 </Typography.Text>
               </Descriptions.Item>
               <Descriptions.Item label="日志文件">
-                <Typography.Text copyable ellipsis style={{ maxWidth: 480 }}>
+                <Typography.Text copyable ellipsis style={{ maxWidth: 560 }}>
                   {selectedTask.logPath || '-'}
                 </Typography.Text>
               </Descriptions.Item>
@@ -907,21 +935,43 @@ const InferenceWorkbench: React.FC = () => {
                 下载日志
               </Button>
             </Space>
-            <Typography.Title level={5}>结构化结果</Typography.Title>
-            <pre
-              style={{
-                margin: 0,
-                padding: 12,
-                minHeight: 160,
-                maxHeight: 360,
-                overflow: 'auto',
-                background: '#111827',
-                color: '#e5e7eb',
-                borderRadius: 6,
-              }}
-            >
-              {JSON.stringify(selectedTask.result || {}, null, 2)}
-            </pre>
+
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: 'structured',
+                  label: '结构化结果',
+                  children: (
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: 12,
+                        minHeight: 120,
+                        maxHeight: 280,
+                        overflow: 'auto',
+                        background: '#111827',
+                        color: '#e5e7eb',
+                        borderRadius: 6,
+                      }}
+                    >
+                      {JSON.stringify(selectedTask.result || {}, null, 2)}
+                    </pre>
+                  ),
+                },
+              ]}
+            />
+
+            <div>
+              <Typography.Title level={5} style={{ marginTop: 0 }}>
+                可视化结果
+              </Typography.Title>
+              <InferenceResultVisual
+                result={selectedTask.result}
+                outputPath={selectedTask.outputPath}
+                onDownloadObject={downloadByObjectName}
+              />
+            </div>
           </Space>
         )}
       </Drawer>
