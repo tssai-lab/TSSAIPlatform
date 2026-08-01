@@ -349,7 +349,7 @@ public class ResourceMonitorService {
         specs.setCpu(server.getSpecCpu() != null && !server.getSpecCpu().isBlank()
                 ? server.getSpecCpu()
                 : (server.getCpuCores() != null && server.getCpuCores() > 0
-                   ? String.format("%.0f 核", server.getCpuCores()) : null));
+                   ? String.format("%.1f 核", server.getCpuCores()) : null));
         specs.setMemory(server.getSpecMemory() != null && !server.getSpecMemory().isBlank()
                 ? server.getSpecMemory()
                 : (server.getMemoryGib() != null && server.getMemoryGib() > 0
