@@ -56,6 +56,10 @@ class DatasetWorkspaceServiceTest {
         assertEquals("v3", draft.getVersion());
         assertEquals("v3", draft.getVersionLabel());
         assertEquals("DRAFT", draft.getStatus());
+        assertEquals(
+                fixture.parent.getId(),
+                draft.getWorkspaceHeadVersionId()
+        );
         assertEquals(fixture.parent.getStoragePath(), draft.getStoragePath());
         assertEquals(fixture.parent.getFileName(), draft.getFileName());
         assertEquals(fixture.parent.getSizeBytes(), draft.getSizeBytes());
@@ -336,7 +340,7 @@ class DatasetWorkspaceServiceTest {
     @Test
     void rejectsDeletedSource() {
         Fixture fixture = new Fixture();
-        when(fixture.versionRepo.findByIdAndDeletedFalseForUpdate(fixture.parent.getId()))
+        when(fixture.versionRepo.findByIdAndDeletedFalse(fixture.parent.getId()))
                 .thenReturn(Optional.empty());
 
         IllegalArgumentException error = assertThrows(
@@ -413,6 +417,8 @@ class DatasetWorkspaceServiceTest {
     void rejectsOtherUsersVersionWithoutRevealingStatus() {
         Fixture fixture = new Fixture();
         fixture.parent.setStatus("DRAFT");
+        when(fixture.versionRepo.findByIdAndDeletedFalse(fixture.parent.getId()))
+                .thenReturn(Optional.of(fixture.parent));
         when(fixture.versionRepo.findByIdAndDeletedFalseForUpdate(fixture.parent.getId()))
                 .thenReturn(Optional.of(fixture.parent));
         when(fixture.assetRepo.findByIdAndDeletedFalseForUpdate(fixture.asset.getId()))
@@ -463,6 +469,8 @@ class DatasetWorkspaceServiceTest {
         }
 
         private void stubOwnedParent() {
+            when(versionRepo.findByIdAndDeletedFalse(parent.getId()))
+                    .thenReturn(Optional.of(parent));
             when(versionRepo.findByIdAndDeletedFalseForUpdate(parent.getId()))
                     .thenReturn(Optional.of(parent));
             when(assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId()))

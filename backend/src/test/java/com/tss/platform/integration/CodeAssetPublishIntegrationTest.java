@@ -25,7 +25,9 @@ import com.tss.platform.service.CodeZipArchiveService;
 import com.tss.platform.service.MinioDeleteTaskScheduler;
 import com.tss.platform.service.MinioDeleteTaskService;
 import com.tss.platform.service.MinioService;
+import com.tss.platform.service.V2AdminCodeAssetService;
 import com.tss.platform.service.V2AdminCodeReviewService;
+import com.tss.platform.service.V2CodeAssetService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -152,6 +154,12 @@ class CodeAssetPublishIntegrationTest {
 
     @Autowired
     private V2AdminCodeReviewService codeReviewService;
+
+    @Autowired
+    private V2AdminCodeAssetService adminCodeAssetService;
+
+    @Autowired
+    private V2CodeAssetService codeAssetService;
 
     @MockitoSpyBean
     private CodeArtifactStorageService storageService;
@@ -335,6 +343,40 @@ class CodeAssetPublishIntegrationTest {
 
         assertTrue(page.items().stream()
                 .anyMatch(candidate -> version.getId().equals(candidate.versionId())));
+    }
+
+    @Test
+    void administratorAssetListIsCrossOwnerWhileOrdinaryListRemainsOwnerScopedOnPostgres() {
+        String suffix = compactUuid();
+        String keyword = "cross-owner-" + suffix;
+        String ownAssetId = "admin-list-own-" + suffix;
+        String foreignAssetId = "admin-list-foreign-" + suffix;
+        persistAsset(ownAssetId, OWNER_USER_ID, keyword + "-own");
+        persistAsset(foreignAssetId, OWNER_USER_ID + 1, keyword + "-foreign");
+
+        var administratorPage = adminCodeAssetService.list(
+                null,
+                keyword,
+                null,
+                0,
+                20,
+                "UPDATED_AT",
+                "DESC"
+        );
+        var ordinaryIds = codeAssetService.list().stream()
+                .map(item -> item.id())
+                .toList();
+
+        assertAll(
+                () -> assertEquals(
+                        Set.of(OWNER_USER_ID, OWNER_USER_ID + 1),
+                        administratorPage.items().stream()
+                                .map(item -> item.ownerUserId())
+                                .collect(java.util.stream.Collectors.toSet())
+                ),
+                () -> assertTrue(ordinaryIds.contains(ownAssetId)),
+                () -> assertFalse(ordinaryIds.contains(foreignAssetId))
+        );
     }
 
     @Test
@@ -523,15 +565,23 @@ class CodeAssetPublishIntegrationTest {
     }
 
     private CodeAsset persistAsset(String assetId) {
+        return persistAsset(assetId, OWNER_USER_ID, "Integration code asset");
+    }
+
+    private CodeAsset persistAsset(
+            String assetId,
+            int ownerUserId,
+            String name
+    ) {
         Instant now = Instant.now();
         CodeAsset asset = new CodeAsset();
         asset.setId(assetId);
-        asset.setName("Integration code asset");
+        asset.setName(name);
         asset.setPurpose("TRAINING");
         asset.setRuntime("python:3.11");
         asset.setEntryScript("scripts/train.py");
         asset.setTrainingType("NLP");
-        asset.setOwnerUserId(OWNER_USER_ID);
+        asset.setOwnerUserId(ownerUserId);
         asset.setCreatedAt(now);
         asset.setUpdatedAt(now);
         asset.setDeleted(false);

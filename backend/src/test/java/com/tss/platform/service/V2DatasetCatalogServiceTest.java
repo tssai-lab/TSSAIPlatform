@@ -81,9 +81,13 @@ class V2DatasetCatalogServiceTest {
         DatasetVersion draft = fixture.version("draft-2", "DRAFT", 2);
         asset.setCurrentVersionId(ready.getId());
         ImportJob job = fixture.job(draft.getId(), "FAILED", 0);
-        job.setErrorCode("DUPLICATE_SAMPLE");
-        job.setErrorMessage("上传内容包含已存在的样本");
-        job.setErrorDetailsJson("{\"sampleName\":\"scene-1\"}");
+        job.setErrorCode("INVALID_MANIFEST");
+        job.setErrorMessage("Manifest 内容无效，请检查后重试");
+        job.setErrorDetailsJson(
+                "{\"field\":\"samples[0].data[0].path\","
+                        + "\"path\":\"missing.png\","
+                        + "\"reason\":\"path not found in zip\"}"
+        );
         fixture.stub(List.of(asset), List.of(ready, draft), List.of(job));
 
         V2DatasetListItem item = fixture.service
@@ -95,8 +99,12 @@ class V2DatasetCatalogServiceTest {
         assertTrue(item.getHasDraft());
         assertEquals(draft.getId(), item.getWorkspaceId());
         assertFalse(item.getPublishReadiness().canPublish());
-        assertEquals("DUPLICATE_SAMPLE", item.getUserError().getErrorCode());
-        assertEquals("scene-1", item.getUserError().getDetails().get("sampleName"));
+        assertEquals("INVALID_MANIFEST", item.getUserError().getErrorCode());
+        assertEquals(
+                "samples[0].data[0].path",
+                item.getUserError().getDetails().get("field")
+        );
+        assertEquals("missing.png", item.getUserError().getDetails().get("path"));
         assertTrue(item.getAvailableActions().contains("ADD_DATA"));
         assertFalse(item.getAvailableActions().contains("PUBLISH"));
     }

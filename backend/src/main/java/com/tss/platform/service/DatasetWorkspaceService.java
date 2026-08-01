@@ -97,12 +97,18 @@ public class DatasetWorkspaceService {
         String requestedVersionLabel =
                 normalizeRequestedVersionLabel(requestedVersionLabelValue);
 
+        DatasetVersion parentSnapshot = versionRepo
+                .findByIdAndDeletedFalse(readyVersionId)
+                .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND));
+        DatasetAsset asset = assetRepo
+                .findByIdAndDeletedFalseForUpdate(parentSnapshot.getAssetId())
+                .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND));
         DatasetVersion parent = versionRepo
                 .findByIdAndDeletedFalseForUpdate(readyVersionId)
                 .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND));
-        DatasetAsset asset = assetRepo
-                .findByIdAndDeletedFalseForUpdate(parent.getAssetId())
-                .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND));
+        if (!asset.getId().equals(parent.getAssetId())) {
+            throw new IllegalArgumentException(NOT_FOUND);
+        }
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new IllegalArgumentException(NOT_FOUND);
         }
@@ -160,6 +166,7 @@ public class DatasetWorkspaceService {
         draft.setCreatedAt(now);
         draft.setUpdatedAt(now);
         draft.setWorkspaceRevision(0L);
+        draft.setWorkspaceHeadVersionId(asset.getCurrentVersionId());
         draft.setDeleted(false);
         draft.setDeletedAt(null);
         DatasetVersion saved;

@@ -516,6 +516,7 @@ class DatasetWorkspacePublishServiceTest {
             version.setId("draft-3");
             version.setAssetId("asset-1");
             version.setParentVersionId("ready-2");
+            version.setWorkspaceHeadVersionId("ready-2");
             version.setVersion("1.0.3");
             version.setVersionLabel("1.0.3");
             version.setVersionNo(3);

@@ -2791,7 +2791,11 @@ V2 成功响应直接返回强类型 DTO 或分页对象。请求已经通过鉴
 | `422` | 目录、Manifest、导入或发布完整性错误 |
 | `500` | 未预期服务错误 |
 
-ImportJob 新增 `errorCode` 和结构化错误详情落库字段。`errorMessage` 只保存用户可读信息，原始技术异常仅写服务端日志。
+ImportJob 新增 `errorCode` 和结构化错误详情落库字段。MANIFEST 校验详情固定包含
+`field/reason`，可定位时增加 `externalId/sampleIndex/path`，非法 JSON 可增加
+`line/column`。V2 上传状态、数据集列表、工作区和 ImportJob 状态接口统一把该内容映射到
+`userError.details`；不返回对象存储路径、堆栈或内部异常类名。`errorMessage` 只保存
+用户可读信息，原始技术异常仅写服务端日志。
 
 ### 18.1 数据集列表
 
@@ -2830,12 +2834,14 @@ IMPORTING > IMPORT_PARTIAL / IMPORT_FAILED > EDITING > READY > EMPTY
 
 ### 18.2 数据集版本工作区
 
-版本工作区从资产当前 READY 版本派生 DRAFT；已有活动 DRAFT 时，创建接口幂等返回同一个工作区。它编辑的是“下一版本”，不会修改父 READY。V2 不再提供 `dataset-edit-sessions` 路由别名，前端必须按后述路径同批迁移。
+版本工作区可以从资产当前 READY 或显式选择的历史 READY 派生 DRAFT；已有活动 DRAFT
+时，仅在基线兼容时幂等返回同一个工作区。它编辑的是“下一版本”，不会修改父 READY。
+V2 不再提供 `dataset-edit-sessions` 路由别名，前端必须按后述路径同批迁移。
 
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/v2/dataset-uploads/init` | 初始化首次数据集 ZIP 上传；请求字段兼容原上传 init |
-| `POST /api/v2/datasets/{datasetId}/workspaces` | 创建或继续该资产的版本工作区；可选请求体携带 `versionLabel` |
+| `POST /api/v2/datasets/{datasetId}/workspaces` | 创建或继续该资产的版本工作区；可选请求体携带 `baseVersionId`、`versionLabel` |
 | `GET /api/v2/datasets/{datasetId}/version-allocation` | 预检下一内部序号、默认标签及可选请求标签的占用情况 |
 | `GET /api/v2/dataset-workspaces/{workspaceId}` | 查询工作区、活动任务和发布 readiness |
 | `PATCH /api/v2/dataset-workspaces/{workspaceId}` | 以 Merge Patch 修改版本元数据 |
@@ -2854,17 +2860,35 @@ IMPORTING > IMPORT_PARTIAL / IMPORT_FAILED > EDITING > READY > EMPTY
 
 ```json
 {
+  "baseVersionId": "dataset-ver-v1",
   "versionLabel": "1.0.3"
 }
 ```
+
+省略 `baseVersionId` 时，仅在新建工作区场景默认使用资产当前 READY。显式基线必须属于
+该资产、未删除且为 READY；返回的 `baseVersion`、数据库 `parentVersionId` 和物化的
+样本/组件/package 关系都来自所选版本，不会静默回退到当前版本。创建事务还会在内部保存
+当时锁定的 `currentVersionId` 作为 head 快照，该内部字段不对前端暴露。
 
 显式标签会先 trim，长度必须为 1–64；显式空白或超长返回
 `400 / INVALID_VERSION_LABEL`，大小写比较规则保持现状。未传标签时，后端在资产行锁内按包含软删除记录的历史最大 `versionNo` 分配下一内部序号，并生成默认标签
 `v{nextVersionNo}`；若该默认标签已被任一历史版本占用，则继续向后寻找。最终标签会在首次保存时同时写入 `version` 和 `versionLabel`，V2 前端不需要再调用 Legacy PUT。
 
-已有活动 DRAFT 时，无标签或与现有工作区一致的标签会幂等返回原工作区；不同标签返回
+已有活动 DRAFT 时，省略基线或显式传相同基线可继续；显式传不同基线返回
+`409 / WORKSPACE_BASE_CONFLICT`，`details` 包含
+`workspaceId/activeBaseVersionId/requestedBaseVersionId`。无标签或与现有工作区一致的
+标签会幂等返回原工作区；不同标签返回
 `409 / DATASET_VERSION_LABEL_CONFLICT`，`details` 额外包含
 `workspaceId/currentVersionLabel`。
+
+基线错误语义：
+
+| HTTP | `errorCode` | 场景 |
+| --- | --- | --- |
+| `400` | `INVALID_BASE_VERSION_ID` | 显式 `baseVersionId` 为空白 |
+| `404` | `DATASET_NOT_FOUND` | 基线不存在、已删除、属于其他资产或无权访问 |
+| `409` | `WORKSPACE_BASE_CONFLICT` | 已有活动工作区使用不同基线 |
+| `422` | `BASE_VERSION_NOT_READY` | 同资产基线存在但不是 READY |
 
 标签预检示例：
 
@@ -2972,7 +2996,7 @@ ZIP 与 RAW 均可在 DRAFT 预览和下载。所有读取执行 owner、工作�
 }
 ```
 
-数据集列表、工作区详情和发布使用同一套 readiness 规则，覆盖空样本、上传/导入状态、包关系与顺序、重复 ID/索引、数据—标注关联、文件描述、版本元数据和父版本基线。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。发布在同一锁和 revision 下重新检查：业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`；父 READY 已变化返回 `409 / BASE_VERSION_STALE`。因此无状态变化时，某 revision 的 `canPublish=true` 保证发布不会再因同一业务规则返回 422。
+数据集列表、工作区详情和发布使用同一套 readiness 规则，覆盖空样本、上传/导入状态、包关系与顺序、重复 ID/索引、数据—标注关联、文件描述、版本元数据和版本谱系。所选父版本可以是历史 READY；发布在同一锁和 revision 下重新检查资产 current 是否仍等于工作区创建时的 head 快照。head 漂移返回 `409 / BASE_VERSION_STALE`，不会静默改用新 current；其他业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。因此无状态变化时，某 revision 的 `canPublish=true` 保证发布不会再因同一业务规则返回 422。
 
 发布会物理清除草稿内已软删除的样本和组件，解除无引用的工作区独占 `OVERLAY` 包并排队清理对象，然后将 DRAFT 转为不可变 READY。放弃会把工作区转为 `ABANDONED`、上传转为 `DISCARDED`、导入转为 `SUPERSEDED`，只清理工作区独占对象并立即释放资产的活动 DRAFT 约束。
 
@@ -3169,6 +3193,7 @@ init 请求：
 
 - `commitInfo` 对所有新上传必填，去除首尾空白后长度为 `1`～`1024`；`hyperParams` 可选且默认 `{}`。
 - 新建模型资产时必须提供 `modelName`、`modelVersion`、`taskType` 和 `remark`。
+- `taskType` 是上传者声明的业务元数据，只支持 `CV/NLP/POINT_CLOUD/ROBOT`。后端校验枚举、已有资产类型一致性和通用制品安全/完整性，但不从文件名、框架或权重二进制推断真实模态；同一合法包声明为 CV 或 NLP 均可 READY。原 A-MODEL-13 的内容识别失败预期由该声明型契约取代。
 - 给已有资产新增版本时传 `targetAssetId`；后端校验资产归属，并把资产名称、类型和备注固化到上传会话。
 - 相同文件指纹仅在文件信息、模型业务信息、`commitInfo` 和 `hyperParams` 全部一致时恢复会话。
 - complete 不再接收模型名称、版本、类型、备注或目标资产。
@@ -3227,6 +3252,7 @@ V2 数据集列表和上传门面不直接提供训练动作；训练页面继�
 - profile 训练提交 `baseModelVersionId`（或兼容字段 `modelVersionId`）、`datasetVersionId`、`codeVersionId`、`trainingProfile` 和 `hyperParams`。
 - `datasetVersionId` 必须指向未删除、调用方可访问、具有存储路径的 `READY` 版本。
 - legacy 路径要求模型与数据集类型匹配；profile 路径要求数据集类型符合该 `trainingProfile` 的固定要求。
+- 上述匹配比较的是持久化的模型/数据集元数据；模型上传不推断权重二进制的真实模态。
 - 当前 profile 兼容路径要求 `codeVersionId` 指向 `READY` + `APPROVED` 的代码版本，并且冻结后的代码资产 `trainingProfile` 与请求一致；模块二的稳定消费契约以版本中固化的 profile 快照为准。
 - 当前启用 profile 包括 `image_text_consistency_fusion_logreg` 和
   `yolo_object_detection`；具体入口、数据集类型及训练模式由当前启用方案定义。

@@ -1,6 +1,5 @@
 package com.tss.platform.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.dto.PageResponse;
 import com.tss.platform.dto.v2.V2DatasetEditability;
@@ -14,9 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class V2DatasetCatalogService {
@@ -112,7 +109,10 @@ public class V2DatasetCatalogService {
         item.setEditability(editability(catalogItem, ready));
         item.setImportProgress(statusJob == null ? null : statusJob.getProgress());
         item.setAvailableActions(List.copyOf(actions));
-        item.setUserError(userError(statusJob));
+        item.setUserError(V2ImportJobDisplayHelper.userError(
+                statusJob,
+                objectMapper
+        ));
         return item;
     }
 
@@ -155,41 +155,6 @@ public class V2DatasetCatalogService {
             return "EDITING";
         }
         return ready != null ? "READY" : "EMPTY";
-    }
-
-    private V2UserError userError(ImportJob job) {
-        if (job == null
-                || (!"FAILED".equals(job.getStatus())
-                && !"PARTIAL".equals(job.getStatus()))) {
-            return null;
-        }
-        String code = job.getErrorCode() == null
-                ? ("PARTIAL".equals(job.getStatus())
-                        ? "PARTIAL_IMPORT_FAILED"
-                        : "IMPORT_FAILED")
-                : job.getErrorCode();
-        String message = job.getErrorMessage() == null
-                ? ("PARTIAL".equals(job.getStatus())
-                        ? "部分样本导入失败，可增量重试"
-                        : "数据导入失败，请检查上传内容后重试")
-                : job.getErrorMessage();
-        return new V2UserError(code, message, parseDetails(job.getErrorDetailsJson()));
-    }
-
-    private Map<String, Object> parseDetails(String json) {
-        if (json == null || json.isBlank()) {
-            return Map.of();
-        }
-        try {
-            Map<String, Object> parsed = objectMapper.readValue(
-                    json,
-                    new TypeReference<LinkedHashMap<String, Object>>() {
-                    }
-            );
-            return Map.copyOf(parsed);
-        } catch (Exception exception) {
-            return Map.of();
-        }
     }
 
     private String displayVersion(DatasetVersion version) {

@@ -4,7 +4,6 @@ import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.ImportJobStatusDto;
 import com.tss.platform.dto.v2.V2ImportJobStatusDto;
 import com.tss.platform.dto.v2.V2ImportJobRetryRequest;
-import com.tss.platform.dto.v2.V2UserError;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -95,7 +94,7 @@ public class V2ImportJobService {
         dto.setFailedSamples(source.getFailedSamples());
         dto.setRetryModes(retryModes(source));
         dto.setRetryable(!dto.getRetryModes().isEmpty());
-        dto.setUserError(userError(source));
+        dto.setUserError(V2ImportJobDisplayHelper.userError(source));
         return dto;
     }
 
@@ -125,39 +124,6 @@ public class V2ImportJobService {
             return "READY";
         }
         return status;
-    }
-
-    private V2UserError userError(ImportJobStatusDto source) {
-        if ("PARTIAL".equals(source.getStatus())) {
-            return new V2UserError(
-                    source.getErrorCode() == null
-                            ? "PARTIAL_IMPORT_FAILED"
-                            : source.getErrorCode(),
-                    source.getErrorMessage() == null
-                            ? "部分样本导入失败，可增量重试"
-                            : source.getErrorMessage(),
-                    Map.of(
-                            "failedSamples", safeInt(source.getFailedSamples()),
-                            "importedSamples", safeInt(source.getImportedSamples()),
-                            "totalSamples", safeInt(source.getTotalSamples()),
-                            "retryMode", "INCREMENTAL"
-                    )
-            );
-        }
-        if (!"FAILED".equals(source.getStatus())) {
-            return null;
-        }
-        return new V2UserError(
-                source.getErrorCode() == null ? "IMPORT_FAILED" : source.getErrorCode(),
-                source.getErrorMessage() == null
-                        ? "数据导入失败，请检查上传内容后重试"
-                        : source.getErrorMessage(),
-                Map.of()
-        );
-    }
-
-    private int safeInt(Integer value) {
-        return value == null ? 0 : value;
     }
 
     private V2BusinessException notFound() {

@@ -196,9 +196,37 @@ public class DatasetWorkspaceReadinessService {
         if (!"DRAFT".equals(workspace.getStatus())) {
             add(blockers, "WORKSPACE_NOT_DRAFT", "版本工作区不是 DRAFT 状态");
         }
+        if (workspace.getWorkspaceHeadVersionId() == null
+                || !workspace.getWorkspaceHeadVersionId().equals(
+                        asset.getCurrentVersionId()
+                )) {
+            add(
+                    blockers,
+                    "BASE_VERSION_STALE",
+                    "工作区创建后数据集当前版本已变化"
+            );
+            return;
+        }
+        DatasetVersion head = versionRepo
+                .findByIdAndDeletedFalse(workspace.getWorkspaceHeadVersionId())
+                .orElse(null);
+        if (head == null
+                || !asset.getId().equals(head.getAssetId())
+                || !"READY".equals(head.getStatus())) {
+            add(
+                    blockers,
+                    "VERSION_LINEAGE_INVALID",
+                    "工作区创建时的当前 READY 版本不存在或无效"
+            );
+            return;
+        }
         if (workspace.getParentVersionId() == null
-                || !workspace.getParentVersionId().equals(asset.getCurrentVersionId())) {
-            add(blockers, "BASE_VERSION_STALE", "工作区父版本不再是当前已发布版本");
+                || workspace.getParentVersionId().isBlank()) {
+            add(
+                    blockers,
+                    "VERSION_LINEAGE_INVALID",
+                    "工作区父 READY 版本缺失"
+            );
             return;
         }
         DatasetVersion parent = versionRepo
@@ -211,12 +239,12 @@ public class DatasetWorkspaceReadinessService {
             return;
         }
         if (workspace.getVersionNo() == null
-                || parent.getVersionNo() == null
-                || workspace.getVersionNo() <= parent.getVersionNo()) {
+                || head.getVersionNo() == null
+                || workspace.getVersionNo() <= head.getVersionNo()) {
             add(
                     blockers,
                     "VERSION_LINEAGE_INVALID",
-                    "目标版本号必须高于父 READY 版本"
+                    "目标版本号必须高于工作区创建时的当前 READY 版本"
             );
         }
     }

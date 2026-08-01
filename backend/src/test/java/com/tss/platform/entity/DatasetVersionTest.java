@@ -38,10 +38,12 @@ class DatasetVersionTest {
         version.setAssetId("asset-1");
         version.setStatus("DRAFT");
         version.setDeleted(false);
+        version.setWorkspaceHeadVersionId("ready-1");
         version.updateActiveDraftAssetId();
 
         String json = new ObjectMapper().writeValueAsString(version);
 
         assertFalse(json.contains("activeDraftAssetId"));
+        assertFalse(json.contains("workspaceHeadVersionId"));
     }
 }
