@@ -96,6 +96,13 @@ public class ServerMetricsCollector {
                         server.setGpuCount((int) cap[2]);
                         updated = true;
                     }
+                    // 同步 OS 信息（已有节点也会更新）
+                    String osImage = osInfo.get(server.getServerIp());
+                    if (osImage != null && !osImage.isEmpty()
+                            && (server.getSpecOs() == null || server.getSpecOs().isBlank())) {
+                        server.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
+                        updated = true;
+                    }
                     if (updated) {
                         serverRepo.save(server);
                     }
@@ -144,7 +151,15 @@ public class ServerMetricsCollector {
             snap.setMemRate(0.0);
         }
 
-        // GPU / 网络 / 磁盘：仅新快照设默认 0，已有数据保留上次的值
+        // 磁盘使用率：ephemeral-storage usage / capacity
+        if (top != null && top.diskBytes() > 0 && capacity != null && capacity.length > 3 && capacity[3] > 0) {
+            double diskGiB = capacity[3];
+            snap.setDiskRate(Math.round(top.diskBytes() * 1000.0 / (diskGiB * 1024 * 1024 * 1024)) / 10.0);
+        } else if (snap.getDiskRate() == null) {
+            snap.setDiskRate(0.0);
+        }
+
+        // GPU / 网络：仅新快照设默认 0，已有数据保留上次的值
         if (snap.getGpuRate() == null) snap.setGpuRate(0.0);
         if (snap.getGpuMemRate() == null) snap.setGpuMemRate(0.0);
         if (snap.getGpuTemp() == null) snap.setGpuTemp(0.0);
@@ -229,7 +244,13 @@ public class ServerMetricsCollector {
                     if (!gpuStr.isEmpty()) {
                         try { gpuCount = Double.parseDouble(gpuStr); } catch (NumberFormatException ignored) {}
                     }
-                    caps.put(name, new double[]{cpu, memGiB, gpuCount});
+                    // 磁盘总容量 from ephemeral-storage capacity (GiB)
+                    double diskCapacityGiB = 0;
+                    String diskCapStr = cap.path("ephemeral-storage").asText();
+                    if (!diskCapStr.isEmpty()) {
+                        diskCapacityGiB = parseMemToBytes(diskCapStr) / (1024.0 * 1024.0 * 1024.0);
+                    }
+                    caps.put(name, new double[]{cpu, memGiB, gpuCount, diskCapacityGiB});
                 }
             }
         } catch (Exception e) {
@@ -289,10 +310,10 @@ public class ServerMetricsCollector {
                     String memS = usage.path("memory").asText();
                     double cpuUsed = parseCpu(cpuS);
                     long memBytes = parseMemToBytes(memS);
-                    // get node capacity for %
-                    double cpuPct = 0, memPct = 0;
-                    // we store absolute values, pct computed at snapshot
-                    result.put(name, new TopData(cpuUsed, memBytes, 0, 0));
+                    // ephemeral-storage usage (may not exist on all clusters)
+                    String diskS = usage.path("ephemeral-storage").asText();
+                    long diskBytes = diskS.isEmpty() ? 0 : parseMemToBytes(diskS);
+                    result.put(name, new TopData(cpuUsed, memBytes, 0, 0, diskBytes));
                 }
             }
         } catch (Exception e) {
@@ -315,7 +336,7 @@ public class ServerMetricsCollector {
                             double cpuPct = parsePct(m.group(3));
                             long mem = parseMemToBytes(m.group(4));
                             double memPct = parsePct(m.group(5));
-                            result.put(name, new TopData(cpu, mem, cpuPct, memPct));
+                            result.put(name, new TopData(cpu, mem, cpuPct, memPct, 0));
                         }
                     }
                 }
@@ -392,5 +413,5 @@ public class ServerMetricsCollector {
         return Double.parseDouble(s.replace("%", "").trim());
     }
 
-    record TopData(double cpuUsed, long memBytes, double cpuPct, double memPct) {}
+    record TopData(double cpuUsed, long memBytes, double cpuPct, double memPct, long diskBytes) {}
 }
