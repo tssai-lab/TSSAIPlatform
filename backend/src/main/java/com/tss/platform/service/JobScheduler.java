@@ -114,9 +114,11 @@ public class JobScheduler {
             }
         }
 
-        // Phase 2：scheduled → 提交 K8s 执行
-        List<TrainingExperimentVersion> scheduled = trainingRepo
-                .findByStatusOrderByPriorityAscCreatedAtAsc("scheduled");
+        // Phase 2：scheduled → 提交 K8s 执行（按优先级+FIFO排序）
+        List<TrainingExperimentVersion> scheduled = trainingRepo.findByStatus("scheduled");
+        scheduled.sort(Comparator.comparingInt((TrainingExperimentVersion t) ->
+                "高".equals(t.getPriority()) ? 0 : ("中".equals(t.getPriority()) ? 1 : 2))
+                .thenComparing(t -> t.getCreatedAt() != null ? t.getCreatedAt() : java.time.Instant.EPOCH));
 
         for (TrainingExperimentVersion task : scheduled) {
             try {
