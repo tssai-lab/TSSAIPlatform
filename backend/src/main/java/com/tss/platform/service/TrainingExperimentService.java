@@ -51,6 +51,7 @@ public class TrainingExperimentService {
     private static final Set<String> ALLOWED_STATUSES = Set.of(
             "pending",
             "queued",
+            "scheduled",
             "running",
             "success",
             "failed",
@@ -318,8 +319,8 @@ public class TrainingExperimentService {
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
-        if (!"queued".equals(version.getStatus()) && !"running".equals(version.getStatus())) {
-            throw new IllegalArgumentException("只有调度中或训练中的任务可以停止");
+        if (!"queued".equals(version.getStatus()) && !"scheduled".equals(version.getStatus()) && !"running".equals(version.getStatus())) {
+            throw new IllegalArgumentException("只有调度中、已分配或训练中的任务可以停止");
         }
         trainingExecutorRouter.stop(version.getId());
         version.setStatus("stopped");
@@ -720,7 +721,7 @@ public class TrainingExperimentService {
         }
         String normalized = status.trim().toLowerCase(Locale.ROOT);
         if (!ALLOWED_STATUSES.contains(normalized)) {
-            throw new IllegalArgumentException("status only supports pending, queued, running, success, failed, stopped");
+            throw new IllegalArgumentException("status only supports pending, queued, scheduled, running, success, failed, stopped");
         }
         return normalized;
     }
@@ -738,6 +739,9 @@ public class TrainingExperimentService {
         }
         if ("running".equals(status)) {
             return 50;
+        }
+        if ("scheduled".equals(status)) {
+            return 5;
         }
         if ("failed".equals(status) || "stopped".equals(status)) {
             return 0;

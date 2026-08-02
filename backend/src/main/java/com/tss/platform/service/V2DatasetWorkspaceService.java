@@ -129,16 +129,29 @@ public class V2DatasetWorkspaceService {
             String datasetId,
             V2DatasetWorkspaceCreateRequest request
     ) {
-        DatasetAsset asset = requireOwnedAsset(datasetId);
+        String requestedBaseVersionId = normalizeBaseVersionId(
+                request == null ? null : request.baseVersionId()
+        );
         String requestedVersionLabel = normalizeVersionLabel(
                 request == null ? null : request.versionLabel()
         );
+        DatasetAsset asset = requireOwnedAssetForUpdate(datasetId);
         Optional<DatasetVersion> active = versionRepo
                 .findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
                         asset.getId(),
                         DRAFT
                 );
         if (active.isPresent()) {
+            if (requestedBaseVersionId != null
+                    && !Objects.equals(
+                            requestedBaseVersionId,
+                            active.get().getParentVersionId()
+                    )) {
+                throw workspaceBaseConflict(
+                        active.get(),
+                        requestedBaseVersionId
+                );
+            }
             String activeVersionLabel = displayVersionLabel(active.get());
             if (requestedVersionLabel != null
                     && !Objects.equals(
@@ -166,9 +179,13 @@ public class V2DatasetWorkspaceService {
                     "数据集当前没有可作为工作区基线的已发布版本"
             );
         }
-        DatasetVersion ready = versionRepo
-                .findByIdAndDeletedFalse(asset.getCurrentVersionId())
-                .orElseThrow(this::notFound);
+        DatasetVersion current = requireCurrentReadyVersion(asset);
+        DatasetVersion ready = requestedBaseVersionId == null
+                ? current
+                : requireRequestedBaseVersion(
+                        asset,
+                        requestedBaseVersionId
+                );
         V2DatasetEditability editability =
                 sourceInspector.inspect(asset, ready);
         if (!editability.canCreateWorkspace()) {
@@ -183,12 +200,21 @@ public class V2DatasetWorkspaceService {
         try {
             DatasetWorkspaceDraftDto created =
                     workspaceService.createDraft(
-                            asset.getCurrentVersionId(),
+                            ready.getId(),
                             requestedVersionLabel
                     );
             DatasetVersion workspace = versionRepo
                     .findByIdAndDeletedFalse(created.getDraftVersionId())
                     .orElseThrow(this::notFound);
+            if (!Objects.equals(
+                    ready.getId(),
+                    workspace.getParentVersionId()
+            )) {
+                throw workspaceBaseConflict(
+                        workspace,
+                        ready.getId()
+                );
+            }
             if (requestedVersionLabel != null
                     && !Objects.equals(
                             requestedVersionLabel,
@@ -482,20 +508,7 @@ public class V2DatasetWorkspaceService {
         ImportJob job = V2ImportJobStatusSelector.statusJobOf(
                 importJobRepo.findByDatasetVersionId(workspaceId)
         );
-        if (job == null
-                || (!"FAILED".equals(job.getStatus())
-                && !"PARTIAL".equals(job.getStatus()))) {
-            return null;
-        }
-        String code = job.getErrorCode() == null
-                ? ("PARTIAL".equals(job.getStatus())
-                ? "PARTIAL_IMPORT_FAILED"
-                : "IMPORT_FAILED")
-                : job.getErrorCode();
-        String message = job.getErrorMessage() == null
-                ? "数据导入失败，请检查上传内容后重试"
-                : job.getErrorMessage();
-        return new V2UserError(code, message, Map.of());
+        return V2ImportJobDisplayHelper.userError(job);
     }
 
     private V2DatasetPublishResult publishedReplay(String workspaceId) {
@@ -641,6 +654,74 @@ public class V2DatasetWorkspaceService {
         return asset;
     }
 
+    private DatasetAsset requireOwnedAssetForUpdate(String datasetId) {
+        if (datasetId == null || datasetId.isBlank()) {
+            throw notFound();
+        }
+        DatasetAsset asset = assetRepo
+                .findByIdAndDeletedFalseForUpdate(datasetId)
+                .orElseThrow(this::notFound);
+        if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
+            throw notFound();
+        }
+        return asset;
+    }
+
+    private DatasetVersion requireCurrentReadyVersion(DatasetAsset asset) {
+        DatasetVersion current = versionRepo
+                .findByIdAndDeletedFalse(asset.getCurrentVersionId())
+                .orElseThrow(() -> new V2BusinessException(
+                        HttpStatus.CONFLICT,
+                        "DATASET_NOT_EDITABLE",
+                        "数据集当前没有有效的已发布版本"
+                ));
+        if (!Objects.equals(asset.getId(), current.getAssetId())
+                || !"READY".equals(current.getStatus())) {
+            throw new V2BusinessException(
+                    HttpStatus.CONFLICT,
+                    "DATASET_NOT_EDITABLE",
+                    "数据集当前没有有效的已发布版本"
+            );
+        }
+        return current;
+    }
+
+    private DatasetVersion requireRequestedBaseVersion(
+            DatasetAsset asset,
+            String baseVersionId
+    ) {
+        DatasetVersion base = versionRepo
+                .findByIdAndDeletedFalse(baseVersionId)
+                .orElseThrow(this::notFound);
+        if (!Objects.equals(asset.getId(), base.getAssetId())) {
+            throw notFound();
+        }
+        if (!"READY".equals(base.getStatus())) {
+            throw new V2BusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "BASE_VERSION_NOT_READY",
+                    "所选基线版本不是 READY 状态",
+                    Map.of("baseVersionId", baseVersionId)
+            );
+        }
+        return base;
+    }
+
+    private String normalizeBaseVersionId(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty()) {
+            throw new V2BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_BASE_VERSION_ID",
+                    "baseVersionId 不能为空"
+            );
+        }
+        return normalized;
+    }
+
     private String normalizeVersionLabel(String value) {
         try {
             return workspaceService.normalizeRequestedVersionLabel(value);
@@ -714,6 +795,27 @@ public class V2DatasetWorkspaceService {
                 HttpStatus.CONFLICT,
                 "DATASET_VERSION_LABEL_CONFLICT",
                 "版本标签已被占用或与当前工作区不一致，请使用建议标签后重试",
+                details
+        );
+    }
+
+    private V2BusinessException workspaceBaseConflict(
+            DatasetVersion activeWorkspace,
+            String requestedBaseVersionId
+    ) {
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        details.put("workspaceId", activeWorkspace.getId());
+        if (activeWorkspace.getParentVersionId() != null) {
+            details.put(
+                    "activeBaseVersionId",
+                    activeWorkspace.getParentVersionId()
+            );
+        }
+        details.put("requestedBaseVersionId", requestedBaseVersionId);
+        return new V2BusinessException(
+                HttpStatus.CONFLICT,
+                "WORKSPACE_BASE_CONFLICT",
+                "已有活动工作区使用不同基线，请先发布或放弃该工作区",
                 details
         );
     }

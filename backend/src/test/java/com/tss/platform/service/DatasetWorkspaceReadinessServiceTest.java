@@ -64,6 +64,29 @@ class DatasetWorkspaceReadinessServiceTest {
     }
 
     @Test
+    void historicalReadyBaseIsPublishableWhileCapturedHeadIsUnchanged() {
+        Fixture fixture = new Fixture();
+        DatasetVersion current = new DatasetVersion();
+        current.setId("ready-2");
+        current.setAssetId("asset-1");
+        current.setVersionNo(2);
+        current.setStatus("READY");
+        fixture.asset.setCurrentVersionId("ready-2");
+        fixture.workspace.setWorkspaceHeadVersionId("ready-2");
+        fixture.workspace.setVersionNo(3);
+        when(fixture.versionRepo.findByIdAndDeletedFalse("ready-2"))
+                .thenReturn(Optional.of(current));
+
+        var readiness = fixture.service.evaluate(
+                fixture.asset,
+                fixture.workspace
+        );
+
+        assertTrue(readiness.canPublish());
+        assertTrue(readiness.blockers().isEmpty());
+    }
+
+    @Test
     void exposesFailedUploadAsAStableBlocker() {
         Fixture fixture = new Fixture();
         DatasetUploadSession upload = new DatasetUploadSession();
@@ -251,6 +274,7 @@ class DatasetWorkspaceReadinessServiceTest {
             workspace.setId("workspace-2");
             workspace.setAssetId("asset-1");
             workspace.setParentVersionId("ready-1");
+            workspace.setWorkspaceHeadVersionId("ready-1");
             workspace.setVersionNo(2);
             workspace.setStatus("DRAFT");
             workspace.setWorkspaceRevision(9L);

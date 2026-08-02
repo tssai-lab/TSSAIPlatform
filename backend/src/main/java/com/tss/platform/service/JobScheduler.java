@@ -60,13 +60,14 @@ public class JobScheduler {
     }
 
     /**
-     * 调度时将任务绑定到节点。
+     * 调度时将任务绑定到节点，状态变为 scheduled（已分配，等待启动）。
      */
     public void bindTask(TrainingExperimentVersion task, String nodeName) {
         task.setServerIp(nodeName);
+        task.setStatus("scheduled");
         task.setUpdatedAt(java.time.Instant.now());
         trainingRepo.save(task);
-        LOG.info("任务已绑定节点: taskId={}, node={}", task.getId(), nodeName);
+        LOG.info("任务已绑定节点: taskId={}, node={}, status=scheduled", task.getId(), nodeName);
     }
 
     /**
@@ -87,14 +88,15 @@ public class JobScheduler {
     }
 
     /**
-     * 定时调度：每 10 秒扫描 status=queued 的任务，尝试分配节点。
+     * 定时调度：每 10 秒执行两阶段调度。
+     * Phase 1 — queued → scheduled：为排队任务分配节点。
+     * Phase 2 — scheduled → running：将已分配节点的任务提交 K8s 执行。
      */
     @Scheduled(fixedDelay = 10_000)
     public void dispatchQueuedTasks() {
+        // Phase 1：queued（无节点）→ scheduled（已分配节点）
         List<TrainingExperimentVersion> queued = trainingRepo
                 .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("queued");
-
-        if (queued.isEmpty()) return;
 
         for (TrainingExperimentVersion task : queued) {
             try {
@@ -104,12 +106,24 @@ public class JobScheduler {
                 String node = assignNode(nodeSelector, req[0], req[1], gpuReq);
                 if (node != null) {
                     bindTask(task, node);
-                    executorRouter.start(task.getId());
                 } else {
                     break; // 资源不足，后面也分配不了
                 }
             } catch (Exception e) {
                 LOG.warn("调度排队任务失败: taskId={}, error={}", task.getId(), e.getMessage());
+            }
+        }
+
+        // Phase 2：scheduled → 提交 K8s 执行
+        List<TrainingExperimentVersion> scheduled = trainingRepo
+                .findByStatusOrderByPriorityAscCreatedAtAsc("scheduled");
+
+        for (TrainingExperimentVersion task : scheduled) {
+            try {
+                LOG.info("提交 scheduled 任务: taskId={}, node={}", task.getId(), task.getServerIp());
+                executorRouter.start(task.getId());
+            } catch (Exception e) {
+                LOG.warn("提交 scheduled 任务失败: taskId={}, error={}", task.getId(), e.getMessage());
             }
         }
     }
@@ -151,6 +165,25 @@ public class JobScheduler {
             }
         }
         for (InferenceTask t : inferenceRepo.findByStatus("running")) {
+            String ip = t.getServerIp();
+            if (ip != null) {
+                double[] req = resolveResourceRequest(t);
+                allocatedCpu.merge(ip, req[0], Double::sum);
+                allocatedMemGib.merge(ip, req[1], Double::sum);
+                if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+            }
+        }
+        // scheduled 状态的任务已经预留资源，也要计入已分配
+        for (TrainingExperimentVersion t : trainingRepo.findByStatus("scheduled")) {
+            String ip = t.getServerIp();
+            if (ip != null) {
+                double[] req = resolveResourceRequest(t);
+                allocatedCpu.merge(ip, req[0], Double::sum);
+                allocatedMemGib.merge(ip, req[1], Double::sum);
+                if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+            }
+        }
+        for (InferenceTask t : inferenceRepo.findByStatus("scheduled")) {
             String ip = t.getServerIp();
             if (ip != null) {
                 double[] req = resolveResourceRequest(t);

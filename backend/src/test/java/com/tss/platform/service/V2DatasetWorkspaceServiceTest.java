@@ -172,6 +172,50 @@ class V2DatasetWorkspaceServiceTest {
     }
 
     @Test
+    void createsWorkspaceFromExplicitHistoricalReadyBase() {
+        Fixture fixture = new Fixture();
+        DatasetVersion historical = new DatasetVersion();
+        historical.setId("historical-1");
+        historical.setAssetId("asset-1");
+        historical.setVersion("v1");
+        historical.setVersionLabel("v1");
+        historical.setVersionNo(1);
+        historical.setStatus("READY");
+        historical.setDeleted(false);
+        fixture.workspace.setParentVersionId("historical-1");
+        fixture.workspace.setWorkspaceHeadVersionId("parent-1");
+        DatasetWorkspaceDraftDto created = new DatasetWorkspaceDraftDto();
+        created.setDraftVersionId("workspace-1");
+        when(fixture.versionRepo.findByIdAndDeletedFalse("historical-1"))
+                .thenReturn(Optional.of(historical));
+        when(fixture.workspaceService.normalizeRequestedVersionLabel(
+                " 1.0.3 "
+        )).thenReturn("1.0.3");
+        when(fixture.sourceInspector.inspect(
+                fixture.asset,
+                historical
+        )).thenReturn(new V2DatasetEditability(true, List.of()));
+        when(fixture.workspaceService.createDraft(
+                "historical-1",
+                "1.0.3"
+        )).thenReturn(created);
+
+        var result = fixture.service.create(
+                "asset-1",
+                new V2DatasetWorkspaceCreateRequest(
+                        "historical-1",
+                        " 1.0.3 "
+                )
+        );
+
+        assertEquals("historical-1", result.getBaseVersion().getVersionId());
+        verify(fixture.workspaceService).createDraft(
+                "historical-1",
+                "1.0.3"
+        );
+    }
+
+    @Test
     void activeWorkspaceRetriesAreIdempotentForMissingOrMatchingLabel() {
         Fixture fixture = new Fixture();
         when(fixture.versionRepo
@@ -238,6 +282,76 @@ class V2DatasetWorkspaceServiceTest {
         assertEquals("v3", error.getDetails().get("defaultVersionLabel"));
         assertEquals("workspace-1", error.getDetails().get("workspaceId"));
         assertEquals("1.0.3", error.getDetails().get("currentVersionLabel"));
+    }
+
+    @Test
+    void activeWorkspaceDifferentExplicitBaseReturnsStructuredConflict() {
+        Fixture fixture = new Fixture();
+        when(fixture.versionRepo
+                .findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                        "asset-1",
+                        "DRAFT"
+                )).thenReturn(Optional.of(fixture.workspace));
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.create(
+                        "asset-1",
+                        new V2DatasetWorkspaceCreateRequest(
+                                "other-ready",
+                                null
+                        )
+                )
+        );
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatus());
+        assertEquals("WORKSPACE_BASE_CONFLICT", error.getErrorCode());
+        assertEquals("workspace-1", error.getDetails().get("workspaceId"));
+        assertEquals(
+                "parent-1",
+                error.getDetails().get("activeBaseVersionId")
+        );
+        assertEquals(
+                "other-ready",
+                error.getDetails().get("requestedBaseVersionId")
+        );
+        verify(fixture.workspaceService, never()).createDraft(any(), any());
+    }
+
+    @Test
+    void rejectsBlankOrNonReadyExplicitBase() {
+        Fixture fixture = new Fixture();
+
+        V2BusinessException blank = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.create(
+                        "asset-1",
+                        new V2DatasetWorkspaceCreateRequest("   ", null)
+                )
+        );
+        assertEquals(HttpStatus.BAD_REQUEST, blank.getStatus());
+        assertEquals("INVALID_BASE_VERSION_ID", blank.getErrorCode());
+
+        DatasetVersion draftBase = new DatasetVersion();
+        draftBase.setId("draft-base");
+        draftBase.setAssetId("asset-1");
+        draftBase.setStatus("DRAFT");
+        draftBase.setDeleted(false);
+        when(fixture.versionRepo.findByIdAndDeletedFalse("draft-base"))
+                .thenReturn(Optional.of(draftBase));
+
+        V2BusinessException notReady = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.create(
+                        "asset-1",
+                        new V2DatasetWorkspaceCreateRequest(
+                                "draft-base",
+                                null
+                        )
+                )
+        );
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, notReady.getStatus());
+        assertEquals("BASE_VERSION_NOT_READY", notReady.getErrorCode());
     }
 
     @Test
@@ -381,6 +495,40 @@ class V2DatasetWorkspaceServiceTest {
         assertEquals(HttpStatus.CONFLICT, error.getStatus());
         assertEquals("BASE_VERSION_STALE", error.getErrorCode());
         assertEquals(List.of(blocker), error.getDetails().get("blockers"));
+    }
+
+    @Test
+    void activeWorkspaceExposesPersistedManifestFailureDetails() {
+        Fixture fixture = new Fixture();
+        when(fixture.versionRepo
+                .findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(
+                        "asset-1",
+                        "DRAFT"
+                )).thenReturn(Optional.of(fixture.workspace));
+        ImportJob failed = new ImportJob();
+        failed.setId("job-1");
+        failed.setStatus("FAILED");
+        failed.setErrorCode("INVALID_MANIFEST");
+        failed.setErrorMessage("Manifest 内容无效，请检查后重试");
+        failed.setErrorDetailsJson(
+                "{\"field\":\"samples[0].data[0].path\","
+                        + "\"path\":\"missing.png\","
+                        + "\"reason\":\"path not found in zip\"}"
+        );
+        when(fixture.importJobRepo.findByDatasetVersionId("workspace-1"))
+                .thenReturn(List.of(failed));
+
+        var result = fixture.service.create("asset-1", null);
+
+        assertEquals("INVALID_MANIFEST", result.getUserError().getErrorCode());
+        assertEquals(
+                "samples[0].data[0].path",
+                result.getUserError().getDetails().get("field")
+        );
+        assertEquals(
+                "missing.png",
+                result.getUserError().getDetails().get("path")
+        );
     }
 
     @Test
@@ -554,6 +702,8 @@ class V2DatasetWorkspaceServiceTest {
                     .thenReturn(Optional.of(parent));
             when(assetRepo.findByIdAndDeletedFalse("asset-1"))
                     .thenReturn(Optional.of(asset));
+            when(assetRepo.findByIdAndDeletedFalseForUpdate("asset-1"))
+                    .thenReturn(Optional.of(asset));
             when(authContext.canAccessOwner(7)).thenReturn(true);
             when(readinessService.evaluate(asset, workspace))
                     .thenReturn(new V2DatasetPublishReadiness(
@@ -594,6 +744,7 @@ class V2DatasetWorkspaceServiceTest {
             workspace.setId("workspace-1");
             workspace.setAssetId("asset-1");
             workspace.setParentVersionId("parent-1");
+            workspace.setWorkspaceHeadVersionId("parent-1");
             workspace.setVersion("1.0.3");
             workspace.setVersionLabel("1.0.3");
             workspace.setVersionNo(2);

@@ -1,6 +1,5 @@
 package com.tss.platform.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.controller.v2.V2BusinessException;
 import com.tss.platform.dto.DatasetPackageAppendInitRequest;
@@ -21,7 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Service
@@ -283,7 +281,10 @@ public class V2DatasetUploadService {
         dto.setStrictManifest(Boolean.TRUE.equals(session.getStrictManifest()));
         dto.setDisplayStatus(displayStatus(source.getStatus(), job));
         dto.setImportProgress(job == null ? null : job.getProgress());
-        dto.setUserError(userError(job));
+        dto.setUserError(V2ImportJobDisplayHelper.userError(
+                job,
+                objectMapper
+        ));
         dto.setCreatedAt(source.getCreatedAt());
         dto.setUpdatedAt(source.getUpdatedAt());
         return dto;
@@ -355,42 +356,6 @@ public class V2DatasetUploadService {
             return "CANCELLED";
         }
         return "UPLOADING";
-    }
-
-    private V2UserError userError(ImportJob job) {
-        if (job == null
-                || (!"FAILED".equals(job.getStatus())
-                && !"PARTIAL".equals(job.getStatus()))) {
-            return null;
-        }
-        return new V2UserError(
-                job.getErrorCode() == null
-                        ? ("PARTIAL".equals(job.getStatus())
-                                ? "PARTIAL_IMPORT_FAILED"
-                                : "IMPORT_FAILED")
-                        : job.getErrorCode(),
-                job.getErrorMessage() == null
-                        ? ("PARTIAL".equals(job.getStatus())
-                                ? "部分样本导入失败，可增量重试"
-                                : "数据导入失败，请检查上传内容后重试")
-                        : job.getErrorMessage(),
-                parseDetails(job.getErrorDetailsJson())
-        );
-    }
-
-    private Map<String, Object> parseDetails(String json) {
-        if (json == null || json.isBlank()) {
-            return Map.of();
-        }
-        try {
-            return Map.copyOf(objectMapper.readValue(
-                    json,
-                    new TypeReference<LinkedHashMap<String, Object>>() {
-                    }
-            ));
-        } catch (Exception exception) {
-            return Map.of();
-        }
     }
 
     private V2BusinessException notFound() {

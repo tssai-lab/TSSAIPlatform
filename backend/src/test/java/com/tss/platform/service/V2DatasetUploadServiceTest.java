@@ -113,17 +113,25 @@ class V2DatasetUploadServiceTest {
         job.setDatasetVersionId("version-secret");
         job.setStatus("FAILED");
         job.setProgress(0);
-        job.setErrorCode("DUPLICATE_SAMPLE");
-        job.setErrorMessage("上传内容包含已存在的样本");
-        job.setErrorDetailsJson("{\"sampleName\":\"scene-1\"}");
+        job.setErrorCode("INVALID_MANIFEST");
+        job.setErrorMessage("Manifest 内容无效，请检查后重试");
+        job.setErrorDetailsJson(
+                "{\"field\":\"samples[0].data[0].path\","
+                        + "\"path\":\"missing.png\","
+                        + "\"reason\":\"path not found in zip\"}"
+        );
         when(fixture.importJobRepo.findById("job-secret")).thenReturn(Optional.of(job));
 
         V2DatasetUploadDto result = fixture.service.get("upload-1");
 
         assertEquals("IMPORT_FAILED", result.getDisplayStatus());
         assertEquals("job-secret", result.getImportJobId());
-        assertEquals("DUPLICATE_SAMPLE", result.getUserError().getErrorCode());
-        assertEquals("scene-1", result.getUserError().getDetails().get("sampleName"));
+        assertEquals("INVALID_MANIFEST", result.getUserError().getErrorCode());
+        assertEquals(
+                "samples[0].data[0].path",
+                result.getUserError().getDetails().get("field")
+        );
+        assertEquals("missing.png", result.getUserError().getDetails().get("path"));
         String json = new ObjectMapper()
                 .findAndRegisterModules()
                 .writeValueAsString(result);

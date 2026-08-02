@@ -239,6 +239,12 @@ public class DatasetWorkspacePublishService {
         if (currentVersionId == null || currentVersionId.isBlank()) {
             throw new IllegalArgumentException("dataset asset current READY version is missing");
         }
+        if (draft.getWorkspaceHeadVersionId() == null
+                || !currentVersionId.equals(draft.getWorkspaceHeadVersionId())) {
+            throw new IllegalArgumentException(
+                    "BASE_VERSION_STALE: dataset current READY version changed"
+            );
+        }
         DatasetVersion current = versionRepo.findByIdAndDeletedFalse(currentVersionId)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "dataset asset current READY version is missing"

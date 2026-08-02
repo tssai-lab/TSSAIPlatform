@@ -88,6 +88,11 @@ class V2ImportJobServiceTest {
         status.setProgress(20);
         status.setErrorCode("IMPORT_FAILED");
         status.setErrorMessage("manifest validation failed");
+        status.setErrorDetailsJson(
+                "{\"field\":\"samples[0].data[0].path\","
+                        + "\"path\":\"missing.png\","
+                        + "\"reason\":\"path not found in zip\"}"
+        );
         when(delegate.getStatus("ijob-2")).thenReturn(status);
         V2ImportJobService service = new V2ImportJobService(
                 delegate,
@@ -102,6 +107,14 @@ class V2ImportJobServiceTest {
         assertEquals(Boolean.TRUE, result.getRetryable());
         assertEquals(List.of("FULL"), result.getRetryModes());
         assertEquals("IMPORT_FAILED", result.getUserError().getErrorCode());
+        assertEquals(
+                "samples[0].data[0].path",
+                result.getUserError().getDetails().get("field")
+        );
+        assertEquals(
+                "missing.png",
+                result.getUserError().getDetails().get("path")
+        );
     }
 
     @Test

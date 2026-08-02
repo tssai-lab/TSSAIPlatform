@@ -59,7 +59,7 @@ public class KubernetesTrainingJobMonitor {
         List<TrainingExperimentVersion> activeTasks = repository.findAllByOrderByCreatedAtDesc()
                 .stream()
                 .filter(task -> !TERMINAL_STATUSES.contains(task.getStatus()))
-                .filter(task -> "queued".equals(task.getStatus()) || "running".equals(task.getStatus()))
+                .filter(task -> "queued".equals(task.getStatus()) || "scheduled".equals(task.getStatus()) || "running".equals(task.getStatus()))
                 .toList();
 
         for (TrainingExperimentVersion task : activeTasks) {
@@ -83,6 +83,7 @@ public class KubernetesTrainingJobMonitor {
         );
         if (!result.success()) {
             if (result.output() != null && result.output().contains("NotFound")) {
+                // scheduled 任务的 Job 可能还没提交，不标记失败
                 if ("queued".equals(task.getStatus())) {
                     markFailed(task.getId(), "K8s Job 不存在或尚未创建: " + jobName);
                 }

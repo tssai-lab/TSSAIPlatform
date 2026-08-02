@@ -175,6 +175,10 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             if (TERMINAL_STATUSES.contains(version.getStatus())) {
                 return;
             }
+            // scheduled 状态的任务已分配到节点，不要降级回 queued
+            if ("queued".equals(status) && "scheduled".equals(version.getStatus())) {
+                return;
+            }
             version.setStatus(status);
             version.setProgress(progress);
             version.setUpdatedAt(Instant.now());

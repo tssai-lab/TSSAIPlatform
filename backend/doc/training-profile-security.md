@@ -62,6 +62,11 @@
 
 **其他**：路径穿越拒绝；无扩展名拒绝；条目数 ≤ 10000；解压总体积 ≤ 50GB；单文件 ≤ 2GB；不能为空。
 
+**任务类型边界**：模型上传的 `taskType`/`type` 是上传者声明的元数据。校验器负责通用
+ZIP 安全、扩展名、大小和制品完整性，不根据文件名、框架特征或权重二进制推断实际
+CV/NLP/POINT_CLOUD/ROBOT 模态。现有资产仍要求新版本声明与资产类型一致，训练任务仍按
+持久化的模型与数据集元数据执行类型匹配。原 A-MODEL-13 的权重内容识别预期不再适用。
+
 **训练代码 ZIP**（`CodeModelZipValidator`）不再允许 `.pt/.pth/.onnx/.pkl/.joblib`；权重应放入独立模型权重包。
 
 **`.pkl` / `.joblib` 安全说明**：当前平台仅将其作为**模型权重文件存储**（上传校验 + MinIO 持久化 + Worker 解压到 `/workspace/job/model`）。Worker **不会**对 `.pkl` / `.joblib` 执行 `pickle.load`、`joblib.load` 或任何反序列化操作。若后续某个 `trainingProfile` 需要在训练脚本中加载它们，必须单独做安全评估（反序列化风险、来源可信性、沙箱隔离等），并在该 profile 的 Worker 逻辑中显式实现。

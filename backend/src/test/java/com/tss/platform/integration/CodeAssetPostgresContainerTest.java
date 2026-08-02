@@ -1,6 +1,7 @@
 package com.tss.platform.integration;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -131,6 +132,7 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("44");
         expectedVersions.add("45");
         expectedVersions.add("46");
+        expectedVersions.add("48");
         Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version
@@ -171,6 +173,114 @@ class CodeAssetPostgresContainerTest {
                         WHERE id = 'GLOBAL'
                         """)
         );
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    void v48BackfillsWorkspaceHeadFromCurrentWhileKeepingHistoricalParent()
+            throws SQLException {
+        String schema = "v48_" + UUID.randomUUID().toString()
+                .replace("-", "")
+                .substring(0, 16);
+        try {
+            migrateSchema(schema, MigrationVersion.fromVersion("47"));
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("SET search_path TO " + schema);
+                statement.executeUpdate("""
+                        INSERT INTO dataset_asset (
+                            id, name, type, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES (
+                            'v48-asset', 'V48 asset', 'MULTIMODAL', 7,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE
+                        )
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO dataset_version (
+                            id, asset_id, version, version_no, version_label,
+                            status, owner_user_id, created_by,
+                            created_at, updated_at, deleted,
+                            active_draft_asset_id
+                        )
+                        VALUES
+                            ('v48-history', 'v48-asset', 'v1', 1, 'v1',
+                             'READY', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, FALSE, NULL),
+                            ('v48-current', 'v48-asset', 'v2', 2, 'v2',
+                             'READY', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, FALSE, NULL),
+                            ('v48-workspace', 'v48-asset', 'v3', 3, 'v3',
+                             'DRAFT', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, FALSE, 'v48-asset')
+                        """);
+                statement.executeUpdate("""
+                        UPDATE dataset_version
+                        SET parent_version_id = 'v48-history'
+                        WHERE id = 'v48-workspace'
+                        """);
+                statement.executeUpdate("""
+                        UPDATE dataset_asset
+                        SET current_version_id = 'v48-current'
+                        WHERE id = 'v48-asset'
+                        """);
+            }
+
+            migrateSchema(schema, null);
+
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("SET search_path TO " + schema);
+                try (ResultSet result = statement.executeQuery("""
+                        SELECT parent_version_id, workspace_head_version_id
+                        FROM dataset_version
+                        WHERE id = 'v48-workspace'
+                        """)) {
+                    assertTrue(result.next());
+                    assertEquals("v48-history", result.getString("parent_version_id"));
+                    assertEquals("v48-current", result.getString("workspace_head_version_id"));
+                }
+            }
+        } finally {
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+            }
+        }
+    }
+
+    private static void migrateSchema(
+            String schema,
+            MigrationVersion target
+    ) {
+        var configuration = Flyway.configure()
+                .dataSource(
+                        POSTGRES.getJdbcUrl(),
+                        POSTGRES.getUsername(),
+                        POSTGRES.getPassword()
+                )
+                .locations("classpath:db/migration")
+                .schemas(schema)
+                .defaultSchema(schema)
+                .createSchemas(true)
+                .cleanDisabled(true);
+        if (target != null) {
+            configuration.target(target);
+        }
+        configuration.load().migrate();
     }
 
     @Test

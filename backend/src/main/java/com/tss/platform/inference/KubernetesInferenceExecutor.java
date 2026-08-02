@@ -191,6 +191,10 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
 
     private void updateStatus(String taskId, String status, int progress, String errorMessage) {
         transactionTemplate.executeWithoutResult(tx -> taskRepository.findById(taskId).ifPresent(task -> {
+            // scheduled 状态的任务已分配到节点，不要降级回 queued
+            if ("queued".equals(status) && "scheduled".equals(task.getStatus())) {
+                return;
+            }
             task.setStatus(status);
             task.setProgress(progress);
             task.setUpdatedAt(Instant.now());

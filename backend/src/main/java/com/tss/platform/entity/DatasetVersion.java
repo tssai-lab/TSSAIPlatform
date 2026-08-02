@@ -106,6 +106,10 @@ public class DatasetVersion {
     @Column(name = "workspace_revision", nullable = false)
     private Long workspaceRevision = 0L;
 
+    @JsonIgnore
+    @Column(name = "workspace_head_version_id", length = 64)
+    private String workspaceHeadVersionId;
+
     @Column(name = "deleted", nullable = false)
     private Boolean deleted = false;
 
@@ -120,4 +124,3 @@ public class DatasetVersion {
                 : null;
     }
 }
-

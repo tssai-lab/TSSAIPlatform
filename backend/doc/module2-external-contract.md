@@ -172,6 +172,13 @@ zip 内规范化路径必须唯一，并拒绝文件/目录冲突
 zip 条目数不超过 100000，解压后总体积不超过 50GB
 ```
 
+模型 `type`（V2 init 中为 `taskType`）是上传者声明的业务元数据。后端校验枚举值、
+已有资产类型一致性、ZIP 安全、大小、扩展名和制品完整性，但不从权重文件名、模型框架
+或二进制内容推断其实际属于 CV、NLP、POINT_CLOUD 还是 ROBOT。因此，将同一个合法权重
+包分别声明为 `CV` 或 `NLP` 均可按上传契约进入 READY；原 A-MODEL-13
+“根据权重内容识别 CV/NLP”的失败预期由本声明型契约取代。训练创建时模型元数据与
+数据集元数据的类型匹配规则保持不变。
+
 创建模型资产的 CRUD 和上传流程共用名称规则：去除首尾空白后必须为 1～255 个字符；
 同一 owner 下未删除模型资产名称按去除首尾空白后、不区分大小写唯一。纯空白名称返回
 HTTP `400`，重复名称或并发重复创建返回 HTTP `409`。模型与数据集使用不同命名空间，
@@ -349,6 +356,11 @@ zip 内路径可以使用 / 或 \，后端统一规范化为 /；规范化后不
 
 `MULTIMODAL` complete 不执行单模态 zip 白名单和全量解压校验；manifest、AUTO_DIRECTORY 目录结构和 ZIP 内容校验由异步 ImportJob 完成。导入全部成功后版本变为 `READY`；任务级失败或 0 个样本成功时 ImportJob 为 `FAILED`，版本保持 `DRAFT`；部分成功时 ImportJob 为 `PARTIAL`，成功样本保留在 DRAFT 工作区，但该版本不可 publish，不能进入 READY 查询或训练消费。
 
+MANIFEST 校验失败会把安全的定位信息持久化到 ImportJob，并由 V2 上传状态、数据集列表、
+工作区和 ImportJob 状态接口统一映射到 `userError.details`。`field` 和 `reason` 固定存在；
+能够定位样本或文件时还会返回 `externalId`、`sampleIndex`、`path`，非法 JSON 可返回
+`line/column`。详情不包含 bucket、对象存储路径、堆栈或内部异常类名。
+
 ### 6.1.1 ImportJob 失败重试
 
 MULTIMODAL 导入失败后，允许对失败任务做受控重试：
@@ -523,7 +535,7 @@ V2 数据集版本工作区的稳定路径为：
 | 能力 | 路径 |
 | --- | --- |
 | 标签分配提示 | `GET /api/v2/datasets/{datasetId}/version-allocation?versionLabel=...` |
-| 创建或继续 | `POST /api/v2/datasets/{datasetId}/workspaces`；可选请求体为 `{"versionLabel":"1.0.3"}` |
+| 创建或继续 | `POST /api/v2/datasets/{datasetId}/workspaces`；可选请求体为 `{"baseVersionId":"dataset-ver-v1","versionLabel":"1.0.3"}` |
 | 详情、元数据 Merge Patch、放弃 | `GET/PATCH/DELETE /api/v2/dataset-workspaces/{workspaceId}` |
 | readiness、发布 | `GET .../{workspaceId}/readiness`、`POST .../{workspaceId}/publish` |
 | 样本 CRUD | `GET/POST .../{workspaceId}/samples`、`GET/PATCH/DELETE .../samples/{sampleId}`、`POST .../restore` |
@@ -534,11 +546,24 @@ V2 数据集版本工作区的稳定路径为：
 | 追加 ZIP | `POST .../{workspaceId}/package-uploads` |
 | 分片、轮询、完成、取消 | `/api/v2/dataset-uploads/{uploadId}` 下的 `chunks`、`GET`、`complete`、`cancel` |
 
-创建请求无请求体、`{}` 或 JSON `null` 时，后端在资产行锁内分配包含软删除历史的下一
-`versionNo` 并生成 `v{nextVersionNo}`；默认标签已被历史记录占用时继续向后寻找。显式
-`versionLabel` 会 trim，长度必须为 1–64，空白或超长返回
-`400 / INVALID_VERSION_LABEL`。标签在创建事务内首次保存到 `version/versionLabel`，不需要 Legacy PUT。已有活动工作区时，无标签或同标签重试幂等返回原工作区，不同标签返回
-`409 / DATASET_VERSION_LABEL_CONFLICT`。
+创建请求无请求体、`{}` 或 JSON `null` 时，新建工作区默认从资产当前 READY 派生。
+显式 `baseVersionId` 时，所选版本必须属于该资产、未删除且为 READY；工作区
+`baseVersion`、`parentVersionId` 和物化内容都来自该版本，不会静默改用当前版本。
+服务端同时在内部记录创建事务锁定时的 `currentVersionId` 作为 head 快照。
+
+后端在资产行锁内分配包含软删除历史的下一 `versionNo` 并生成
+`v{nextVersionNo}`；默认标签已被历史记录占用时继续向后寻找。显式 `versionLabel`
+会 trim，长度必须为 1–64，空白或超长返回 `400 / INVALID_VERSION_LABEL`。标签在创建
+事务内首次保存到 `version/versionLabel`，不需要 Legacy PUT。已有活动工作区时，省略
+基线或显式传相同基线可幂等继续；显式传不同基线返回
+`409 / WORKSPACE_BASE_CONFLICT`，`details` 包含
+`workspaceId/activeBaseVersionId/requestedBaseVersionId`。无标签或同标签重试幂等返回
+原工作区，不同标签仍返回 `409 / DATASET_VERSION_LABEL_CONFLICT`。
+
+基线校验错误固定为：空白 `baseVersionId` 返回
+`400 / INVALID_BASE_VERSION_ID`；不存在、跨资产、已删除或无权访问返回
+`404 / DATASET_NOT_FOUND`；同资产但不是 READY 返回
+`422 / BASE_VERSION_NOT_READY`。
 
 分配提示返回
 `nextVersionNo/defaultVersionLabel/requestedVersionLabel/requestedVersionLabelAvailable/unavailableReason`。请求标签不可用时，原因仅为
@@ -557,7 +582,7 @@ V2 数据集版本工作区的稳定路径为：
 
 小文本组件限制为 1 MiB 和 `.txt/.json/.jsonl/.xml/.csv/.yaml/.yml`，执行 UTF-8、NUL、MIME、format 和安全语法校验。大文件创建/替换生成不可变 RAW `OVERLAY` 对象；继承 ZIP 继续保持不可变，读取服务按 `storageKind=ZIP|RAW` 选择 ZIP entry 或 RAW object。有效标注仍引用数据组件时，删除数据返回 `409 / RESOURCE_IN_USE`。
 
-`publishReadiness` 固定为 `{canPublish,evaluatedRevision,blockers[]}`。列表、详情和发布使用同一套 readiness 规则，统一覆盖样本、上传/导入、包关系、重复标识、数据—标注关联、文件描述、版本元数据和父版本基线。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。发布在同一锁和 revision 下复检；业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`，父版本漂移返回 `409 / BASE_VERSION_STALE`。无状态变化时，同 revision 的 `canPublish=true` 保证不会因同一业务规则返回 422。
+`publishReadiness` 固定为 `{canPublish,evaluatedRevision,blockers[]}`。列表、详情和发布使用同一套 readiness 规则，统一覆盖样本、上传/导入、包关系、重复标识、数据—标注关联、文件描述、版本元数据和版本谱系。所选 `parentVersionId` 可以是历史 READY；发布要求资产当前 head 仍等于创建工作区时记录的 head 快照，之后发生任何 current 漂移均返回 `409 / BASE_VERSION_STALE`，不得把工作区改接到新 current。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。其他业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`。无状态变化时，同 revision 的 `canPublish=true` 保证不会因同一业务规则返回 422。
 
 发布结果固定为：
 

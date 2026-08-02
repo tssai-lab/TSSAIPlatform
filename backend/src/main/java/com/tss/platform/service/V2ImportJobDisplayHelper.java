@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.dto.ImportJobStatusDto;
 import com.tss.platform.dto.v2.V2UserError;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ImportJob;
@@ -11,12 +12,17 @@ import java.util.Map;
 
 final class V2ImportJobDisplayHelper {
 
+    private static final ObjectMapper DEFAULT_OBJECT_MAPPER = new ObjectMapper();
     private static final String IMPORT_SUCCESS = "SUCCESS";
     private static final String IMPORT_SUPERSEDED = "SUPERSEDED";
     private static final String IMPORT_PARTIAL = "PARTIAL";
     private static final String IMPORT_FAILED = "FAILED";
 
     private V2ImportJobDisplayHelper() {
+    }
+
+    static V2UserError userError(ImportJob job) {
+        return userError(job, DEFAULT_OBJECT_MAPPER);
     }
 
     static V2UserError userError(ImportJob job, ObjectMapper objectMapper) {
@@ -38,6 +44,45 @@ final class V2ImportJobDisplayHelper {
         return new V2UserError(code, message, parseDetails(job.getErrorDetailsJson(), objectMapper));
     }
 
+    static V2UserError userError(ImportJobStatusDto source) {
+        if (source == null
+                || (!IMPORT_FAILED.equals(source.getStatus())
+                && !IMPORT_PARTIAL.equals(source.getStatus()))) {
+            return null;
+        }
+        boolean partial = IMPORT_PARTIAL.equals(source.getStatus());
+        String code = source.getErrorCode() == null
+                ? (partial ? "PARTIAL_IMPORT_FAILED" : "IMPORT_FAILED")
+                : source.getErrorCode();
+        String message = source.getErrorMessage() == null
+                ? (partial
+                        ? "部分样本导入失败，可增量重试"
+                        : "数据导入失败，请检查上传内容后重试")
+                : source.getErrorMessage();
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>(
+                parseDetails(
+                        source.getErrorDetailsJson(),
+                        DEFAULT_OBJECT_MAPPER
+                )
+        );
+        if (partial) {
+            details.putIfAbsent(
+                    "failedSamples",
+                    safeInt(source.getFailedSamples())
+            );
+            details.putIfAbsent(
+                    "importedSamples",
+                    safeInt(source.getImportedSamples())
+            );
+            details.putIfAbsent(
+                    "totalSamples",
+                    safeInt(source.getTotalSamples())
+            );
+            details.putIfAbsent("retryMode", "INCREMENTAL");
+        }
+        return new V2UserError(code, message, Map.copyOf(details));
+    }
+
     static Map<String, Object> parseDetails(String json, ObjectMapper objectMapper) {
         if (json == null || json.isBlank()) {
             return Map.of();
@@ -52,6 +97,10 @@ final class V2ImportJobDisplayHelper {
         } catch (Exception exception) {
             return Map.of();
         }
+    }
+
+    private static int safeInt(Integer value) {
+        return value == null ? 0 : value;
     }
 
     static boolean isPublishTerminalJobStatus(String status) {

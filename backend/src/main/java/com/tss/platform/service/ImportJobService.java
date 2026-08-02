@@ -39,8 +39,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -877,8 +877,11 @@ public class ImportJobService {
                         List.of(sample.externalId())
                 );
         if (!externalConflicts.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "external_id already exists in DRAFT: " + sample.externalId()
+            throw duplicateSampleFailure(
+                    "external_id",
+                    sample.externalId(),
+                    null,
+                    "external_id already exists in workspace"
             );
         }
         List<DatasetSample> indexConflicts =
@@ -887,8 +890,11 @@ public class ImportJobService {
                         List.of(sample.sampleIndex())
                 );
         if (!indexConflicts.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "sample_index already exists in DRAFT: " + sample.sampleIndex()
+            throw duplicateSampleFailure(
+                    "sample_index",
+                    sample.externalId(),
+                    sample.sampleIndex(),
+                    "sample_index already exists in workspace"
             );
         }
     }
@@ -1051,9 +1057,11 @@ public class ImportJobService {
                         externalIds
                 );
         if (!externalConflicts.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "external_id already exists in DRAFT: "
-                            + externalConflicts.get(0).getExternalId()
+            throw duplicateSampleFailure(
+                    "external_id",
+                    externalConflicts.get(0).getExternalId(),
+                    null,
+                    "external_id already exists in workspace"
             );
         }
 
@@ -1066,11 +1074,41 @@ public class ImportJobService {
                         sampleIndexes
                 );
         if (!indexConflicts.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "sample_index already exists in DRAFT: "
-                            + indexConflicts.get(0).getSampleIndex()
+            int sampleIndex = indexConflicts.get(0).getSampleIndex();
+            String externalId = plan.samples().stream()
+                    .filter(sample -> sample.sampleIndex() == sampleIndex)
+                    .map(ManifestSample::externalId)
+                    .findFirst()
+                    .orElse(null);
+            throw duplicateSampleFailure(
+                    "sample_index",
+                    externalId,
+                    sampleIndex,
+                    "sample_index already exists in workspace"
             );
         }
+    }
+
+    private static ManifestValidationException duplicateSampleFailure(
+            String field,
+            String externalId,
+            Integer sampleIndex,
+            String reason
+    ) {
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        details.put("field", field);
+        if (externalId != null && !externalId.isBlank()) {
+            details.put("externalId", externalId);
+        }
+        if (sampleIndex != null) {
+            details.put("sampleIndex", sampleIndex);
+        }
+        details.put("reason", reason);
+        return new ManifestValidationException(
+                "DUPLICATE_SAMPLE",
+                "上传内容包含已存在的样本",
+                Map.copyOf(details)
+        );
     }
 
     private boolean shouldUpdateCurrentVersion(DatasetAsset asset, DatasetVersion candidate) {

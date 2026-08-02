@@ -6,7 +6,9 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
@@ -31,19 +33,48 @@ public class ManifestZipReader {
             long objectSize,
             String manifestPath
     ) throws Exception {
-        String safePath = DatasetUploadService.normalizeManifestPath("MANIFEST", manifestPath);
-        String normalizedPath = ZipCentralDirectoryReader.normalizePath(safePath);
+        String safePath;
+        String normalizedPath;
+        try {
+            safePath = DatasetUploadService.normalizeManifestPath(
+                    "MANIFEST",
+                    manifestPath
+            );
+            normalizedPath = ZipCentralDirectoryReader.normalizePath(safePath);
+        } catch (IllegalArgumentException exception) {
+            throw invalidManifest(
+                    "manifestPath",
+                    manifestPath,
+                    safeReason(exception, "manifest path is invalid"),
+                    exception
+            );
+        }
         List<ZipEntryInfo> entries = centralDirectoryReader.read(objectName, objectSize);
         ZipEntryInfo manifest = entries.stream()
                 .filter(entry -> normalizedPath.equals(entry.normalizedPath()))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Manifest entry not found: " + safePath));
+                .orElseThrow(() -> invalidManifest(
+                        "manifestPath",
+                        normalizedPath,
+                        "manifest entry not found",
+                        null
+                ));
 
         if (manifest.directory()) {
-            throw new IllegalArgumentException("Manifest path points to a directory");
+            throw invalidManifest(
+                    "manifestPath",
+                    normalizedPath,
+                    "manifest path points to a directory",
+                    null
+            );
         }
         if (manifest.uncompressedSize() > MAX_MANIFEST_SIZE) {
-            throw new IllegalArgumentException("Manifest exceeds 10MB");
+            throw invalidManifest(
+                    "manifestPath",
+                    normalizedPath,
+                    "manifest exceeds 10MB",
+                    null
+            );
         }
 
         try (InputStream range = minioService.downloadRange(
@@ -52,18 +83,35 @@ public class ManifestZipReader {
                 manifest.compressedSize()
         )) {
             if (manifest.method() == 0) {
-                return decodeBounded(range, manifest.uncompressedSize());
+                return decodeBounded(
+                        range,
+                        manifest.uncompressedSize(),
+                        normalizedPath
+                );
             }
             if (manifest.method() == 8) {
                 try (InflaterInputStream inflater = new InflaterInputStream(range, new Inflater(true))) {
-                    return decodeBounded(inflater, manifest.uncompressedSize());
+                    return decodeBounded(
+                            inflater,
+                            manifest.uncompressedSize(),
+                            normalizedPath
+                    );
                 }
             }
-            throw new IllegalArgumentException("Unsupported manifest compression method: " + manifest.method());
+            throw invalidManifest(
+                    "manifestPath",
+                    normalizedPath,
+                    "unsupported manifest compression method: " + manifest.method(),
+                    null
+            );
         }
     }
 
-    private static String decodeBounded(InputStream input, long declaredSize) throws Exception {
+    private static String decodeBounded(
+            InputStream input,
+            long declaredSize,
+            String manifestPath
+    ) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream((int) Math.min(declaredSize, MAX_MANIFEST_SIZE));
         byte[] buffer = new byte[8192];
         long total = 0;
@@ -71,13 +119,55 @@ public class ManifestZipReader {
         while ((read = input.read(buffer)) >= 0) {
             total += read;
             if (total > MAX_MANIFEST_SIZE) {
-                throw new IllegalArgumentException("Manifest exceeds 10MB");
+                throw invalidManifest(
+                        "manifestPath",
+                        manifestPath,
+                        "manifest exceeds 10MB",
+                        null
+                );
             }
             output.write(buffer, 0, read);
         }
         if (total != declaredSize) {
-            throw new IllegalArgumentException("Manifest size does not match ZIP metadata");
+            throw invalidManifest(
+                    "manifestPath",
+                    manifestPath,
+                    "manifest size does not match ZIP metadata",
+                    null
+            );
         }
         return output.toString(StandardCharsets.UTF_8);
+    }
+
+    private static ManifestValidationException invalidManifest(
+            String field,
+            String path,
+            String reason,
+            Throwable cause
+    ) {
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        details.put("field", field);
+        if (path != null && !path.isBlank()) {
+            details.put("path", path);
+        }
+        details.put("reason", reason);
+        String message = "field " + field
+                + (path == null || path.isBlank() ? "" : ", path: " + path)
+                + ", reason: " + reason;
+        return new ManifestValidationException(
+                "INVALID_MANIFEST",
+                message,
+                Map.copyOf(details),
+                cause
+        );
+    }
+
+    private static String safeReason(
+            IllegalArgumentException exception,
+            String fallback
+    ) {
+        return exception.getMessage() == null || exception.getMessage().isBlank()
+                ? fallback
+                : exception.getMessage();
     }
 }

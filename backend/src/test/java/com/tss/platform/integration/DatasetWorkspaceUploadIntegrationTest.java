@@ -2,19 +2,24 @@ package com.tss.platform.integration;
 
 import com.tss.platform.TssPlatformApplication;
 import com.tss.platform.controller.v2.V2BusinessException;
+import com.tss.platform.dto.v2.V2DatasetWorkspaceCreateRequest;
 import com.tss.platform.dto.v2.V2DatasetUploadCompleteRequest;
 import com.tss.platform.entity.DatasetAsset;
+import com.tss.platform.entity.DatasetPackage;
 import com.tss.platform.entity.DatasetSample;
 import com.tss.platform.entity.DatasetSampleData;
 import com.tss.platform.entity.DatasetUploadChunk;
 import com.tss.platform.entity.DatasetUploadSession;
 import com.tss.platform.entity.DatasetVersion;
+import com.tss.platform.entity.DatasetVersionPackage;
 import com.tss.platform.entity.MinioDeleteTask;
 import com.tss.platform.repository.DatasetAssetRepository;
+import com.tss.platform.repository.DatasetPackageRepository;
 import com.tss.platform.repository.DatasetSampleDataRepository;
 import com.tss.platform.repository.DatasetSampleRepository;
 import com.tss.platform.repository.DatasetUploadChunkRepository;
 import com.tss.platform.repository.DatasetUploadSessionRepository;
+import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.MinioDeleteTaskRepository;
 import com.tss.platform.security.AuthContext;
@@ -23,6 +28,7 @@ import com.tss.platform.service.DatasetWorkspaceFileUploadService;
 import com.tss.platform.service.MinioDeleteTaskScheduler;
 import com.tss.platform.service.MinioDeleteTaskService;
 import com.tss.platform.service.MinioService;
+import com.tss.platform.service.V2DatasetWorkspaceService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -55,6 +61,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
@@ -158,6 +165,9 @@ class DatasetWorkspaceUploadIntegrationTest {
     private DatasetWorkspaceFileUploadService workspaceFileUploadService;
 
     @Autowired
+    private V2DatasetWorkspaceService v2WorkspaceService;
+
+    @Autowired
     private DatasetAssetRepository assetRepository;
 
     @Autowired
@@ -168,6 +178,12 @@ class DatasetWorkspaceUploadIntegrationTest {
 
     @Autowired
     private DatasetSampleDataRepository dataRepository;
+
+    @Autowired
+    private DatasetPackageRepository packageRepository;
+
+    @Autowired
+    private DatasetVersionPackageRepository versionPackageRepository;
 
     @Autowired
     private DatasetUploadSessionRepository sessionRepository;
@@ -412,6 +428,112 @@ class DatasetWorkspaceUploadIntegrationTest {
         );
     }
 
+    @Test
+    void historicalReadyBaselineMaterializesSelectedContentAndPublishesOnPostgres() {
+        HistoricalFixture fixture = persistHistoricalFixture();
+
+        var workspace = v2WorkspaceService.create(
+                fixture.assetId(),
+                new V2DatasetWorkspaceCreateRequest(
+                        fixture.historicalVersionId(),
+                        "historical-branch"
+                )
+        );
+        DatasetVersion persisted = versionRepository
+                .findById(workspace.getWorkspaceId())
+                .orElseThrow();
+        List<DatasetSample> materializedSamples = sampleRepository
+                .findByDatasetVersionIdAndDeletedFalseOrderBySampleIndexAscIdAsc(
+                        persisted.getId()
+                );
+
+        assertAll(
+                () -> assertEquals(
+                        fixture.historicalVersionId(),
+                        workspace.getBaseVersion().getVersionId()
+                ),
+                () -> assertEquals(
+                        fixture.historicalVersionId(),
+                        persisted.getParentVersionId()
+                ),
+                () -> assertEquals(
+                        fixture.currentVersionId(),
+                        persisted.getWorkspaceHeadVersionId()
+                ),
+                () -> assertEquals(1, materializedSamples.size()),
+                () -> assertEquals(
+                        fixture.historicalExternalId(),
+                        materializedSamples.get(0).getExternalId()
+                )
+        );
+
+        var published = v2WorkspaceService.publish(
+                persisted.getId(),
+                persisted.getWorkspaceRevision()
+        );
+
+        assertAll(
+                () -> assertEquals(
+                        persisted.getId(),
+                        published.getCurrentVersion().getVersionId()
+                ),
+                () -> assertEquals(
+                        persisted.getId(),
+                        assetRepository.findById(fixture.assetId())
+                                .orElseThrow()
+                                .getCurrentVersionId()
+                ),
+                () -> assertEquals(
+                        "READY",
+                        versionRepository.findById(persisted.getId())
+                                .orElseThrow()
+                                .getStatus()
+                )
+        );
+    }
+
+    @Test
+    void historicalWorkspacePublishIsBlockedWhenCurrentHeadDriftsOnPostgres() {
+        HistoricalFixture fixture = persistHistoricalFixture();
+        var workspace = v2WorkspaceService.create(
+                fixture.assetId(),
+                new V2DatasetWorkspaceCreateRequest(
+                        fixture.historicalVersionId(),
+                        "stale-branch"
+                )
+        );
+        DatasetVersion concurrent = readyVersion(
+                fixture.assetId(),
+                "concurrent-" + compactUuid(),
+                4,
+                "concurrent-v4"
+        );
+        versionRepository.saveAndFlush(concurrent);
+        DatasetAsset asset = assetRepository.findById(fixture.assetId())
+                .orElseThrow();
+        asset.setCurrentVersionId(concurrent.getId());
+        asset.setUpdatedAt(Instant.now());
+        assetRepository.saveAndFlush(asset);
+
+        V2BusinessException failure = assertThrows(
+                V2BusinessException.class,
+                () -> v2WorkspaceService.publish(
+                        workspace.getWorkspaceId(),
+                        workspace.getWorkspaceRevision()
+                )
+        );
+
+        assertAll(
+                () -> assertEquals("BASE_VERSION_STALE", failure.getErrorCode()),
+                () -> assertEquals(
+                        "DRAFT",
+                        versionRepository.findById(workspace.getWorkspaceId())
+                                .orElseThrow()
+                                .getStatus()
+                )
+        );
+    }
+
     private UploadFixture persistFixture(long fileSize, String fileName) {
         String suffix = compactUuid();
         String assetId = "asset-upload-" + suffix;
@@ -458,6 +580,7 @@ class DatasetWorkspaceUploadIntegrationTest {
         workspace.setVersionNo(2);
         workspace.setVersionLabel("v2");
         workspace.setParentVersionId(readyVersionId);
+        workspace.setWorkspaceHeadVersionId(readyVersionId);
         workspace.setStatus("DRAFT");
         workspace.setOwnerUserId(OWNER_USER_ID);
         workspace.setCreatedBy(OWNER_USER_ID);
@@ -519,6 +642,156 @@ class DatasetWorkspaceUploadIntegrationTest {
                 expectedSha256,
                 revision
         );
+    }
+
+    private HistoricalFixture persistHistoricalFixture() {
+        String suffix = compactUuid();
+        String assetId = "history-asset-" + suffix;
+        String historicalVersionId = "history-v1-" + suffix;
+        String currentVersionId = "history-v2-" + suffix;
+        String historicalPackageId = "history-pkg-v1-" + suffix;
+        String currentPackageId = "history-pkg-v2-" + suffix;
+        String historicalExternalId = "selected-v1-" + suffix;
+        Instant now = Instant.now();
+
+        DatasetAsset asset = new DatasetAsset();
+        asset.setId(assetId);
+        asset.setName("Historical baseline " + suffix);
+        asset.setType("MULTIMODAL");
+        asset.setOwnerUserId(OWNER_USER_ID);
+        asset.setCreatedAt(now);
+        asset.setUpdatedAt(now);
+        asset.setDeleted(false);
+        assetRepository.saveAndFlush(asset);
+
+        DatasetVersion historical = readyVersion(
+                assetId,
+                historicalVersionId,
+                1,
+                "v1"
+        );
+        DatasetVersion current = readyVersion(
+                assetId,
+                currentVersionId,
+                2,
+                "v2"
+        );
+        versionRepository.saveAllAndFlush(List.of(historical, current));
+
+        persistVersionContent(
+                assetId,
+                historicalVersionId,
+                historicalPackageId,
+                historicalExternalId
+        );
+        persistVersionContent(
+                assetId,
+                currentVersionId,
+                currentPackageId,
+                "current-v2-" + suffix
+        );
+
+        asset.setCurrentVersionId(currentVersionId);
+        assetRepository.saveAndFlush(asset);
+        return new HistoricalFixture(
+                assetId,
+                historicalVersionId,
+                currentVersionId,
+                historicalExternalId
+        );
+    }
+
+    private DatasetVersion readyVersion(
+            String assetId,
+            String versionId,
+            int versionNo,
+            String versionLabel
+    ) {
+        Instant now = Instant.now();
+        DatasetVersion version = new DatasetVersion();
+        version.setId(versionId);
+        version.setAssetId(assetId);
+        version.setVersion(versionLabel);
+        version.setVersionNo(versionNo);
+        version.setVersionLabel(versionLabel);
+        version.setStatus("READY");
+        version.setOwnerUserId(OWNER_USER_ID);
+        version.setCreatedBy(OWNER_USER_ID);
+        version.setCreatedAt(now);
+        version.setUpdatedAt(now);
+        version.setPublishedAt(now);
+        version.setWorkspaceRevision(0L);
+        version.setDeleted(false);
+        return version;
+    }
+
+    private void persistVersionContent(
+            String assetId,
+            String versionId,
+            String packageId,
+            String externalId
+    ) {
+        Instant now = Instant.now();
+        DatasetPackage datasetPackage = new DatasetPackage();
+        datasetPackage.setId(packageId);
+        datasetPackage.setDatasetAssetId(assetId);
+        datasetPackage.setStoragePath(
+                "users/" + OWNER_USER_ID + "/datasets/" + assetId
+                        + "/packages/" + packageId + ".zip"
+        );
+        datasetPackage.setFileName(packageId + ".zip");
+        datasetPackage.setSizeBytes(1L);
+        datasetPackage.setChecksum("a".repeat(64));
+        datasetPackage.setManifestPath("manifest.json");
+        datasetPackage.setStatus("READY");
+        datasetPackage.setStorageKind("ZIP");
+        datasetPackage.setCreatedAt(now);
+        datasetPackage.setDeleted(false);
+        packageRepository.saveAndFlush(datasetPackage);
+
+        DatasetVersionPackage relation = new DatasetVersionPackage();
+        relation.setDatasetVersionId(versionId);
+        relation.setPackageId(packageId);
+        relation.setPackageRole("PRIMARY");
+        relation.setPackageOrder(0);
+        relation.setCreatedAt(now);
+        versionPackageRepository.saveAndFlush(relation);
+
+        DatasetSample sample = new DatasetSample();
+        sample.setId("history-sample-" + compactUuid());
+        sample.setDatasetVersionId(versionId);
+        sample.setCreatedByPackageId(packageId);
+        sample.setExternalId(externalId);
+        sample.setSampleIndex(0);
+        sample.setTags(Map.of());
+        sample.setMetadata(Map.of());
+        sample.setOwnerUserId(OWNER_USER_ID);
+        sample.setCreatedAt(now);
+        sample.setUpdatedAt(now);
+        sample.setDeleted(false);
+        sampleRepository.saveAndFlush(sample);
+
+        DatasetSampleData data = new DatasetSampleData();
+        data.setId("history-data-" + compactUuid());
+        data.setSampleId(sample.getId());
+        data.setDatasetVersionId(versionId);
+        data.setPackageId(packageId);
+        data.setDataType("TEXT");
+        data.setSeq(0);
+        data.setFormat("txt");
+        data.setOriginalPath(externalId + ".txt");
+        data.setFileName(externalId + ".txt");
+        data.setSizeBytes(1L);
+        data.setContentType("text/plain");
+        data.setZipDataOffset(0L);
+        data.setCompressedSize(1L);
+        data.setUncompressedSize(1L);
+        data.setCompressionMethod("STORED");
+        data.setMetadata(Map.of());
+        data.setCreatedAt(now);
+        data.setUpdatedAt(now);
+        data.setDeleted(false);
+        dataRepository.saveAndFlush(data);
     }
 
     private void uploadPart(UploadFixture fixture, int partIndex) {
@@ -635,6 +908,14 @@ class DatasetWorkspaceUploadIntegrationTest {
             int totalChunks,
             String expectedSha256,
             long workspaceRevision
+    ) {
+    }
+
+    private record HistoricalFixture(
+            String assetId,
+            String historicalVersionId,
+            String currentVersionId,
+            String historicalExternalId
     ) {
     }
 

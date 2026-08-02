@@ -43,8 +43,17 @@ class ManifestZipReaderTest {
         byte[] zip = ZipTestFixtures.zip(ZipTestFixtures.stored("other.json", "{}"));
         ManifestZipReader reader = readerFor(zip);
 
-        assertThrows(IllegalArgumentException.class,
+        ManifestValidationException error = assertThrows(
+                ManifestValidationException.class,
                 () -> reader.readManifest("dataset.zip", zip.length, "manifest.json"));
+
+        assertEquals("INVALID_MANIFEST", error.getErrorCode());
+        assertEquals("manifestPath", error.getDetails().get("field"));
+        assertEquals("manifest.json", error.getDetails().get("path"));
+        assertEquals(
+                "manifest entry not found",
+                error.getDetails().get("reason")
+        );
     }
 
     @Test
@@ -52,8 +61,12 @@ class ManifestZipReaderTest {
         byte[] zip = ZipTestFixtures.zip(ZipTestFixtures.stored("manifest.json", "{}"));
         ManifestZipReader reader = readerFor(zip);
 
-        assertThrows(IllegalArgumentException.class,
+        ManifestValidationException error = assertThrows(
+                ManifestValidationException.class,
                 () -> reader.readManifest("dataset.zip", zip.length, "../manifest.json"));
+
+        assertEquals("manifestPath", error.getDetails().get("field"));
+        assertEquals("../manifest.json", error.getDetails().get("path"));
     }
 
     @Test
@@ -64,8 +77,12 @@ class ManifestZipReaderTest {
         );
         ManifestZipReader reader = readerFor(zip);
 
-        assertThrows(IllegalArgumentException.class,
+        ManifestValidationException error = assertThrows(
+                ManifestValidationException.class,
                 () -> reader.readManifest("dataset.zip", zip.length, "manifest.json"));
+
+        assertEquals("manifestPath", error.getDetails().get("field"));
+        assertEquals("manifest exceeds 10MB", error.getDetails().get("reason"));
     }
 
     private static void assertManifestRead(ZipTestFixtures.EntrySpec spec, String expected) throws Exception {

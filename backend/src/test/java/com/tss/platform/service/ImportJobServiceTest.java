@@ -373,6 +373,12 @@ class ImportJobServiceTest {
         assertEquals("FAILED", fixture.job.getStatus());
         assertEquals("DUPLICATE_SAMPLE", fixture.job.getErrorCode());
         assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"field\":\"external_id\""
+        ));
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"externalId\":\"scene-1\""
+        ));
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         assertEquals("DRAFT", fixture.version.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
@@ -410,6 +416,12 @@ class ImportJobServiceTest {
         assertEquals("FAILED", fixture.job.getStatus());
         assertEquals("DUPLICATE_SAMPLE", fixture.job.getErrorCode());
         assertEquals("上传内容包含已存在的样本", fixture.job.getErrorMessage());
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"field\":\"sample_index\""
+        ));
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"sampleIndex\":0"
+        ));
         assertEquals("FAILED", fixture.datasetPackage.getStatus());
         verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
     }
@@ -645,6 +657,15 @@ class ImportJobServiceTest {
         assertEquals("INVALID_MANIFEST", fixture.job.getErrorCode());
         assertEquals("Manifest 内容无效，请检查后重试", fixture.job.getErrorMessage());
         assertFalse(fixture.job.getErrorMessage().contains("missing.png"));
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"field\":\"samples[0].data[0].path\""
+        ));
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"externalId\":\"scene-1\""
+        ));
+        assertTrue(fixture.job.getErrorDetailsJson().contains(
+                "\"path\":\"missing.png\""
+        ));
         assertEquals("DRAFT", fixture.version.getStatus());
         assertNull(fixture.version.getPublishedAt());
         assertEquals("version-ready", fixture.asset.getCurrentVersionId());

@@ -150,6 +150,15 @@ class ManifestParserTest {
         );
 
         assertTrue(error.getMessage().contains("duplicate external_id: scene_001"));
+        assertEquals(
+                "samples[1].external_id",
+                error.getDetails().get("field")
+        );
+        assertEquals("scene_001", error.getDetails().get("externalId"));
+        assertEquals(
+                "duplicate external_id: scene_001",
+                error.getDetails().get("reason")
+        );
     }
 
     @Test
@@ -165,6 +174,11 @@ class ManifestParserTest {
         );
 
         assertTrue(error.getMessage().contains("duplicate sample_index: 3"));
+        assertEquals(
+                "samples[1].sample_index",
+                error.getDetails().get("field")
+        );
+        assertEquals(3, error.getDetails().get("sampleIndex"));
     }
 
     @Test
@@ -178,6 +192,12 @@ class ManifestParserTest {
 
         assertTrue(error.getMessage().contains("path not found in zip: missing.png"));
         assertTrue(error.getMessage().contains("external_id: scene_001"));
+        assertEquals(
+                "samples[0].data[0].path",
+                error.getDetails().get("field")
+        );
+        assertEquals("missing.png", error.getDetails().get("path"));
+        assertEquals("scene_001", error.getDetails().get("externalId"));
     }
 
     @Test
@@ -384,6 +404,26 @@ class ManifestParserTest {
 
         assertTrue(error.getMessage().contains("field version"));
         assertTrue(error.getMessage().contains("must equal 1.0"));
+        assertEquals("version", error.getDetails().get("field"));
+        assertEquals("must equal 1.0", error.getDetails().get("reason"));
+    }
+
+    @Test
+    void invalidJsonIncludesSafeLocationDetails() {
+        ManifestValidationException error = assertThrows(
+                ManifestValidationException.class,
+                () -> parser.parse(
+                        "{\"version\":\"1.0\",\"samples\":[}",
+                        entries("manifest.json"),
+                        "manifest.json"
+                )
+        );
+
+        assertEquals("INVALID_MANIFEST", error.getErrorCode());
+        assertEquals("manifestJson", error.getDetails().get("field"));
+        assertEquals("invalid JSON", error.getDetails().get("reason"));
+        assertTrue(((Number) error.getDetails().get("line")).intValue() >= 1);
+        assertTrue(((Number) error.getDetails().get("column")).intValue() >= 1);
     }
 
     @Test

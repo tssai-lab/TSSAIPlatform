@@ -92,44 +92,76 @@ public class ManifestParser {
 
         for (int position = 0; position < samplesNode.size(); position++) {
             JsonNode sampleNode = samplesNode.get(position);
+            String sampleField = "samples[" + position + "]";
             if (!sampleNode.isObject()) {
-                throw error("samples[" + position + "]", null, null, "must be a JSON object");
+                throw error(sampleField, null, null, "must be a JSON object");
             }
-            String externalId = requiredText(sampleNode, "external_id", null, null);
-            validateLength("external_id", externalId, 255, externalId, null);
+            String externalId = requiredText(
+                    sampleNode,
+                    "external_id",
+                    sampleField + ".external_id",
+                    null,
+                    null
+            );
+            validateLength(
+                    sampleField + ".external_id",
+                    externalId,
+                    255,
+                    externalId,
+                    null
+            );
             if (!externalIds.add(externalId)) {
-                throw new ManifestValidationException("duplicate external_id: " + externalId);
+                throw error(
+                        sampleField + ".external_id",
+                        externalId,
+                        null,
+                        "duplicate external_id: " + externalId
+                );
             }
 
             int sampleIndex = optionalNonNegativeInt(
                     sampleNode.get("sample_index"),
                     generatedSampleIndexStart + position,
-                    "sample_index",
+                    sampleField + ".sample_index",
                     externalId,
                     null
             );
             if (!sampleIndexes.add(sampleIndex)) {
-                throw new ManifestValidationException(
-                        "duplicate sample_index: " + sampleIndex + ", external_id: " + externalId
+                throw error(
+                        sampleField + ".sample_index",
+                        externalId,
+                        null,
+                        "duplicate sample_index: " + sampleIndex,
+                        Map.of("sampleIndex", sampleIndex)
                 );
             }
 
-            Map<String, Object> tags = objectMap(sampleNode.get("tags"), "tags", externalId, null);
+            Map<String, Object> tags = objectMap(
+                    sampleNode.get("tags"),
+                    sampleField + ".tags",
+                    externalId,
+                    null
+            );
             Map<String, Object> metadata = objectMap(
                     sampleNode.get("metadata"),
-                    "metadata",
+                    sampleField + ".metadata",
                     externalId,
                     null
             );
 
-            JsonNode dataNode = optionalArray(sampleNode.get("data"), "data", externalId);
+            JsonNode dataNode = optionalArray(
+                    sampleNode.get("data"),
+                    sampleField + ".data",
+                    externalId
+            );
             JsonNode annotationsNode = optionalArray(
                     sampleNode.get("annotations"),
-                    "annotations",
+                    sampleField + ".annotations",
                     externalId
             );
             List<ManifestData> data = parseData(
                     dataNode,
+                    sampleField,
                     externalId,
                     zipEntryMap,
                     declaredPaths
@@ -140,6 +172,7 @@ public class ManifestParser {
             }
             List<ManifestAnnotation> annotations = parseAnnotations(
                     annotationsNode,
+                    sampleField,
                     externalId,
                     zipEntryMap,
                     declaredPaths,
@@ -166,7 +199,9 @@ public class ManifestParser {
                     "INVALID_MANIFEST_UNDECLARED_ENTRY",
                     "manifest 未声明 ZIP 文件: " + undeclaredEntries.get(0),
                     Map.of(
+                            "field", "zipEntries",
                             "path", undeclaredEntries.get(0),
+                            "reason", "entry is not declared by manifest",
                             "undeclaredEntries", undeclaredEntries
                     )
             );
@@ -186,6 +221,7 @@ public class ManifestParser {
 
     private List<ManifestData> parseData(
             JsonNode dataNode,
+            String sampleField,
             String externalId,
             Map<String, ZipEntryInfo> zipEntryMap,
             Set<String> declaredPaths
@@ -194,34 +230,58 @@ public class ManifestParser {
         Set<String> dataKeys = new LinkedHashSet<>();
         for (int index = 0; index < dataNode.size(); index++) {
             JsonNode item = dataNode.get(index);
+            String dataField = sampleField + ".data[" + index + "]";
             if (!item.isObject()) {
-                throw error("data[" + index + "]", externalId, null, "must be a JSON object");
+                throw error(dataField, externalId, null, "must be a JSON object");
             }
             String path = validatedDeclaredPath(
                     item,
                     "path",
-                    "data.path",
+                    dataField + ".path",
                     externalId,
                     zipEntryMap,
                     declaredPaths
             );
-            String dataType = requiredText(item, "data_type", externalId, path);
+            String dataType = requiredText(
+                    item,
+                    "data_type",
+                    dataField + ".data_type",
+                    externalId,
+                    path
+            );
             if (!DATA_TYPES.contains(dataType)) {
-                throw error("data_type", externalId, path, "unsupported value: " + dataType);
+                throw error(
+                        dataField + ".data_type",
+                        externalId,
+                        path,
+                        "unsupported value: " + dataType
+                );
             }
-            String sensor = optionalText(item, "sensor", externalId, path);
-            String channel = optionalText(item, "channel", externalId, path);
-            String format = optionalText(item, "format", externalId, path);
-            validateLength("sensor", sensor, 64, externalId, path);
-            validateLength("channel", channel, 32, externalId, path);
-            validateLength("format", format, 32, externalId, path);
+            String sensor = optionalText(
+                    item, "sensor", dataField + ".sensor", externalId, path
+            );
+            String channel = optionalText(
+                    item, "channel", dataField + ".channel", externalId, path
+            );
+            String format = optionalText(
+                    item, "format", dataField + ".format", externalId, path
+            );
+            validateLength(dataField + ".sensor", sensor, 64, externalId, path);
+            validateLength(dataField + ".channel", channel, 32, externalId, path);
+            validateLength(dataField + ".format", format, 32, externalId, path);
 
-            int seq = optionalNonNegativeInt(item.get("seq"), 0, "seq", externalId, path);
+            int seq = optionalNonNegativeInt(
+                    item.get("seq"),
+                    0,
+                    dataField + ".seq",
+                    externalId,
+                    path
+            );
             String key = dataType + "\u0000" + nullToEmpty(sensor) + "\u0000"
                     + nullToEmpty(channel) + "\u0000" + seq;
             if (!dataKeys.add(key)) {
                 throw error(
-                        "data",
+                        dataField,
                         externalId,
                         path,
                         "duplicate data_type + sensor + channel + seq"
@@ -229,14 +289,21 @@ public class ManifestParser {
             }
 
             String fileName = fileName(path);
-            validateLength("fileName", fileName, 255, externalId, path);
+            validateLength(dataField + ".path", fileName, 255, externalId, path);
             String extension = extension(fileName);
             if ("VIDEO".equals(dataType)) {
-                validateVideo(extension, format, externalId, path);
+                validateVideo(
+                        extension,
+                        format,
+                        dataField + ".path",
+                        dataField + ".format",
+                        externalId,
+                        path
+                );
             }
             Map<String, Object> metadata = objectMap(
                     item.get("metadata"),
-                    "data.metadata",
+                    dataField + ".metadata",
                     externalId,
                     path
             );
@@ -258,6 +325,7 @@ public class ManifestParser {
 
     private List<ManifestAnnotation> parseAnnotations(
             JsonNode annotationsNode,
+            String sampleField,
             String externalId,
             Map<String, ZipEntryInfo> zipEntryMap,
             Set<String> declaredPaths,
@@ -266,9 +334,11 @@ public class ManifestParser {
         List<ManifestAnnotation> annotations = new ArrayList<>(annotationsNode.size());
         for (int index = 0; index < annotationsNode.size(); index++) {
             JsonNode item = annotationsNode.get(index);
+            String annotationField =
+                    sampleField + ".annotations[" + index + "]";
             if (!item.isObject()) {
                 throw error(
-                        "annotations[" + index + "]",
+                        annotationField,
                         externalId,
                         null,
                         "must be a JSON object"
@@ -277,22 +347,56 @@ public class ManifestParser {
             String path = validatedDeclaredPath(
                     item,
                     "path",
-                    "annotations.path",
+                    annotationField + ".path",
                     externalId,
                     zipEntryMap,
                     declaredPaths
             );
-            String annotationType = requiredText(item, "annotation_type", externalId, path);
-            String format = requiredText(item, "format", externalId, path);
-            validateLength("annotation_type", annotationType, 64, externalId, path);
-            validateLength("format", format, 32, externalId, path);
+            String annotationType = requiredText(
+                    item,
+                    "annotation_type",
+                    annotationField + ".annotation_type",
+                    externalId,
+                    path
+            );
+            String format = requiredText(
+                    item,
+                    "format",
+                    annotationField + ".format",
+                    externalId,
+                    path
+            );
+            validateLength(
+                    annotationField + ".annotation_type",
+                    annotationType,
+                    64,
+                    externalId,
+                    path
+            );
+            validateLength(
+                    annotationField + ".format",
+                    format,
+                    32,
+                    externalId,
+                    path
+            );
 
-            String refDataPath = optionalText(item, "ref_data_path", externalId, path);
+            String refDataPath = optionalText(
+                    item,
+                    "ref_data_path",
+                    annotationField + ".ref_data_path",
+                    externalId,
+                    path
+            );
             if (refDataPath != null) {
-                refDataPath = normalizePath(refDataPath, "ref_data_path", externalId);
+                refDataPath = normalizePath(
+                        refDataPath,
+                        annotationField + ".ref_data_path",
+                        externalId
+                );
                 if (!currentSampleData.containsKey(refDataPath)) {
                     throw error(
-                            "ref_data_path",
+                            annotationField + ".ref_data_path",
                             externalId,
                             refDataPath,
                             "ref_data_path not found in current sample"
@@ -301,10 +405,10 @@ public class ManifestParser {
             }
 
             String fileName = fileName(path);
-            validateLength("fileName", fileName, 255, externalId, path);
+            validateLength(annotationField + ".path", fileName, 255, externalId, path);
             Map<String, Object> metadata = objectMap(
                     item.get("metadata"),
-                    "annotation.metadata",
+                    annotationField + ".metadata",
                     externalId,
                     path
             );
@@ -330,16 +434,28 @@ public class ManifestParser {
             Map<String, ZipEntryInfo> zipEntryMap,
             Set<String> declaredPaths
     ) {
-        String rawPath = requiredText(item, jsonField, externalId, null);
+        String rawPath = requiredText(
+                item,
+                jsonField,
+                errorField,
+                externalId,
+                null
+        );
         String path = normalizePath(rawPath, errorField, externalId);
         if (!declaredPaths.add(path)) {
-            throw new ManifestValidationException(
-                    "duplicate manifest path: " + path + ", external_id: " + externalId
+            throw error(
+                    errorField,
+                    externalId,
+                    path,
+                    "duplicate manifest path: " + path
             );
         }
         if (!zipEntryMap.containsKey(path)) {
-            throw new ManifestValidationException(
-                    "path not found in zip: " + path + ", external_id: " + externalId
+            throw error(
+                    errorField,
+                    externalId,
+                    path,
+                    "path not found in zip: " + path
             );
         }
         if (zipEntryMap.get(path).directory()) {
@@ -389,24 +505,39 @@ public class ManifestParser {
         int annotationCount = 0;
         for (int index = 0; index < samplesNode.size(); index++) {
             JsonNode sample = samplesNode.get(index);
+            String sampleField = "samples[" + index + "]";
             if (!sample.isObject()) {
-                throw error("samples[" + index + "]", null, null, "must be a JSON object");
+                throw error(sampleField, null, null, "must be a JSON object");
             }
             JsonNode externalIdNode = sample.get("external_id");
             String externalId = externalIdNode != null && externalIdNode.isTextual()
                     ? externalIdNode.textValue()
                     : null;
-            JsonNode data = optionalArray(sample.get("data"), "data", externalId);
+            JsonNode data = optionalArray(
+                    sample.get("data"),
+                    sampleField + ".data",
+                    externalId
+            );
             JsonNode annotations = optionalArray(
                     sample.get("annotations"),
-                    "annotations",
+                    sampleField + ".annotations",
                     externalId
             );
             if (data.size() > MAX_DATA_PER_SAMPLE) {
-                throw error("data", externalId, null, "data count exceeds 100");
+                throw error(
+                        sampleField + ".data",
+                        externalId,
+                        null,
+                        "data count exceeds 100"
+                );
             }
             if (annotations.size() > MAX_ANNOTATIONS_PER_SAMPLE) {
-                throw error("annotations", externalId, null, "annotations count exceeds 100");
+                throw error(
+                        sampleField + ".annotations",
+                        externalId,
+                        null,
+                        "annotations count exceeds 100"
+                );
             }
             dataCount = addReferenceCount(dataCount, data.size());
             annotationCount = addReferenceCount(annotationCount, annotations.size());
@@ -458,7 +589,22 @@ public class ManifestParser {
             }
             return root;
         } catch (JsonProcessingException exception) {
-            throw new ManifestValidationException("invalid manifest JSON: " + exception.getOriginalMessage(), exception);
+            LinkedHashMap<String, Object> details = validationDetails(
+                    "manifestJson",
+                    null,
+                    null,
+                    "invalid JSON"
+            );
+            if (exception.getLocation() != null) {
+                details.put("line", exception.getLocation().getLineNr());
+                details.put("column", exception.getLocation().getColumnNr());
+            }
+            throw new ManifestValidationException(
+                    "INVALID_MANIFEST",
+                    "invalid manifest JSON: " + exception.getOriginalMessage(),
+                    details,
+                    exception
+            );
         }
     }
 
@@ -493,9 +639,24 @@ public class ManifestParser {
             String externalId,
             String path
     ) {
-        JsonNode node = object.get(field);
+        return requiredText(object, field, field, externalId, path);
+    }
+
+    private static String requiredText(
+            JsonNode object,
+            String jsonField,
+            String errorField,
+            String externalId,
+            String path
+    ) {
+        JsonNode node = object.get(jsonField);
         if (node == null || !node.isTextual() || node.textValue().isBlank()) {
-            throw error(field, externalId, path, "must be a non-empty string");
+            throw error(
+                    errorField,
+                    externalId,
+                    path,
+                    "must be a non-empty string"
+            );
         }
         return node.textValue();
     }
@@ -506,12 +667,22 @@ public class ManifestParser {
             String externalId,
             String path
     ) {
-        JsonNode node = object.get(field);
+        return optionalText(object, field, field, externalId, path);
+    }
+
+    private static String optionalText(
+            JsonNode object,
+            String jsonField,
+            String errorField,
+            String externalId,
+            String path
+    ) {
+        JsonNode node = object.get(jsonField);
         if (node == null || node.isNull()) {
             return null;
         }
         if (!node.isTextual()) {
-            throw error(field, externalId, path, "must be a string");
+            throw error(errorField, externalId, path, "must be a string");
         }
         return node.textValue();
     }
@@ -551,15 +722,27 @@ public class ManifestParser {
     private static void validateVideo(
             String extension,
             String format,
+            String pathField,
+            String formatField,
             String externalId,
             String path
     ) {
         if (!VIDEO_FORMATS.contains(extension)) {
-            throw error("data.path", externalId, path, "invalid video format: " + extension);
+            throw error(
+                    pathField,
+                    externalId,
+                    path,
+                    "invalid video format: " + extension
+            );
         }
         String normalizedFormat = format == null ? null : format.toLowerCase(Locale.ROOT);
         if (!VIDEO_FORMATS.contains(normalizedFormat)) {
-            throw error("format", externalId, path, "invalid video format: " + format);
+            throw error(
+                    formatField,
+                    externalId,
+                    path,
+                    "invalid video format: " + format
+            );
         }
     }
 
@@ -612,7 +795,21 @@ public class ManifestParser {
             String path,
             String reason
     ) {
-        StringBuilder message = new StringBuilder("field ").append(field);
+        return error(field, externalId, path, reason, Map.of());
+    }
+
+    private static ManifestValidationException error(
+            String field,
+            String externalId,
+            String path,
+            String reason,
+            Map<String, Object> additionalDetails
+    ) {
+        String displayField = displayField(field);
+        StringBuilder message = new StringBuilder("field ").append(leafField(displayField));
+        if (!displayField.equals(leafField(displayField))) {
+            message.append(" (").append(displayField).append(')');
+        }
         if (externalId != null) {
             message.append(", external_id: ").append(externalId);
         }
@@ -620,7 +817,48 @@ public class ManifestParser {
             message.append(", path: ").append(path);
         }
         message.append(", reason: ").append(reason);
-        return new ManifestValidationException(message.toString());
+        LinkedHashMap<String, Object> details = validationDetails(
+                field,
+                externalId,
+                path,
+                reason
+        );
+        if (additionalDetails != null) {
+            details.putAll(additionalDetails);
+        }
+        return new ManifestValidationException(
+                "INVALID_MANIFEST",
+                message.toString(),
+                details
+        );
+    }
+
+    private static String displayField(String field) {
+        String display = field.replaceAll("\\[\\d+\\]", "");
+        return display.startsWith("samples.") ? display.substring("samples.".length()) : display;
+    }
+
+    private static String leafField(String field) {
+        int separator = field.lastIndexOf('.');
+        return separator < 0 ? field : field.substring(separator + 1);
+    }
+
+    private static LinkedHashMap<String, Object> validationDetails(
+            String field,
+            String externalId,
+            String path,
+            String reason
+    ) {
+        LinkedHashMap<String, Object> details = new LinkedHashMap<>();
+        details.put("field", field);
+        if (externalId != null) {
+            details.put("externalId", externalId);
+        }
+        if (path != null) {
+            details.put("path", path);
+        }
+        details.put("reason", reason);
+        return details;
     }
 
     private record ReferenceCounts(int dataCount, int annotationCount) {
