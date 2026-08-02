@@ -106,7 +106,7 @@ public class ResourceMonitorService {
         return servers.stream()
                 .filter(s -> keyword == null || keyword.isEmpty()
                         || s.getHostname().contains(keyword) || s.getServerIp().contains(keyword))
-                .map(s -> toServerItem(s, snapMap.get(s.getServerIp()), false))
+                .map(s -> toServerItem(s, snapMap.get(s.getServerIp()), true))
                 .filter(item -> status == null || "all".equals(status) || item.getStatus().equals(status))
                 .collect(Collectors.toList());
     }
