@@ -3,6 +3,7 @@ import type { ProgressProps } from 'antd';
 const STATUS_TEXT: Record<string, string> = {
   pending: '待提交',
   queued: '调度中',
+  scheduled: '已分配',
   running: '训练中',
   success: '已完成',
   failed: '失败',
@@ -17,6 +18,7 @@ export function getTrainingStatusText(status?: string): string {
 export function getTrainingStatusTagColor(status?: string): string {
   if (status === 'success') return 'success';
   if (status === 'running') return 'processing';
+  if (status === 'scheduled') return 'processing';
   if (status === 'queued') return 'warning';
   if (status === 'failed') return 'error';
   if (status === 'stopped') return 'default';
@@ -28,7 +30,8 @@ export function getTrainingProgressStatus(
 ): ProgressProps['status'] {
   if (status === 'success') return 'success';
   if (status === 'failed') return 'exception';
-  if (status === 'running' || status === 'queued') return 'active';
+  if (status === 'running' || status === 'queued' || status === 'scheduled')
+    return 'active';
   return 'normal';
 }
 
