@@ -11,10 +11,35 @@ export type CodeVersionDisplayInfo = {
   fileName: string;
 };
 
+/** 同时进行的展示名解析上限，避免页面初始化打爆后端 */
+const RESOLVE_CONCURRENCY = 6;
+
 const modelDisplayCache = new Map<string, VersionDisplayInfo>();
 const datasetDisplayCache = new Map<string, VersionDisplayInfo>();
+const datasetAssetNameCache = new Map<string, string>();
 const codeDisplayCache = new Map<string, CodeVersionDisplayInfo>();
 const codeDisplayResolved = new Set<string>();
+
+/** 解析失败负缓存，避免同一 ID 反复打详情 */
+const modelMissCache = new Set<string>();
+const datasetMissCache = new Set<string>();
+
+const modelInflight = new Map<
+  string,
+  Promise<VersionDisplayInfo | undefined>
+>();
+const datasetInflight = new Map<
+  string,
+  Promise<VersionDisplayInfo | undefined>
+>();
+const codeInflight = new Map<
+  string,
+  Promise<CodeVersionDisplayInfo | undefined>
+>();
+
+let codeListCache:
+  | Promise<Awaited<ReturnType<typeof fetchCodeVersionList>>>
+  | undefined;
 
 function isVersionId(value?: string) {
   return !!value && /^(model-ver-|dataset-ver-)/i.test(value);
@@ -36,29 +61,86 @@ export function formatVersionDisplayLabel(
   return '-';
 }
 
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<unknown>,
+): Promise<void> {
+  if (!items.length) return;
+  const limit = Math.max(1, concurrency);
+  let next = 0;
+  const runners = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        await worker(items[index]);
+      }
+    },
+  );
+  await Promise.all(runners);
+}
+
 async function resolveModelVersionDisplay(
   modelVersionId: string,
   options?: { [key: string]: unknown },
 ): Promise<VersionDisplayInfo | undefined> {
   const cached = modelDisplayCache.get(modelVersionId);
   if (cached) return cached;
+  if (modelMissCache.has(modelVersionId)) return undefined;
 
+  const pending = modelInflight.get(modelVersionId);
+  if (pending) return pending;
+
+  const job = (async () => {
+    try {
+      const res = await getModelDetail(modelVersionId, {
+        skipErrorHandler: true,
+        ...options,
+      });
+      const item = res?.data;
+      if (item?.name && !isVersionId(item.name)) {
+        const info: VersionDisplayInfo = {
+          name: item.name,
+          version: item.version,
+        };
+        modelDisplayCache.set(modelVersionId, info);
+        return info;
+      }
+      modelMissCache.add(modelVersionId);
+    } catch {
+      modelMissCache.add(modelVersionId);
+    }
+    return undefined;
+  })();
+
+  modelInflight.set(modelVersionId, job);
   try {
-    const res = await getModelDetail(modelVersionId, {
+    return await job;
+  } finally {
+    modelInflight.delete(modelVersionId);
+  }
+}
+
+async function resolveDatasetAssetName(
+  assetId: string,
+  options?: { [key: string]: unknown },
+): Promise<string | undefined> {
+  const cached = datasetAssetNameCache.get(assetId);
+  if (cached) return cached;
+  try {
+    const assetRes = await getDatasetAsset(assetId, {
       skipErrorHandler: true,
       ...options,
     });
-    const item = res?.data;
-    if (item?.name && !isVersionId(item.name)) {
-      const info: VersionDisplayInfo = {
-        name: item.name,
-        version: item.version,
-      };
-      modelDisplayCache.set(modelVersionId, info);
-      return info;
+    const name = assetRes?.data?.name;
+    if (name && !isVersionId(name)) {
+      datasetAssetNameCache.set(assetId, name);
+      return name;
     }
   } catch {
-    // 忽略单条解析失败
+    // ignore
   }
   return undefined;
 }
@@ -69,32 +151,45 @@ async function resolveDatasetVersionDisplay(
 ): Promise<VersionDisplayInfo | undefined> {
   const cached = datasetDisplayCache.get(datasetVersionId);
   if (cached) return cached;
+  if (datasetMissCache.has(datasetVersionId)) return undefined;
 
-  try {
-    const versionRes = await getDatasetVersion(datasetVersionId, {
-      skipErrorHandler: true,
-      ...options,
-    });
-    const version = versionRes?.data;
-    if (!version?.assetId) return undefined;
+  const pending = datasetInflight.get(datasetVersionId);
+  if (pending) return pending;
 
-    const assetRes = await getDatasetAsset(version.assetId, {
-      skipErrorHandler: true,
-      ...options,
-    });
-    const name = assetRes?.data?.name;
-    if (name && !isVersionId(name)) {
-      const info: VersionDisplayInfo = {
-        name,
-        version: version.version,
-      };
-      datasetDisplayCache.set(datasetVersionId, info);
-      return info;
+  const job = (async () => {
+    try {
+      const versionRes = await getDatasetVersion(datasetVersionId, {
+        skipErrorHandler: true,
+        ...options,
+      });
+      const version = versionRes?.data;
+      if (!version?.assetId) {
+        datasetMissCache.add(datasetVersionId);
+        return undefined;
+      }
+
+      const name = await resolveDatasetAssetName(version.assetId, options);
+      if (name) {
+        const info: VersionDisplayInfo = {
+          name,
+          version: version.version,
+        };
+        datasetDisplayCache.set(datasetVersionId, info);
+        return info;
+      }
+      datasetMissCache.add(datasetVersionId);
+    } catch {
+      datasetMissCache.add(datasetVersionId);
     }
-  } catch {
-    // 忽略单条解析失败
+    return undefined;
+  })();
+
+  datasetInflight.set(datasetVersionId, job);
+  try {
+    return await job;
+  } finally {
+    datasetInflight.delete(datasetVersionId);
   }
-  return undefined;
 }
 
 function pickCodeZipFileName(data?: {
@@ -115,49 +210,72 @@ function pickCodeZipFileName(data?: {
   return fileName;
 }
 
+function loadCodeVersionListOnce(options?: { [key: string]: unknown }) {
+  if (!codeListCache) {
+    codeListCache = fetchCodeVersionList(
+      { pageSize: 500 },
+      { skipErrorHandler: true, ...options },
+    ).catch((error) => {
+      codeListCache = undefined;
+      throw error;
+    });
+  }
+  return codeListCache;
+}
+
 async function resolveCodeVersionDisplay(
   codeVersionId: string,
   options?: { [key: string]: unknown },
 ): Promise<CodeVersionDisplayInfo | undefined> {
   const cached = codeDisplayCache.get(codeVersionId);
   if (cached) return cached;
+  if (codeDisplayResolved.has(codeVersionId)) return undefined;
 
-  try {
-    const res = await getCodeVersionDetail(codeVersionId, {
-      skipErrorHandler: true,
-      ...options,
-    });
-    const fileName = pickCodeZipFileName(res?.data);
-    if (fileName) {
-      const info: CodeVersionDisplayInfo = { fileName };
-      codeDisplayCache.set(codeVersionId, info);
-      codeDisplayResolved.add(codeVersionId);
-      return info;
-    }
-  } catch {
-    // 尝试列表接口
-  }
+  const pending = codeInflight.get(codeVersionId);
+  if (pending) return pending;
 
-  try {
-    const listRes = await fetchCodeVersionList(
-      { pageSize: 500 },
-      { skipErrorHandler: true, ...options },
-    );
-    const item = listRes?.data?.find(
-      (row) => row.codeVersionId === codeVersionId,
-    );
-    const fileName = pickCodeZipFileName(item);
-    if (fileName) {
-      const info: CodeVersionDisplayInfo = { fileName };
-      codeDisplayCache.set(codeVersionId, info);
-      codeDisplayResolved.add(codeVersionId);
-      return info;
+  const job = (async () => {
+    try {
+      const res = await getCodeVersionDetail(codeVersionId, {
+        skipErrorHandler: true,
+        ...options,
+      });
+      const fileName = pickCodeZipFileName(res?.data);
+      if (fileName) {
+        const info: CodeVersionDisplayInfo = { fileName };
+        codeDisplayCache.set(codeVersionId, info);
+        codeDisplayResolved.add(codeVersionId);
+        return info;
+      }
+    } catch {
+      // 尝试列表接口
     }
-  } catch {
-    // 忽略单条解析失败
+
+    try {
+      const listRes = await loadCodeVersionListOnce(options);
+      const item = listRes?.data?.find(
+        (row) => row.codeVersionId === codeVersionId,
+      );
+      const fileName = pickCodeZipFileName(item);
+      if (fileName) {
+        const info: CodeVersionDisplayInfo = { fileName };
+        codeDisplayCache.set(codeVersionId, info);
+        codeDisplayResolved.add(codeVersionId);
+        return info;
+      }
+    } catch {
+      // 忽略单条解析失败
+    }
+    codeDisplayResolved.add(codeVersionId);
+    return undefined;
+  })();
+
+  codeInflight.set(codeVersionId, job);
+  try {
+    return await job;
+  } finally {
+    codeInflight.delete(codeVersionId);
   }
-  codeDisplayResolved.add(codeVersionId);
-  return undefined;
 }
 
 /** 根据版本 ID 批量解析用户填写的模型/数据集名称 */
@@ -182,10 +300,20 @@ export async function enrichTaskItemsWithDisplayNames<T extends API.TaskItem>(
     ),
   ];
 
-  await Promise.all([
-    ...modelIds.map((id) => resolveModelVersionDisplay(id, options)),
-    ...datasetIds.map((id) => resolveDatasetVersionDisplay(id, options)),
-  ]);
+  await mapPool(
+    [
+      ...modelIds.map((id) => ({ kind: 'model' as const, id })),
+      ...datasetIds.map((id) => ({ kind: 'dataset' as const, id })),
+    ],
+    RESOLVE_CONCURRENCY,
+    async (item) => {
+      if (item.kind === 'model') {
+        await resolveModelVersionDisplay(item.id, options);
+      } else {
+        await resolveDatasetVersionDisplay(item.id, options);
+      }
+    },
+  );
 
   return items.map((item) => {
     const modelInfo = item.modelVersionId
@@ -271,8 +399,8 @@ export async function preloadDatasetVersionDisplayNames(
       ),
     ),
   ];
-  await Promise.all(
-    unique.map((id) => resolveDatasetVersionDisplay(id, options)),
+  await mapPool(unique, RESOLVE_CONCURRENCY, (id) =>
+    resolveDatasetVersionDisplay(id, options),
   );
 }
 
@@ -288,5 +416,24 @@ export async function preloadCodeVersionDisplayNames(
       ),
     ),
   ];
-  await Promise.all(unique.map((id) => resolveCodeVersionDisplay(id, options)));
+  await mapPool(unique, RESOLVE_CONCURRENCY, (id) =>
+    resolveCodeVersionDisplay(id, options),
+  );
+}
+
+/** 批量预加载模型版本展示名称 */
+export async function preloadModelVersionDisplayNames(
+  modelVersionIds: string[],
+  options?: { [key: string]: unknown },
+) {
+  const unique = [
+    ...new Set(
+      modelVersionIds.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      ),
+    ),
+  ];
+  await mapPool(unique, RESOLVE_CONCURRENCY, (id) =>
+    resolveModelVersionDisplay(id, options),
+  );
 }

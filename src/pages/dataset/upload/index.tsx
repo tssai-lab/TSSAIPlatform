@@ -18,6 +18,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import type {
   AnnotationFormat,
+  CvTaskType,
   DatasetType,
   MultimodalSampleGrouping,
 } from '@/services/dataset';
@@ -207,6 +208,7 @@ const DatasetUpload: React.FC = () => {
       | undefined;
     const manifestPath = values.manifestPath?.trim();
     const strictManifest = Boolean(values.strictManifest);
+    const cvTaskType = values.cvTaskType as CvTaskType | undefined;
     const annotationFormat = values.annotationFormat as
       | AnnotationFormat
       | undefined;
@@ -267,6 +269,7 @@ const DatasetUpload: React.FC = () => {
           version,
           type,
           annotationFormat,
+          cvTaskType,
         );
         const uploadRes = await uploadDataset(
           {
@@ -275,6 +278,7 @@ const DatasetUpload: React.FC = () => {
             type,
             version,
             assetId,
+            cvTaskType,
             annotationFormat,
             remark,
             sampleGrouping:
@@ -332,6 +336,7 @@ const DatasetUpload: React.FC = () => {
             files,
             type: 'CV',
             version,
+            cvTaskType,
             annotationFormat,
             remark,
           },
@@ -442,6 +447,7 @@ const DatasetUpload: React.FC = () => {
             disabled={isNewVersionUpload || prefillLoading}
             onChange={(value) => {
               form.setFieldValue('files', []);
+              form.setFieldValue('cvTaskType', undefined);
               form.setFieldValue('annotationFormat', undefined);
               if (value === 'MULTIMODAL') {
                 form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
@@ -514,25 +520,59 @@ const DatasetUpload: React.FC = () => {
           </>
         )}
         {datasetType === 'CV' && (
-          <Form.Item
-            name="annotationFormat"
-            label="标注格式"
-            extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
-          >
-            <Select allowClear placeholder="请选择标注格式">
-              <Select.Option value="NONE">NONE（仅图片）</Select.Option>
-              <Select.Option value="FOLDER_CLASSIFICATION">
-                FOLDER_CLASSIFICATION
-              </Select.Option>
-              <Select.Option value="YOLO">YOLO</Select.Option>
-              <Select.Option value="COCO">COCO</Select.Option>
-              <Select.Option value="VOC">VOC</Select.Option>
-              <Select.Option value="CSV">CSV</Select.Option>
-              <Select.Option value="MASK">MASK</Select.Option>
-              <Select.Option value="LABELME">LABELME</Select.Option>
-              <Select.Option value="OTHER">OTHER</Select.Option>
-            </Select>
-          </Form.Item>
+          <>
+            <Form.Item
+              name="cvTaskType"
+              label="CV 子任务类型"
+              extra="不选时后端默认 UNLABELED；YOLO 目标检测训练须选「目标检测」"
+            >
+              <Select allowClear placeholder="请选择 CV 子任务">
+                <Select.Option value="IMAGE_CLASSIFICATION">
+                  图像分类
+                </Select.Option>
+                <Select.Option value="OBJECT_DETECTION">目标检测</Select.Option>
+                <Select.Option value="SEMANTIC_SEGMENTATION">
+                  语义分割
+                </Select.Option>
+                <Select.Option value="INSTANCE_SEGMENTATION">
+                  实例分割
+                </Select.Option>
+                <Select.Option value="UNLABELED">未标注</Select.Option>
+                <Select.Option value="OTHER">其它</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="annotationFormat"
+              label="标注格式"
+              extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
+            >
+              <Select
+                allowClear
+                placeholder="请选择标注格式"
+                onChange={(value) => {
+                  if (value === 'YOLO') {
+                    form.setFieldValue('cvTaskType', 'OBJECT_DETECTION');
+                  } else if (value === 'FOLDER_CLASSIFICATION') {
+                    form.setFieldValue('cvTaskType', 'IMAGE_CLASSIFICATION');
+                  } else if (value === 'NONE') {
+                    form.setFieldValue('cvTaskType', 'UNLABELED');
+                  }
+                }}
+              >
+                <Select.Option value="NONE">NONE（仅图片）</Select.Option>
+                <Select.Option value="FOLDER_CLASSIFICATION">
+                  FOLDER_CLASSIFICATION
+                </Select.Option>
+                <Select.Option value="YOLO">YOLO</Select.Option>
+                <Select.Option value="COCO">COCO</Select.Option>
+                <Select.Option value="VOC">VOC</Select.Option>
+                <Select.Option value="CSV">CSV</Select.Option>
+                <Select.Option value="MASK">MASK</Select.Option>
+                <Select.Option value="LABELME">LABELME</Select.Option>
+                <Select.Option value="OTHER">OTHER</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
         )}
         <Form.Item
           name="remark"
