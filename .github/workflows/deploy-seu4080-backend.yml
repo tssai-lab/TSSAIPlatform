@@ -1,0 +1,61 @@
+name: Deploy seu4080 Backend
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Commit SHA image tag produced by Backend CI and Image
+        required: true
+        type: string
+      image_digest:
+        description: Immutable sha256 digest produced by the image build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: tss-seu4080-platform-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, X64, seu4080, deploy]
+    environment: seu4080-test
+    timeout-minutes: 20
+    env:
+      DEPLOY_ROOT: /media/seu/data/tssai-platform
+      REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
+      EXPECTED_IMAGE_DIGEST: ${{ inputs.image_digest }}
+    steps:
+      - name: Validate immutable deployment request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "tssai-lab/TSSAIPlatform" ]]
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$REQUESTED_IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test -x "$DEPLOY_ROOT/deploy-backend-image.sh"
+
+      - name: Pull and verify backend image
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-backend:${REQUESTED_IMAGE_TAG}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker pull "$image"
+          docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep --fixed-strings --quiet "@${EXPECTED_IMAGE_DIGEST}"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          "$DEPLOY_ROOT/deploy-backend-image.sh" \
+            "$image" "$image_id" "$EXPECTED_IMAGE_DIGEST"
+
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io >/dev/null 2>&1 || true

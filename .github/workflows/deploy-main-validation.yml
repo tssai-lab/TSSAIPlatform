@@ -7,6 +7,11 @@ on:
         description: Commit SHA image tag produced by Backend CI and Image
         required: true
         type: string
+      image_digest:
+        description: Immutable sha256 digest produced by the image build
+        required: false
+        default: ""
+        type: string
       target_environment:
         description: GitHub Environment containing the target node credentials
         required: false
@@ -22,6 +27,11 @@ on:
       image_tag:
         description: Commit SHA image tag produced by Backend CI and Image
         required: true
+        type: string
+      image_digest:
+        description: Immutable sha256 digest produced by the image build
+        required: false
+        default: ""
         type: string
       target_environment:
         description: GitHub Environment containing the target node credentials
@@ -97,9 +107,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Transfer image and deploy target backend
+        env:
+          EXPECTED_IMAGE_DIGEST: ${{ inputs.image_digest }}
         run: |
+          set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-backend:${{ steps.image.outputs.tag }}"
+          if [[ -n "$EXPECTED_IMAGE_DIGEST" ]]; then
+            [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          fi
           docker pull "$image"
+          if [[ -n "$EXPECTED_IMAGE_DIGEST" ]]; then
+            docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              | grep --fixed-strings --quiet "@${EXPECTED_IMAGE_DIGEST}"
+          fi
           image_id="$(docker image inspect "$image" --format '{{.Id}}')"
           set -o pipefail
           docker save "$image" \

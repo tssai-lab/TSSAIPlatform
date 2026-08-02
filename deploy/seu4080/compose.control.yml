@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: ${TSS_POSTGRES_IMAGE:?TSS_POSTGRES_IMAGE must be set}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ${TSS_DATA_ROOT:?TSS_DATA_ROOT must be set}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    cpus: 0.50
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  minio:
+    image: ${TSS_MINIO_IMAGE:?TSS_MINIO_IMAGE must be set}
+    user: "1000:1000"
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${TSS_BIND_IP:?TSS_BIND_IP must be set}:19010:9000"
+    volumes:
+      - ${TSS_DATA_ROOT:?TSS_DATA_ROOT must be set}/minio:/data
+    cpus: 0.50
+    mem_limit: 1g
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mlflow:
+    image: ${TSS_MLFLOW_IMAGE:?TSS_MLFLOW_IMAGE must be set}
+    restart: unless-stopped
+    ports:
+      - "${TSS_BIND_IP:?TSS_BIND_IP must be set}:15000:5000"
+    volumes:
+      - ${TSS_DATA_ROOT:?TSS_DATA_ROOT must be set}/mlflow:/mlflow
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    cpus: 0.50
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ${TSS_BACKEND_IMAGE:?TSS_BACKEND_IMAGE must be set}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      mlflow:
+        condition: service_healthy
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      TSS_NODE_ID: seu4080
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: models
+      TRAINING_MLFLOW_ENABLED: "true"
+      TRAINING_MLFLOW_TRACKING_URI: http://mlflow:5000
+      TRAINING_K8S_ENABLED: "false"
+      TRAINING_K8S_AUTO_CREATE: "false"
+      TRAINING_K8S_VERIFY_ON_STARTUP: "false"
+      TRAINING_K8S_FALLBACK_TO_LOCAL: "false"
+      TRAINING_K8S_INTERNAL_CALLBACK_TOKEN: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN}
+    ports:
+      - "${TSS_BIND_IP:?TSS_BIND_IP must be set}:18080:8080"
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

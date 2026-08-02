@@ -28,6 +28,8 @@ concurrency:
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.backend_image.outputs.digest }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -61,6 +63,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish immutable image
+        id: backend_image
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
@@ -78,6 +81,17 @@ jobs:
     uses: ./.github/workflows/deploy-main-validation.yml
     with:
       image_tag: ${{ github.sha }}
+      image_digest: ${{ needs.verify-and-build.outputs.image_digest }}
       target_environment: main
       target_name: main
+    secrets: inherit
+
+  deploy-seu4080:
+    name: Deploy successful backend-ops image to seu4080
+    needs: verify-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/backend-ops'
+    uses: ./.github/workflows/deploy-seu4080-backend.yml
+    with:
+      image_tag: ${{ github.sha }}
+      image_digest: ${{ needs.verify-and-build.outputs.image_digest }}
     secrets: inherit

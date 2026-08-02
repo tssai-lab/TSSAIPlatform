@@ -1,0 +1,64 @@
+name: seu4080 Deployment Isolation Validation
+
+on:
+  push:
+    branches:
+      - ops/backend-main-seu4080-deploy
+    paths:
+      - deploy/seu4080/**
+      - .github/workflows/backend-ci.yml
+      - .github/workflows/deploy-main-validation.yml
+      - .github/workflows/deploy-seu4080-backend.yml
+      - .github/workflows/seu4080-deployment-isolated.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate-without-deployment:
+    name: Validate scripts and Compose without deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out isolated branch
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: |
+          set -euo pipefail
+          find deploy/seu4080 -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+
+      - name: Validate combined Compose model
+        env:
+          TSS_POSTGRES_IMAGE: postgres:16
+          TSS_MINIO_IMAGE: minio/minio:latest
+          TSS_MLFLOW_IMAGE: ghcr.io/tssai-lab/tssai-mlflow:validation
+          TSS_BACKEND_IMAGE: ghcr.io/tssai-lab/tssai-backend:0000000000000000000000000000000000000000
+          TSS_FRONTEND_IMAGE: ghcr.io/tssai-lab/tssai-frontend:0000000000000000000000000000000000000000
+          TSS_BIND_IP: 127.0.0.1
+          TSS_DATA_ROOT: /tmp/tss4080-validation
+          POSTGRES_DB: tss
+          POSTGRES_USER: tss
+          POSTGRES_PASSWORD: validation-only
+          MINIO_ROOT_USER: validation
+          MINIO_ROOT_PASSWORD: validation-only
+          TRAINING_K8S_INTERNAL_CALLBACK_TOKEN: validation-only
+        run: |
+          set -euo pipefail
+          docker compose \
+            -f deploy/seu4080/compose.control.yml \
+            -f deploy/seu4080/compose.frontend.yml \
+            config --quiet
+
+      - name: Verify self-hosted jobs do not check out repository code
+        run: |
+          set -euo pipefail
+          if grep --fixed-strings 'actions/checkout' .github/workflows/deploy-seu4080-backend.yml; then
+            echo 'self-hosted backend deployment must not check out repository code' >&2
+            exit 1
+          fi
+
+      - name: Confirm validation did not target the self-hosted runner
+        run: |
+          [[ "$RUNNER_ENVIRONMENT" == "github-hosted" ]]

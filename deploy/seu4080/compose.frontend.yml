@@ -1,0 +1,24 @@
+services:
+  frontend:
+    image: ${TSS_FRONTEND_IMAGE:?TSS_FRONTEND_IMAGE must be set}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+      mlflow:
+        condition: service_healthy
+    environment:
+      BACKEND_UPSTREAM: http://backend:8080
+      MLFLOW_UPSTREAM: http://mlflow:5000
+    ports:
+      - "${TSS_BIND_IP:?TSS_BIND_IP must be set}:80:80"
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
