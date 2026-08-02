@@ -5,9 +5,19 @@ on:
     branches:
       - ops/seu4080-frontend-image
     paths:
+      - package.json
+      - package-lock.json
+      - .npmrc
+      - config/**
+      - src/**
+      - public/**
+      - scripts/**
       - Dockerfile
+      - Dockerfile.runtime
+      - Dockerfile.runtime.dockerignore
       - .dockerignore
       - deploy/nginx/default.conf.template
+      - .github/workflows/deploy.yml
       - .github/workflows/frontend-image-isolated.yml
 
 permissions:
@@ -25,6 +35,18 @@ jobs:
       - name: Check out isolated branch
         uses: actions/checkout@v4
 
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build production assets once
+        run: |
+          npm ci --no-audit
+          npm run build
+          test -s dist/index.html
+
       - name: Log in to GHCR on the ephemeral runner
         uses: docker/login-action@v3
         with:
@@ -39,6 +61,7 @@ jobs:
           docker build \
             --pull \
             --build-arg "VCS_REF=${GITHUB_SHA}" \
+            --file Dockerfile.runtime \
             --tag "$IMAGE_REF" \
             .
 

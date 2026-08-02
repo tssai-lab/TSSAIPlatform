@@ -1,34 +1,104 @@
-name: 前端自动化部署
+name: Frontend Build and Multi-Environment Deploy
 
-# 只有推送到这两个分支才会部署
-# feat 分支 永远不会触发！！！
 on:
   push:
     branches:
       - frontend-dev
       - frontend-main
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  build-and-deploy:
+  build:
+    name: Build frontend once
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: 拉取代码
+      - name: Check out source
         uses: actions/checkout@v4
 
-      - name: 设置 Node.js 20
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
 
-      - name: 安装依赖
-        run: npm install
+      - name: Install locked dependencies
+        run: npm ci --no-audit
 
-      - name: 打包项目
+      - name: Build production assets
         run: npm run build
 
-      - name: 上传 dist 到主服务器
-        uses: appleboy/scp-action@master
+      - name: Verify build output
+        run: test -s dist/index.html
+
+      - name: Upload immutable build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-${{ github.sha }}
+          path: dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-image:
+    name: Publish matching seu4080 frontend image
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image_digest: ${{ steps.frontend_image.outputs.digest }}
+    steps:
+      - name: Check out image definition
+        uses: actions/checkout@v4
+
+      - name: Download the exact build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist-${{ github.sha }}
+          path: dist
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable runtime image
+        id: frontend_image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.runtime
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tssai-frontend:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy-main:
+    name: Deploy frontend to main
+    needs: [build, publish-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: tss-main-frontend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Download the exact build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist-${{ github.sha }}
+          path: dist
+
+      - name: Upload dist to main
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.MAIN_SERVER_HOST }}
           username: ${{ secrets.MAIN_SERVER_USER }}
@@ -36,9 +106,25 @@ jobs:
           source: "dist/*"
           target: "/var/www/"
           strip_components: 1
+          overwrite: true
 
-      - name: 上传 dist 到第二台服务器
-        uses: appleboy/scp-action@master
+  deploy-second:
+    name: Deploy frontend to second
+    needs: [build, publish-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: tss-second-frontend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Download the exact build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist-${{ github.sha }}
+          path: dist
+
+      - name: Upload dist to second
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SECONDARY_SERVER_HOST }}
           username: ${{ secrets.SECONDARY_SERVER_USER }}
@@ -46,3 +132,47 @@ jobs:
           source: "dist/*"
           target: "/var/www/"
           strip_components: 1
+          overwrite: true
+
+  deploy-seu4080:
+    name: Deploy matching frontend image to seu4080
+    needs: [build, publish-image]
+    runs-on: [self-hosted, Linux, X64, seu4080, deploy]
+    environment: seu4080-test
+    timeout-minutes: 15
+    concurrency:
+      group: tss-seu4080-platform-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_ROOT: /media/seu/data/tssai-platform
+      EXPECTED_IMAGE_DIGEST: ${{ needs.publish-image.outputs.image_digest }}
+    steps:
+      - name: Validate immutable deployment request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "tssai-lab/TSSAIPlatform" ]]
+          [[ "$GITHUB_REF" == "refs/heads/frontend-dev" || "$GITHUB_REF" == "refs/heads/frontend-main" ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test -x "$DEPLOY_ROOT/deploy-frontend-image.sh"
+
+      - name: Pull, verify and deploy frontend image
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${GITHUB_SHA}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker pull "$image"
+          docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep --fixed-strings --quiet "@${EXPECTED_IMAGE_DIGEST}"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          "$DEPLOY_ROOT/deploy-frontend-image.sh" \
+            "$image" "$image_id" "$EXPECTED_IMAGE_DIGEST"
+
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
