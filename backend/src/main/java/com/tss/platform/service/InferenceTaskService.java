@@ -47,12 +47,13 @@ public class InferenceTaskService {
     private static final Set<String> ALLOWED_STATUSES = Set.of(
             "pending",
             "queued",
+            "scheduled",
             "running",
             "success",
             "failed",
             "stopped"
     );
-    private static final Set<String> ACTIVE_TASK_STATUSES = Set.of("pending", "queued", "running");
+    private static final Set<String> ACTIVE_TASK_STATUSES = Set.of("pending", "queued", "scheduled", "running");
 
     private final InferenceTaskRepository taskRepo;
     private final ModelVersionRepository modelVersionRepo;
@@ -241,6 +242,10 @@ public class InferenceTaskService {
     @Transactional
     public void markQueuedFromExecutor(String taskId) {
         taskRepo.findById(taskId).ifPresent(task -> {
+            // scheduled 状态的任务已分配到节点，不要降级回 queued
+            if ("scheduled".equals(task.getStatus())) {
+                return;
+            }
             task.setStatus("queued");
             task.setProgress(progressOf("queued"));
             task.setUpdatedAt(Instant.now());
@@ -377,7 +382,7 @@ public class InferenceTaskService {
     private String normalizeStatus(String status) {
         String normalized = requireText(status, "status cannot be empty").toLowerCase(Locale.ROOT);
         if (!ALLOWED_STATUSES.contains(normalized)) {
-            throw new IllegalArgumentException("status only supports pending, queued, running, success, failed, stopped");
+            throw new IllegalArgumentException("status only supports pending, queued, scheduled, running, success, failed, stopped");
         }
         return normalized;
     }
@@ -441,6 +446,9 @@ public class InferenceTaskService {
         }
         if ("running".equals(status)) {
             return 10;
+        }
+        if ("scheduled".equals(status)) {
+            return 5;
         }
         return 0;
     }

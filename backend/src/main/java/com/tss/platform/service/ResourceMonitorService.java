@@ -73,17 +73,17 @@ public class ResourceMonitorService {
 
         // 汇总所有服务器上的任务数
         List<TrainingExperimentVersion> trainingTasks = trainingRepo
-                .findByServerIpNotNullAndStatusIn(List.of("running", "queued"));
+                .findByServerIpNotNullAndStatusIn(List.of("running", "queued", "scheduled"));
         List<InferenceTask> inferenceTasks = inferenceRepo
-                .findByServerIpNotNullAndStatusIn(List.of("running", "queued"));
+                .findByServerIpNotNullAndStatusIn(List.of("running", "queued", "scheduled"));
 
         for (TrainingExperimentVersion t : trainingTasks) {
             if ("running".equals(t.getStatus())) runningTasks++;
-            else if ("queued".equals(t.getStatus())) queuedTasks++;
+            else queuedTasks++;  // queued / scheduled 都算排队
         }
         for (InferenceTask t : inferenceTasks) {
             if ("running".equals(t.getStatus())) runningTasks++;
-            else if ("queued".equals(t.getStatus())) queuedTasks++;
+            else queuedTasks++;
         }
 
         SummaryDto dto = new SummaryDto();
@@ -165,14 +165,19 @@ public class ResourceMonitorService {
             throw new IllegalArgumentException("服务器不存在: " + serverIp);
         }
 
-        // 检查是否有运行中任务
+        // 检查是否有运行中或已分配任务
         List<TrainingExperimentVersion> runningTraining = trainingRepo
                 .findByServerIpAndStatus(serverIp, "running");
         List<InferenceTask> runningInference = inferenceRepo
                 .findByServerIpAndStatus(serverIp, "running");
+        List<TrainingExperimentVersion> scheduledTraining = trainingRepo
+                .findByServerIpAndStatus(serverIp, "scheduled");
+        List<InferenceTask> scheduledInference = inferenceRepo
+                .findByServerIpAndStatus(serverIp, "scheduled");
 
-        if (!runningTraining.isEmpty() || !runningInference.isEmpty()) {
-            throw new IllegalArgumentException("该服务器仍有运行中任务，无法删除");
+        if (!runningTraining.isEmpty() || !runningInference.isEmpty()
+                || !scheduledTraining.isEmpty() || !scheduledInference.isEmpty()) {
+            throw new IllegalArgumentException("该服务器仍有运行中或已分配任务，无法删除");
         }
 
         // 清空该节点排队任务
@@ -364,9 +369,9 @@ public class ResourceMonitorService {
 
         if (includeTasks) {
             List<TrainingExperimentVersion> trainingTasks = trainingRepo
-                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued"));
+                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued", "scheduled"));
             List<InferenceTask> inferenceTasks = inferenceRepo
-                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued"));
+                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued", "scheduled"));
 
             List<RunningTask> running = new ArrayList<>();
             List<QueuedTask> queued = new ArrayList<>();
@@ -374,14 +379,14 @@ public class ResourceMonitorService {
             for (TrainingExperimentVersion t : trainingTasks) {
                 if ("running".equals(t.getStatus())) {
                     running.add(toRunningTask(t));
-                } else if ("queued".equals(t.getStatus())) {
-                    queued.add(toQueuedTask(t));
+                } else {
+                    queued.add(toQueuedTask(t));  // queued / scheduled 都显示在排队列表
                 }
             }
             for (InferenceTask t : inferenceTasks) {
                 if ("running".equals(t.getStatus())) {
                     running.add(toRunningTask(t));
-                } else if ("queued".equals(t.getStatus())) {
+                } else {
                     queued.add(toQueuedTask(t));
                 }
             }
@@ -464,7 +469,17 @@ public class ResourceMonitorService {
                     t.getPriority() != null ? t.getPriority() : "中",
                     t.getCreatedAt() != null ? t.getCreatedAt() : Instant.EPOCH));
         }
+        for (TrainingExperimentVersion t : trainingRepo.findByServerIpAndStatus(serverIp, "scheduled")) {
+            entries.add(new QueuedTaskEntry(t.getId(), t.getQueueSortIndex() != null ? t.getQueueSortIndex() : 0,
+                    t.getPriority() != null ? t.getPriority() : "中",
+                    t.getCreatedAt() != null ? t.getCreatedAt() : Instant.EPOCH));
+        }
         for (InferenceTask t : inferenceRepo.findByServerIpAndStatus(serverIp, "queued")) {
+            entries.add(new QueuedTaskEntry(t.getId(), t.getQueueSortIndex() != null ? t.getQueueSortIndex() : 0,
+                    t.getPriority() != null ? t.getPriority() : "中",
+                    t.getCreatedAt() != null ? t.getCreatedAt() : Instant.EPOCH));
+        }
+        for (InferenceTask t : inferenceRepo.findByServerIpAndStatus(serverIp, "scheduled")) {
             entries.add(new QueuedTaskEntry(t.getId(), t.getQueueSortIndex() != null ? t.getQueueSortIndex() : 0,
                     t.getPriority() != null ? t.getPriority() : "中",
                     t.getCreatedAt() != null ? t.getCreatedAt() : Instant.EPOCH));
@@ -522,15 +537,17 @@ public class ResourceMonitorService {
     }
 
     private void cancelQueuedTasksOnServer(String serverIp) {
-        for (TrainingExperimentVersion t : trainingRepo.findByServerIpAndStatus(serverIp, "queued")) {
-            t.setStatus("cancelled");
-            t.setQueueSortIndex(0);
-            trainingRepo.save(t);
-        }
-        for (InferenceTask t : inferenceRepo.findByServerIpAndStatus(serverIp, "queued")) {
-            t.setStatus("cancelled");
-            t.setQueueSortIndex(0);
-            inferenceRepo.save(t);
+        for (String status : List.of("queued", "scheduled")) {
+            for (TrainingExperimentVersion t : trainingRepo.findByServerIpAndStatus(serverIp, status)) {
+                t.setStatus("cancelled");
+                t.setQueueSortIndex(0);
+                trainingRepo.save(t);
+            }
+            for (InferenceTask t : inferenceRepo.findByServerIpAndStatus(serverIp, status)) {
+                t.setStatus("cancelled");
+                t.setQueueSortIndex(0);
+                inferenceRepo.save(t);
+            }
         }
     }
 
