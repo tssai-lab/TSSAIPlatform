@@ -21,6 +21,7 @@ import {
   fetchResourceMonitorSummary,
   fetchTaskList,
 } from '@/services/platform';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 type ResourceSummary = {
@@ -318,7 +319,7 @@ const Dashboard: React.FC = () => {
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="创建时间">
-                  {latestTask.createTime}
+                  {formatDisplayDateTime(latestTask.createTime)}
                 </Descriptions.Item>
                 <Descriptions.Item label="模型">
                   {latestTask.modelName || '-'}
