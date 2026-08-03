@@ -209,6 +209,9 @@ class DatasetWorkspaceUploadIntegrationTest {
     @MockitoBean
     private com.tss.platform.module1.service.AuditHooks auditHooks;
 
+    @MockitoBean
+    private com.tss.platform.module1.service.AuditRecordService auditRecordService;
+
     @AfterEach
     void removeForcedPersistenceFailure() {
         jdbcTemplate.execute(
