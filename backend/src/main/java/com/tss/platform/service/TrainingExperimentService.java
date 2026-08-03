@@ -34,6 +34,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -72,6 +73,7 @@ public class TrainingExperimentService {
     private final TrainingOutputValidator trainingOutputValidator;
     private final TrainingExecutorRouter trainingExecutorRouter;
     private final JobScheduler jobScheduler;
+    private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
 
@@ -89,6 +91,7 @@ public class TrainingExperimentService {
             TrainingOutputValidator trainingOutputValidator,
             TrainingExecutorRouter trainingExecutorRouter,
             @Lazy JobScheduler jobScheduler,
+            TransactionTemplate transactionTemplate,
             ObjectMapper objectMapper,
             AuthContext authContext
     ) {
@@ -105,6 +108,7 @@ public class TrainingExperimentService {
         this.trainingOutputValidator = trainingOutputValidator;
         this.trainingExecutorRouter = trainingExecutorRouter;
         this.jobScheduler = jobScheduler;
+        this.transactionTemplate = transactionTemplate;
         this.objectMapper = objectMapper;
         this.authContext = authContext;
     }
@@ -781,24 +785,24 @@ public class TrainingExperimentService {
     }
 
     private void scheduleOrStart(String trainingId) {
-        TrainingExperimentVersion task = repo.findById(trainingId).orElse(null);
-        if (task == null) return;
+        transactionTemplate.executeWithoutResult(status -> {
+            TrainingExperimentVersion task = repo.findById(trainingId).orElse(null);
+            if (task == null) return;
 
-        // 只有带 trainingPlanId 的 K8s 任务走调度器
-        if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
-            Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
-            String node = jobScheduler.assignNodeForTraining(task, nodeSelector);
-            if (node != null) {
-                jobScheduler.bindTask(task, node);
-                trainingExecutorRouter.start(trainingId);
+            if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
+                Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
+                String node = jobScheduler.assignNodeForTraining(task, nodeSelector);
+                if (node != null) {
+                    jobScheduler.bindTask(task, node);
+                    trainingExecutorRouter.start(trainingId);
+                    return;
+                }
+                jobScheduler.enqueueTask(task);
                 return;
             }
-            jobScheduler.enqueueTask(task);
-            return;
-        }
 
-        // 旧版 trainingProfile 或本地训练直接执行
-        trainingExecutorRouter.start(trainingId);
+            trainingExecutorRouter.start(trainingId);
+        });
     }
 
     private String newVersionId() {

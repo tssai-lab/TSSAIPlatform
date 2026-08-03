@@ -97,6 +97,15 @@ public class JobScheduler {
      */
     @Scheduled(fixedDelay = 10_000)
     public void dispatchQueuedTasks() {
+        // Phase 0：兜底，把因重启丢失 afterCommit 回调的 pending 任务捞回队列
+        List<TrainingExperimentVersion> stranded = trainingRepo
+                .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("pending");
+        for (TrainingExperimentVersion task : stranded) {
+            if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
+                enqueueTask(task);
+            }
+        }
+
         // Phase 1：queued（无节点）→ scheduled（已分配节点）
         List<TrainingExperimentVersion> queued = trainingRepo
                 .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("queued");
