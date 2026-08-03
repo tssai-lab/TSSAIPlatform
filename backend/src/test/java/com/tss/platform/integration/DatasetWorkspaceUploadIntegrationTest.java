@@ -203,15 +203,6 @@ class DatasetWorkspaceUploadIntegrationTest {
     @MockitoBean
     private MinioDeleteTaskScheduler minioDeleteTaskScheduler;
 
-    @MockitoBean
-    private com.tss.platform.config.AuditSchemaInitializer auditSchemaInitializer;
-
-    @MockitoBean
-    private com.tss.platform.module1.service.AuditHooks auditHooks;
-
-    @MockitoBean
-    private com.tss.platform.module1.service.AuditRecordService auditRecordService;
-
     @AfterEach
     void removeForcedPersistenceFailure() {
         jdbcTemplate.execute(
