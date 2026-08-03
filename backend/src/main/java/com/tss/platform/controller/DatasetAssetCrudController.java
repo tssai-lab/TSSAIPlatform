@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetVersion;
@@ -31,6 +34,9 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/dataset-assets")
 public class DatasetAssetCrudController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private static final Logger log = LoggerFactory.getLogger(DatasetAssetCrudController.class);
 
@@ -181,6 +187,7 @@ public class DatasetAssetCrudController {
     public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
         Optional<DatasetAsset> existing = repo.findByIdAndDeletedFalse(id);
         if (existing.isEmpty() || !authContext.canAccessOwner(existing.get().getOwnerUserId())) {
+            auditHooks.delete(AuditObjectType.DATASET, id, "DATASET_DELETE", false, "not found or no permission");
             return ApiResponse.fail("not found or no permission: " + id);
         }
 
@@ -188,6 +195,7 @@ public class DatasetAssetCrudController {
         List<String> versionIds = versions.stream().map(DatasetVersion::getId).toList();
         if (!versionIds.isEmpty() && trainingRepo.countByDatasetVersionIdIn(versionIds) > 0) {
             log.warn("Reject dataset asset delete because versions are referenced by training experiments: id={}", id);
+            auditHooks.delete(AuditObjectType.DATASET, id, "DATASET_DELETE", false, "referenced by training");
             return ApiResponse.fail("dataset asset has versions referenced by training experiments");
         }
         LinkedHashSet<String> objectNames = new LinkedHashSet<>();
@@ -244,6 +252,7 @@ public class DatasetAssetCrudController {
         result.put("deletedVersions", deletedVersions);
         result.put("deleted", true);
         result.put("minioDeleteQueued", objectNames.size());
+        auditHooks.delete(AuditObjectType.DATASET, id, "DATASET_DELETE", true, null);
         return ApiResponse.ok(result);
     }
 

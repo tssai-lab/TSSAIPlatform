@@ -49,10 +49,12 @@ public final class OperationLogConverter {
         if (operateType == null || operateType.isBlank()) {
             return null;
         }
-        return switch (operateType) {
-            case "登录" -> List.of("5", "6");
+        String key = operateType.trim();
+        return switch (key) {
+            case "登录", "LOGIN" -> List.of("5", "6");
+            case "登出", "退出", "LOGOUT" -> List.of("6");
             case "用户管理" -> List.of("1", "2", "3", "4");
-            default -> List.of(operateType);
+            default -> List.of(key);
         };
     }
 }

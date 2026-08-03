@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/system/config")
 public class SystemConfigController {
@@ -22,24 +25,33 @@ public class SystemConfigController {
     }
 
     @GetMapping("/get")
-    public Result<SystemConfigDto> get() {
+    public Result<Map<String, Object>> get() {
         try {
-            return Result.success(service.getForAdministration(), "查询成功");
+            return Result.success(toFrontendMap(service.getForAdministration()), "查询成功");
         } catch (CodeApprovalForbiddenException exception) {
             return Result.noAuth("无权限访问，仅管理员可操作");
         }
     }
 
     @PostMapping("/update")
-    public Result<SystemConfigDto> update(
+    public Result<Map<String, Object>> update(
             @RequestBody(required = false) SystemConfigUpdateRequest request
     ) {
         try {
-            return Result.success(service.updateForAdministration(request), "更新成功");
+            return Result.success(toFrontendMap(service.updateForAdministration(request)), "保存成功");
         } catch (CodeApprovalForbiddenException exception) {
             return Result.noAuth("无权限访问，仅管理员可操作");
         } catch (IllegalArgumentException exception) {
             return Result.fail(exception.getMessage());
         }
+    }
+
+    private static Map<String, Object> toFrontendMap(SystemConfigDto dto) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("trainingCodeReviewMode", dto.trainingCodeReviewMode());
+        map.put("logMaxSize", dto.logMaxSize());
+        map.put("userLogStorageLimitMb", dto.userLogStorageLimitMb());
+        map.put("updatedAt", dto.updatedAt());
+        return map;
     }
 }
