@@ -1,6 +1,5 @@
 import { request } from '@umijs/max';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
-import type { CurrentUserRoleForApi } from './user';
 
 /** 模块一统一响应 */
 type Module1Result<T> = {
@@ -19,7 +18,6 @@ type OperationLogRaw = {
   operationObj?: string;
   ipAddress?: string;
   operationTime?: string;
-  /** 新标准字段，与 operationTime 二选一 */
   operateTime?: string;
   remarks?: string;
   status?: string;
@@ -32,7 +30,21 @@ type OperationLogQueryData = {
   size?: number;
 };
 
-/** 查询日志列表请求参数 */
+/** POST /api/log/query Body（与后端约定对齐） */
+export type OperationLogQueryBody = {
+  page?: number;
+  size?: number;
+  username?: string;
+  operationType?: string;
+  operationObj?: string;
+  status?: string;
+  ipAddress?: string;
+  remarksKeyword?: string;
+  startTime?: string;
+  endTime?: string;
+};
+
+/** 页面 / ProTable 入参（内部再映射为 Body） */
 export interface LogListParams {
   pageNum?: number;
   pageSize?: number;
@@ -41,10 +53,9 @@ export interface LogListParams {
   operateTime?: string[];
   ip?: string;
   result?: string;
-  currentUserRole?: CurrentUserRoleForApi;
-  /** 个人中心：仅当前用户 */
-  currentUsername?: string;
+  /** 操作内容关键词 → remarksKeyword */
   content?: string;
+  operationObj?: string;
 }
 
 /** 查询日志列表响应（兼容页面使用的 msg 字段） */
@@ -86,16 +97,28 @@ function mapStatusToResult(status?: string): 'success' | 'failed' {
   return 'success';
 }
 
+/** 前端 result → 后端 status */
 function mapResultToStatus(result?: string): string | undefined {
   if (!result) return undefined;
-  if (result === 'failed') return 'FAIL';
+  if (result === 'failed') return 'FAILED';
   if (result === 'success') return 'SUCCESS';
   return result;
 }
 
+/** 展示用本地时间字符串 */
 function formatOperationTime(value?: string): string {
   if (!value) return '';
   return value.replace('T', ' ').slice(0, 19);
+}
+
+/**
+ * 查询时间进 Body：后端示例为 2026-01-01T00:00:00
+ * 已是 ISO 则规范化；否则把空格换成 T
+ */
+function toApiDateTime(value?: string): string | undefined {
+  if (!value?.trim()) return undefined;
+  const normalized = value.trim().replace(' ', 'T');
+  return normalized.slice(0, 19);
 }
 
 function mapOperationLogToLogItem(
@@ -114,42 +137,14 @@ function mapOperationLogToLogItem(
   };
 }
 
-function applyClientFilters(list: LogItem[], params: LogListParams): LogItem[] {
-  let rows = [...list];
-
-  if (params.currentUsername) {
-    rows = rows.filter((r) => r.username === params.currentUsername);
-  }
-
-  if (params.username?.trim()) {
-    const kw = params.username.trim().toLowerCase();
-    rows = rows.filter((r) => r.username.toLowerCase().includes(kw));
-  }
-
-  if (params.content?.trim()) {
-    const kw = params.content.trim();
-    rows = rows.filter((r) => r.content.includes(kw));
-  }
-
-  if (params.ip?.trim()) {
-    const kw = params.ip.trim();
-    rows = rows.filter((r) => r.ip.includes(kw));
-  }
-
-  if (params.operateTime?.length === 2 && params.operateTime[0] && params.operateTime[1]) {
-    const start = params.operateTime[0];
-    const end = params.operateTime[1];
-    rows = rows.filter((r) => r.operateTime >= start && r.operateTime <= end);
-  }
-
-  return rows;
-}
-
-async function loadOperationTypeLabelMap(): Promise<Record<string, string>> {
+/** GET /api/log/types */
+export async function getOperationTypes(options?: {
+  [key: string]: unknown;
+}): Promise<Record<string, string>> {
   try {
     const res = await request<Module1Result<Record<string, string>>>(
       SYSTEM_API_CONFIG.ENDPOINTS.LOG_OPERATION_TYPES,
-      { method: 'GET', skipErrorHandler: true },
+      { method: 'GET', skipErrorHandler: true, ...(options || {}) },
     );
     if (res.code !== 200 || !res.data) {
       return {};
@@ -160,24 +155,54 @@ async function loadOperationTypeLabelMap(): Promise<Record<string, string>> {
   }
 }
 
-function toOperationLogQueryBody(params: LogListParams) {
-  const body: Record<string, unknown> = {
+/** ProTable valueEnum：key 为后端 operationType */
+export async function getOperationTypeValueEnum(): Promise<
+  Record<string, { text: string }>
+> {
+  const map = await getOperationTypes();
+  return Object.fromEntries(
+    Object.entries(map).map(([key, label]) => [key, { text: label }]),
+  );
+}
+
+function toOperationLogQueryBody(params: LogListParams): OperationLogQueryBody {
+  const body: OperationLogQueryBody = {
     page: params.pageNum ?? 1,
     size: params.pageSize ?? 10,
-    operationType: params.operateType || undefined,
-    status: mapResultToStatus(params.result),
   };
+
+  const username = params.username?.trim();
+  if (username) body.username = username;
+
+  const operationType = params.operateType?.trim();
+  if (operationType) body.operationType = operationType;
+
+  const operationObj = params.operationObj?.trim();
+  if (operationObj) body.operationObj = operationObj;
+
+  const status = mapResultToStatus(params.result);
+  if (status) body.status = status;
+
+  const ipAddress = params.ip?.trim();
+  if (ipAddress) body.ipAddress = ipAddress;
+
+  const remarksKeyword = params.content?.trim();
+  if (remarksKeyword) body.remarksKeyword = remarksKeyword;
+
   if (params.operateTime?.length === 2) {
-    body.startTime = params.operateTime[0];
-    body.endTime = params.operateTime[1];
+    const startTime = toApiDateTime(params.operateTime[0]);
+    const endTime = toApiDateTime(params.operateTime[1]);
+    if (startTime) body.startTime = startTime;
+    if (endTime) body.endTime = endTime;
   }
+
   return body;
 }
 
-/** POST /log/query（操作日志分页） */
+/** POST /api/log/query */
 export async function queryOperationLogs(
   params?: LogListParams,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return request<Module1Result<OperationLogQueryData>>(
     SYSTEM_API_CONFIG.ENDPOINTS.LOG_QUERY,
@@ -190,25 +215,41 @@ export async function queryOperationLogs(
   );
 }
 
-/** 查询操作日志列表 POST /log/query */
-export async function getLogList(params: LogListParams): Promise<LogListResponse> {
-  const typeLabelMap = await loadOperationTypeLabelMap();
+/**
+ * 查询操作日志列表
+ * - 条件全部进 Body，不做前端二次过滤
+ * - 个人中心：不要传 username，由后端按 Token 限定本人
+ */
+export async function getLogList(
+  params: LogListParams,
+): Promise<LogListResponse> {
+  const typeLabelMap = await getOperationTypes();
   const res = await queryOperationLogs(params);
   const msg = getResultMessage(res);
   if (res.code !== 200) {
-    return { code: res.code ?? 500, msg: msg || '查询失败', data: { list: [], total: 0 } };
+    return {
+      code: res.code ?? 500,
+      msg: msg || '查询失败',
+      data: { list: [], total: 0 },
+    };
   }
   const records = res.data?.records ?? [];
-  let list = records.map((row) => mapOperationLogToLogItem(row, typeLabelMap));
-  list = applyClientFilters(list, params);
+  const list = records.map((row) =>
+    mapOperationLogToLogItem(row, typeLabelMap),
+  );
   return {
     code: 200,
     msg: msg || 'ok',
-    data: { list, total: res.data?.total ?? list.length },
+    data: {
+      list,
+      total: res.data?.total ?? list.length,
+    },
   };
 }
 
 /** ProTable request 适配 */
-export async function fetchLogList(params: LogListParams): Promise<LogListResponse> {
+export async function fetchLogList(
+  params: LogListParams,
+): Promise<LogListResponse> {
   return getLogList(params);
 }

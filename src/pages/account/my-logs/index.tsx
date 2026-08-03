@@ -7,9 +7,10 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { useModel } from '@umijs/max';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   getLogList,
+  getOperationTypeValueEnum,
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
@@ -17,12 +18,15 @@ import { redirectToLogin } from '@/utils/loginRedirect';
 
 /**
  * 个人中心 - 我的操作记录
- * 所有登录用户可见，仅展示当前用户自己的操作日志；筛选：时间/操作类型/操作内容/结果，操作人固定为当前用户
+ * 不传 username；后端按 Token 只返回当前用户
  */
 const MyOperationLogs: React.FC = () => {
   const { initialState } = useModel('@@initialState');
   const currentUser = initialState?.currentUser;
   const actionRef = useRef<ActionType>(null);
+  const [operateTypeEnum, setOperateTypeEnum] = useState<
+    Record<string, { text: string }>
+  >({});
 
   useEffect(() => {
     if (!currentUser) {
@@ -30,11 +34,9 @@ const MyOperationLogs: React.FC = () => {
     }
   }, [currentUser]);
 
-  const currentUsername =
-    currentUser?.userid ??
-    (typeof currentUser?.name === 'string'
-      ? currentUser.name.replace(/（.*$/, '').trim()
-      : '');
+  useEffect(() => {
+    void getOperationTypeValueEnum().then(setOperateTypeEnum);
+  }, []);
 
   const fetchMyLogList = async (
     params: ParamsType & {
@@ -48,9 +50,6 @@ const MyOperationLogs: React.FC = () => {
     _sort: Record<string, SortOrder>,
     _filter: Record<string, (string | number)[] | null>,
   ) => {
-    if (!currentUsername) {
-      return { data: [], success: false, total: 0 };
-    }
     try {
       const {
         current = 1,
@@ -77,19 +76,18 @@ const MyOperationLogs: React.FC = () => {
         operateTime[1]
       ) {
         operateTimeRange = [
-          dayjs(operateTime[0]).format('YYYY-MM-DD HH:mm:ss'),
-          dayjs(operateTime[1]).format('YYYY-MM-DD HH:mm:ss'),
+          dayjs(operateTime[0]).format('YYYY-MM-DDTHH:mm:ss'),
+          dayjs(operateTime[1]).format('YYYY-MM-DDTHH:mm:ss'),
         ];
       }
 
+      // 个人中心：不传 username，由后端 Token 限定本人
       const requestParams: LogListParams = {
         pageNum: current,
         pageSize,
-        username: '',
         operateType: operateType ?? '',
         operateTime: operateTimeRange,
         result: result ?? '',
-        currentUsername,
         content: content ?? '',
       };
 
@@ -99,7 +97,7 @@ const MyOperationLogs: React.FC = () => {
         const list = (response.data?.list ?? []).map(
           (item: LogItem, index: number) => ({
             ...item,
-            _index: (current! - 1) * pageSize! + index + 1,
+            _index: (current - 1) * pageSize + index + 1,
           }),
         );
         return {
@@ -129,14 +127,8 @@ const MyOperationLogs: React.FC = () => {
       key: 'operateType',
       align: 'center',
       valueType: 'select',
-      valueEnum: {
-        登录: { text: '登录' },
-        用户管理: { text: '用户管理' },
-        数据查询: { text: '数据查询' },
-        数据上传: { text: '数据上传' },
-        任务创建: { text: '任务创建' },
-      },
-      fieldProps: { placeholder: '请选择操作类型' },
+      valueEnum: operateTypeEnum,
+      fieldProps: { placeholder: '请选择操作类型', allowClear: true },
     },
     {
       title: '操作时间',
@@ -177,7 +169,7 @@ const MyOperationLogs: React.FC = () => {
   return (
     <PageContainer
       title="我的操作记录"
-      subTitle={`当前用户：${currentUser.name ?? currentUsername}`}
+      subTitle={`当前用户：${currentUser.name ?? currentUser.userid ?? ''}`}
     >
       <ProTable<LogItem>
         actionRef={actionRef}
