@@ -536,7 +536,6 @@ const UserManagement: React.FC = () => {
         pagination={{
           defaultPageSize: 10,
           showSizeChanger: true,
-          showQuickJumper: true,
         }}
         toolBarRender={false}
         dateFormatter="string"
