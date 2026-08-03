@@ -10,6 +10,7 @@ import com.tss.platform.service.ModelCodePreviewService;
 import com.tss.platform.service.ModelVersionLifecycleService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -92,6 +94,51 @@ class ModelControllerListTest {
         verify(versionRepo, never()).findByDeletedFalse();
         verify(assetRepo, never()).findByDeletedFalse();
         verify(assetRepo, never()).findByOwnerUserIdAndDeletedFalse(any());
+    }
+
+    @Test
+    void listEscapesLiteralLikeCharactersAndTreatsBlankKeywordAsNoFilter() {
+        ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
+        ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        ModelController controller = new ModelController(
+                assetRepo,
+                versionRepo,
+                mock(ModelCodePreviewService.class),
+                authContext,
+                mock(ModelVersionLifecycleService.class)
+        );
+        Pageable pageable = PageRequest.of(0, 10);
+        when(authContext.isAdmin()).thenReturn(false);
+        when(authContext.currentUserId()).thenReturn(7);
+        when(versionRepo.searchVisibleCatalog(
+                eq(7),
+                eq("CV"),
+                eq("%100!%!_\\!!%"),
+                any(Pageable.class)
+        )).thenReturn(Page.empty(pageable));
+        when(versionRepo.searchVisibleCatalog(
+                eq(7),
+                eq("CV"),
+                isNull(),
+                any(Pageable.class)
+        )).thenReturn(Page.empty(pageable));
+
+        controller.list("CV", " 100%_\\! ", 1, null, 10);
+        controller.list("CV", "   ", 1, null, 10);
+
+        verify(versionRepo).searchVisibleCatalog(
+                eq(7),
+                eq("CV"),
+                eq("%100!%!_\\!!%"),
+                any(Pageable.class)
+        );
+        verify(versionRepo).searchVisibleCatalog(
+                eq(7),
+                eq("CV"),
+                isNull(),
+                any(Pageable.class)
+        );
     }
 
     @Test
