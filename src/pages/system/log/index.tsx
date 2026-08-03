@@ -152,17 +152,6 @@ const LogManagement: React.FC = () => {
       valueEnum: operateTypeEnum,
       fieldProps: { placeholder: '请选择操作类型', allowClear: true },
     },
-    {
-      title: '操作时间',
-      dataIndex: 'operateTime',
-      key: 'operateTime',
-      align: 'center',
-      valueType: 'dateTimeRange',
-      search: {
-        transform: (value: [string, string]) => ({ operateTime: value }),
-      },
-      render: (_, record) => record.operateTime || '-',
-    },
     ...(isSuperAdmin
       ? [
           {
@@ -177,6 +166,17 @@ const LogManagement: React.FC = () => {
           } as ProColumns<LogItem>,
         ]
       : []),
+    {
+      title: '操作时间',
+      dataIndex: 'operateTime',
+      key: 'operateTime',
+      align: 'center',
+      valueType: 'dateTimeRange',
+      search: {
+        transform: (value: [string, string]) => ({ operateTime: value }),
+      },
+      render: (_, record) => record.operateTime || '-',
+    },
     {
       title: '操作内容',
       dataIndex: 'content',
