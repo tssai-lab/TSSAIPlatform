@@ -49,7 +49,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
                       )
                     order by coalesce(a.updatedAt, a.createdAt) desc, a.id asc
                     """,
@@ -60,7 +60,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
                       )
                     """
     )
@@ -79,7 +79,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
                       )
                     order by coalesce(a.updatedAt, a.createdAt) desc, a.id asc
                     """,
@@ -91,7 +91,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
                       )
                     """
     )
