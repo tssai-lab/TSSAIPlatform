@@ -41,10 +41,7 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
               and (:type is null or a.type = :type)
               and (
                     :keyword is null
-                    or lower(a.name) like :keyword
-                    or lower(v.version) like :keyword
-                    or lower(a.remark) like :keyword
-                    or lower(v.fileName) like :keyword
+                    or lower(a.name) like :keyword escape '!'
               )
             order by v.createdAt desc, v.id desc
             """)
@@ -69,4 +66,3 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
 
     boolean existsByAssetIdAndVersionAndIdNot(String assetId, String version, String id);
 }
-

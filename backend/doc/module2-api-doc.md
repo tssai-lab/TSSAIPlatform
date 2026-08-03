@@ -531,14 +531,14 @@ GET /api/model/list
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | string | 否 | `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT` |
-| `keyword` | string | 否 | 按模型名称、版本、备注、文件名模糊搜索 |
+| `keyword` | string | 否 | 仅按模型显示名称做不区分大小写的子串搜索 |
 | `page` | integer | 否 | 页码，从 `1` 开始 |
 | `current` | integer | 否 | 页码；优先级高于 `page` |
 | `pageSize` | integer | 否 | 每页数量；不传则返回全部 |
 
 前端查询对接说明：
 
-- 模型名称输入框应传 `keyword`，后端会按模型名称、版本、备注、文件名做不区分大小写的模糊搜索。
+- 模型名称输入框应传 `keyword`，后端仅按模型显示名称做不区分大小写的子串搜索；空白值等同未传，`%`、`_`、`\` 按普通字符处理。
 - 类型下拉框应传 `type`，模型接口只支持 `CV`、`NLP`、`POINT_CLOUD` 或 `ROBOT`。
 - 如果前端表单字段名是 `modelName` 或 `name`，提交请求前需要映射为 `keyword`。
 - 示例：`GET /api/model/list?keyword=resnet&type=CV&page=1&pageSize=10`。
@@ -1414,14 +1414,14 @@ GET /api/dataset/list
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | string | 否 | `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 或 `MULTIMODAL` |
-| `keyword` | string | 否 | 按数据集名称、版本、数据集备注、版本备注、版本说明、文件名模糊搜索 |
+| `keyword` | string | 否 | 仅按数据集显示名称做不区分大小写的子串搜索 |
 | `page` | integer | 否 | 页码 |
 | `current` | integer | 否 | 页码；优先级高于 `page` |
 | `pageSize` | integer | 否 | 每页数量；不传则返回全部，传入时最大 `200` |
 
 前端查询对接说明：
 
-- 数据集名称输入框应传 `keyword`，后端会按数据集名称、版本、数据集备注、版本备注、版本说明、文件名做不区分大小写的模糊搜索。
+- 数据集名称输入框应传 `keyword`，后端仅按数据集显示名称做不区分大小写的子串搜索；空白值等同未传，`%`、`_`、`\` 按普通字符处理。
 - 类型下拉框应传 `type`，取值为 `CV`、`NLP`、`POINT_CLOUD`、`ROBOT` 或 `MULTIMODAL`。
 - 如果前端表单字段名是 `datasetName` 或 `name`，提交请求前需要映射为 `keyword`。
 - 示例：`GET /api/dataset/list?keyword=casting&type=CV&page=1&pageSize=10`。
@@ -2804,6 +2804,7 @@ GET /api/v2/datasets?type=MULTIMODAL&keyword=&page=1&pageSize=20
 ```
 
 `current` 的优先级高于 `page`；页码无效时使用 1，`pageSize` 默认 20、最大 200。
+`keyword` 与 legacy 数据集列表保持一致，仅按数据集显示名称做不区分大小写的子串搜索。
 
 分页项字段：
 

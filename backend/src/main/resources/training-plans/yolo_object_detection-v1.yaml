@@ -87,7 +87,7 @@ parameters:
 runtimes:
   - id: cv-gpu
     deviceType: NVIDIA_GPU
-    image: tss-cv-worker:local
+    image: ghcr.io/tssai-lab/tss-cv-worker:latest
     imagePullPolicy: IfNotPresent
     productionDigestRequired: true
     resourceProfiles:

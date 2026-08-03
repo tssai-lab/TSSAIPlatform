@@ -83,9 +83,7 @@ public class DatasetCatalogQueryService {
         String normalizedType = type == null || type.isBlank()
                 ? null
                 : DatasetTaskType.normalize(type);
-        String normalizedKeyword = keyword == null
-                ? ""
-                : keyword.trim().toLowerCase(Locale.ROOT);
+        String normalizedKeyword = normalizeKeyword(keyword);
         int pageNo = resolvePage(page, current);
         boolean unpaged = unpagedWhenPageSizeAbsent && (pageSize == null || pageSize <= 0);
         int size = unpaged ? 0 : resolvePageSize(pageSize);
@@ -153,6 +151,17 @@ public class DatasetCatalogQueryService {
                 ? (assetPage.getTotalElements() == 0 ? 0 : 1)
                 : assetPage.getTotalPages());
         return response;
+    }
+
+    private static String normalizeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+        return keyword.trim()
+                .toLowerCase(Locale.ROOT)
+                .replace("!", "!!")
+                .replace("%", "!%")
+                .replace("_", "!_");
     }
 
     private Map<String, List<ImportJob>> importJobsByVersion(

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -198,7 +199,13 @@ public class ModelController {
         if (keyword == null || keyword.isBlank()) {
             return null;
         }
-        return "%" + keyword.trim().toLowerCase() + "%";
+        return "%" + escapeLike(keyword.trim().toLowerCase(Locale.ROOT)) + "%";
+    }
+
+    private String escapeLike(String value) {
+        return value.replace("!", "!!")
+                .replace("%", "!%")
+                .replace("_", "!_");
     }
 
     private int resolvePage(Integer page, Integer current) {

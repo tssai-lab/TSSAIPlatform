@@ -49,21 +49,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%')
-                            or lower(coalesce(a.remark, '')) like concat('%', :keyword, '%')
-                            or exists (
-                                select v.id
-                                from DatasetVersion v
-                                where v.assetId = a.id
-                                  and v.deleted = false
-                                  and (
-                                        lower(coalesce(v.version, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.versionLabel, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.remark, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.description, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.fileName, '')) like concat('%', :keyword, '%')
-                                  )
-                            )
+                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
                       )
                     order by coalesce(a.updatedAt, a.createdAt) desc, a.id asc
                     """,
@@ -74,21 +60,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%')
-                            or lower(coalesce(a.remark, '')) like concat('%', :keyword, '%')
-                            or exists (
-                                select v.id
-                                from DatasetVersion v
-                                where v.assetId = a.id
-                                  and v.deleted = false
-                                  and (
-                                        lower(coalesce(v.version, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.versionLabel, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.remark, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.description, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.fileName, '')) like concat('%', :keyword, '%')
-                                  )
-                            )
+                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
                       )
                     """
     )
@@ -107,21 +79,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%')
-                            or lower(coalesce(a.remark, '')) like concat('%', :keyword, '%')
-                            or exists (
-                                select v.id
-                                from DatasetVersion v
-                                where v.assetId = a.id
-                                  and v.deleted = false
-                                  and (
-                                        lower(coalesce(v.version, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.versionLabel, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.remark, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.description, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.fileName, '')) like concat('%', :keyword, '%')
-                                  )
-                            )
+                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
                       )
                     order by coalesce(a.updatedAt, a.createdAt) desc, a.id asc
                     """,
@@ -133,21 +91,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
-                            or lower(a.name) like concat('%', :keyword, '%')
-                            or lower(coalesce(a.remark, '')) like concat('%', :keyword, '%')
-                            or exists (
-                                select v.id
-                                from DatasetVersion v
-                                where v.assetId = a.id
-                                  and v.deleted = false
-                                  and (
-                                        lower(coalesce(v.version, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.versionLabel, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.remark, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.description, '')) like concat('%', :keyword, '%')
-                                        or lower(coalesce(v.fileName, '')) like concat('%', :keyword, '%')
-                                  )
-                            )
+                            or lower(a.name) like concat('%', :keyword, '%') escape '!'
                       )
                     """
     )
@@ -158,4 +102,3 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
             Pageable pageable
     );
 }
-
