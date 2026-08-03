@@ -6,6 +6,7 @@ import com.tss.platform.entity.PlatformSystemConfig;
 import com.tss.platform.model.TrainingCodeReviewMode;
 import com.tss.platform.repository.PlatformSystemConfigRepository;
 import com.tss.platform.security.AuthContext;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,8 +26,9 @@ class SystemConfigServiceTest {
     private final PlatformSystemConfigRepository repository =
             mock(PlatformSystemConfigRepository.class);
     private final AuthContext authContext = mock(AuthContext.class);
+    private final EntityManager entityManager = mock(EntityManager.class);
     private final SystemConfigService service =
-            new SystemConfigService(repository, authContext);
+            new SystemConfigService(repository, authContext, entityManager);
 
     @BeforeEach
     void setUp() {
