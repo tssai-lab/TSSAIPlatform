@@ -7,7 +7,6 @@ import com.tss.platform.model.TrainingCodeReviewMode;
 import com.tss.platform.repository.PlatformSystemConfigRepository;
 import com.tss.platform.security.AuthContext;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,15 +26,16 @@ public class SystemConfigService {
     private final PlatformSystemConfigRepository repository;
     private final AuthContext authContext;
 
-    @PersistenceContext
-    private EntityManager entityManager;
+    private final EntityManager entityManager;
 
     public SystemConfigService(
             PlatformSystemConfigRepository repository,
-            AuthContext authContext
+            AuthContext authContext,
+            EntityManager entityManager
     ) {
         this.repository = repository;
         this.authContext = authContext;
+        this.entityManager = entityManager;
     }
 
     @Transactional(readOnly = true)
