@@ -14,6 +14,11 @@ type BackendModelItem = {
   sizeBytes?: number;
   createdAt?: string;
   updatedAt?: string;
+  artifactSha256?: string;
+  commitInfo?: string;
+  hyperParams?: Record<string, unknown>;
+  isCurrent?: boolean;
+  status?: string;
 };
 
 /** §4 模型资产 */
@@ -24,6 +29,7 @@ export type ModelAsset = {
   remark?: string;
   createdAt?: string;
   updatedAt?: string;
+  currentVersionId?: string | null;
 };
 
 /** §5 模型版本 */
@@ -36,6 +42,12 @@ export type ModelVersion = {
   sizeBytes?: number;
   createdAt?: string;
   updatedAt?: string;
+  remark?: string;
+  artifactSha256?: string;
+  commitInfo?: string;
+  hyperParams?: Record<string, unknown>;
+  isCurrent?: boolean;
+  status?: string;
 };
 
 export type ModelDeleteResult = {
@@ -79,11 +91,15 @@ function mapModelVersion(
   version: ModelVersion,
   asset?: ModelAsset,
 ): API.ModelVersionDetail {
+  const currentId = asset?.currentVersionId ?? undefined;
+  const isCurrent =
+    version.isCurrent === true || (!!currentId && version.id === currentId);
   return {
     ...version,
     name: asset?.name,
     type: asset?.type,
     size: formatBytes(version.sizeBytes),
+    isCurrent,
   };
 }
 
@@ -127,11 +143,17 @@ function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
     type: item.type,
     remark: item.remark,
     storagePath: item.storagePath,
+    fileName: item.fileName,
     sizeBytes: item.sizeBytes,
     size: formatBytes(item.sizeBytes),
     uploadTime: item.createdAt,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+    artifactSha256: item.artifactSha256,
+    commitInfo: item.commitInfo,
+    hyperParams: item.hyperParams,
+    isCurrent: item.isCurrent,
+    status: item.status,
   };
 }
 
@@ -190,7 +212,10 @@ export type ModelListQuery = {
   page?: number;
 };
 
-export async function getModelList(params?: ModelListQuery, options?: { [key: string]: any }) {
+export async function getModelList(params?: ModelListQuery & {
+  sortBy?: string;
+  sortDirection?: string;
+}, options?: { [key: string]: any }) {
   return request<{ data: { data: BackendModelItem[]; total: number } }>('/model/list', {
     method: 'GET',
     params,
@@ -207,11 +232,30 @@ export async function getModelDetail(id: string, options?: { [key: string]: any 
 }
 
 export async function listModelCodeFiles(id: string, options?: { [key: string]: any }) {
-  return request<{ data: API.ModelCodeFile[] }>('/model/code-files', {
-    method: 'GET',
-    params: { id },
-    ...(options || {}),
-  });
+  try {
+    const raw = await request<unknown>(
+      `/v2/model-versions/${encodeURIComponent(id)}/files`,
+      {
+        method: 'GET',
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const obj = raw as Record<string, unknown>;
+    const data = obj?.data ?? raw;
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { files?: unknown })?.files)
+        ? (data as { files: unknown[] }).files
+        : [];
+    return { data: list as API.ModelCodeFile[] };
+  } catch {
+    return request<{ data: API.ModelCodeFile[] }>('/model/code-files', {
+      method: 'GET',
+      params: { id },
+      ...(options || {}),
+    });
+  }
 }
 
 export async function previewModelCode(
@@ -219,11 +263,38 @@ export async function previewModelCode(
   path: string,
   options?: { [key: string]: any },
 ) {
-  return request<{ data: API.ModelCodePreview }>('/model/previewCode', {
-    method: 'GET',
-    params: { id, path },
-    ...(options || {}),
-  });
+  try {
+    const raw = await request<unknown>(
+      `/v2/model-versions/${encodeURIComponent(id)}/files/content`,
+      {
+        method: 'GET',
+        params: { path },
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const obj = raw as Record<string, unknown>;
+    const data =
+      obj?.data && typeof obj.data === 'object' ? obj.data : obj;
+    return {
+      data: {
+        path,
+        content:
+          typeof (data as { content?: string }).content === 'string'
+            ? (data as { content: string }).content
+            : typeof data === 'string'
+              ? data
+              : JSON.stringify(data, null, 2),
+        ...(typeof data === 'object' && data ? data : {}),
+      } as API.ModelCodePreview,
+    };
+  } catch {
+    return request<{ data: API.ModelCodePreview }>('/model/previewCode', {
+      method: 'GET',
+      params: { id, path },
+      ...(options || {}),
+    });
+  }
 }
 
 export async function deleteModel(id: string, options?: { [key: string]: any }) {
@@ -276,6 +347,81 @@ export async function deleteModelAsset(id: string, options?: { [key: string]: un
     method: 'DELETE',
     ...(options || {}),
   });
+}
+
+/** PUT /api/v2/model-assets/{assetId}/current-version（正式）；失败回退兼容路径 */
+export async function switchModelCurrentVersion(
+  assetId: string,
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  try {
+    return await request<{ success?: boolean; data?: unknown }>(
+      `/v2/model-assets/${encodeURIComponent(assetId)}/current-version`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        data: { versionId },
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+  } catch {
+    return request<{ success?: boolean; data?: unknown }>(
+      `/model-assets/${encodeURIComponent(assetId)}/current-version`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        data: { versionId },
+        ...(options || {}),
+      },
+    );
+  }
+}
+
+/**
+ * GET /api/v2/model-versions/{versionId}/download
+ * 新契约 list/detail 不再保证 storagePath，下载走带鉴权的版本制品流。
+ */
+export async function downloadModelVersion(
+  versionId: string,
+  fileName?: string,
+  options?: { [key: string]: unknown },
+) {
+  const blob = await request<Blob>(
+    `/v2/model-versions/${encodeURIComponent(versionId)}/download`,
+    {
+      method: 'GET',
+      responseType: 'blob',
+      skipErrorHandler: true,
+      ...(options || {}),
+    },
+  );
+  if (!(blob instanceof Blob)) {
+    throw new Error('下载响应不是文件流');
+  }
+  if (blob.type && blob.type.includes('application/json')) {
+    const text = await blob.text();
+    try {
+      const json = JSON.parse(text) as {
+        errorMessage?: string;
+        message?: string;
+      };
+      throw new Error(json.errorMessage || json.message || '下载失败');
+    } catch (e: any) {
+      if (e?.message && e.message !== '下载失败') throw e;
+      throw new Error(text || '下载失败');
+    }
+  }
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName?.trim() || `${versionId}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+  return { success: true };
 }
 
 // ——— §5 模型版本 CRUD ———
@@ -333,8 +479,13 @@ export async function fetchModelList(options?: {
   name?: string;
   version?: string;
   type?: string;
+  sortBy?: string;
+  sortDirection?: string;
 }) {
-  const params: ModelListQuery = {};
+  const params: ModelListQuery & {
+    sortBy?: string;
+    sortDirection?: string;
+  } = {};
 
   if (options?.type) {
     params.type = options.type as ModelListQuery['type'];
@@ -352,6 +503,12 @@ export async function fetchModelList(options?: {
   }
   if (options?.pageSize) {
     params.pageSize = options.pageSize;
+  }
+  if (options?.sortBy) {
+    params.sortBy = options.sortBy;
+  }
+  if (options?.sortDirection) {
+    params.sortDirection = options.sortDirection;
   }
 
   const res = await getModelList(params);
@@ -399,6 +556,11 @@ export async function fetchModelAssetDetail(
     );
 
   const defaultVersionId =
+    (asset.currentVersionId &&
+    versions.some((v) => v.id === asset.currentVersionId)
+      ? asset.currentVersionId
+      : undefined) ??
+    versions.find((v) => v.isCurrent)?.id ??
     versions.map((v) => resolveModelVersionId(v, asset.id)).find(Boolean) ??
     (listLatestVersionId && listLatestVersionId !== asset.id
       ? listLatestVersionId
@@ -416,6 +578,7 @@ export async function fetchModelAssetDetail(
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,
       uploadTime: latestVersion?.createdAt ?? asset.createdAt,
+      currentVersionId: asset.currentVersionId ?? defaultVersionId,
       latestVersion,
       versions,
       defaultVersionId,
@@ -442,6 +605,15 @@ export async function fetchModelVersionCodePreview(
         sizeBytes: raw.sizeBytes,
         size: formatBytes(raw.sizeBytes),
         createdAt: raw.createdAt,
+        updatedAt: 'updatedAt' in raw ? raw.updatedAt : undefined,
+        artifactSha256:
+          'artifactSha256' in raw ? (raw as any).artifactSha256 : undefined,
+        commitInfo: 'commitInfo' in raw ? (raw as any).commitInfo : undefined,
+        hyperParams:
+          'hyperParams' in raw ? (raw as any).hyperParams : undefined,
+        isCurrent: 'isCurrent' in raw ? (raw as any).isCurrent : undefined,
+        status: 'status' in raw ? (raw as any).status : undefined,
+        remark: 'remark' in raw ? (raw as any).remark : undefined,
       }
     : undefined;
 

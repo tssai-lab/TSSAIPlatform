@@ -34,6 +34,7 @@ import {
   fetchModelList,
   fetchTaskDetail,
   fetchTrainingPlans,
+  getCodeVersionDetail,
   getModelVersion,
   publishTaskModel,
   uploadCodeZip,
@@ -660,7 +661,63 @@ const TaskCreate: React.FC = () => {
     setSelectedCodeVersionId(presetCodeVersionId);
     setSelectedCodeApprovalStatus('APPROVED');
     form.setFieldValue('codeVersionId', presetCodeVersionId);
+
+    let cancelled = false;
+    void getCodeVersionDetail(presetCodeVersionId, {
+      skipErrorHandler: true,
+    })
+      .then((res) => {
+        if (cancelled || !res?.data) return;
+        const detail = res.data;
+        const profile = detail.trainingProfile?.trim();
+        if (profile) {
+          setSelectedTrainingPlanId(profile);
+          form.setFieldValue('trainingProfile', profile);
+        }
+        setCodeOptions((prev) => {
+          if (prev.some((item) => item.codeVersionId === presetCodeVersionId)) {
+            return prev.map((item) =>
+              item.codeVersionId === presetCodeVersionId
+                ? { ...item, ...detail }
+                : item,
+            );
+          }
+          return [
+            {
+              ...detail,
+              codeVersionId: presetCodeVersionId,
+              codeAssetName:
+                detail.codeAssetName || detail.codeName || presetCodeVersionId,
+              approvalStatus: detail.approvalStatus || 'APPROVED',
+            },
+            ...prev,
+          ];
+        });
+        if (String(detail.approvalStatus || '').toUpperCase() === 'APPROVED') {
+          setSelectedCodeApprovalStatus('APPROVED');
+        }
+      })
+      .catch(() => {
+        // 预填失败时仍保留 URL 中的 codeVersionId 选中态
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [form, presetCodeVersionId]);
+
+  useEffect(() => {
+    if (!presetCodeVersionId || !codeOptions.length) return;
+    const found = codeOptions.find(
+      (item) => item.codeVersionId === presetCodeVersionId,
+    );
+    const profile = found?.trainingProfile?.trim();
+    if (!profile) return;
+    setSelectedTrainingPlanId((prev) => prev || profile);
+    if (!form.getFieldValue('trainingProfile')) {
+      form.setFieldValue('trainingProfile', profile);
+    }
+  }, [codeOptions, form, presetCodeVersionId]);
 
   useEffect(() => {
     if (!presetBaseModelVersionId || isExperimentContinue) return;

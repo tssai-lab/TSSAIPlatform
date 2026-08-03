@@ -165,7 +165,11 @@ export type DatasetListItem = {
   importErrorMessage?: string | null;
   /** V2 聚合展示状态 */
   displayStatus?: string;
+  /** @deprecated 新契约用 workspaceId */
   editSessionId?: string | null;
+  workspaceId?: string | null;
+  workspaceRevision?: number | null;
+  hasDraft?: boolean;
 };
 
 /** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
@@ -196,6 +200,8 @@ export type DatasetUploadInitParams = {
   description?: string;
   sampleGrouping?: MultimodalSampleGrouping;
   manifestPath?: string;
+  /** MANIFEST 严格模式：未声明 entry 导致 ImportJob 失败 */
+  strictManifest?: boolean;
 };
 
 /**
@@ -426,13 +432,53 @@ function withDatasetUploadRequestOptions(options?: { [key: string]: unknown }) {
 
 /**
  * 初始化或恢复数据集分片上传。
- *
- * CV 支持图片 zip，NLP 支持 txt/json/jsonl 或包含这些文件的 zip。
+ * 优先 V2 `/v2/dataset-uploads/init`，失败回退 Legacy。
  */
 export async function datasetUploadInit(
   body: DatasetUploadInitParams,
   options?: { [key: string]: any },
 ) {
+  try {
+    const raw = await request<unknown>('/v2/dataset-uploads/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      skipErrorHandler: true,
+      ...withDatasetUploadRequestOptions(options),
+    });
+    const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    const data = (
+      obj.data && typeof obj.data === 'object' ? obj.data : obj
+    ) as Record<string, unknown>;
+    if (data.uploadId) {
+      return {
+        data: {
+          uploadId: String(data.uploadId),
+          status: String(data.status || 'UPLOADING'),
+          fileName: String(data.fileName || body.fileName),
+          fileSize: Number(data.fileSize ?? body.fileSize),
+          chunkSize: Number(data.chunkSize ?? 5 * 1024 * 1024),
+          totalChunks: Number(data.totalChunks ?? 0),
+          uploadedChunks: Number(data.uploadedChunks ?? 0),
+          uploadedBytes: Number(data.uploadedBytes ?? 0),
+          uploadedPartIndexes: Array.isArray(data.uploadedPartIndexes)
+            ? (data.uploadedPartIndexes as number[])
+            : [],
+          assetId: data.datasetId
+            ? String(data.datasetId)
+            : data.assetId
+              ? String(data.assetId)
+              : undefined,
+          versionId: data.versionId ? String(data.versionId) : undefined,
+        } as DatasetUploadProgress,
+      };
+    }
+  } catch {
+    // fall through
+  }
   return request<{ data: DatasetUploadProgress }>('/dataset/upload/init', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -443,8 +489,7 @@ export async function datasetUploadInit(
 
 /**
  * 上传数据集的单个分片。
- *
- * 非末尾分片大小应等于后端返回的 chunkSize，否则 MinIO 合并可能失败。
+ * 优先 V2 chunks，失败回退 Legacy（form 含 uploadId）。
  */
 export async function datasetUploadChunk(
   uploadId: string,
@@ -452,19 +497,77 @@ export async function datasetUploadChunk(
   chunk: Blob,
   options?: { [key: string]: any },
 ) {
-  const formData = new FormData();
-  formData.append('uploadId', uploadId);
-  formData.append('partIndex', String(partIndex));
-  formData.append('file', chunk);
-  return request<{ data: DatasetUploadProgress }>('/dataset/upload/chunk', {
-    method: 'POST',
-    data: formData,
-    ...withDatasetUploadRequestOptions(options),
-  });
+  try {
+    const formData = new FormData();
+    formData.append('partIndex', String(partIndex));
+    formData.append('file', chunk);
+    await request<unknown>(
+      `/v2/dataset-uploads/${encodeURIComponent(uploadId)}/chunks`,
+      {
+        method: 'POST',
+        data: formData,
+        skipErrorHandler: true,
+        ...withDatasetUploadRequestOptions(options),
+      },
+    );
+    return { data: { uploadId } as DatasetUploadProgress };
+  } catch {
+    const formData = new FormData();
+    formData.append('uploadId', uploadId);
+    formData.append('partIndex', String(partIndex));
+    formData.append('file', chunk);
+    return request<{ data: DatasetUploadProgress }>('/dataset/upload/chunk', {
+      method: 'POST',
+      data: formData,
+      ...withDatasetUploadRequestOptions(options),
+    });
+  }
 }
 
 /** 查询数据集上传进度，用于刷新后恢复断点续传。 */
 export async function datasetUploadProgress(uploadId: string, options?: { [key: string]: any }) {
+  try {
+    const raw = await request<unknown>(
+      `/v2/dataset-uploads/${encodeURIComponent(uploadId)}`,
+      {
+        method: 'GET',
+        skipErrorHandler: true,
+        ...withDatasetUploadRequestOptions(options),
+      },
+    );
+    const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    const data = (
+      obj.data && typeof obj.data === 'object' ? obj.data : obj
+    ) as Record<string, unknown>;
+    if (data.uploadId || data.status) {
+      return {
+        data: {
+          uploadId: String(data.uploadId || uploadId),
+          status: String(data.status || 'UPLOADING'),
+          fileName: String(data.fileName || ''),
+          fileSize: Number(data.fileSize ?? 0),
+          chunkSize: Number(data.chunkSize ?? 0),
+          totalChunks: Number(data.totalChunks ?? 0),
+          uploadedChunks: Number(data.uploadedChunks ?? 0),
+          uploadedBytes: Number(data.uploadedBytes ?? 0),
+          uploadedPartIndexes: Array.isArray(data.uploadedPartIndexes)
+            ? (data.uploadedPartIndexes as number[])
+            : [],
+          importJobId: data.importJobId as string | undefined,
+          assetId: data.datasetId
+            ? String(data.datasetId)
+            : data.assetId
+              ? String(data.assetId)
+              : undefined,
+        } as DatasetUploadProgress & { importJobId?: string },
+      };
+    }
+  } catch {
+    // fall through
+  }
   return request<{ data: DatasetUploadProgress }>('/dataset/upload/progress', {
     method: 'GET',
     params: { uploadId },
@@ -478,12 +581,56 @@ export async function datasetUploadProgress(uploadId: string, options?: { [key: 
  * 后端会校验分片齐全、合并 MinIO 临时对象、创建资产和版本记录，并清理临时分片。
  */
 export async function datasetUploadComplete(uploadId: string, options?: { [key: string]: any }) {
-  return request<{ data: DatasetUploadCompleteResult }>('/dataset/upload/complete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    data: { uploadId },
-    ...withDatasetUploadRequestOptions(options),
-  });
+  try {
+    const raw = await request<unknown>(
+      `/v2/dataset-uploads/${encodeURIComponent(uploadId)}/complete`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        data: {},
+        skipErrorHandler: true,
+        ...withDatasetUploadRequestOptions(options),
+      },
+    );
+    const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    const data = (
+      obj.data && typeof obj.data === 'object' ? obj.data : obj
+    ) as Record<string, unknown>;
+    return {
+      data: {
+        uploadId,
+        id: String(data.datasetId || data.assetId || data.id || ''),
+        assetId: String(data.datasetId || data.assetId || data.id || ''),
+        datasetVersionId: data.versionId
+          ? String(data.versionId)
+          : data.datasetVersionId
+            ? String(data.datasetVersionId)
+            : undefined,
+        name: String(data.name || ''),
+        version: String(data.versionLabel || data.version || ''),
+        type: (data.type as DatasetType) || 'CV',
+        fileName: String(data.fileName || ''),
+        status: String(data.status || data.displayStatus || 'COMPLETED'),
+        importJobId:
+          (data.importJobId as string | null | undefined) ?? null,
+        importStatus:
+          (data.importStatus as string | null | undefined) ?? null,
+      } as DatasetUploadCompleteResult,
+    };
+  } catch {
+    return request<{ data: DatasetUploadCompleteResult }>(
+      '/dataset/upload/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        data: { uploadId },
+        ...withDatasetUploadRequestOptions(options),
+      },
+    );
+  }
 }
 
 const UPLOAD_PROGRESS_POLL_MS = 2000;
@@ -639,6 +786,12 @@ function mergeV1ListWithV2Display(
       ...item,
       displayStatus: overlay.displayStatus ?? item.displayStatus,
       editSessionId: overlay.editSessionId ?? item.editSessionId,
+      workspaceId: overlay.workspaceId ?? item.workspaceId,
+      workspaceRevision:
+        overlay.workspaceRevision ?? item.workspaceRevision,
+      hasDraft: overlay.hasDraft ?? item.hasDraft,
+      importJobId: overlay.importJobId ?? item.importJobId,
+      importStatus: overlay.importStatus ?? item.importStatus,
       importProgress: overlay.importProgress ?? item.importProgress,
       importErrorMessage: overlay.importErrorMessage ?? item.importErrorMessage,
       versionId: item.versionId ?? overlay.versionId,
@@ -649,14 +802,19 @@ function mergeV1ListWithV2Display(
   });
 }
 
-/** 获取数据集列表（兼容：返回 `{ data, total }`；ProTable 的 name 映射为 keyword） */
+/** 获取数据集列表：优先 V2（无 storagePath），V1 仅补文件名/大小等展示字段 */
 export async function fetchDatasetList(options?: {
   current?: number;
   pageSize?: number;
   name?: string;
   type?: string;
+  sortBy?: string;
+  sortDirection?: 'ASC' | 'DESC';
 }) {
-  const params: DatasetListQuery = {};
+  const params: DatasetListQuery & {
+    sortBy?: string;
+    sortDirection?: string;
+  } = {};
 
   if (options?.type) {
     params.type = options.type as DatasetListQuery['type'];
@@ -673,30 +831,61 @@ export async function fetchDatasetList(options?: {
   if (options?.pageSize) {
     params.pageSize = options.pageSize;
   }
+  if (options?.sortBy) {
+    params.sortBy = options.sortBy;
+  }
+  if (options?.sortDirection) {
+    params.sortDirection = options.sortDirection;
+  }
 
-  const [v1Result, v2Result] = await Promise.allSettled([
-    getDatasetList(params, options),
+  const [v2Result, v1Result] = await Promise.allSettled([
     getV2DatasetList(params, options),
+    getDatasetList(params, options),
   ]);
 
   let list: DatasetListItem[] = [];
   let total = 0;
 
-  if (v1Result.status === 'fulfilled') {
-    const inner = v1Result.value?.data;
-    list = inner?.data ?? [];
-    total = inner?.total ?? list.length;
-  }
-
   if (v2Result.status === 'fulfilled') {
     const v2Page = normalizeV2ListPage(v2Result.value);
-    if (v2Page?.data?.length) {
-      if (list.length) {
-        list = mergeV1ListWithV2Display(list, v2Page);
-      } else {
-        list = v2Page.data.map(mapV2DatasetToListItem);
-        total = v2Page.total ?? list.length;
-      }
+    if (v2Page) {
+      list = v2Page.data.map(mapV2DatasetToListItem);
+      total = v2Page.total ?? list.length;
+    }
+  }
+
+  if (v1Result.status === 'fulfilled') {
+    const inner = v1Result.value?.data;
+    const v1List = inner?.data ?? [];
+    if (list.length && v1List.length) {
+      // V2 为主，用 V1 补 size/fileName/versionRemark（不依赖 V1 storagePath）
+      const v1ById = new Map(
+        v1List.map((item) => [item.assetId || item.id, item]),
+      );
+      list = list.map((item) => {
+        const v1 = v1ById.get(item.assetId || item.id);
+        if (!v1) return item;
+        // V2 常无 sizeBytes，formatBytes 会得到 '-'；'-' 为真值会挡住 V1 补全
+        const sizeMissing =
+          item.sizeBytes == null ||
+          item.size == null ||
+          item.size === '' ||
+          item.size === '-';
+        return {
+          ...item,
+          fileName: item.fileName || v1.fileName,
+          size: sizeMissing ? v1.size || item.size : item.size,
+          sizeBytes: item.sizeBytes ?? v1.sizeBytes,
+          versionRemark: item.versionRemark || v1.versionRemark,
+          uploadTime: item.uploadTime || v1.uploadTime,
+          latestDraftVersionId:
+            item.latestDraftVersionId ?? v1.latestDraftVersionId,
+          importJobId: item.importJobId ?? v1.importJobId,
+        };
+      });
+    } else if (!list.length) {
+      list = v1List;
+      total = inner?.total ?? list.length;
     }
   }
 
@@ -704,10 +893,7 @@ export async function fetchDatasetList(options?: {
     return { data: list, total };
   }
 
-  if (v1Result.status === 'rejected') {
-    throw v1Result.reason;
-  }
-  if (v2Result.status === 'rejected') {
+  if (v2Result.status === 'rejected' && v1Result.status === 'rejected') {
     throw v2Result.reason;
   }
 
@@ -735,6 +921,9 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
     | 'importErrorMessage'
     | 'displayStatus'
     | 'editSessionId'
+    | 'workspaceId'
+    | 'workspaceRevision'
+    | 'hasDraft'
   > = {};
   try {
     const listRes = await getDatasetList(
@@ -755,6 +944,9 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
         importErrorMessage: row.importErrorMessage,
         displayStatus: row.displayStatus,
         editSessionId: row.editSessionId,
+        workspaceId: row.workspaceId,
+        workspaceRevision: row.workspaceRevision,
+        hasDraft: row.hasDraft,
       };
     }
   } catch {
@@ -825,6 +1017,8 @@ export type UploadDatasetCompatParams = {
   remark?: string;
   sampleGrouping?: MultimodalSampleGrouping;
   manifestPath?: string;
+  /** MANIFEST 严格模式：未声明 entry 导致 ImportJob 失败 */
+  strictManifest?: boolean;
   /** 与 backend-api 一致；不传则按「文件名|大小|数据集名|版本|类型」自动生成稳定指纹 */
   fileFingerprint?: string;
   /** 单文件分片上传时进度 0–100 */
@@ -851,6 +1045,7 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
     remark,
     sampleGrouping,
     manifestPath,
+    strictManifest,
     fileFingerprint,
     onProgress,
     onMergeStatus,
@@ -895,6 +1090,12 @@ export async function uploadDataset(params: UploadDatasetCompatParams, options?:
         manifestPath?.trim()
       ) {
         initBody.manifestPath = manifestPath.trim();
+      }
+      if (
+        initBody.sampleGrouping === 'MANIFEST' &&
+        strictManifest === true
+      ) {
+        initBody.strictManifest = true;
       }
     }
     const initRes = await datasetUploadInit(initBody, options);

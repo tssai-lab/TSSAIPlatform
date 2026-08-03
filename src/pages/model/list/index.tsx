@@ -1,28 +1,47 @@
-import type { ProColumns } from '@ant-design/pro-components';
+import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import { Button, message, Popconfirm, Space } from 'antd';
-import React from 'react';
-import { MOCK_MODELS } from '@/constants/mockData';
+import React, { useRef } from 'react';
 import { MODEL_TYPE_VALUE_ENUM } from '@/constants/model';
 import {
   deleteModelAsset,
   deleteModelVersion,
+  downloadModelVersion,
   fetchModelList as fetchModelListService,
-  getDownloadUrl,
 } from '@/services/platform';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
 const ModelList: React.FC = () => {
-  const fetchModelList = async (params: any) => {
+  const actionRef = useRef<ActionType>(null);
+
+  const fetchModelList = async (params: any, sort: any) => {
     try {
-      const res = await fetchModelListService(params);
+      const sortEntry = Object.entries(sort || {})[0] as
+        | [string, 'ascend' | 'descend']
+        | undefined;
+      const query: Record<string, unknown> = { ...params };
+      if (sortEntry) {
+        const [field, order] = sortEntry;
+        query.sortDirection = order === 'ascend' ? 'ASC' : 'DESC';
+        if (field === 'name') query.sortBy = 'NAME';
+        else if (field === 'version') query.sortBy = 'VERSION';
+        else if (field === 'uploadTime' || field === 'updatedAt')
+          query.sortBy = 'UPDATED_AT';
+        else query.sortBy = 'UPDATED_AT';
+      }
+      const res = await fetchModelListService(query);
       return {
         data: res?.data || [],
         success: true,
         total: res?.total ?? (res?.data?.length || 0),
       };
-    } catch {
-      return { data: MOCK_MODELS, success: true, total: MOCK_MODELS.length };
+    } catch (error: any) {
+      // 主接口失败不得用 Mock 假通过（A-COMMON-12 / A-MODEL-16）
+      message.error(
+        error?.info?.message || error?.message || '加载模型列表失败',
+      );
+      return { data: [], success: false, total: 0 };
     }
   };
 
@@ -35,18 +54,21 @@ const ModelList: React.FC = () => {
         await deleteModelVersion(record.id);
       }
       message.success('删除成功');
-      window.location.reload();
+      actionRef.current?.reload();
     } catch (error: any) {
       message.error(error?.info?.message || error?.message || '删除失败');
     }
   };
 
-  const handleDownload = (storagePath?: string) => {
-    if (!storagePath) {
-      message.warning('当前模型没有可下载文件');
-      return;
+  const handleDownload = async (record: API.ModelItem) => {
+    try {
+      await downloadModelVersion(record.id, record.fileName, {
+        skipErrorHandler: true,
+      });
+      message.success('开始下载');
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '下载失败');
     }
-    window.open(getDownloadUrl(storagePath), '_blank');
   };
 
   const columns: ProColumns<API.ModelItem>[] = [
@@ -56,22 +78,31 @@ const ModelList: React.FC = () => {
       key: 'name',
       width: 160,
       ellipsis: true,
+      sorter: true,
     },
-    { title: '版本号', dataIndex: 'version', key: 'version', width: 100 },
+    {
+      title: '版本号',
+      dataIndex: 'version',
+      key: 'version',
+      width: 100,
+      sorter: true,
+    },
     {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
       width: 88,
       valueEnum: MODEL_TYPE_VALUE_ENUM,
+      sorter: true,
     },
     {
       title: '上传时间',
       dataIndex: 'uploadTime',
       key: 'uploadTime',
-      valueType: 'dateTime',
       width: 180,
       hideInSearch: true,
+      sorter: true,
+      render: (_, record) => formatDisplayDateTime(record.uploadTime),
     },
     {
       title: '大小',
@@ -113,7 +144,7 @@ const ModelList: React.FC = () => {
           <Button
             type="link"
             style={{ paddingInline: 4 }}
-            onClick={() => handleDownload(record.storagePath)}
+            onClick={() => handleDownload(record)}
           >
             下载
           </Button>
@@ -145,11 +176,12 @@ const ModelList: React.FC = () => {
       }
     >
       <ProTable
+        actionRef={actionRef}
         columns={columns}
         request={fetchModelList}
         rowKey="id"
         search={{ labelWidth: 'auto' }}
-        pagination={{ pageSize: 10 }}
+        pagination={{ pageSize: 10, showSizeChanger: true }}
         tableLayout="fixed"
         scroll={{ x: 'max-content' }}
       />

@@ -9,25 +9,104 @@ const DEFAULT_CHUNK = 5 * 1024 * 1024;
 
 export type { MultimodalSampleGrouping };
 
-/** 多模态导入任务状态 */
+/** 多模态导入任务状态（含 PARTIAL 部分成功） */
 export type MultimodalImportStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'SUCCESS'
-  | 'FAILED';
+  | 'FAILED'
+  | 'PARTIAL';
+
+export type ImportRetryMode = 'FULL' | 'INCREMENTAL';
 
 export type MultimodalImportJob = {
   importJobId: string;
-  datasetVersionId: string;
+  datasetVersionId?: string;
+  workspaceId?: string | null;
+  workspaceRevision?: number | null;
   status: MultimodalImportStatus;
+  /** V2 展示状态 */
+  displayStatus?: string | null;
   progress: number;
   totalSamples?: number | null;
   importedSamples: number;
+  failedSamples?: number | null;
+  retryable?: boolean;
+  retryModes?: ImportRetryMode[];
   errorMessage?: string | null;
+  /** Legacy ImportJob 结构化错误码（与 userError.errorCode 可能同源） */
+  errorCode?: string | null;
+  /** Legacy ImportJob 详情 JSON 文本 */
+  errorDetailsJson?: string | null;
+  userError?: {
+    errorCode?: string;
+    errorMessage?: string;
+    details?: Record<string, unknown>;
+  } | null;
   createdAt?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
 };
+
+function unwrapImportJob(raw: unknown): MultimodalImportJob {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const data = (
+    obj.data && typeof obj.data === 'object' ? obj.data : obj
+  ) as Record<string, unknown>;
+  const progress =
+    typeof data.importProgress === 'number'
+      ? data.importProgress
+      : typeof data.progress === 'number'
+        ? data.progress
+        : 0;
+  const retryModes = Array.isArray(data.retryModes)
+    ? (data.retryModes as ImportRetryMode[])
+    : undefined;
+  const userError =
+    data.userError && typeof data.userError === 'object'
+      ? (data.userError as MultimodalImportJob['userError'])
+      : null;
+  return {
+    importJobId: String(data.importJobId || ''),
+    datasetVersionId: data.datasetVersionId
+      ? String(data.datasetVersionId)
+      : undefined,
+    workspaceId: (data.workspaceId as string | null | undefined) ?? null,
+    workspaceRevision:
+      typeof data.workspaceRevision === 'number'
+        ? data.workspaceRevision
+        : null,
+    status: (data.status as MultimodalImportStatus) || 'PENDING',
+    displayStatus: (data.displayStatus as string | null | undefined) ?? null,
+    progress,
+    totalSamples:
+      typeof data.totalSamples === 'number' ? data.totalSamples : null,
+    importedSamples:
+      typeof data.importedSamples === 'number' ? data.importedSamples : 0,
+    failedSamples:
+      typeof data.failedSamples === 'number' ? data.failedSamples : null,
+    retryable: Boolean(data.retryable),
+    retryModes,
+    errorMessage:
+      (data.errorMessage as string | null | undefined) ??
+      userError?.errorMessage ??
+      null,
+    errorCode:
+      (data.errorCode as string | null | undefined) ??
+      userError?.errorCode ??
+      null,
+    errorDetailsJson:
+      (data.errorDetailsJson as string | null | undefined) ??
+      (userError?.details ? JSON.stringify(userError.details) : null),
+    userError,
+    createdAt: data.createdAt as string | undefined,
+    startedAt: (data.startedAt as string | null | undefined) ?? null,
+    finishedAt: (data.finishedAt as string | null | undefined) ?? null,
+  };
+}
 
 export type MultimodalSampleSummary = {
   sampleId: string;
@@ -93,19 +172,48 @@ export type MultimodalSamplesPage = {
   totalPages: number;
 };
 
-/** POST /api/dataset-samples/import/{importJobId}/retry?mode=FULL */
+/**
+ * POST /api/v2/import-jobs/{importJobId}/retry
+ * body: { mode, expectedWorkspaceRevision }
+ */
 export async function retryMultimodalImport(
   importJobId: string,
+  params: {
+    mode: ImportRetryMode;
+    expectedWorkspaceRevision: number;
+  },
   options?: { [key: string]: unknown },
 ) {
-  return request<{ success?: boolean; data?: MultimodalImportJob }>(
-    `/dataset-samples/import/${encodeURIComponent(importJobId)}/retry`,
+  const raw = await request<unknown>(
+    `/v2/import-jobs/${encodeURIComponent(importJobId)}/retry`,
     {
       method: 'POST',
-      params: { mode: 'FULL' },
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        mode: params.mode,
+        expectedWorkspaceRevision: params.expectedWorkspaceRevision,
+      },
       ...(options || {}),
     },
   );
+  return { data: unwrapImportJob(raw) };
+}
+
+/** @deprecated Legacy query-mode 重试；新前端请用 retryMultimodalImport + revision */
+export async function retryMultimodalImportLegacy(
+  importJobId: string,
+  mode: ImportRetryMode = 'FULL',
+  options?: { [key: string]: unknown },
+) {
+  const raw = await request<unknown>(
+    `/dataset-samples/import/${encodeURIComponent(importJobId)}/retry`,
+    {
+      method: 'POST',
+      params: { mode },
+      ...(options || {}),
+    },
+  );
+  return { data: unwrapImportJob(raw) };
 }
 
 export type ConsumerManifestSample = MultimodalSampleSummary & {
@@ -141,18 +249,19 @@ export async function fetchConsumerManifest(
   );
 }
 
-/** GET /api/dataset-samples/import/{importJobId}/status */
+/** GET /api/v2/import-jobs/{importJobId}（新前端不以 Legacy 为主路径） */
 export async function fetchMultimodalImportStatus(
   importJobId: string,
   options?: { [key: string]: unknown },
 ) {
-  return request<{ data: MultimodalImportJob }>(
-    `/dataset-samples/import/${encodeURIComponent(importJobId)}/status`,
+  const raw = await request<unknown>(
+    `/v2/import-jobs/${encodeURIComponent(importJobId)}`,
     {
       method: 'GET',
       ...(options || {}),
     },
   );
+  return { data: unwrapImportJob(raw) };
 }
 
 /** GET /api/dataset-versions/{versionId}/samples */
@@ -257,6 +366,7 @@ export const MULTIMODAL_IMPORT_STATUS_LABEL: Record<
   RUNNING: '导入中',
   SUCCESS: '导入成功',
   FAILED: '导入失败',
+  PARTIAL: '部分导入',
 };
 
 export type CreateWorkspaceDraftResult = {

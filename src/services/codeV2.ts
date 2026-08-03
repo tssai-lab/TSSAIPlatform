@@ -905,6 +905,7 @@ export async function patchV2CodeAsset(
     `/v2/code-assets/${encodeURIComponent(assetId)}`,
     {
       method: 'PATCH',
+      headers: { 'Content-Type': 'application/merge-patch+json' },
       data: body,
       ...(options || {}),
     },
@@ -1046,6 +1047,130 @@ export async function upgradeV2CodeArtifact(
     data: {},
     ...(options || {}),
   });
+}
+
+/** —— 管理员跨 owner 代码资产 —— */
+
+export type V2AdminCodeAsset = V2CodeAsset & {
+  assetId?: string;
+  ownerUserId?: string;
+};
+
+export type V2AdminCodeAssetPage = {
+  data: V2AdminCodeAsset[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+/** GET /api/v2/admin/code-assets — page 从 0 开始 */
+export async function listAdminCodeAssets(
+  params?: {
+    page?: number;
+    pageSize?: number;
+    keyword?: string;
+    ownerUserId?: string;
+    trainingProfile?: string;
+    sortBy?: 'UPDATED_AT' | 'CREATED_AT' | 'NAME' | 'OWNER_USER_ID' | string;
+    sortDirection?: 'ASC' | 'DESC';
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2AdminCodeAssetPage>('/v2/admin/code-assets', {
+    method: 'GET',
+    params: {
+      page: params?.page ?? 0,
+      pageSize: params?.pageSize ?? 20,
+      sortBy: params?.sortBy ?? 'UPDATED_AT',
+      sortDirection: params?.sortDirection ?? 'DESC',
+      ...(params?.keyword ? { keyword: params.keyword } : {}),
+      ...(params?.ownerUserId ? { ownerUserId: params.ownerUserId } : {}),
+      ...(params?.trainingProfile
+        ? { trainingProfile: params.trainingProfile }
+        : {}),
+    },
+    ...(options || {}),
+  });
+}
+
+/** GET /api/v2/admin/code-assets/{assetId} */
+export async function getAdminCodeAsset(
+  assetId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2AdminCodeAsset>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}`,
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+/** PATCH /api/v2/admin/code-assets/{assetId} */
+export async function patchAdminCodeAsset(
+  assetId: string,
+  body: {
+    assetRevision: number;
+    name?: string;
+    trainingProfile?: string;
+    purpose?: string;
+    runtime?: string;
+    entryScript?: string;
+    trainingType?: string;
+    remark?: string;
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2AdminCodeAsset>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/merge-patch+json' },
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** DELETE /api/v2/admin/code-assets/{assetId} */
+export async function deleteAdminCodeAsset(
+  assetId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<unknown>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}`,
+    { method: 'DELETE', ...(options || {}) },
+  );
+}
+
+/** GET /api/v2/admin/code-assets/{assetId}/versions */
+export async function listAdminCodeAssetVersions(
+  assetId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeVersion[]>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}/versions`,
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+/** GET/POST /api/v2/admin/code-assets/{assetId}/workspaces */
+export async function getAdminCodeAssetWorkspace(
+  assetId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeWorkspace>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}/workspaces`,
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+export async function openAdminCodeAssetWorkspace(
+  assetId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeWorkspace>(
+    `/v2/admin/code-assets/${encodeURIComponent(assetId)}/workspaces`,
+    { method: 'POST', data: {}, ...(options || {}) },
+  );
 }
 
 /** GET /api/v2/admin/code-review-tasks/{versionId}/findings */

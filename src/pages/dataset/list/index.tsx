@@ -21,7 +21,8 @@ function resolveDetailHref(record: API.DatasetItem): string {
             record.importStatus === 'RUNNING' ||
             record.importStatus === 'FAILED' ||
             record.displayStatus === 'IMPORTING' ||
-            record.displayStatus === 'IMPORT_FAILED')
+            record.displayStatus === 'IMPORT_FAILED' ||
+            record.displayStatus === 'IMPORT_PARTIAL')
         ? record.latestDraftVersionId
         : undefined;
   const query = versionId ? `?versionId=${encodeURIComponent(versionId)}` : '';
@@ -43,6 +44,7 @@ function resolveVersionAttention(record: API.DatasetItem): {
       IMPORTING: 'processing',
       EDITING: 'processing',
       IMPORT_FAILED: 'error',
+      IMPORT_PARTIAL: 'warning',
     };
     return {
       color: colorMap[displayStatus] ?? 'default',
@@ -117,8 +119,25 @@ function renderVersionCell(record: API.DatasetItem) {
 }
 
 const DatasetList: React.FC = () => {
-  const fetchDatasetList = async (params: any) => {
-    const res = await fetchDatasetListService(params);
+  const fetchDatasetList = async (params: any, sort: any) => {
+    const sortEntry = Object.entries(sort || {})[0] as
+      | [string, 'ascend' | 'descend']
+      | undefined;
+    let sortBy: string | undefined;
+    let sortDirection: 'ASC' | 'DESC' | undefined;
+    if (sortEntry) {
+      const [field, order] = sortEntry;
+      sortDirection = order === 'ascend' ? 'ASC' : 'DESC';
+      if (field === 'name') sortBy = 'NAME';
+      else if (field === 'uploadTime' || field === 'updatedAt')
+        sortBy = 'UPDATED_AT';
+      else if (field === 'type') sortBy = 'TYPE';
+      else sortBy = 'UPDATED_AT';
+    }
+    const res = await fetchDatasetListService({
+      ...params,
+      ...(sortBy ? { sortBy, sortDirection } : {}),
+    });
     return {
       data: res?.data || [],
       success: true,
@@ -152,7 +171,12 @@ const DatasetList: React.FC = () => {
   };
 
   const columns: ProColumns<API.DatasetItem>[] = [
-    { title: '数据集名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '数据集名称',
+      dataIndex: 'name',
+      key: 'name',
+      sorter: true,
+    },
     {
       title: '类型',
       dataIndex: 'type',
@@ -164,6 +188,7 @@ const DatasetList: React.FC = () => {
         MULTIMODAL: { text: '多模态' },
         ROBOT: { text: '机器人' },
       },
+      sorter: true,
     },
     {
       title: '版本号',
@@ -187,6 +212,7 @@ const DatasetList: React.FC = () => {
       key: 'uploadTime',
       valueType: 'dateTime',
       hideInSearch: true,
+      sorter: true,
     },
     { title: '大小', dataIndex: 'size', key: 'size', hideInSearch: true },
     {

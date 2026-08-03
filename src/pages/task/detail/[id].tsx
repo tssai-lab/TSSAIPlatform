@@ -404,6 +404,8 @@ const TaskDetail: React.FC = () => {
   /** 同一实验下多版本对比：勾选版本记录 id */
   const [compareVersionKeys, setCompareVersionKeys] = useState<React.Key[]>([]);
   const [displayNamesReady, setDisplayNamesReady] = useState(0);
+  const [versionHistoryPage, setVersionHistoryPage] = useState(1);
+  const [versionHistoryPageSize, setVersionHistoryPageSize] = useState(10);
 
   const renderCodeVersionCell = useCallback(
     (codeVersionId?: string) => {
@@ -543,27 +545,56 @@ const TaskDetail: React.FC = () => {
   useEffect(() => {
     if (!experimentId) {
       setVersions([]);
+      setVersionHistoryPage(1);
       return;
     }
+    setVersionHistoryPage(1);
     listExperimentVersions(experimentId, { skipErrorHandler: true })
-      .then(async (res: any) => {
+      .then((res: any) => {
         const list = Array.isArray(res?.data) ? res.data : [];
         setVersions(list);
-        await preloadDatasetVersionDisplayNames(
-          list.map(
-            (item: API.TrainingExperimentVersion) => item.datasetVersionId,
-          ),
-          { skipErrorHandler: true },
-        );
-        await preloadCodeVersionDisplayNames(
-          list.map((item: API.TrainingExperimentVersion) => item.codeVersionId),
-          { skipErrorHandler: true },
-        );
-        setDisplayNamesReady((t) => t + 1);
       })
       .catch(() => setVersions([]));
   }, [experimentId]);
 
+  // 版本表只解析当前页展示名，避免一次对全部版本打详情
+  useEffect(() => {
+    if (!versions.length) return;
+    let cancelled = false;
+    const start = (versionHistoryPage - 1) * versionHistoryPageSize;
+    const pageRows = versions.slice(start, start + versionHistoryPageSize);
+    void (async () => {
+      await preloadDatasetVersionDisplayNames(
+        pageRows
+          .map((item) => item.datasetVersionId)
+          .filter(Boolean) as string[],
+        { skipErrorHandler: true },
+      );
+      await preloadCodeVersionDisplayNames(
+        pageRows.map((item) => item.codeVersionId).filter(Boolean) as string[],
+        { skipErrorHandler: true },
+      );
+      if (!cancelled) {
+        setDisplayNamesReady((t) => t + 1);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [versions, versionHistoryPage, versionHistoryPageSize]);
+
+  const versionHistoryPagination = {
+    current: versionHistoryPage,
+    pageSize: versionHistoryPageSize,
+    total: versions.length,
+    showSizeChanger: true,
+    pageSizeOptions: [10, 20, 50],
+    showTotal: (total: number) => `共 ${total} 个版本`,
+    onChange: (page: number, pageSize: number) => {
+      setVersionHistoryPage(page);
+      setVersionHistoryPageSize(pageSize);
+    },
+  };
   const refreshVersions = async (expId: string) => {
     try {
       const res: any = await listExperimentVersions(expId, {
@@ -1230,7 +1261,7 @@ const TaskDetail: React.FC = () => {
         <Table
           rowKey="id"
           size="small"
-          pagination={false}
+          pagination={versionHistoryPagination}
           dataSource={versions}
           scroll={{ x: 1080 }}
           rowClassName={(record) =>
@@ -1406,7 +1437,7 @@ const TaskDetail: React.FC = () => {
           rowKey="id"
           columns={compareVersionColumns}
           dataSource={versions}
-          pagination={false}
+          pagination={versionHistoryPagination}
           scroll={{ x: 900 }}
           locale={{ emptyText: '暂无版本记录' }}
           rowSelection={{

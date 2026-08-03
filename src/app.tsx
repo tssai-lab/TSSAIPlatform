@@ -142,9 +142,9 @@ export const layout: RunTimeLayoutConfig = ({
       },
     ],
     links: [
-      <Link key="openapi" to="/api-doc">
+      <Link key="usermanual" to="/user-manual">
         <LinkOutlined />
-        <span>OpenAPI 文档</span>
+        <span>用户手册</span>
       </Link>,
     ],
     // 边栏顶部默认 Logo

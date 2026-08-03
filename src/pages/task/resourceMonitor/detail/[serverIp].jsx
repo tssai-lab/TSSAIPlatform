@@ -35,7 +35,6 @@ import {
 import {
   getIntervalSpanLabel,
   getUsageColor,
-  getUsageStatus,
   TIME_INTERVAL_OPTIONS,
 } from '../constants';
 import ResourceTrendChart from '../ResourceTrendChart';
@@ -348,24 +347,28 @@ const ServerDetail = () => {
       <Card title="硬件信息" style={{ marginBottom: 16 }}>
         <Descriptions column={4}>
           <Descriptions.Item label="主机名">
-            {server.hostname}
+            {server.hostname || '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="CPU">{server.specs.cpu}</Descriptions.Item>
+          <Descriptions.Item label="CPU">
+            {server.specs?.cpu || '-'}
+          </Descriptions.Item>
           <Descriptions.Item label="内存">
-            {server.specs.memory}
+            {server.specs?.memory || '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="GPU">{server.specs.gpu}</Descriptions.Item>
+          <Descriptions.Item label="GPU">
+            {server.specs?.gpu || '-'}
+          </Descriptions.Item>
           <Descriptions.Item label="操作系统">
-            {server.specs.os}
+            {server.specs?.os || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="GPU 温度">
-            {server.gpuTemp} °C
+            {server.gpuTemp > 0 ? `${server.gpuTemp} °C` : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="网络入站">
-            {server.networkIn} MB/s
+            {server.networkIn > 0 ? `${server.networkIn} MB/s` : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="网络出站">
-            {server.networkOut} MB/s
+            {server.networkOut > 0 ? `${server.networkOut} MB/s` : '-'}
           </Descriptions.Item>
         </Descriptions>
       </Card>
@@ -378,7 +381,7 @@ const ServerDetail = () => {
               <Progress
                 percent={item.value}
                 strokeColor={getUsageColor(item.value)}
-                status={getUsageStatus(item.value)}
+                format={() => `${item.value}%`}
                 style={{ marginTop: 8 }}
               />
             </Card>

@@ -31,11 +31,12 @@ import { resolveModelVersionId } from '@/services/model';
 import {
   deleteModelAsset,
   deleteModelVersion,
+  downloadModelVersion,
   fetchModelAssetDetail,
   fetchModelVersionCodePreview,
-  getDownloadUrl,
   getModelVersion,
   previewModelCode,
+  switchModelCurrentVersion,
   updateModelAsset,
 } from '@/services/platform';
 import {
@@ -90,6 +91,7 @@ const ModelDetail: React.FC = () => {
         (queryVersionId && queryVersionId !== assetId
           ? queryVersionId
           : undefined) ??
+        detail?.currentVersionId ??
         detail?.defaultVersionId ??
         resolveModelVersionId(detail?.latestVersion, assetId) ??
         detail?.versions
@@ -188,12 +190,37 @@ const ModelDetail: React.FC = () => {
     }
   };
 
-  const handleDownload = (storagePath?: string) => {
-    if (!storagePath) {
+  const handleDownload = async (record: API.ModelVersionDetail) => {
+    const versionId = resolveModelVersionId(record, assetInfo?.id) ?? record.id;
+    if (!versionId) {
       message.warning('当前版本没有可下载文件');
       return;
     }
-    window.open(getDownloadUrl(storagePath), '_blank');
+    try {
+      await downloadModelVersion(versionId, record.fileName, {
+        skipErrorHandler: true,
+      });
+      message.success('开始下载');
+    } catch (error: any) {
+      message.error(error?.info?.message || error?.message || '下载失败');
+    }
+  };
+
+  const handleSetCurrentVersion = async (record: API.ModelVersionDetail) => {
+    if (!id || !assetInfo) return;
+    const versionId = resolveModelVersionId(record, assetInfo.id) ?? record.id;
+    if (!versionId) return;
+    try {
+      await switchModelCurrentVersion(id, versionId, {
+        skipErrorHandler: true,
+      });
+      message.success('已设为当前版本');
+      await loadAsset();
+    } catch (error: any) {
+      message.error(
+        error?.info?.message || error?.message || '切换当前版本失败',
+      );
+    }
   };
 
   const openEditAsset = () => {
@@ -359,14 +386,20 @@ const ModelDetail: React.FC = () => {
               {assetInfo.id}
             </Typography.Text>
           </Descriptions.Item>
+          <Descriptions.Item label="当前版本">
+            {assetInfo.currentVersionId ||
+              assetInfo.defaultVersionId ||
+              selectedVersion?.version ||
+              '-'}
+          </Descriptions.Item>
           <Descriptions.Item label="版本数量">
             {assetInfo.versions.length}
           </Descriptions.Item>
           <Descriptions.Item label="最近上传">
-            {assetInfo.uploadTime || '-'}
+            {formatDisplayDateTime(assetInfo.uploadTime)}
           </Descriptions.Item>
           <Descriptions.Item label="更新时间">
-            {assetInfo.updatedAt || '-'}
+            {formatDisplayDateTime(assetInfo.updatedAt)}
           </Descriptions.Item>
           <Descriptions.Item label="备注" span={2}>
             {assetInfo.remark || '-'}
@@ -396,7 +429,16 @@ const ModelDetail: React.FC = () => {
               title: '版本号',
               dataIndex: 'version',
               key: 'version',
-              width: 100,
+              width: 120,
+              render: (value: string, record: API.ModelVersionDetail) => (
+                <Space size={4}>
+                  <span>{value}</span>
+                  {(record.isCurrent ||
+                    record.id === assetInfo.currentVersionId) && (
+                    <Tag color="blue">当前</Tag>
+                  )}
+                </Space>
+              ),
             },
             {
               title: '版本 ID',
@@ -430,44 +472,53 @@ const ModelDetail: React.FC = () => {
             {
               title: '操作',
               key: 'action',
-              width: 280,
+              width: 360,
               fixed: 'right',
               align: 'left',
-              render: (_, record: API.ModelVersionDetail) => (
-                <Space
-                  size={0}
-                  split={<span style={{ color: '#f0f0f0' }}>|</span>}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Button
-                    type="link"
-                    style={{ paddingLeft: 0 }}
-                    onClick={() => setSelectedVersionId(record.id)}
+              render: (_, record: API.ModelVersionDetail) => {
+                const isCurrent =
+                  record.isCurrent || record.id === assetInfo.currentVersionId;
+                return (
+                  <Space
+                    size={0}
+                    split={<span style={{ color: '#f0f0f0' }}>|</span>}
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    选中
-                  </Button>
-                  <Button
-                    type="link"
-                    onClick={() => handleStartTraining(record.id)}
-                  >
-                    发起训练
-                  </Button>
-                  <Button
-                    type="link"
-                    onClick={() => handleDownload(record.storagePath)}
-                  >
-                    下载
-                  </Button>
-                  <Popconfirm
-                    title="确认删除该版本？"
-                    onConfirm={() => handleDeleteVersion(record.id)}
-                  >
-                    <Button type="link" danger>
-                      删除
+                    <Button
+                      type="link"
+                      style={{ paddingLeft: 0 }}
+                      onClick={() => setSelectedVersionId(record.id)}
+                    >
+                      选中
                     </Button>
-                  </Popconfirm>
-                </Space>
-              ),
+                    <Button
+                      type="link"
+                      onClick={() => handleStartTraining(record.id)}
+                    >
+                      发起训练
+                    </Button>
+                    <Button type="link" onClick={() => handleDownload(record)}>
+                      下载
+                    </Button>
+                    {!isCurrent && (
+                      <Popconfirm
+                        title="将此版本设为列表和训练的默认当前版本？"
+                        onConfirm={() => handleSetCurrentVersion(record)}
+                      >
+                        <Button type="link">设为当前</Button>
+                      </Popconfirm>
+                    )}
+                    <Popconfirm
+                      title="确认删除该版本？"
+                      onConfirm={() => handleDeleteVersion(record.id)}
+                    >
+                      <Button type="link" danger>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                );
+              },
             },
           ]}
         />
@@ -476,9 +527,56 @@ const ModelDetail: React.FC = () => {
           style={{ display: 'block', marginTop: 8 }}
         >
           每个版本对应一次上传的 zip
-          文件。选中版本后可用「用此版本发起训练」；行内「发起训练」会直接带上该行版本。
+          文件。可用「设为当前」指定推荐版本；选中后可用「用此版本发起训练」。
         </Typography.Text>
       </Card>
+
+      {selectedVersion && (
+        <Card title="选中版本元信息" style={{ marginBottom: 16 }}>
+          <Descriptions column={2} size="small">
+            <Descriptions.Item label="版本号">
+              {selectedVersion.version}
+            </Descriptions.Item>
+            <Descriptions.Item label="状态">
+              {selectedVersion.status || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Commit">
+              {selectedVersion.commitInfo || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="SHA-256">
+              <Typography.Text
+                copyable={!!selectedVersion.artifactSha256}
+                code
+                style={{ fontSize: 11 }}
+              >
+                {selectedVersion.artifactSha256 || '-'}
+              </Typography.Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="超参" span={2}>
+              {selectedVersion.hyperParams &&
+              Object.keys(selectedVersion.hyperParams).length > 0 ? (
+                <pre
+                  style={{
+                    margin: 0,
+                    maxHeight: 200,
+                    overflow: 'auto',
+                    background: '#fafafa',
+                    padding: 8,
+                    borderRadius: 4,
+                  }}
+                >
+                  {JSON.stringify(selectedVersion.hyperParams, null, 2)}
+                </pre>
+              ) : (
+                '无（未填写或为空对象）'
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="备注" span={2}>
+              {selectedVersion.remark || assetInfo.remark || '-'}
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+      )}
 
       <Card
         title={
@@ -595,7 +693,7 @@ const ModelDetail: React.FC = () => {
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
-              selectedVersion?.storagePath
+              selectedVersion
                 ? '当前版本包中没有可预览的代码/文本文件（权重等二进制不会出现在此列表）'
                 : '该版本尚未绑定模型文件，请先上传'
             }

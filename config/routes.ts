@@ -104,6 +104,12 @@ export default [
             hideInMenu: true,
           },
           {
+            path: '/task/code/admin-assets',
+            name: '代码资产管理',
+            component: './task/trainingCode/adminAssets',
+            access: 'isAdmin',
+          },
+          {
             path: '/task/code/upload',
             name: '上传训练代码',
             component: './task/trainingCode/upload',
@@ -221,6 +227,13 @@ export default [
     ],
   },
   { path: '/dashboard', name: '首页', icon: 'home', component: './dashboard' },
+  {
+    path: '/user-manual',
+    name: '用户手册',
+    icon: 'book',
+    component: './user-manual',
+    hideInMenu: true,
+  },
   {
     path: '/api-doc',
     name: 'OpenAPI文档',

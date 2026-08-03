@@ -191,7 +191,7 @@ const TaskList: React.FC = () => {
                       },
                     ]
                   : []),
-                ...(['queued', 'running'].includes(record.status)
+                ...(['queued', 'scheduled', 'running'].includes(record.status)
                   ? [
                       {
                         key: 'stop',

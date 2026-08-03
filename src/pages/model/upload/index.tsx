@@ -144,8 +144,30 @@ const ModelUpload: React.FC = () => {
     const requestOpts = { skipErrorHandler: true } as const;
 
     try {
-      // 后端要求 commitInfo 非空；与公网一致，用备注作为 Commit/版本说明
-      const commitInfo = String(values.remark ?? '').trim();
+      const commitInfo = String(
+        values.commitInfo ?? values.remark ?? '',
+      ).trim();
+      if (!commitInfo) {
+        throw new Error('请填写 Commit 说明（commitInfo）');
+      }
+      if (commitInfo.length > 1024) {
+        throw new Error('Commit 说明不能超过 1024 个字符');
+      }
+
+      let hyperParams: Record<string, unknown> | undefined;
+      const hyperRaw = String(values.hyperParamsJson ?? '').trim();
+      if (hyperRaw) {
+        try {
+          const parsed = JSON.parse(hyperRaw);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('超参必须是 JSON 对象');
+          }
+          hyperParams = parsed as Record<string, unknown>;
+        } catch (e: any) {
+          throw new Error(e?.message || '超参 JSON 格式不正确');
+        }
+      }
+
       const fileFingerprint = buildModelFileFingerprint(
         file,
         values.modelName,
@@ -158,6 +180,7 @@ const ModelUpload: React.FC = () => {
           fileSize: file.size,
           fileFingerprint,
           commitInfo,
+          ...(hyperParams ? { hyperParams } : {}),
         },
         requestOpts,
       );
@@ -210,8 +233,9 @@ const ModelUpload: React.FC = () => {
           modelName: values.modelName,
           version: values.version.trim(),
           type: values.type,
-          remark: commitInfo,
+          remark: String(values.remark ?? '').trim() || commitInfo,
           commitInfo,
+          ...(hyperParams ? { hyperParams } : {}),
         },
         requestOpts,
       );
@@ -302,14 +326,78 @@ const ModelUpload: React.FC = () => {
           label="备注"
           rules={[
             { required: true, message: '请输入备注' },
+            {
+              validator: async (_, value) => {
+                if (value != null && !String(value).trim()) {
+                  throw new Error('备注不能为空或纯空格');
+                }
+              },
+            },
             { max: 200, message: '备注不能超过 200 个字符' },
+          ]}
+          extra="资产级说明：整份模型资产的用途/来源备注，会一直挂在资产上（不是某个版本专属）。"
+        >
+          <Input.TextArea
+            rows={3}
+            placeholder="例如：ImageNet 预训练权重，供 CV 检测任务使用"
+            maxLength={200}
+            showCount
+          />
+        </Form.Item>
+        <Form.Item
+          name="commitInfo"
+          label="Commit 说明"
+          rules={[
+            { required: true, message: '请输入 Commit 说明' },
+            {
+              validator: async (_, value) => {
+                const text = String(value ?? '').trim();
+                if (!text) {
+                  throw new Error('Commit 说明不能为空或纯空格');
+                }
+                if (text.length > 1024) {
+                  throw new Error('Commit 说明不能超过 1024 个字符');
+                }
+              },
+            },
+          ]}
+          extra="本版本提交说明：只描述「这一次上传/这个版本」改了什么（类似 Git commit message），与上方资产备注分开保存。"
+        >
+          <Input.TextArea
+            rows={2}
+            placeholder="例如：v1 基线权重；或 fix: 调整学习率后重训"
+            maxLength={1024}
+            showCount
+          />
+        </Form.Item>
+        <Form.Item
+          name="hyperParamsJson"
+          label="超参（JSON，可选）"
+          extra='训练超参快照（可选）：须为 JSON 对象，例如 {"lr":0.001,"epochs":10}。不填则按空对象上传，不影响上传成功。'
+          rules={[
+            {
+              validator: async (_, value) => {
+                const text = String(value ?? '').trim();
+                if (!text) return;
+                try {
+                  const parsed = JSON.parse(text);
+                  if (
+                    !parsed ||
+                    typeof parsed !== 'object' ||
+                    Array.isArray(parsed)
+                  ) {
+                    throw new Error('须为 JSON 对象');
+                  }
+                } catch {
+                  throw new Error('超参 JSON 格式不正确');
+                }
+              },
+            },
           ]}
         >
           <Input.TextArea
             rows={4}
-            placeholder="请输入备注"
-            maxLength={200}
-            showCount
+            placeholder='可选，例如 {"imageSize":224,"epochs":3}'
           />
         </Form.Item>
         <Form.Item

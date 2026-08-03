@@ -229,7 +229,12 @@ export function buildMetricsChartOption(
   };
 }
 
-export const ACTIVE_TASK_STATUSES = new Set(['pending', 'queued', 'running']);
+export const ACTIVE_TASK_STATUSES = new Set([
+  'pending',
+  'queued',
+  'scheduled',
+  'running',
+]);
 
 export function isActiveTaskStatus(status?: string) {
   return !!status && ACTIVE_TASK_STATUSES.has(status);

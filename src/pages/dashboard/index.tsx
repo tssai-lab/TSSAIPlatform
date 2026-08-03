@@ -21,6 +21,7 @@ import {
   fetchResourceMonitorSummary,
   fetchTaskList,
 } from '@/services/platform';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 type ResourceSummary = {
@@ -133,9 +134,15 @@ const Dashboard: React.FC = () => {
 
       const allTasks = parseTaskList(taskRes);
       const runningTasks = parseTaskList(runningRes);
-      const enrichedTasks = await enrichTaskItemsWithDisplayNames(allTasks, {
-        skipErrorHandler: true,
-      });
+      const latest = pickLatestTask(allTasks);
+      // 首页只展示「最近一次」名称，勿对整表 100 条逐个打模型/数据集详情
+      const enrichedLatest = latest
+        ? (
+            await enrichTaskItemsWithDisplayNames([latest], {
+              skipErrorHandler: true,
+            })
+          )[0]
+        : null;
 
       if (summaryRes?.success && summaryRes.data) {
         setResourceSummary(summaryRes.data);
@@ -151,7 +158,7 @@ const Dashboard: React.FC = () => {
           ? countTasksByStatus(runningTasks, 'running')
           : countTasksByStatus(allTasks, 'running'),
       });
-      setLatestTask(pickLatestTask(enrichedTasks));
+      setLatestTask(enrichedLatest);
     } finally {
       setLoading(false);
     }
@@ -318,7 +325,7 @@ const Dashboard: React.FC = () => {
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="创建时间">
-                  {latestTask.createTime}
+                  {formatDisplayDateTime(latestTask.createTime)}
                 </Descriptions.Item>
                 <Descriptions.Item label="模型">
                   {latestTask.modelName || '-'}

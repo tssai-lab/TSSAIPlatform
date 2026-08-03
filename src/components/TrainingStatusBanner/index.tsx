@@ -192,6 +192,30 @@ const TrainingStatusBanner: React.FC<TrainingStatusBannerProps> = ({
     );
   }
 
+  if (status === 'scheduled') {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        icon={<SyncOutlined style={{ fontSize: 22 }} spin />}
+        message={
+          <Typography.Text strong style={{ fontSize: 18 }}>
+            {statusLabel}
+          </Typography.Text>
+        }
+        description={
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Typography.Text type="secondary">
+              任务已分配至计算节点，正在准备启动。
+            </Typography.Text>
+            {progressBlock}
+          </Space>
+        }
+        style={{ marginBottom: 16, ...style }}
+      />
+    );
+  }
+
   if (status === 'queued') {
     return (
       <Alert

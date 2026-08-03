@@ -124,6 +124,8 @@ const TrainingCodeList: React.FC = () => {
       key: 'codeAssetName',
       width: 160,
       ellipsis: true,
+      sorter: (a, b) =>
+        getCodeUserDisplayName(a).localeCompare(getCodeUserDisplayName(b)),
       render: (_, record) => getCodeUserDisplayName(record),
     },
     {
@@ -133,6 +135,8 @@ const TrainingCodeList: React.FC = () => {
       width: 180,
       ellipsis: true,
       hideInSearch: true,
+      sorter: (a, b) =>
+        String(a.fileName || '').localeCompare(String(b.fileName || '')),
       render: (_, record) => record.fileName?.trim() || '-',
     },
     {
@@ -142,6 +146,10 @@ const TrainingCodeList: React.FC = () => {
       ellipsis: true,
       hideInSearch: true,
       width: 220,
+      sorter: (a, b) =>
+        String(a.trainingProfile || '').localeCompare(
+          String(b.trainingProfile || ''),
+        ),
     },
     {
       title: '审核状态',
@@ -149,6 +157,10 @@ const TrainingCodeList: React.FC = () => {
       key: 'approvalStatus',
       width: 110,
       hideInSearch: true,
+      sorter: (a, b) =>
+        String(a.approvalStatus || '').localeCompare(
+          String(b.approvalStatus || ''),
+        ),
       render: (_, record) => approvalTag(record.approvalStatus),
     },
     {

@@ -5,6 +5,7 @@ import type { UploadFile } from 'antd';
 import {
   Alert,
   Button,
+  Checkbox,
   Form,
   Input,
   message,
@@ -17,6 +18,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import type {
   AnnotationFormat,
+  CvTaskType,
   DatasetType,
   MultimodalSampleGrouping,
 } from '@/services/dataset';
@@ -34,6 +36,7 @@ import {
   datasetVersionFormRules,
   suggestNextDatasetVersion,
 } from '@/utils/datasetVersion';
+import { saveImportJobId } from '@/utils/importJobStorage';
 import {
   buildDatasetFileFingerprint,
   LS_DATASET_UPLOAD_FP,
@@ -204,6 +207,8 @@ const DatasetUpload: React.FC = () => {
       | MultimodalSampleGrouping
       | undefined;
     const manifestPath = values.manifestPath?.trim();
+    const strictManifest = Boolean(values.strictManifest);
+    const cvTaskType = values.cvTaskType as CvTaskType | undefined;
     const annotationFormat = values.annotationFormat as
       | AnnotationFormat
       | undefined;
@@ -264,6 +269,7 @@ const DatasetUpload: React.FC = () => {
           version,
           type,
           annotationFormat,
+          cvTaskType,
         );
         const uploadRes = await uploadDataset(
           {
@@ -272,6 +278,7 @@ const DatasetUpload: React.FC = () => {
             type,
             version,
             assetId,
+            cvTaskType,
             annotationFormat,
             remark,
             sampleGrouping:
@@ -282,6 +289,11 @@ const DatasetUpload: React.FC = () => {
               type === 'MULTIMODAL' &&
               (multimodalGrouping ?? 'AUTO_DIRECTORY') === 'MANIFEST'
                 ? manifestPath
+                : undefined,
+            strictManifest:
+              type === 'MULTIMODAL' &&
+              (multimodalGrouping ?? 'AUTO_DIRECTORY') === 'MANIFEST'
+                ? strictManifest
                 : undefined,
             fileFingerprint: fp,
             onProgress: (p) => setUploadPercent(p),
@@ -297,6 +309,11 @@ const DatasetUpload: React.FC = () => {
         );
         createdAssetId = uploadRes?.data?.assetId;
         if (type === 'MULTIMODAL' && uploadRes?.data?.importJobId) {
+          const jobDatasetId =
+            assetId || createdAssetId || uploadRes?.data?.assetId;
+          if (jobDatasetId) {
+            saveImportJobId(jobDatasetId, uploadRes.data.importJobId);
+          }
           message.info(
             multimodalGrouping === 'MANIFEST'
               ? 'zip 上传完成，后台正在解析 manifest 并导入样本，请在详情页查看导入进度。'
@@ -319,6 +336,7 @@ const DatasetUpload: React.FC = () => {
             files,
             type: 'CV',
             version,
+            cvTaskType,
             annotationFormat,
             remark,
           },
@@ -393,6 +411,7 @@ const DatasetUpload: React.FC = () => {
           type: 'CV',
           version: 'v1.0.0',
           sampleGrouping: 'AUTO_DIRECTORY',
+          strictManifest: false,
         }}
       >
         <Form.Item
@@ -428,6 +447,7 @@ const DatasetUpload: React.FC = () => {
             disabled={isNewVersionUpload || prefillLoading}
             onChange={(value) => {
               form.setFieldValue('files', []);
+              form.setFieldValue('cvTaskType', undefined);
               form.setFieldValue('annotationFormat', undefined);
               if (value === 'MULTIMODAL') {
                 form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
@@ -464,13 +484,22 @@ const DatasetUpload: React.FC = () => {
               </Select>
             </Form.Item>
             {sampleGrouping === 'MANIFEST' && (
-              <Form.Item
-                name="manifestPath"
-                label="Manifest 路径"
-                extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
-              >
-                <Input placeholder="例如 metadata/manifest.json" />
-              </Form.Item>
+              <>
+                <Form.Item
+                  name="manifestPath"
+                  label="Manifest 路径"
+                  extra="zip 内 manifest 相对路径，留空则默认 manifest.json"
+                >
+                  <Input placeholder="例如 metadata/manifest.json" />
+                </Form.Item>
+                <Form.Item
+                  name="strictManifest"
+                  valuePropName="checked"
+                  extra="开启后，zip 内未被 manifest 声明的普通文件会导致导入失败"
+                >
+                  <Checkbox>严格 Manifest（strictManifest）</Checkbox>
+                </Form.Item>
+              </>
             )}
             {sampleGrouping === 'AUTO_DIRECTORY' && (
               <Alert
@@ -491,25 +520,59 @@ const DatasetUpload: React.FC = () => {
           </>
         )}
         {datasetType === 'CV' && (
-          <Form.Item
-            name="annotationFormat"
-            label="标注格式"
-            extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
-          >
-            <Select allowClear placeholder="请选择标注格式">
-              <Select.Option value="NONE">NONE（仅图片）</Select.Option>
-              <Select.Option value="FOLDER_CLASSIFICATION">
-                FOLDER_CLASSIFICATION
-              </Select.Option>
-              <Select.Option value="YOLO">YOLO</Select.Option>
-              <Select.Option value="COCO">COCO</Select.Option>
-              <Select.Option value="VOC">VOC</Select.Option>
-              <Select.Option value="CSV">CSV</Select.Option>
-              <Select.Option value="MASK">MASK</Select.Option>
-              <Select.Option value="LABELME">LABELME</Select.Option>
-              <Select.Option value="OTHER">OTHER</Select.Option>
-            </Select>
-          </Form.Item>
+          <>
+            <Form.Item
+              name="cvTaskType"
+              label="CV 子任务类型"
+              extra="不选时后端默认 UNLABELED；YOLO 目标检测训练须选「目标检测」"
+            >
+              <Select allowClear placeholder="请选择 CV 子任务">
+                <Select.Option value="IMAGE_CLASSIFICATION">
+                  图像分类
+                </Select.Option>
+                <Select.Option value="OBJECT_DETECTION">目标检测</Select.Option>
+                <Select.Option value="SEMANTIC_SEGMENTATION">
+                  语义分割
+                </Select.Option>
+                <Select.Option value="INSTANCE_SEGMENTATION">
+                  实例分割
+                </Select.Option>
+                <Select.Option value="UNLABELED">未标注</Select.Option>
+                <Select.Option value="OTHER">其它</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="annotationFormat"
+              label="标注格式"
+              extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
+            >
+              <Select
+                allowClear
+                placeholder="请选择标注格式"
+                onChange={(value) => {
+                  if (value === 'YOLO') {
+                    form.setFieldValue('cvTaskType', 'OBJECT_DETECTION');
+                  } else if (value === 'FOLDER_CLASSIFICATION') {
+                    form.setFieldValue('cvTaskType', 'IMAGE_CLASSIFICATION');
+                  } else if (value === 'NONE') {
+                    form.setFieldValue('cvTaskType', 'UNLABELED');
+                  }
+                }}
+              >
+                <Select.Option value="NONE">NONE（仅图片）</Select.Option>
+                <Select.Option value="FOLDER_CLASSIFICATION">
+                  FOLDER_CLASSIFICATION
+                </Select.Option>
+                <Select.Option value="YOLO">YOLO</Select.Option>
+                <Select.Option value="COCO">COCO</Select.Option>
+                <Select.Option value="VOC">VOC</Select.Option>
+                <Select.Option value="CSV">CSV</Select.Option>
+                <Select.Option value="MASK">MASK</Select.Option>
+                <Select.Option value="LABELME">LABELME</Select.Option>
+                <Select.Option value="OTHER">OTHER</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
         )}
         <Form.Item
           name="remark"
