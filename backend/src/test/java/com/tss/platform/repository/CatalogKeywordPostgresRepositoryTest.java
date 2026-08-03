@@ -9,6 +9,8 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.tss.platform.config.AuditSchemaInitializer;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -36,7 +38,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.jpa.show-sql=false",
         "spring.jpa.properties.hibernate.show_sql=false",
-        "logging.level.org.hibernate.SQL=OFF"
+        "logging.level.org.hibernate.SQL=OFF",
+        "spring.sql.init.mode=never"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class CatalogKeywordPostgresRepositoryTest {
@@ -57,6 +60,9 @@ class CatalogKeywordPostgresRepositoryTest {
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
+
+    @MockBean
+    private AuditSchemaInitializer auditSchemaInitializer;
 
     @Autowired
     private ModelAssetRepository modelAssetRepo;
