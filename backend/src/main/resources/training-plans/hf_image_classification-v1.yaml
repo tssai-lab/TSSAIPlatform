@@ -106,7 +106,7 @@ parameters:
 runtimes:
   - id: cv-cu
     deviceType: CPU
-    image: tss-cv-worker:local
+    image: ghcr.io/tssai-lab/tss-cv-worker:latest
     imagePullPolicy: IfNotPresent
     productionDigestRequired: false
     resourceProfiles:

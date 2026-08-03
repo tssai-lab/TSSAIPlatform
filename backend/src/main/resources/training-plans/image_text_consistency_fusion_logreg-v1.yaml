@@ -54,7 +54,7 @@ parameters:
 runtimes:
   - id: nlp-cpu
     deviceType: CPU
-    image: tss-nlp-worker:local
+    image: ghcr.io/tssai-lab/tss-nlp-worker:latest
     imagePullPolicy: IfNotPresent
     productionDigestRequired: true
     resourceProfiles:
