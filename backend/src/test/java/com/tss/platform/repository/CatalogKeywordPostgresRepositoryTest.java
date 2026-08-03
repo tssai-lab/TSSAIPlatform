@@ -9,7 +9,6 @@ import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -260,7 +259,6 @@ class CatalogKeywordPostgresRepositoryTest {
     }
 
     @SpringBootConfiguration
-    @EnableAutoConfiguration
     @EntityScan(basePackageClasses = {
             ModelAsset.class,
             ModelVersion.class,
