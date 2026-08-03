@@ -63,7 +63,7 @@ class SystemConfigServiceTest {
                 .thenReturn(Optional.of(config));
 
         SystemConfigDto updated = service.updateForAdministration(
-                new SystemConfigUpdateRequest("direct_pass")
+                new SystemConfigUpdateRequest("direct_pass", null)
         );
 
         assertEquals(TrainingCodeReviewMode.DIRECT_PASS.name(),
@@ -79,7 +79,7 @@ class SystemConfigServiceTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> service.updateForAdministration(
-                        new SystemConfigUpdateRequest("SHADOW")
+                        new SystemConfigUpdateRequest("SHADOW", null)
                 )
         );
         verify(repository, never()).saveAndFlush(any());

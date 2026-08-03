@@ -2,12 +2,17 @@ package com.tss.platform.module1.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.tss.platform.module1.common.AuditActionType;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.common.AuditResult;
 import com.tss.platform.module1.common.Result;
 import com.tss.platform.module1.dto.*;
 import com.tss.platform.module1.entity.OperationLog;
 import com.tss.platform.module1.entity.User;
+import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
+import com.tss.platform.module1.util.ClientIpUtil;
 import com.tss.platform.module1.util.SmsCodeUtil;
 import com.tss.platform.module1.util.DesensitizationUtil;
 import jakarta.annotation.Resource;
@@ -37,6 +42,9 @@ public class UserController {
 
     @Resource
     private OperationLogService operationLogService;
+
+    @Resource
+    private AuditRecordService auditRecordService;
 
     /** 开发环境将验证码写入日志并在接口中返回（生产环境请设为 false） */
     @Value("${sms.expose-code:true}")
@@ -206,18 +214,45 @@ public class UserController {
                 opLog.setStatus("SUCCESS");
                 operationLogService.recordLog(opLog);
                 SYSTEM_LOG.info("管理员切换用户状态成功: userId={}", userId);
+                auditRecordService.recordSuccess(
+                        AuditActionType.PERMISSION_CHANGE,
+                        AuditObjectType.USER,
+                        String.valueOf(userId),
+                        Boolean.TRUE.equals(status) ? "USER_ENABLE" : "USER_DISABLE"
+                );
                 return Result.success(null, "状态更新成功");
             } else {
                 opLog.setStatus("FAIL");
                 operationLogService.recordLog(opLog);
+                auditRecordService.recordFailed(
+                        AuditActionType.PERMISSION_CHANGE,
+                        AuditObjectType.USER,
+                        String.valueOf(userId),
+                        "状态更新失败",
+                        "USER_STATUS_CHANGE"
+                );
                 return Result.fail("状态更新失败");
             }
         } catch (IllegalArgumentException e) {
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    e.getMessage(),
+                    "USER_STATUS_CHANGE"
+            );
             return Result.fail(e.getMessage());
         } catch (Exception e) {
             opLog.setStatus("FAIL");
             operationLogService.recordLog(opLog);
             SYSTEM_LOG.error("管理员切换用户状态异常: userId={}, error={}", userId, e.getMessage());
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    "状态更新失败",
+                    "USER_STATUS_CHANGE"
+            );
             return Result.fail("状态更新失败: " + e.getMessage());
         }
     }
@@ -240,17 +275,25 @@ public class UserController {
                 opLog.setStatus("SUCCESS");
                 operationLogService.recordLog(opLog);
                 SYSTEM_LOG.info("管理员删除用户成功: userId={}", userId);
+                auditRecordService.recordSuccess(
+                        AuditActionType.DELETE, AuditObjectType.USER, String.valueOf(userId), "USER_DELETE");
                 return Result.success(null, "删除成功");
             } else {
                 opLog.setStatus("FAIL");
                 operationLogService.recordLog(opLog);
                 SYSTEM_LOG.error("管理员删除用户失败: userId={}", userId);
+                auditRecordService.recordFailed(
+                        AuditActionType.DELETE, AuditObjectType.USER, String.valueOf(userId),
+                        "删除失败", "USER_DELETE");
                 return Result.fail("删除失败");
             }
         } catch (Exception e) {
             opLog.setStatus("FAIL");
             operationLogService.recordLog(opLog);
             SYSTEM_LOG.error("管理员删除用户异常: userId={}, error={}", userId, e.getMessage());
+            auditRecordService.recordFailed(
+                    AuditActionType.DELETE, AuditObjectType.USER, String.valueOf(userId),
+                    e.getMessage(), "USER_DELETE");
             return Result.fail("删除失败: " + e.getMessage());
         }
     }
@@ -331,7 +374,7 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public Result<Map<String, Object>> login(@RequestBody LoginDTO dto) {
+    public Result<Map<String, Object>> login(@RequestBody LoginDTO dto, HttpServletRequest request) {
         if ("account".equals(dto.getType())) {
             USER_LOG.info("登录请求: username={}", DesensitizationUtil.maskUsername(dto.getUsername()));
             SYSTEM_LOG.debug("登录请求入参: username={}", DesensitizationUtil.maskUsername(dto.getUsername()));
@@ -343,26 +386,88 @@ public class UserController {
             SYSTEM_LOG.debug("登录请求入参: type={}", dto.getType());
         }
 
+        String ip = ClientIpUtil.resolve(request);
+        String loginAccount = resolveLoginAccount(dto);
         try {
             Map<String, Object> data = userService.login(dto);
+            recordAuthLog(
+                    (Integer) data.get("userId"),
+                    (String) data.get("username"),
+                    ip,
+                    "5",
+                    "用户登录成功",
+                    true
+            );
+            auditRecordService.record(AuditRecordCommand.builder()
+                    .actionType(AuditActionType.LOGIN)
+                    .objectType(AuditObjectType.USER)
+                    .objectId(String.valueOf(data.get("userId")))
+                    .result(AuditResult.SUCCESS)
+                    .detail("LOGIN_SUCCESS")
+                    .ipAddress(ip)
+                    .build());
             return Result.success(data, "登录成功");
         } catch (IllegalArgumentException e) {
+            auditRecordService.record(AuditRecordCommand.builder()
+                    .actionType(AuditActionType.LOGIN)
+                    .objectType(AuditObjectType.USER)
+                    .result(AuditResult.FAILED)
+                    .failReason(e.getMessage())
+                    .detail("LOGIN_FAILED")
+                    .ipAddress(ip)
+                    .fallbackUsername(loginAccount)
+                    .build());
             return Result.fail(e.getMessage());
         } catch (Exception e) {
+            auditRecordService.record(AuditRecordCommand.builder()
+                    .actionType(AuditActionType.LOGIN)
+                    .objectType(AuditObjectType.USER)
+                    .result(AuditResult.FAILED)
+                    .failReason("登录失败")
+                    .detail("LOGIN_FAILED")
+                    .ipAddress(ip)
+                    .fallbackUsername(loginAccount)
+                    .build());
             return Result.fail("登录失败，请稍后重试");
         }
     }
 
     @PostMapping("/logout")
-    public Result<?> logout() {
+    public Result<?> logout(HttpServletRequest request) {
+        String ip = ClientIpUtil.resolve(request);
         try {
             if (StpUtil.isLogin()) {
+                Integer userId = StpUtil.getLoginIdAsInt();
+                String username = (String) StpUtil.getTokenSession().get("username");
+                recordAuthLog(userId, username, ip, "6", "用户退出登录", true);
+                // 退出记入 LOGIN 扩展详情，不新增一级类型
+                auditRecordService.record(AuditRecordCommand.builder()
+                        .actionType(AuditActionType.LOGIN)
+                        .objectType(AuditObjectType.USER)
+                        .objectId(String.valueOf(userId))
+                        .result(AuditResult.SUCCESS)
+                        .detail("LOGOUT")
+                        .ipAddress(ip)
+                        .build());
                 StpUtil.logout();
             }
         } catch (Exception e) {
             SYSTEM_LOG.warn("退出登录异常: {}", e.getMessage());
         }
         return Result.success("退出登录成功");
+    }
+
+    private void recordAuthLog(Integer userId, String username, String ip,
+                               String operationType, String remarks, boolean success) {
+        OperationLog opLog = new OperationLog();
+        opLog.setUserId(userId);
+        opLog.setUserName(username != null ? username : "unknown");
+        opLog.setOperationType(operationType);
+        opLog.setOperationObj("users");
+        opLog.setIpAddress(ip);
+        opLog.setRemarks(remarks);
+        opLog.setStatus(success ? "SUCCESS" : "FAIL");
+        operationLogService.recordLog(opLog);
     }
 
     /**
@@ -381,13 +486,43 @@ public class UserController {
         USER_LOG.info("超级管理员晋升普通管理员: targetUserId={}", userId);
         try {
             userService.promoteToNormalAdmin(userId);
+            auditRecordService.recordSuccess(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    "ROLE_CHANGE:promote_to_normal_admin"
+            );
             return Result.success(null, "已设为普通管理员");
         } catch (IllegalArgumentException e) {
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    e.getMessage(),
+                    "ROLE_CHANGE:promote_to_normal_admin"
+            );
             return Result.fail(e.getMessage());
         } catch (Exception e) {
             SYSTEM_LOG.error("晋升管理员异常: userId={}, error={}", userId, e.getMessage());
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    "操作失败",
+                    "ROLE_CHANGE:promote_to_normal_admin"
+            );
             return Result.fail("操作失败，请稍后重试");
         }
+    }
+
+    private String resolveLoginAccount(LoginDTO dto) {
+        if (dto == null) {
+            return null;
+        }
+        if ("mobile".equals(dto.getType())) {
+            return dto.getMobile();
+        }
+        return dto.getUsername();
     }
 
     @PostMapping("/forget/password")
@@ -441,16 +576,6 @@ public class UserController {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("X-Real-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        if (ip != null && ip.contains(",")) {
-            ip = ip.split(",")[0].trim();
-        }
-        return ip;
+        return ClientIpUtil.resolve(request);
     }
 }

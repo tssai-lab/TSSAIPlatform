@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.ModelCodeFileDto;
 import com.tss.platform.dto.ModelCodePreviewDto;
@@ -26,6 +29,9 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/model")
 public class ModelController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final ModelAssetRepository modelAssetRepo;
     private final ModelVersionRepository modelVersionRepo;
@@ -180,8 +186,11 @@ public class ModelController {
     @DeleteMapping("/delete")
     public ApiResponse<Map<String, Object>> delete(@RequestParam String id) {
         try {
-            return ApiResponse.ok(lifecycleService.deleteVersion(id));
+            var __auditData = lifecycleService.deleteVersion(id);
+            auditHooks.delete(AuditObjectType.MODEL, id, "MODEL_DELETE", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (IllegalArgumentException exception) {
+            auditHooks.delete(AuditObjectType.MODEL, id, "MODEL_DELETE", false, exception.getMessage());
             return ApiResponse.fail(exception.getMessage());
         }
     }

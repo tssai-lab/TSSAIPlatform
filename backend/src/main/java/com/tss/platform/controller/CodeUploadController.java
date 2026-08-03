@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CodeUploadResultDto;
 import com.tss.platform.service.CodeUploadService;
@@ -13,6 +16,9 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/code/upload")
 public class CodeUploadController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final CodeUploadService service;
 
@@ -29,8 +35,13 @@ public class CodeUploadController {
             @RequestParam(required = false) String remark
     ) {
         try {
-            return ApiResponse.ok(service.upload(file, codeName, version, trainingProfile, remark));
+            var __auditData = service.upload(file, codeName, version, trainingProfile, remark);
+            auditHooks.upload(AuditObjectType.TRAINING_CODE,
+                    __auditData != null ? String.valueOf(__auditData) : codeName,
+                    "CODE_UPLOAD", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (RuntimeException exception) {
+            auditHooks.upload(AuditObjectType.TRAINING_CODE, codeName, "CODE_UPLOAD", false, "代码资产导入失败");
             return ApiResponse.fail("代码资产导入失败");
         }
     }

@@ -58,7 +58,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        if (isAdminOnlyPath(requestUri) && !isAdmin()) {
+        if (isAdminOnlyPath(requestUri, request) && !isAdmin()) {
             SYSTEM_LOG.warn("权限验证失败，非管理员: uri={}", requestUri);
             writeResult(response, HttpServletResponse.SC_FORBIDDEN, Result.noAuth("无权限访问，仅管理员可操作"));
             return false;
@@ -81,7 +81,11 @@ public class PermissionInterceptor implements HandlerInterceptor {
         return PUBLIC_PATHS.stream().anyMatch(requestUri::startsWith);
     }
 
-    private boolean isAdminOnlyPath(String requestUri) {
+    private boolean isAdminOnlyPath(String requestUri, HttpServletRequest request) {
+        // 日志查询/类型字典：登录用户均可访问，数据范围由 Controller 按 Token 裁剪（BUG-017/018）
+        if (isLogQueryAllowedForAllRoles(requestUri, request)) {
+            return false;
+        }
         if (!requestUri.startsWith("/api/user") &&
             !requestUri.startsWith("/api/log") &&
             !requestUri.startsWith("/api/role") &&
@@ -94,6 +98,24 @@ public class PermissionInterceptor implements HandlerInterceptor {
             return false;
         }
         return USER_SELF_PATHS.stream().noneMatch(requestUri::startsWith);
+    }
+
+    private boolean isLogQueryAllowedForAllRoles(String requestUri, HttpServletRequest request) {
+        if ("POST".equalsIgnoreCase(request.getMethod()) && requestUri.startsWith("/api/log/query")) {
+            return true;
+        }
+        if ("GET".equalsIgnoreCase(request.getMethod()) && (
+                requestUri.startsWith("/api/log/types")
+                        || requestUri.startsWith("/api/system/log/types")
+                        || requestUri.startsWith("/api/system/log/objects"))) {
+            return true;
+        }
+        // 个人中心「我的操作记录」：GET /api/system/log/list + currentUsername=本人
+        // 以及普通用户不带 currentUsername 时由 Controller 强制本人范围，故 list 对登录用户开放
+        if ("GET".equalsIgnoreCase(request.getMethod()) && requestUri.startsWith("/api/system/log/list")) {
+            return true;
+        }
+        return false;
     }
 
     private boolean isAdmin() {

@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.DatasetUploadCompleteRequest;
 import com.tss.platform.dto.DatasetUploadInitRequest;
@@ -17,6 +20,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/dataset/upload")
 public class DatasetUploadController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final DatasetUploadService service;
 
@@ -60,10 +66,15 @@ public class DatasetUploadController {
     @PostMapping("/complete")
     public ApiResponse<Map<String, Object>> complete(@RequestBody DatasetUploadCompleteRequest req) {
         try {
-            return ApiResponse.ok(service.complete(req));
+            var __auditData = service.complete(req);
+            Object oid = __auditData != null ? __auditData.getOrDefault("assetId", __auditData.get("id")) : null;
+            auditHooks.upload(AuditObjectType.DATASET, oid != null ? String.valueOf(oid) : null, "DATASET_UPLOAD", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            auditHooks.upload(AuditObjectType.DATASET, null, "DATASET_UPLOAD", false, exception.getMessage());
             throw exception;
         } catch (IllegalArgumentException e) {
+            auditHooks.upload(AuditObjectType.DATASET, null, "DATASET_UPLOAD", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }

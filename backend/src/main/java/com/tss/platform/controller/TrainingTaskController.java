@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CreateTrainingExperimentRequest;
 import com.tss.platform.dto.TrainingExperimentVersionDto;
@@ -14,6 +17,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/task")
 public class TrainingTaskController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final TrainingExperimentService service;
 
@@ -24,8 +30,12 @@ public class TrainingTaskController {
     @PostMapping("/create")
     public ApiResponse<TrainingExperimentVersionDto> create(@RequestBody CreateTrainingExperimentRequest req) {
         try {
-            return ApiResponse.ok(service.createExperiment(req));
+            var __auditData = service.createExperiment(req);
+            String oid = __auditData != null && __auditData.getId() != null ? String.valueOf(__auditData.getId()) : null;
+            auditHooks.train(oid, "TRAIN_CREATE", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (IllegalArgumentException e) {
+            auditHooks.train(null, "TRAIN_CREATE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }
@@ -51,8 +61,11 @@ public class TrainingTaskController {
     @PostMapping("/stop")
     public ApiResponse<TrainingExperimentVersionDto> stop(@RequestParam String id) {
         try {
-            return ApiResponse.ok(service.stopTraining(id));
+            var __auditData = service.stopTraining(id);
+            auditHooks.train(id, "TRAIN_STOP", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (IllegalArgumentException e) {
+            auditHooks.train(id, "TRAIN_STOP", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }
