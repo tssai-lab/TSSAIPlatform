@@ -5,11 +5,13 @@ import type {
 } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import { message } from 'antd';
+import { Button, message } from 'antd';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  downloadLogListAsCsv,
+  exportSystemLogs,
   getLogList,
   getOperationTypeValueEnum,
   type LogItem,
@@ -19,17 +21,20 @@ import { notifyRequestError } from '../notifyRequestError';
 
 /**
  * 日志管理页（操作日志）
- * 数据范围由后端按角色控制；筛选条件全部进 Body
- * 超管可展示 IP 列；普管可不展示（后端也可不返回 IP）
+ * GET /api/system/log/list；不传 currentUsername（超管/普管看全部）
+ * IP 列仅超管展示；导出 GET /api/system/log/export（仅超管）
  */
 const LogManagement: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType>(null);
+  const lastQueryRef = useRef<LogListParams>({ pageNum: 1, pageSize: 10 });
   const [operateTypeEnum, setOperateTypeEnum] = useState<
     Record<string, { text: string }>
   >({});
+  const [exporting, setExporting] = useState(false);
 
   const isSuperAdmin = access.canLogViewAdminAndIp;
+  const canExport = access.canLogExport;
 
   useEffect(() => {
     if (!access.canAccessSystemLog) {
@@ -85,21 +90,23 @@ const LogManagement: React.FC = () => {
         operateTime[1]
       ) {
         operateTimeRange = [
-          dayjs(operateTime[0]).format('YYYY-MM-DDTHH:mm:ss'),
-          dayjs(operateTime[1]).format('YYYY-MM-DDTHH:mm:ss'),
+          dayjs(operateTime[0]).format('YYYY-MM-DD HH:mm:ss'),
+          dayjs(operateTime[1]).format('YYYY-MM-DD HH:mm:ss'),
         ];
       }
 
+      // 管理端：不要传 currentUsername；普管不传 ip
       const requestParams: LogListParams = {
         pageNum: current,
         pageSize,
         username: username ?? '',
         operateType: operateType ?? '',
         operateTime: operateTimeRange,
-        ip: ip ?? '',
+        ip: isSuperAdmin ? (ip ?? '') : '',
         result: result ?? '',
         content: content ?? '',
       };
+      lastQueryRef.current = requestParams;
 
       const response = await getLogList(requestParams);
 
@@ -142,6 +149,7 @@ const LogManagement: React.FC = () => {
         placeholder: '请输入操作人',
         onPressEnter: () => actionRef.current?.reload(),
       },
+      render: (_, record) => record.username || '-',
     },
     {
       title: '操作类型',
@@ -151,6 +159,18 @@ const LogManagement: React.FC = () => {
       valueType: 'select',
       valueEnum: operateTypeEnum,
       fieldProps: { placeholder: '请选择操作类型', allowClear: true },
+      render: (_, record) => record.operateType || '-',
+    },
+    {
+      title: '操作时间',
+      dataIndex: 'operateTime',
+      key: 'operateTime',
+      align: 'center',
+      valueType: 'dateTimeRange',
+      search: {
+        transform: (value: [string, string]) => ({ operateTime: value }),
+      },
+      render: (_, record) => record.operateTime || '-',
     },
     ...(isSuperAdmin
       ? [
@@ -163,20 +183,10 @@ const LogManagement: React.FC = () => {
               placeholder: '请输入IP地址',
               onPressEnter: () => actionRef.current?.reload(),
             },
+            render: (_: unknown, record: LogItem) => record.ip || '-',
           } as ProColumns<LogItem>,
         ]
       : []),
-    {
-      title: '操作时间',
-      dataIndex: 'operateTime',
-      key: 'operateTime',
-      align: 'center',
-      valueType: 'dateTimeRange',
-      search: {
-        transform: (value: [string, string]) => ({ operateTime: value }),
-      },
-      render: (_, record) => record.operateTime || '-',
-    },
     {
       title: '操作内容',
       dataIndex: 'content',
@@ -185,6 +195,7 @@ const LogManagement: React.FC = () => {
       ellipsis: true,
       hideInSearch: false,
       fieldProps: { placeholder: '操作内容关键词' },
+      render: (_, record) => record.content || '-',
     },
     {
       title: '结果',
@@ -200,8 +211,52 @@ const LogManagement: React.FC = () => {
     },
   ];
 
+  const handleExport = async () => {
+    if (!canExport) {
+      message.warning('暂无导出权限');
+      return;
+    }
+    setExporting(true);
+    try {
+      const response = await exportSystemLogs({
+        ...lastQueryRef.current,
+        pageNum: 1,
+        pageSize: 10000,
+      });
+      if (response.code !== 200) {
+        message.error(response.msg || '导出失败');
+        return;
+      }
+      const list = response.data?.list ?? [];
+      if (!list.length) {
+        message.warning('暂无数据可导出');
+        return;
+      }
+      downloadLogListAsCsv(list);
+      message.success(response.msg || `导出成功（共 ${list.length} 条）`);
+    } catch (error: unknown) {
+      notifyRequestError(error, '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
-    <PageContainer title="日志管理" subTitle="用户操作日志查询">
+    <PageContainer
+      title="日志管理"
+      subTitle="用户操作日志查询"
+      extra={
+        canExport ? (
+          <Button
+            type="primary"
+            loading={exporting}
+            onClick={() => void handleExport()}
+          >
+            导出日志
+          </Button>
+        ) : undefined
+      }
+    >
       <ProTable<LogItem>
         actionRef={actionRef}
         columns={columns}
