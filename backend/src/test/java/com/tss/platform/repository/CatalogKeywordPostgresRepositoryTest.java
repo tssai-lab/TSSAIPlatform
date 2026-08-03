@@ -11,6 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.tss.platform.config.AuditSchemaInitializer;
+import com.tss.platform.module1.service.AuditHooks;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +38,12 @@ class CatalogKeywordPostgresRepositoryTest {
 
     private static final int OWNER_ID = 61_001;
     private static final int OTHER_OWNER_ID = 61_002;
+
+    @MockBean
+    private AuditSchemaInitializer auditSchemaInitializer;
+
+    @MockBean
+    private AuditHooks auditHooks;
 
     @Autowired
     private ModelAssetRepository modelAssetRepo;
