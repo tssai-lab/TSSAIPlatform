@@ -64,9 +64,12 @@ export async function syncTrainingCodeReviewConfigFromServer(options?: {
       ...(options || {}),
     });
     if (res?.code === 200 && res.data) {
+      const enableAdminReview =
+        res.data.enableTrainingCodeAdminReview ??
+        String(res.data.trainingCodeReviewMode || '').toUpperCase() ===
+          'STANDARD_REVIEW';
       return setTrainingCodeReviewLocalConfig({
-        enableTrainingCodeAdminReview:
-          res.data.enableTrainingCodeAdminReview ?? false,
+        enableTrainingCodeAdminReview: enableAdminReview,
       });
     }
   } catch {
