@@ -92,7 +92,7 @@ function mapDatasetVersion(
 export type TaskType = 'CV' | 'NLP' | 'POINT_CLOUD';
 
 /** 数据集模块类型（含多模态、机器人预留） */
-export type DatasetType = TaskType | 'MULTIMODAL' | 'ROBOT';
+export type DatasetType = TaskType | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
 
 /** CV 子任务（module2-api-doc 1.3） */
 export type CvTaskType =
@@ -174,7 +174,7 @@ export type DatasetListItem = {
 
 /** GET /api/dataset/list 查询参数（module2-api-doc 7.1） */
 export type DatasetListQuery = {
-  type?: DatasetType | 'ROBOT';
+  type?: DatasetType;
   keyword?: string;
   current?: number;
   pageSize?: number;

@@ -1,3 +1,4 @@
+import { FileOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -11,10 +12,17 @@ import {
   Spin,
   Table,
   Tag,
+  Tree,
   Typography,
 } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   type DatasetPreviewContentData,
   type DatasetPreviewFileItem,
@@ -33,6 +41,7 @@ import {
   type MultimodalSampleDataItem,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import MarkdownPreview from './MarkdownPreview';
 import TableEllipsisCell from './TableEllipsisCell';
 
 const KIND_OPTIONS: { value: DatasetPreviewFileKind; label: string }[] = [
@@ -215,6 +224,10 @@ function isJsonlFile(file: DatasetPreviewFileItem): boolean {
   return extensionOfFile(file) === 'jsonl';
 }
 
+function isMarkdownFile(file: DatasetPreviewFileItem): boolean {
+  return extensionOfFile(file) === 'md';
+}
+
 function isForceTextPreviewFile(file: DatasetPreviewFileItem): boolean {
   const ext = extensionOfFile(file);
   return !!ext && FORCE_TEXT_PREVIEW_EXTS.has(ext);
@@ -385,12 +398,22 @@ export type DatasetPreviewPanelProps = {
    * 独立整包上传版本保持 false，直接扫该版本主包 ZIP。
    */
   samplesOnly?: boolean;
+  hierarchical?: boolean;
+};
+
+type FileTreeNode = {
+  key: string;
+  title: React.ReactNode;
+  children?: FileTreeNode[];
+  isLeaf?: boolean;
+  file?: DatasetPreviewFileItem;
 };
 
 const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   versionId,
   compact = false,
   samplesOnly = false,
+  hierarchical = false,
 }) => {
   const listScrollY = compact ? 320 : 480;
   const contentMaxHeight = compact ? '45vh' : '65vh';
@@ -619,20 +642,39 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
         return;
       }
 
+      const requestedPageSize = hierarchical ? 200 : filePageSize;
       const data = await fetchDatasetPreviewFiles(
         versionId,
         {
-          page: filePage,
-          pageSize: filePageSize,
+          page: hierarchical ? 1 : filePage,
+          pageSize: requestedPageSize,
           keyword: keyword.trim() || undefined,
           kind: kindFilter,
         },
         { skipErrorHandler: true, signal: controller.signal },
       );
       if (isStale()) return;
+      let nextFiles = data.files ?? [];
+      if (hierarchical && nextFiles.length < data.total) {
+        const pages = Math.ceil(data.total / requestedPageSize);
+        for (let page = 2; page <= pages; page += 1) {
+          const next = await fetchDatasetPreviewFiles(
+            versionId,
+            {
+              page,
+              pageSize: requestedPageSize,
+              keyword: keyword.trim() || undefined,
+              kind: kindFilter,
+            },
+            { skipErrorHandler: true, signal: controller.signal },
+          );
+          if (isStale()) return;
+          nextFiles = nextFiles.concat(next.files ?? []);
+        }
+      }
       setListSource('zip');
       setMeta(data);
-      setFiles(data.files ?? []);
+      setFiles(nextFiles);
       setFileTotal(data.total ?? 0);
     } catch (e: unknown) {
       if (isStale() || (e as Error)?.name === 'AbortError') return;
@@ -652,6 +694,7 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     filePageSize,
     keyword,
     kindFilter,
+    hierarchical,
     applySampleFiles,
   ]);
 
@@ -848,6 +891,64 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
     },
   ];
 
+  const fileTree = useMemo<FileTreeNode[]>(() => {
+    const roots: FileTreeNode[] = [];
+    const directories = new Map<string, FileTreeNode>();
+    for (const file of files) {
+      const path = (file.path || file.fileName).replace(/\\/g, '/');
+      const parts = path.split('/').filter(Boolean);
+      let children = roots;
+      let parentPath = '';
+      parts.forEach((part, index) => {
+        const nodePath = parentPath ? `${parentPath}/${part}` : part;
+        const leaf = index === parts.length - 1;
+        if (leaf) {
+          children.push({
+            key: `file:${nodePath}`,
+            isLeaf: true,
+            file,
+            title: (
+              <Space size={6}>
+                <FileOutlined />
+                <Typography.Text
+                  ellipsis={{ tooltip: nodePath }}
+                  style={{ maxWidth: 240 }}
+                >
+                  {part}
+                </Typography.Text>
+                <Tag color={KIND_COLORS[file.kind] ?? 'default'}>
+                  {file.kind}
+                </Tag>
+                <Typography.Text type="secondary">
+                  {formatBytes(file.sizeBytes)}
+                </Typography.Text>
+              </Space>
+            ),
+          });
+        } else {
+          let directory = directories.get(nodePath);
+          if (!directory) {
+            directory = {
+              key: `dir:${nodePath}`,
+              title: (
+                <Space size={6}>
+                  <FolderOpenOutlined />
+                  {part}
+                </Space>
+              ),
+              children: [],
+            };
+            directories.set(nodePath, directory);
+            children.push(directory);
+          }
+          children = directory.children as FileTreeNode[];
+        }
+        parentPath = nodePath;
+      });
+    }
+    return roots;
+  }, [files]);
+
   const csvColumns =
     contentData?.columns?.map((col, index) => ({
       title: col,
@@ -873,7 +974,15 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
   const textLineCount = countTextLines(contentData?.content);
   const textHasMoreRows = textLineCount >= contentPageSize;
   const showTextPreview =
-    !!selected && !!contentData && isTextContentPreview(selected, contentData);
+    !!selected &&
+    !!contentData &&
+    !isMarkdownFile(selected) &&
+    isTextContentPreview(selected, contentData);
+  const showMarkdownPreview =
+    !!selected &&
+    !!contentData &&
+    isMarkdownFile(selected) &&
+    contentData.content != null;
 
   const handleCsvTableChange = (pagination: TablePaginationConfig) => {
     void goToContentPage(
@@ -940,40 +1049,72 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
               共 {fileTotal} 项
             </Typography.Text>
           </Space>
-          <Table<DatasetPreviewFileItem>
-            size="small"
-            rowKey={(row) => row.path ?? row.fileName}
-            loading={filesLoading}
-            columns={fileColumns}
-            dataSource={files}
-            pagination={{
-              current: filePage,
-              pageSize: filePageSize,
-              total: fileTotal,
-              showSizeChanger: true,
-              pageSizeOptions: ['20', '50', '100', '200'],
-              onChange: (page, pageSize) => {
-                setFilePage(page);
-                setFilePageSize(pageSize);
-              },
-            }}
-            onRow={(record) => {
-              const key = record.path ?? record.fileName;
-              const selKey = selected?.path ?? selected?.fileName;
-              const active = key === selKey;
-              return {
-                onClick: () => {
-                  if (canPreviewFile(record)) openPreview(record);
+          {hierarchical && listSource === 'zip' ? (
+            <div
+              style={{
+                maxHeight: listScrollY,
+                overflow: 'auto',
+                border: '1px solid #f0f0f0',
+                padding: 8,
+              }}
+            >
+              <Spin spinning={filesLoading}>
+                {fileTree.length ? (
+                  <Tree<FileTreeNode>
+                    blockNode
+                    defaultExpandAll
+                    treeData={fileTree}
+                    selectedKeys={
+                      selected
+                        ? [`file:${selected.path || selected.fileName}`]
+                        : []
+                    }
+                    onSelect={(_, info) => {
+                      const file = info.node.file;
+                      if (file && canPreviewFile(file)) openPreview(file);
+                    }}
+                  />
+                ) : (
+                  <Empty description="暂无文件或当前筛选无结果" />
+                )}
+              </Spin>
+            </div>
+          ) : (
+            <Table<DatasetPreviewFileItem>
+              size="small"
+              rowKey={(row) => row.path ?? row.fileName}
+              loading={filesLoading}
+              columns={fileColumns}
+              dataSource={files}
+              pagination={{
+                current: filePage,
+                pageSize: filePageSize,
+                total: fileTotal,
+                showSizeChanger: true,
+                pageSizeOptions: ['20', '50', '100', '200'],
+                onChange: (page, pageSize) => {
+                  setFilePage(page);
+                  setFilePageSize(pageSize);
                 },
-                style: {
-                  cursor: canPreviewFile(record) ? 'pointer' : 'default',
-                  background: active ? '#e6f4ff' : undefined,
-                },
-              };
-            }}
-            locale={{ emptyText: '暂无文件或当前筛选无结果' }}
-            scroll={{ y: listScrollY }}
-          />
+              }}
+              onRow={(record) => {
+                const key = record.path ?? record.fileName;
+                const selKey = selected?.path ?? selected?.fileName;
+                const active = key === selKey;
+                return {
+                  onClick: () => {
+                    if (canPreviewFile(record)) openPreview(record);
+                  },
+                  style: {
+                    cursor: canPreviewFile(record) ? 'pointer' : 'default',
+                    background: active ? '#e6f4ff' : undefined,
+                  },
+                };
+              }}
+              locale={{ emptyText: '暂无文件或当前筛选无结果' }}
+              scroll={{ y: listScrollY }}
+            />
+          )}
         </Col>
 
         <Col xs={24} lg={14}>
@@ -1012,6 +1153,28 @@ const DatasetPreviewPanel: React.FC<DatasetPreviewPanelProps> = ({
                   style={{ maxWidth: '100%' }}
                 />
               </div>
+            )}
+          {selected &&
+            !previewLoading &&
+            !previewError &&
+            contentData &&
+            showMarkdownPreview && (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {contentData.truncated && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="内容已截断，仅渲染允许读取的最大范围"
+                  />
+                )}
+                {contentData.message && (
+                  <Alert type="info" showIcon message={contentData.message} />
+                )}
+                <MarkdownPreview
+                  content={contentData.content ?? ''}
+                  maxHeight={contentMaxHeight}
+                />
+              </Space>
             )}
           {selected &&
             !previewLoading &&

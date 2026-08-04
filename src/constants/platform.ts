@@ -102,6 +102,7 @@ export const DATASET_TYPES = {
   NLP: { label: 'NLP（自然语言处理）', value: 'NLP', color: '#52c41a' },
   POINT_CLOUD: { label: '点云', value: 'POINT_CLOUD', color: '#722ed1' },
   MULTIMODAL: { label: '多模态', value: 'MULTIMODAL', color: '#eb2f96' },
+  LEROBOT: { label: 'LeRobot', value: 'LEROBOT', color: '#1677ff' },
 } as const;
 
 /** 任务状态 */

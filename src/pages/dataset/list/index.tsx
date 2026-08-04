@@ -187,6 +187,7 @@ const DatasetList: React.FC = () => {
         POINT_CLOUD: { text: '点云' },
         MULTIMODAL: { text: '多模态' },
         ROBOT: { text: '机器人' },
+        LEROBOT: { text: 'LeRobot' },
       },
       sorter: true,
     },

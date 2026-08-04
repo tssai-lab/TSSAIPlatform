@@ -46,7 +46,7 @@ export type DatasetPreviewFilesQuery = {
 
 export type DatasetPreviewFilesData = {
   datasetVersionId: string;
-  type: Extract<TaskType, 'CV' | 'NLP'> | 'CV' | 'NLP';
+  type: Extract<TaskType, 'CV' | 'NLP' | 'LEROBOT'> | 'CV' | 'NLP' | 'LEROBOT';
   fileName: string;
   sourceArchive?: boolean;
   page: number;
@@ -61,6 +61,7 @@ export type DatasetPreviewContentType =
   | 'JSONL'
   | 'JSON'
   | 'XML'
+  | 'MARKDOWN'
   | string;
 
 export type DatasetPreviewContentData = {

@@ -123,7 +123,7 @@ declare namespace API {
     id: string;
     assetId?: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
     uploadTime?: string;
     size?: string;
     fileCount?: number | null;
@@ -280,7 +280,7 @@ declare namespace API {
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;

@@ -75,6 +75,12 @@ export default [
         component: './dataset/preview/[versionId]',
         hideInMenu: true,
       },
+      {
+        path: '/dataset/lerobot-timeline/:versionId',
+        name: 'LeRobot 时序预览',
+        component: './dataset/lerobot-timeline/[versionId]',
+        hideInMenu: true,
+      },
     ],
   },
   {
