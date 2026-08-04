@@ -116,6 +116,7 @@ public class SingleModalImportPlanBuilder {
             case "NLP" -> describeTextLikeFile(extension, path);
             case "POINT_CLOUD" -> describePointCloudFile(extension, path);
             case "ROBOT" -> describeRobotFile(extension, path);
+            case "LEROBOT" -> describeLeRobotFile(extension, path);
             default -> throw new IllegalArgumentException(
                     "single-modal import plan does not support task type: " + taskType
             );
@@ -166,6 +167,26 @@ public class SingleModalImportPlanBuilder {
         };
     }
 
+    private static FileDescriptor describeLeRobotFile(String extension, String path) {
+        return switch (extension) {
+            case "mp4" -> new FileDescriptor("VIDEO", extension, "video/mp4");
+            case "mkv" -> new FileDescriptor("VIDEO", extension, "video/x-matroska");
+            case "parquet" -> new FileDescriptor(
+                    "OTHER",
+                    extension,
+                    "application/vnd.apache.parquet"
+            );
+            case "json", "jsonl", "txt", "md" -> describeTextLikeFile(extension, path);
+            case "", "gitattributes" -> {
+                if (".gitattributes".equals(fileName(path).toLowerCase(Locale.ROOT))) {
+                    yield new FileDescriptor("OTHER", "gitattributes", "text/plain");
+                }
+                yield unsupported(extension, path);
+            }
+            default -> unsupported(extension, path);
+        };
+    }
+
     private static FileDescriptor describeTextLikeFile(
             String extension,
             String path
@@ -193,6 +214,7 @@ public class SingleModalImportPlanBuilder {
             case "xml" -> new FileDescriptor("TEXT", extension, "application/xml");
             case "yaml", "yml" ->
                     new FileDescriptor("TEXT", extension, "application/yaml");
+            case "md" -> new FileDescriptor("TEXT", extension, "text/markdown");
             default -> unsupported(extension, path);
         };
     }

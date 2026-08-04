@@ -228,6 +228,7 @@ __marimo__/
 .env.production
 .env.local
 .env.*.local
+/backend/src/main/resources/config/application.properties
 
 # --- 后端顶层运行时/遗留产物 ---
 /backend.log

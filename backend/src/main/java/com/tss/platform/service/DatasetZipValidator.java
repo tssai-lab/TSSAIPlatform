@@ -53,6 +53,12 @@ final class DatasetZipValidator {
     private static final Set<String> ROBOT_ZIP_ALLOWED_EXTENSIONS = Set.of(
             ".xml", ".yaml", ".yml", ".json", ".txt"
     );
+    private static final Set<String> LEROBOT_ZIP_ALLOWED_EXTENSIONS = Set.of(
+            ".json", ".jsonl", ".parquet", ".mp4", ".mkv", ".txt", ".md"
+    );
+    private static final Set<String> LEROBOT_REPOSITORY_METADATA_FILES = Set.of(
+            ".gitattributes"
+    );
     private static final Set<String> YOLO_METADATA_FILES = Set.of(
             "classes.txt", "train.txt", "val.txt", "test.txt"
     );
@@ -182,6 +188,12 @@ final class DatasetZipValidator {
             }
             return;
         }
+        if ("LEROBOT".equals(taskType)) {
+            if (!lower.endsWith(".zip")) {
+                throw new IllegalArgumentException("LEROBOT dataset only supports a LeRobot v2.1 or v3 zip archive");
+            }
+            return;
+        }
         if ("MULTIMODAL".equals(taskType) && !lower.endsWith(".zip")) {
             throw new IllegalArgumentException("MULTIMODAL 数据集仅支持 zip 压缩包");
         }
@@ -204,6 +216,10 @@ final class DatasetZipValidator {
         boolean foundCvImage = false;
         boolean foundCvAnnotation = false;
         boolean foundPointCloud = false;
+        boolean foundLeRobotInfo = false;
+        boolean foundLeRobotEpisodes = false;
+        boolean foundLeRobotData = false;
+        boolean foundLeRobotVideo = false;
         int entries = 0;
         long files = 0;
         long totalUncompressedBytes = 0;
@@ -290,6 +306,24 @@ final class DatasetZipValidator {
                             );
                         }
                         found = true;
+                    } else if ("LEROBOT".equals(taskType)) {
+                        String path = leRobotDatasetPath(canonicalPath).toLowerCase(Locale.ROOT);
+                        if (!LEROBOT_ZIP_ALLOWED_EXTENSIONS.contains(ext)
+                                && !isLeRobotRepositoryMetadata(path)) {
+                            throw new IllegalArgumentException(
+                                    "LEROBOT zip contains an unsupported file: " + entryName
+                            );
+                        }
+                        foundLeRobotInfo = foundLeRobotInfo || "meta/info.json".equals(path);
+                        foundLeRobotEpisodes = foundLeRobotEpisodes
+                                || "meta/episodes.jsonl".equals(path)
+                                || (path.startsWith("meta/episodes/") && path.endsWith(".parquet"));
+                        foundLeRobotData = foundLeRobotData
+                                || (path.startsWith("data/") && path.endsWith(".parquet"));
+                        foundLeRobotVideo = foundLeRobotVideo
+                                || (path.startsWith("videos/")
+                                && (path.endsWith(".mp4") || path.endsWith(".mkv")));
+                        found = true;
                     } else {
                         throw new IllegalArgumentException(taskType + " zip dataset format is not supported");
                     }
@@ -360,6 +394,12 @@ final class DatasetZipValidator {
         if ("POINT_CLOUD".equals(taskType) && !foundPointCloud) {
             throw new IllegalArgumentException("POINT_CLOUD zip dataset must contain .ply or .pcd files");
         }
+        if ("LEROBOT".equals(taskType)
+                && (!foundLeRobotInfo || !foundLeRobotEpisodes || !foundLeRobotData || !foundLeRobotVideo)) {
+            throw new IllegalArgumentException(
+                    "LEROBOT zip must contain meta/info.json, episode metadata, data/*.parquet, and videos/*.mp4 or videos/*.mkv"
+            );
+        }
         if (!found) {
             if ("CV".equals(taskType)) {
                 throw new IllegalArgumentException("CV zip 数据集必须包含图片文件");
@@ -373,6 +413,9 @@ final class DatasetZipValidator {
                 throw new IllegalArgumentException(
                         "ROBOT zip dataset must contain .xml, .yaml, .yml, .json, or .txt files"
                 );
+            }
+            if ("LEROBOT".equals(taskType)) {
+                throw new IllegalArgumentException("LEROBOT zip does not contain supported LeRobot dataset files");
             }
         }
         return files;
@@ -779,6 +822,35 @@ final class DatasetZipValidator {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
         return normalized;
+    }
+
+    private static String leRobotDatasetPath(String path) {
+        String normalized = canonicalEntryPath(path);
+        if (isLeRobotDatasetPath(normalized)) {
+            return normalized;
+        }
+        int slash = normalized.indexOf('/');
+        if (slash > 0) {
+            String withoutRootDirectory = normalized.substring(slash + 1);
+            if (isLeRobotDatasetPath(withoutRootDirectory)
+                    || isLeRobotRepositoryMetadata(withoutRootDirectory)) {
+                return withoutRootDirectory;
+            }
+        }
+        return normalized;
+    }
+
+    private static boolean isLeRobotDatasetPath(String path) {
+        String lower = path.toLowerCase(Locale.ROOT);
+        return lower.startsWith("meta/")
+                || lower.startsWith("data/")
+                || lower.startsWith("videos/");
+    }
+
+    private static boolean isLeRobotRepositoryMetadata(String path) {
+        String normalized = path.toLowerCase(Locale.ROOT);
+        return !normalized.contains("/")
+                && LEROBOT_REPOSITORY_METADATA_FILES.contains(normalized);
     }
 
     private static String normalizedFileName(String fileName) {
