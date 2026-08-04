@@ -810,10 +810,14 @@ public class TrainingExperimentService {
                 Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
                 String assignedNode = jobScheduler.assignNodeForTraining(task, nodeSelector);
                 if (assignedNode != null && !assignedNode.isBlank()) {
-                    LOG.info("bindTask will execute, assignedNode={}", assignedNode);
-                    jobScheduler.bindTask(task, assignedNode);
-                    LOG.info("bindTask done inside tx, assignedNode={}", assignedNode);
-                    return assignedNode;
+                    boolean bindOk = jobScheduler.bindTask(task.getId(), assignedNode);
+                    if (bindOk) {
+                        LOG.info("bindTask ok, assignedNode={}", assignedNode);
+                        return assignedNode;
+                    }
+                    // 别的线程已抢先绑定，不要重复提交 K8s 任务
+                    LOG.info("scheduleOrStart: task already bound by another thread, skip start. taskId={}", trainingId);
+                    return null;
                 } else {
                     LOG.info("no available node, enqueueTask");
                     jobScheduler.enqueueTask(task);
@@ -825,15 +829,11 @@ public class TrainingExperimentService {
             }
         });
 
+        // 事务已提交、绑定已落库后再启动异步提交，避免异步线程读到未提交的 serverIp
         LOG.info("scheduleOrStart after tx commit, result={}", result);
         if (result != null) {
-            if ("__start__".equals(result)) {
-                LOG.info("trigger start: no plan");
-                trainingExecutorRouter.start(trainingId);
-            } else {
-                LOG.info("trigger start: node assigned={}", result);
-                trainingExecutorRouter.start(trainingId);
-            }
+            LOG.info("trigger start, result={}", result);
+            trainingExecutorRouter.start(trainingId);
         } else {
             LOG.info("result is null, skip start");
         }

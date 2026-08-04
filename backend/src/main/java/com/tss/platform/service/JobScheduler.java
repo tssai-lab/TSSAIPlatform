@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,18 +37,21 @@ public class JobScheduler {
     private final InferenceTaskRepository inferenceRepo;
     private final TrainingKubernetesProperties k8sProperties;
     private final TrainingExecutorRouter executorRouter;
+    private final TransactionTemplate transactionTemplate;
 
     public JobScheduler(
             ComputeServerRepository computeServerRepo,
             TrainingExperimentVersionRepository trainingRepo,
             InferenceTaskRepository inferenceRepo,
             TrainingKubernetesProperties k8sProperties,
-            @Lazy TrainingExecutorRouter executorRouter) {
+            @Lazy TrainingExecutorRouter executorRouter,
+            TransactionTemplate transactionTemplate) {
         this.computeServerRepo = computeServerRepo;
         this.trainingRepo = trainingRepo;
         this.inferenceRepo = inferenceRepo;
         this.k8sProperties = k8sProperties;
         this.executorRouter = executorRouter;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -61,14 +65,20 @@ public class JobScheduler {
     }
 
     /**
-     * 调度时将任务绑定到节点，状态变为 scheduled（已分配，等待启动）。
+     * 原子绑定任务到节点（状态变为 scheduled，已分配，等待启动）。
+     * 通过条件更新（server_ip IS NULL 且 status in pending/queued）保证只有一条路径能绑定成功，
+     * 防止 afterCommit 与调度循环并发时重复绑定 / 重复提交，从而避免 serverIp 被并发写覆盖丢失。
+     *
+     * @return true=本次调用绑定成功；false=已被其他线程抢先绑定或任务已不在可绑定状态
      */
-
-    public void bindTask(TrainingExperimentVersion task, String nodeName) {
-        task.setServerIp(nodeName);
-        task.setStatus("scheduled");
-        task.setUpdatedAt(java.time.Instant.now());
-        LOG.info("任务已绑定节点: taskId={}, node={}, status=scheduled", task.getId(), nodeName);
+    public boolean bindTask(String taskId, String nodeName) {
+        int updated = trainingRepo.atomicBindNode(taskId, nodeName, java.time.Instant.now());
+        if (updated > 0) {
+            LOG.info("任务已绑定节点: taskId={}, node={}, status=scheduled", taskId, nodeName);
+            return true;
+        }
+        LOG.info("任务绑定被其他线程抢占: taskId={}, node={}", taskId, nodeName);
+        return false;
     }
 
     /**
@@ -91,47 +101,55 @@ public class JobScheduler {
 
     /**
      * 定时调度：每 10 秒执行两阶段调度。
-     * Phase 1 — queued → scheduled：为排队任务分配节点。
-     * Phase 2 — scheduled → running：将已分配节点的任务提交 K8s 执行。
+     * Phase 1 — pending/queued（无节点）→ scheduled（已分配节点）：事务内悲观锁 + 原子绑定。
+     * Phase 2 — scheduled → 提交 K8s 执行（崩溃兜底重提）。
+     * 绑定必须在事务提交后再启动异步提交，否则异步线程会读到未提交的绑定导致 serverIp 丢失。
      */
     @Scheduled(fixedDelay = 10_000)
     public void dispatchQueuedTasks() {
-        // Phase 0：兜底，把因重启丢失 afterCommit 回调的 pending 任务捞回队列
-        List<TrainingExperimentVersion> stranded = trainingRepo
-                .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("pending");
-        for (TrainingExperimentVersion task : stranded) {
-            if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
-                enqueueTask(task);
-            }
-        }
-
-        // Phase 1：queued（无节点）→ scheduled（已分配节点）
-        List<TrainingExperimentVersion> queued = trainingRepo
-                .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("queued");
-
-        for (TrainingExperimentVersion task : queued) {
-            try {
-                Map<String, String> nodeSelector = resolveNodeSelector(task);
-                double[] req = resolveResourceRequest(task);
-                Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
-                String node = assignNode(nodeSelector, req[0], req[1], gpuReq);
-                if (node != null) {
-                    bindTask(task, node);
-                } else {
-                    break; // 资源不足，后面也分配不了
+        // Phase 1：悲观锁查询未分配节点（pending/queued）的任务，分配节点并原子绑定。
+        // 绑定成功的任务先收集 id，等事务提交（serverIp 落库）后再启动异步提交。
+        List<String> newlyBound = transactionTemplate.execute(status -> {
+            List<String> bound = new ArrayList<>();
+            List<TrainingExperimentVersion> unassigned = trainingRepo.findAllPendingWithLock();
+            for (TrainingExperimentVersion task : unassigned) {
+                if (task.getTrainingPlanId() == null || task.getTrainingPlanId().isBlank()) {
+                    continue;
                 }
-            } catch (Exception e) {
-                LOG.warn("调度排队任务失败: taskId={}, error={}", task.getId(), e.getMessage());
+                try {
+                    Map<String, String> nodeSelector = resolveNodeSelector(task);
+                    double[] req = resolveResourceRequest(task);
+                    Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
+                    String node = assignNode(nodeSelector, req[0], req[1], gpuReq);
+                    if (node != null) {
+                        if (bindTask(task.getId(), node)) {
+                            bound.add(task.getId());
+                        }
+                    } else {
+                        break; // 资源不足，后面也分配不了
+                    }
+                } catch (Exception e) {
+                    LOG.warn("调度排队任务失败: taskId={}, error={}", task.getId(), e.getMessage());
+                }
             }
+            return bound;
+        });
+
+        // 事务已提交、绑定已落库后再启动，异步提交线程读到的才是已提交的 serverIp
+        for (String trainingId : newlyBound) {
+            executorRouter.start(trainingId);
         }
 
-        // Phase 2：scheduled → 提交 K8s 执行（按优先级+FIFO排序）
+        // Phase 2：scheduled → 提交 K8s 执行（崩溃兜底重提；跳过刚绑定的，避免同一 tick 重复提交）
         List<TrainingExperimentVersion> scheduled = trainingRepo.findByStatus("scheduled");
         scheduled.sort(Comparator.comparingInt((TrainingExperimentVersion t) ->
                 "高".equals(t.getPriority()) ? 0 : ("中".equals(t.getPriority()) ? 1 : 2))
                 .thenComparing(t -> t.getCreatedAt() != null ? t.getCreatedAt() : java.time.Instant.EPOCH));
 
         for (TrainingExperimentVersion task : scheduled) {
+            if (newlyBound.contains(task.getId())) {
+                continue;
+            }
             try {
                 LOG.info("提交 scheduled 任务: taskId={}, node={}", task.getId(), task.getServerIp());
                 executorRouter.start(task.getId());

@@ -1,7 +1,9 @@
 package com.tss.platform.repository;
 
 import com.tss.platform.entity.TrainingExperimentVersion;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -81,4 +83,38 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
     List<TrainingExperimentVersion> findByStatus(String status);
 
     List<TrainingExperimentVersion> findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc(String status);
+
+    /**
+     * 原子绑定任务到节点：只有尚未分配节点（server_ip IS NULL）且仍处于 pending/queued 的任务才会被更新。
+     * 返回更新行数：1=本次调用绑定成功；0=已被其他线程抢先绑定/任务已不在可绑定状态。
+     * 用于防止 afterCommit 路径与调度循环并发绑定同一任务导致 serverIp 丢失。
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update TrainingExperimentVersion v
+               set v.serverIp = :serverIp,
+                   v.status = 'scheduled',
+                   v.updatedAt = :now
+             where v.id = :id
+               and v.serverIp is null
+               and v.status in ('pending', 'queued')
+            """)
+    int atomicBindNode(
+            @Param("id") String id,
+            @Param("serverIp") String serverIp,
+            @Param("now") Instant now
+    );
+
+    /**
+     * 悲观锁查询所有未分配节点（pending/queued）的任务，用于 @Scheduled 调度循环，
+     * 串行化节点分配与绑定，避免并发分配重复占用节点资源。需要事务上下文。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select v from TrainingExperimentVersion v
+             where v.serverIp is null
+               and v.status in ('pending', 'queued')
+             order by v.priority asc, v.createdAt asc
+            """)
+    List<TrainingExperimentVersion> findAllPendingWithLock();
 }
