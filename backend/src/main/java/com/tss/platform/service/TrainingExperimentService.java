@@ -789,7 +789,16 @@ public class TrainingExperimentService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    scheduleOrStart(trainingId);
+                    // afterCommit 仍运行在原事务的线程上，线程局部仍绑定着刚提交事务的旧 EntityManager。
+                    // 若直接执行，scheduleOrStart 新开的事务会复用旧 EM（其事务已结束），导致
+                    // @Modifying 的 atomicBindNode 报 "no transaction is in progress"。
+                    // 用独立线程执行，保证全新的线程局部与干净的事务上下文。
+                    Thread thread = new Thread(
+                            () -> scheduleOrStart(trainingId),
+                            "training-schedule-" + trainingId
+                    );
+                    thread.setDaemon(true);
+                    thread.start();
                 }
             });
             return;
