@@ -1096,9 +1096,10 @@ const DatasetDetail: React.FC = () => {
               ，完成后「发布为新版本」才生效。同一资产同时只能有一个活动工作区；基线不同时请先发布或放弃后再开。
               <br />
               <Typography.Text type="secondary">
-                联调说明：前端已传 baseVersionId；后端需按所选 READY
-                版派生基线（见
-                BUG-DA-BE-07）。在后端落地前，实际基线仍可能是资产「当前」正式版。
+                基线规则：显式传入的 baseVersionId
+                即为工作区基线（不会静默改用「当前」正式版）。若已有其它基线的活动工作区，后端返回
+                WORKSPACE_BASE_CONFLICT；发布时若资产当前指针已变，可能返回
+                BASE_VERSION_STALE，需放弃后重建。
               </Typography.Text>
             </>
           }
@@ -1590,7 +1591,8 @@ const DatasetDetail: React.FC = () => {
               description={
                 <>
                   请求会携带所点版本的 <strong>baseVersionId</strong>
-                  （后端落地后基线即为该版）。版本号在创建时写入目标草稿，资产内唯一；
+                  ，基线即为该 READY
+                  版内容。版本号在创建时写入目标草稿，资产内唯一；
                   <strong>已取消/软删的草稿标签仍占用</strong>
                   ，列表里可能看不到。若提示被占用，请改用 v3、v1.0.3
                   等更大号；前端也会自动尝试跳号。同一资产同时只能有一个活动工作区；若已有其它基线的工作区，请先发布或放弃。

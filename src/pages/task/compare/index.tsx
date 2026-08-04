@@ -38,6 +38,22 @@ import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
+/** 对比页优先解析 URL/对比池中的任务，否则最多解析前 20 条，避免一次打满详情 */
+async function enrichFocusedTaskDisplayNames(
+  list: API.TaskItem[],
+  focusIds: string[],
+  options?: { [key: string]: unknown },
+) {
+  if (!list.length) return list;
+  const focus = new Set(focusIds.filter(Boolean).map(String));
+  const targets = focus.size
+    ? list.filter((item) => focus.has(String(item.id)))
+    : list.slice(0, 20);
+  if (!targets.length) return list;
+  const enriched = await enrichTaskItemsWithDisplayNames(targets, options);
+  const byId = new Map(enriched.map((item) => [String(item.id), item]));
+  return list.map((item) => byId.get(String(item.id)) ?? item);
+}
 function loadComparePool(): string[] {
   try {
     const raw = localStorage.getItem(COMPARE_POOL_KEY);
@@ -313,7 +329,7 @@ const TaskCompare: React.FC = () => {
               }
             }
             setTaskList(
-              await enrichTaskItemsWithDisplayNames(list, {
+              await enrichFocusedTaskDisplayNames(list, idsFromUrl, {
                 skipErrorHandler: true,
               }),
             );
@@ -344,9 +360,13 @@ const TaskCompare: React.FC = () => {
         }
 
         setTaskList(
-          await enrichTaskItemsWithDisplayNames(list, {
-            skipErrorHandler: true,
-          }),
+          await enrichFocusedTaskDisplayNames(
+            list,
+            [...idsFromUrl, ...loadComparePool()],
+            {
+              skipErrorHandler: true,
+            },
+          ),
         );
       } catch {
         message.error('加载训练任务列表失败');

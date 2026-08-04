@@ -13,12 +13,13 @@ export const SYSTEM_API_CONFIG = {
     /** 将普通用户晋升为普通管理员（仅超管） */
     USER_PROMOTE_TO_ADMIN: '/user/promote-to-admin',
 
-    /** 操作日志 §6.3 */
-    LOG_QUERY: '/log/query',
-    /** 操作类型字典 §6.4 */
-    LOG_OPERATION_TYPES: '/log/types',
+    /** 操作日志主链路 GET /api/system/log/* */
+    LOG_LIST: '/system/log/list',
+    LOG_EXPORT: '/system/log/export',
+    LOG_OPERATION_TYPES: '/system/log/types',
+    LOG_OBJECTS: '/system/log/objects',
 
-    /** 系统配置（待与后端确认接口后对接） */
+    /** 系统配置 */
     CONFIG_GET: '/system/config/get',
     CONFIG_UPDATE: '/system/config/update',
   },
