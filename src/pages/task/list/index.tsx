@@ -13,7 +13,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteTask,
   fetchTaskList as fetchTaskListService,
@@ -27,6 +27,13 @@ import {
   normalizeTrainingProgress,
 } from '@/utils/trainingStatusDisplay';
 
+function readListPageFromSearch(searchParams: URLSearchParams) {
+  return {
+    current: Math.max(1, Number(searchParams.get('current')) || 1),
+    pageSize: Math.max(1, Number(searchParams.get('pageSize')) || 10),
+  };
+}
+
 /**
  * 训练任务列表页 - Page 层
  * 调用 Services 层接口，适配 ProTable 的 request 格式
@@ -35,15 +42,33 @@ const TaskList: React.FC = () => {
   const actionRef = useRef<ActionType | null>(null);
   const [loadError, setLoadError] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
+  const [listCurrent, setListCurrent] = useState(
+    () => readListPageFromSearch(searchParams).current,
+  );
+  const [listPageSize, setListPageSize] = useState(
+    () => readListPageFromSearch(searchParams).pageSize,
+  );
+  /** 避免翻页写 URL 与「从详情返回读 URL」互相打架 */
+  const lastSyncedQueryRef = useRef(searchParams.toString());
 
-  const listCurrent = Math.max(1, Number(searchParams.get('current')) || 1);
-  const listPageSize = Math.max(1, Number(searchParams.get('pageSize')) || 10);
+  // 仅在 URL 被外部改写时同步（例如详情返回 /task/list?current=3）
+  useEffect(() => {
+    const query = searchParams.toString();
+    if (query === lastSyncedQueryRef.current) return;
+    lastSyncedQueryRef.current = query;
+    const { current, pageSize } = readListPageFromSearch(searchParams);
+    setListCurrent(current);
+    setListPageSize(pageSize);
+  }, [searchParams]);
 
   const syncListPage = useCallback(
     (page: number, pageSize: number) => {
+      setListCurrent(page);
+      setListPageSize(pageSize);
       const next = new URLSearchParams(searchParams);
       next.set('current', String(page));
       next.set('pageSize', String(pageSize));
+      lastSyncedQueryRef.current = next.toString();
       setSearchParams(next, { replace: true });
     },
     [searchParams, setSearchParams],
@@ -57,11 +82,6 @@ const TaskList: React.FC = () => {
       const path = `/task/detail/${encodeURIComponent(taskOrExperimentId)}?${qs.toString()}`;
       return hash ? `${path}#${hash}` : path;
     },
-    [listCurrent, listPageSize],
-  );
-
-  const tableParams = useMemo(
-    () => ({ current: listCurrent, pageSize: listPageSize }),
     [listCurrent, listPageSize],
   );
 
@@ -289,7 +309,6 @@ const TaskList: React.FC = () => {
         actionRef={actionRef}
         columns={columns}
         request={fetchTaskList}
-        params={tableParams}
         polling={3000}
         rowKey="id"
         search={{
