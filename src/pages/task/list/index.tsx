@@ -1,7 +1,7 @@
 import { MoreOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
+import { history, useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -13,7 +13,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteTask,
   fetchTaskList as fetchTaskListService,
@@ -27,6 +27,13 @@ import {
   normalizeTrainingProgress,
 } from '@/utils/trainingStatusDisplay';
 
+function readListPageFromSearch(searchParams: URLSearchParams) {
+  return {
+    current: Math.max(1, Number(searchParams.get('current')) || 1),
+    pageSize: Math.max(1, Number(searchParams.get('pageSize')) || 10),
+  };
+}
+
 /**
  * 训练任务列表页 - Page 层
  * 调用 Services 层接口，适配 ProTable 的 request 格式
@@ -34,6 +41,49 @@ import {
 const TaskList: React.FC = () => {
   const actionRef = useRef<ActionType | null>(null);
   const [loadError, setLoadError] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [listCurrent, setListCurrent] = useState(
+    () => readListPageFromSearch(searchParams).current,
+  );
+  const [listPageSize, setListPageSize] = useState(
+    () => readListPageFromSearch(searchParams).pageSize,
+  );
+  /** 避免翻页写 URL 与「从详情返回读 URL」互相打架 */
+  const lastSyncedQueryRef = useRef(searchParams.toString());
+
+  // 仅在 URL 被外部改写时同步（例如详情返回 /task/list?current=3）
+  useEffect(() => {
+    const query = searchParams.toString();
+    if (query === lastSyncedQueryRef.current) return;
+    lastSyncedQueryRef.current = query;
+    const { current, pageSize } = readListPageFromSearch(searchParams);
+    setListCurrent(current);
+    setListPageSize(pageSize);
+  }, [searchParams]);
+
+  const syncListPage = useCallback(
+    (page: number, pageSize: number) => {
+      setListCurrent(page);
+      setListPageSize(pageSize);
+      const next = new URLSearchParams(searchParams);
+      next.set('current', String(page));
+      next.set('pageSize', String(pageSize));
+      lastSyncedQueryRef.current = next.toString();
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const buildDetailUrl = useCallback(
+    (taskOrExperimentId: string, hash?: string) => {
+      const qs = new URLSearchParams();
+      qs.set('fromCurrent', String(listCurrent));
+      qs.set('fromPageSize', String(listPageSize));
+      const path = `/task/detail/${encodeURIComponent(taskOrExperimentId)}?${qs.toString()}`;
+      return hash ? `${path}#${hash}` : path;
+    },
+    [listCurrent, listPageSize],
+  );
 
   const fetchTaskList = async (params: any) => {
     try {
@@ -169,7 +219,7 @@ const TaskList: React.FC = () => {
             style={{ paddingLeft: 0 }}
             onClick={() =>
               history.push(
-                `/task/detail/${encodeURIComponent(record.id || record.experimentId || '')}`,
+                buildDetailUrl(record.id || record.experimentId || ''),
               )
             }
           >
@@ -186,7 +236,10 @@ const TaskList: React.FC = () => {
                         label: '追溯历史版本',
                         onClick: () =>
                           history.push(
-                            `/task/detail/${encodeURIComponent(record.experimentId || '')}#version-history`,
+                            buildDetailUrl(
+                              record.experimentId || '',
+                              'version-history',
+                            ),
                           ),
                       },
                     ]
@@ -262,7 +315,11 @@ const TaskList: React.FC = () => {
           labelWidth: 'auto',
         }}
         pagination={{
-          pageSize: 10,
+          current: listCurrent,
+          pageSize: listPageSize,
+          showSizeChanger: true,
+          onChange: syncListPage,
+          onShowSizeChange: syncListPage,
         }}
       />
     </PageContainer>

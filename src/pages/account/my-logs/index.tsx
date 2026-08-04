@@ -4,12 +4,13 @@ import type {
   ProColumns,
 } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { useModel } from '@umijs/max';
+import { useAccess, useModel } from '@umijs/max';
 import type { SortOrder } from 'antd/es/table/interface';
 import dayjs from 'dayjs';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   getLogList,
+  getOperationTypeValueEnum,
   type LogItem,
   type LogListParams,
 } from '@/services/system/log';
@@ -17,12 +18,22 @@ import { redirectToLogin } from '@/utils/loginRedirect';
 
 /**
  * 个人中心 - 我的操作记录
- * 所有登录用户可见，仅展示当前用户自己的操作日志；筛选：时间/操作类型/操作内容/结果，操作人固定为当前用户
+ * GET /api/system/log/list，传 currentUsername=本人
+ * IP 列仅超管展示
  */
 const MyOperationLogs: React.FC = () => {
+  const access = useAccess();
   const { initialState } = useModel('@@initialState');
   const currentUser = initialState?.currentUser;
   const actionRef = useRef<ActionType>(null);
+  const [operateTypeEnum, setOperateTypeEnum] = useState<
+    Record<string, { text: string }>
+  >({});
+
+  const isSuperAdmin = access.canLogViewAdminAndIp;
+  const selfUsername = String(
+    currentUser?.username ?? currentUser?.name ?? '',
+  ).trim();
 
   useEffect(() => {
     if (!currentUser) {
@@ -30,11 +41,9 @@ const MyOperationLogs: React.FC = () => {
     }
   }, [currentUser]);
 
-  const currentUsername =
-    currentUser?.userid ??
-    (typeof currentUser?.name === 'string'
-      ? currentUser.name.replace(/（.*$/, '').trim()
-      : '');
+  useEffect(() => {
+    void getOperationTypeValueEnum().then(setOperateTypeEnum);
+  }, []);
 
   const fetchMyLogList = async (
     params: ParamsType & {
@@ -48,10 +57,11 @@ const MyOperationLogs: React.FC = () => {
     _sort: Record<string, SortOrder>,
     _filter: Record<string, (string | number)[] | null>,
   ) => {
-    if (!currentUsername) {
-      return { data: [], success: false, total: 0 };
-    }
     try {
+      if (!selfUsername) {
+        return { data: [], success: false, total: 0 };
+      }
+
       const {
         current = 1,
         pageSize = 10,
@@ -85,12 +95,11 @@ const MyOperationLogs: React.FC = () => {
       const requestParams: LogListParams = {
         pageNum: current,
         pageSize,
-        username: '',
         operateType: operateType ?? '',
         operateTime: operateTimeRange,
         result: result ?? '',
-        currentUsername,
         content: content ?? '',
+        currentUsername: selfUsername,
       };
 
       const response = await getLogList(requestParams);
@@ -99,7 +108,7 @@ const MyOperationLogs: React.FC = () => {
         const list = (response.data?.list ?? []).map(
           (item: LogItem, index: number) => ({
             ...item,
-            _index: (current! - 1) * pageSize! + index + 1,
+            _index: (current - 1) * pageSize + index + 1,
           }),
         );
         return {
@@ -129,14 +138,9 @@ const MyOperationLogs: React.FC = () => {
       key: 'operateType',
       align: 'center',
       valueType: 'select',
-      valueEnum: {
-        登录: { text: '登录' },
-        用户管理: { text: '用户管理' },
-        数据查询: { text: '数据查询' },
-        数据上传: { text: '数据上传' },
-        任务创建: { text: '任务创建' },
-      },
-      fieldProps: { placeholder: '请选择操作类型' },
+      valueEnum: operateTypeEnum,
+      fieldProps: { placeholder: '请选择操作类型', allowClear: true },
+      render: (_, record) => record.operateType || '-',
     },
     {
       title: '操作时间',
@@ -149,6 +153,18 @@ const MyOperationLogs: React.FC = () => {
       },
       render: (_, record) => record.operateTime || '-',
     },
+    ...(isSuperAdmin
+      ? [
+          {
+            title: 'IP地址',
+            dataIndex: 'ip',
+            key: 'ip',
+            align: 'center' as const,
+            hideInSearch: true,
+            render: (_: unknown, record: LogItem) => record.ip || '-',
+          } as ProColumns<LogItem>,
+        ]
+      : []),
     {
       title: '操作内容',
       dataIndex: 'content',
@@ -157,6 +173,7 @@ const MyOperationLogs: React.FC = () => {
       ellipsis: true,
       hideInSearch: false,
       fieldProps: { placeholder: '操作内容关键词' },
+      render: (_, record) => record.content || '-',
     },
     {
       title: '结果',
@@ -177,7 +194,7 @@ const MyOperationLogs: React.FC = () => {
   return (
     <PageContainer
       title="我的操作记录"
-      subTitle={`当前用户：${currentUser.name ?? currentUsername}`}
+      subTitle={`当前用户：${selfUsername || currentUser.userid || ''}`}
     >
       <ProTable<LogItem>
         actionRef={actionRef}

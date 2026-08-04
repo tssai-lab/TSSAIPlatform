@@ -42,7 +42,10 @@ export {
 export {
   fetchLogList,
   getLogList,
+  querySystemLogs,
   queryOperationLogs,
+  exportSystemLogs,
+  downloadLogListAsCsv,
   type LogListParams,
   type LogListResponse,
   type LogItem,

@@ -11,7 +11,7 @@ import {
   type MultimodalImportStatus,
   retryMultimodalImport,
 } from '@/services/platform';
-import { getApiErrorMessage } from '@/utils/apiError';
+import { formatUserErrorDetails, getApiErrorMessage } from '@/utils/apiError';
 import { clearImportJobId } from '@/utils/importJobStorage';
 
 const ACTIVE_IMPORT_STATUSES: MultimodalImportStatus[] = ['PENDING', 'RUNNING'];
@@ -318,7 +318,9 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
 
   if (status === 'FAILED') {
     const errorCode = job?.errorCode || job?.userError?.errorCode;
+    const structuredDetails = formatUserErrorDetails(job?.userError?.details);
     const errorDetails =
+      structuredDetails ||
       job?.errorDetailsJson ||
       (job?.userError?.details
         ? JSON.stringify(job.userError.details, null, 2)

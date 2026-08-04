@@ -388,6 +388,24 @@ const TaskDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const versionNoParam = searchParams.get('versionNo');
+  const listBackPath = useMemo(() => {
+    const fromCurrent = searchParams.get('fromCurrent');
+    const fromPageSize = searchParams.get('fromPageSize');
+    const qs = new URLSearchParams();
+    if (fromCurrent) qs.set('current', fromCurrent);
+    if (fromPageSize) qs.set('pageSize', fromPageSize);
+    const query = qs.toString();
+    return query ? `/task/list?${query}` : '/task/list';
+  }, [searchParams]);
+  const detailQuerySuffix = useMemo(() => {
+    const fromCurrent = searchParams.get('fromCurrent');
+    const fromPageSize = searchParams.get('fromPageSize');
+    const qs = new URLSearchParams();
+    if (fromCurrent) qs.set('fromCurrent', fromCurrent);
+    if (fromPageSize) qs.set('fromPageSize', fromPageSize);
+    const query = qs.toString();
+    return query ? `?${query}` : '';
+  }, [searchParams]);
   const [taskInfo, setTaskInfo] = useState<TaskDetailInfo | null>(null);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -666,17 +684,23 @@ const TaskDetail: React.FC = () => {
   const handleTraceVersion = (versionRecordId: string) => {
     const target = versions.find((v) => v.id === versionRecordId);
     if (!target) return;
-    history.push(`/task/detail/${encodeURIComponent(target.id)}`);
+    history.push(
+      `/task/detail/${encodeURIComponent(target.id)}${detailQuerySuffix}`,
+    );
   };
 
   const handleJumpToLatestVersion = () => {
     if (!experimentId) return;
     const latest = versions[versions.length - 1];
     if (latest) {
-      history.push(`/task/detail/${encodeURIComponent(latest.id)}`);
+      history.push(
+        `/task/detail/${encodeURIComponent(latest.id)}${detailQuerySuffix}`,
+      );
       return;
     }
-    history.push(`/task/detail/${encodeURIComponent(experimentId)}`);
+    history.push(
+      `/task/detail/${encodeURIComponent(experimentId)}${detailQuerySuffix}`,
+    );
   };
 
   const handlePublishModel = async () => {
@@ -771,7 +795,7 @@ const TaskDetail: React.FC = () => {
     return (
       <PageContainer
         title="训练结果详情"
-        onBack={() => history.push('/task/list')}
+        onBack={() => history.push(listBackPath)}
       >
         <div style={{ textAlign: 'center', padding: 80 }}>
           <Spin size="large" />
@@ -784,7 +808,7 @@ const TaskDetail: React.FC = () => {
     return (
       <PageContainer
         title="训练结果详情"
-        onBack={() => history.push('/task/list')}
+        onBack={() => history.push(listBackPath)}
       >
         <Alert
           type="error"
@@ -876,7 +900,7 @@ const TaskDetail: React.FC = () => {
     <PageContainer
       title="训练结果详情"
       subTitle="按 experimentId 追溯各次训练：基础模型权重、训练代码、数据集版本与超参数为只读快照"
-      onBack={() => history.push('/task/list')}
+      onBack={() => history.push(listBackPath)}
       extra={
         <Space wrap>
           {experimentId && versions.length > 0 && (
@@ -904,7 +928,7 @@ const TaskDetail: React.FC = () => {
           {isTracingHistorical && (
             <Button onClick={handleJumpToLatestVersion}>回到最新版本</Button>
           )}
-          <Button onClick={() => history.push('/task/list')}>返回列表</Button>
+          <Button onClick={() => history.push(listBackPath)}>返回列表</Button>
         </Space>
       }
     >

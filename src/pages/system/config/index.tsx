@@ -1,22 +1,35 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import { Button, Card, Form, message, Spin, Switch, Typography } from 'antd';
+import {
+  Button,
+  Card,
+  Form,
+  InputNumber,
+  message,
+  Spin,
+  Switch,
+  Typography,
+} from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   getTrainingCodeReviewLocalConfig,
   setTrainingCodeReviewLocalConfig,
 } from '@/constants/trainingCode';
 import {
+  DEFAULT_USER_LOG_LIMIT_MB,
   fetchSystemConfig,
+  MAX_USER_LOG_LIMIT_MB,
+  MIN_USER_LOG_LIMIT_MB,
   type SystemConfig,
   updateSystemConfig,
-} from '@/services/system';
+} from '@/services/system/config';
 import { storage } from '@/utils/storage';
 
 const DEFAULT_CONFIG: SystemConfig = {
-  enableAuditLog: true,
   enableTrainingCodeAdminReview: false,
   trainingCodeReviewMode: 'DIRECT_PASS',
+  userLogStorageLimitMb: DEFAULT_USER_LOG_LIMIT_MB,
+  logMaxSize: DEFAULT_USER_LOG_LIMIT_MB,
 };
 
 const LOCAL_SYSTEM_CONFIG_KEY = 'SYSTEM_CONFIG_LOCAL';
@@ -35,16 +48,20 @@ function isNotFoundError(error: unknown): boolean {
 function readLocalSystemConfig(): SystemConfig {
   const cached = storage.get<Partial<SystemConfig>>(LOCAL_SYSTEM_CONFIG_KEY);
   const review = getTrainingCodeReviewLocalConfig();
+  const limitMb =
+    cached?.userLogStorageLimitMb ??
+    cached?.logMaxSize ??
+    DEFAULT_USER_LOG_LIMIT_MB;
+  const enableReview =
+    cached?.enableTrainingCodeAdminReview ??
+    review.enableTrainingCodeAdminReview ??
+    false;
   return {
-    enableAuditLog: cached?.enableAuditLog ?? DEFAULT_CONFIG.enableAuditLog,
-    enableTrainingCodeAdminReview:
-      cached?.enableTrainingCodeAdminReview ??
-      review.enableTrainingCodeAdminReview ??
-      false,
-    trainingCodeReviewMode:
-      cached?.trainingCodeReviewMode ||
-      review.trainingCodeReviewMode ||
-      'DIRECT_PASS',
+    enableTrainingCodeAdminReview: enableReview,
+    trainingCodeReviewMode: enableReview ? 'STANDARD_REVIEW' : 'DIRECT_PASS',
+    userLogStorageLimitMb: limitMb,
+    logMaxSize: limitMb,
+    updatedAt: cached?.updatedAt,
   };
 }
 
@@ -53,14 +70,17 @@ function writeLocalSystemConfig(config: SystemConfig) {
   setTrainingCodeReviewLocalConfig({
     enableTrainingCodeAdminReview:
       config.enableTrainingCodeAdminReview ?? false,
-    trainingCodeReviewMode: config.trainingCodeReviewMode,
   });
+}
+
+function formatUpdatedAt(value?: string) {
+  if (!value) return '-';
+  return value.replace('T', ' ').replace('Z', ' UTC').slice(0, 23);
 }
 
 /**
  * 系统配置页（仅超管）
- * 训练代码审核对接后端 trainingCodeReviewMode：
- * DIRECT_PASS / STANDARD_REVIEW
+ * 对齐后端：trainingCodeReviewMode、logMaxSize / userLogStorageLimitMb、updatedAt
  */
 const SystemConfigPage: React.FC = () => {
   const access = useAccess();
@@ -68,6 +88,7 @@ const SystemConfigPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [usingLocalFallback, setUsingLocalFallback] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string>();
 
   useEffect(() => {
     if (!access.canAccessSystemConfig) {
@@ -75,29 +96,28 @@ const SystemConfigPage: React.FC = () => {
     }
   }, [access.canAccessSystemConfig]);
 
+  const applyConfig = useCallback(
+    (next: SystemConfig) => {
+      form.setFieldsValue(next);
+      setUpdatedAt(next.updatedAt);
+      writeLocalSystemConfig(next);
+    },
+    [form],
+  );
+
   const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetchSystemConfig({ skipErrorHandler: true });
       if (res.code === 200 && res.data) {
-        const next: SystemConfig = {
-          enableAuditLog: res.data.enableAuditLog ?? true,
-          enableTrainingCodeAdminReview:
-            res.data.enableTrainingCodeAdminReview ?? false,
-          trainingCodeReviewMode:
-            res.data.trainingCodeReviewMode || 'DIRECT_PASS',
-        };
-        form.setFieldsValue(next);
-        writeLocalSystemConfig(next);
+        applyConfig(res.data);
         setUsingLocalFallback(false);
         return;
       }
-      const local = readLocalSystemConfig();
-      form.setFieldsValue(local);
+      applyConfig(readLocalSystemConfig());
       setUsingLocalFallback(true);
     } catch (error: unknown) {
-      const local = readLocalSystemConfig();
-      form.setFieldsValue(local);
+      applyConfig(readLocalSystemConfig());
       setUsingLocalFallback(true);
       if (!isNotFoundError(error)) {
         message.warning('系统配置接口暂不可用，已加载本机缓存');
@@ -105,42 +125,39 @@ const SystemConfigPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [form]);
+  }, [applyConfig]);
 
   useEffect(() => {
     if (access.canAccessSystemConfig) {
-      loadConfig();
+      void loadConfig();
     }
   }, [access.canAccessSystemConfig, loadConfig]);
+
+  const buildPayload = (values: SystemConfig): SystemConfig => {
+    const limitMb =
+      values.userLogStorageLimitMb ??
+      values.logMaxSize ??
+      DEFAULT_USER_LOG_LIMIT_MB;
+    const enableReview = values.enableTrainingCodeAdminReview ?? false;
+    return {
+      enableTrainingCodeAdminReview: enableReview,
+      trainingCodeReviewMode: enableReview ? 'STANDARD_REVIEW' : 'DIRECT_PASS',
+      userLogStorageLimitMb: limitMb,
+      logMaxSize: limitMb,
+    };
+  };
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
-      const payload: SystemConfig = {
-        enableAuditLog: values.enableAuditLog ?? true,
-        enableTrainingCodeAdminReview:
-          values.enableTrainingCodeAdminReview ?? false,
-        trainingCodeReviewMode: values.enableTrainingCodeAdminReview
-          ? 'STANDARD_REVIEW'
-          : 'DIRECT_PASS',
-      };
+      const payload = buildPayload(values);
       setSaving(true);
       try {
         const res = await updateSystemConfig(payload, {
           skipErrorHandler: true,
         });
         if (res.code === 200) {
-          const saved: SystemConfig = {
-            enableAuditLog: res.data?.enableAuditLog ?? payload.enableAuditLog,
-            enableTrainingCodeAdminReview:
-              res.data?.enableTrainingCodeAdminReview ??
-              payload.enableTrainingCodeAdminReview,
-            trainingCodeReviewMode:
-              res.data?.trainingCodeReviewMode ||
-              payload.trainingCodeReviewMode,
-          };
-          form.setFieldsValue(saved);
-          writeLocalSystemConfig(saved);
+          applyConfig(res.data ?? payload);
           setUsingLocalFallback(false);
           message.success(res.message || '保存成功');
           return;
@@ -150,21 +167,11 @@ const SystemConfigPage: React.FC = () => {
           throw error;
         }
       }
-      writeLocalSystemConfig(payload);
-      form.setFieldsValue(payload);
+      applyConfig(payload);
       setUsingLocalFallback(true);
       message.success('已保存（当前后端未提供系统配置接口，已写入本机）');
     } catch {
-      const values = form.getFieldsValue();
-      const payload: SystemConfig = {
-        enableAuditLog: values.enableAuditLog ?? true,
-        enableTrainingCodeAdminReview:
-          values.enableTrainingCodeAdminReview ?? false,
-        trainingCodeReviewMode: values.enableTrainingCodeAdminReview
-          ? 'STANDARD_REVIEW'
-          : 'DIRECT_PASS',
-      };
-      writeLocalSystemConfig(payload);
+      applyConfig(buildPayload(form.getFieldsValue()));
       setUsingLocalFallback(true);
       message.success('已保存到本机缓存');
     } finally {
@@ -183,7 +190,7 @@ const SystemConfigPage: React.FC = () => {
         <Spin spinning={loading}>
           {usingLocalFallback ? (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              后端系统配置接口暂不可用（404），当前使用本机缓存；「训练代码管理员审核」开关仍会立即影响前端行为。
+              后端系统配置接口暂不可用，当前使用本机缓存；「训练代码管理员审核」开关仍会立即影响前端行为。
             </Typography.Paragraph>
           ) : null}
           <Form
@@ -193,20 +200,41 @@ const SystemConfigPage: React.FC = () => {
             initialValues={DEFAULT_CONFIG}
           >
             <Form.Item
-              name="enableAuditLog"
-              label="审计日志"
+              name="enableTrainingCodeAdminReview"
+              label="训练代码管理员审核"
               valuePropName="checked"
-              extra="开启后记录关键操作日志。"
+              extra="关闭（默认）：上传/发布新版本后自动审核通过，可直接用于训练。开启：需管理员在「待审核」中人工通过或拒绝。"
             >
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
             <Form.Item
-              name="enableTrainingCodeAdminReview"
-              label="训练代码管理员审核"
-              valuePropName="checked"
-              extra="关闭：后端 DIRECT_PASS，校验通过后自动批准。开启：后端 STANDARD_REVIEW，按风险策略进入待审/人工审核。"
+              name="userLogStorageLimitMb"
+              label="每用户日志容量上限"
+              extra={`单位 MB。默认 ${DEFAULT_USER_LOG_LIMIT_MB}，范围 ${MIN_USER_LOG_LIMIT_MB}～${MAX_USER_LOG_LIMIT_MB}。`}
+              rules={[
+                { required: true, message: '请输入每用户日志容量上限' },
+                {
+                  type: 'number',
+                  min: MIN_USER_LOG_LIMIT_MB,
+                  max: MAX_USER_LOG_LIMIT_MB,
+                  message: `请输入 ${MIN_USER_LOG_LIMIT_MB}～${MAX_USER_LOG_LIMIT_MB} 之间的整数`,
+                },
+              ]}
             >
-              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              <InputNumber
+                min={MIN_USER_LOG_LIMIT_MB}
+                max={MAX_USER_LOG_LIMIT_MB}
+                step={1}
+                precision={0}
+                addonAfter="MB"
+                style={{ width: 240 }}
+                placeholder={String(DEFAULT_USER_LOG_LIMIT_MB)}
+              />
+            </Form.Item>
+            <Form.Item label="最近更新时间">
+              <Typography.Text type="secondary">
+                {formatUpdatedAt(updatedAt)}
+              </Typography.Text>
             </Form.Item>
             <Form.Item>
               <Button type="primary" onClick={handleSubmit} loading={saving}>
@@ -214,7 +242,7 @@ const SystemConfigPage: React.FC = () => {
               </Button>
               <Button
                 style={{ marginLeft: 8 }}
-                onClick={() => loadConfig()}
+                onClick={() => void loadConfig()}
                 disabled={loading || saving}
               >
                 重新加载
