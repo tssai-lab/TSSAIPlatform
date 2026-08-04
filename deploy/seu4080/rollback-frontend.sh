@@ -87,13 +87,13 @@ if [[ "$previous_present" == true ]]; then
 else
   rollback_required=true
   "${compose[@]}" rm -s -f frontend
-  awk '$1 !~ /^TSS_FRONTEND_IMAGE=/' "$image_env" >"$next_env"
-  chmod 600 "$next_env"
-  mv "$next_env" "$image_env"
   [[ -z "$("${compose[@]}" ps -q frontend)" ]] || {
     echo "frontend container still exists after rollback" >&2
     exit 1
   }
+  awk '$1 !~ /^TSS_FRONTEND_IMAGE=/' "$image_env" >"$next_env"
+  chmod 600 "$next_env"
+  mv "$next_env" "$image_env"
 fi
 
 printf 'TSS_FRONTEND_PRESENT=true\nTSS_FRONTEND_IMAGE=%s\n' "$current_image" >"$next_rollback_state"
