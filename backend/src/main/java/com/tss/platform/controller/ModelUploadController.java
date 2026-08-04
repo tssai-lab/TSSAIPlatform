@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.ModelUploadProgressDto;
 import com.tss.platform.dto.UploadCompleteRequest;
@@ -21,6 +24,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/model/upload")
 public class ModelUploadController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final ModelUploadService service;
 
@@ -62,10 +68,15 @@ public class ModelUploadController {
     @PostMapping("/complete")
     public ApiResponse<Map<String, Object>> complete(@RequestBody UploadCompleteRequest req) {
         try {
-            return ApiResponse.ok(service.complete(req));
+            var __auditData = service.complete(req);
+            Object oid = __auditData != null ? __auditData.getOrDefault("assetId", __auditData.get("id")) : null;
+            auditHooks.upload(AuditObjectType.MODEL, oid != null ? String.valueOf(oid) : null, "MODEL_UPLOAD", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            auditHooks.upload(AuditObjectType.MODEL, null, "MODEL_UPLOAD", false, exception.getMessage());
             throw exception;
         } catch (IllegalArgumentException e) {
+            auditHooks.upload(AuditObjectType.MODEL, null, "MODEL_UPLOAD", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }

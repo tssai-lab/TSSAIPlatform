@@ -1,5 +1,8 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.CreateInferenceTaskRequest;
 import com.tss.platform.dto.InferenceTaskDto;
@@ -20,6 +23,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/inference/tasks")
 public class InferenceTaskController {
+    @Autowired
+    private AuditHooks auditHooks;
+
 
     private final InferenceTaskService taskService;
 
@@ -30,8 +36,12 @@ public class InferenceTaskController {
     @PostMapping
     public ApiResponse<InferenceTaskDto> create(@RequestBody CreateInferenceTaskRequest req) {
         try {
-            return ApiResponse.ok(taskService.createTask(req));
+            var __auditData = taskService.createTask(req);
+            String oid = __auditData != null && __auditData.getId() != null ? String.valueOf(__auditData.getId()) : null;
+            auditHooks.inference(oid, "INFERENCE_CREATE", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (IllegalArgumentException e) {
+            auditHooks.inference(null, "INFERENCE_CREATE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }
@@ -61,8 +71,11 @@ public class InferenceTaskController {
     @PostMapping("/{id}/stop")
     public ApiResponse<InferenceTaskDto> stop(@PathVariable String id) {
         try {
-            return ApiResponse.ok(taskService.stopTask(id));
+            var __auditData = taskService.stopTask(id);
+            auditHooks.inference(id, "INFERENCE_STOP", true, null);
+            return ApiResponse.ok(__auditData);
         } catch (IllegalArgumentException e) {
+            auditHooks.inference(id, "INFERENCE_STOP", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
         }
     }

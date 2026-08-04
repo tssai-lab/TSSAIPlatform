@@ -54,7 +54,7 @@ parameters:
 runtimes:
   - id: nlp-cpu
     deviceType: CPU
-    image: tss-nlp-worker:local
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:latest
     imagePullPolicy: IfNotPresent
     productionDigestRequired: true
     resourceProfiles:

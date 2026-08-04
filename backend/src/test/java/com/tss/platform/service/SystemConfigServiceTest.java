@@ -6,10 +6,13 @@ import com.tss.platform.entity.PlatformSystemConfig;
 import com.tss.platform.model.TrainingCodeReviewMode;
 import com.tss.platform.repository.PlatformSystemConfigRepository;
 import com.tss.platform.security.AuthContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,8 +28,10 @@ class SystemConfigServiceTest {
     private final PlatformSystemConfigRepository repository =
             mock(PlatformSystemConfigRepository.class);
     private final AuthContext authContext = mock(AuthContext.class);
+    private final EntityManager entityManager = mock(EntityManager.class);
+    private final Query nativeQuery = mock(Query.class);
     private final SystemConfigService service =
-            new SystemConfigService(repository, authContext);
+            new SystemConfigService(repository, authContext, entityManager);
 
     @BeforeEach
     void setUp() {
@@ -34,6 +39,12 @@ class SystemConfigServiceTest {
         when(authContext.currentUserId()).thenReturn(9);
         when(repository.saveAndFlush(any(PlatformSystemConfig.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        when(entityManager.createNativeQuery(any(String.class)))
+                .thenReturn(nativeQuery);
+        when(nativeQuery.setParameter(any(String.class), any()))
+                .thenReturn(nativeQuery);
+        when(nativeQuery.getResultList())
+                .thenReturn(Collections.emptyList());
     }
 
     @Test
@@ -63,7 +74,7 @@ class SystemConfigServiceTest {
                 .thenReturn(Optional.of(config));
 
         SystemConfigDto updated = service.updateForAdministration(
-                new SystemConfigUpdateRequest("direct_pass")
+                new SystemConfigUpdateRequest("direct_pass", null)
         );
 
         assertEquals(TrainingCodeReviewMode.DIRECT_PASS.name(),
@@ -79,7 +90,7 @@ class SystemConfigServiceTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> service.updateForAdministration(
-                        new SystemConfigUpdateRequest("SHADOW")
+                        new SystemConfigUpdateRequest("SHADOW", null)
                 )
         );
         verify(repository, never()).saveAndFlush(any());

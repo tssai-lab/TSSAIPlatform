@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,6 +63,7 @@ public class JobScheduler {
     /**
      * 调度时将任务绑定到节点，状态变为 scheduled（已分配，等待启动）。
      */
+    @Transactional
     public void bindTask(TrainingExperimentVersion task, String nodeName) {
         task.setServerIp(nodeName);
         task.setStatus("scheduled");
@@ -73,6 +75,7 @@ public class JobScheduler {
     /**
      * 标记任务排队。
      */
+    @Transactional
     public void enqueueTask(TrainingExperimentVersion task) {
         task.setStatus("queued");
         task.setUpdatedAt(java.time.Instant.now());
@@ -94,6 +97,15 @@ public class JobScheduler {
      */
     @Scheduled(fixedDelay = 10_000)
     public void dispatchQueuedTasks() {
+        // Phase 0：兜底，把因重启丢失 afterCommit 回调的 pending 任务捞回队列
+        List<TrainingExperimentVersion> stranded = trainingRepo
+                .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("pending");
+        for (TrainingExperimentVersion task : stranded) {
+            if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
+                enqueueTask(task);
+            }
+        }
+
         // Phase 1：queued（无节点）→ scheduled（已分配节点）
         List<TrainingExperimentVersion> queued = trainingRepo
                 .findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc("queued");

@@ -1,5 +1,6 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.CodeApprovalForbiddenException;
 import com.tss.platform.service.CodeArtifactStorageException;
 import com.tss.platform.service.CodeUploadService;
@@ -7,6 +8,7 @@ import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeVersionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -64,13 +66,16 @@ class LegacyCodeControllerSecurityTest {
     @Test
     void uploadStorageOrZipFailureUsesSafeLegacyEnvelope() {
         CodeUploadService service = mock(CodeUploadService.class);
+        AuditHooks auditHooks = mock(AuditHooks.class);
         MockMultipartFile file = new MockMultipartFile(
                 "file", "source.zip", "application/zip", new byte[]{1}
         );
         when(service.upload(file, "asset", "v1", "profile-1", null))
                 .thenThrow(new CodeArtifactStorageException());
 
-        var response = new CodeUploadController(service).upload(
+        CodeUploadController controller = new CodeUploadController(service);
+        ReflectionTestUtils.setField(controller, "auditHooks", auditHooks);
+        var response = controller.upload(
                 file, "asset", "v1", "profile-1", null
         );
 

@@ -2,9 +2,12 @@ package com.tss.platform.module1.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tss.platform.module1.common.AuditActionType;
+import com.tss.platform.module1.common.AuditObjectType;
 import com.tss.platform.module1.common.Result;
 import com.tss.platform.module1.entity.OperationLog;
 import com.tss.platform.module1.entity.User;
+import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.DesensitizationUtil;
@@ -20,6 +23,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/system/user")
@@ -33,6 +37,9 @@ public class SystemUserController {
 
     @Resource
     private OperationLogService operationLogService;
+
+    @Resource
+    private AuditRecordService auditRecordService;
 
     @GetMapping("/list")
     public Result<Map<String, Object>> getUserList() {
@@ -242,17 +249,25 @@ public class SystemUserController {
                 user.setMobile(newMobile);
             }
 
+            boolean roleChanged = false;
+            boolean statusChanged = false;
+            Integer newRoleId = null;
+            Boolean newStatus = null;
+
             if (params.get("role") != null) {
-                Integer newRoleId = UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role")));
+                newRoleId = UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role")));
                 Result<?> roleCheck = validateRoleAssignment(currentRoleId, newRoleId, targetRoleId);
                 if (roleCheck != null) {
                     return roleCheck;
                 }
+                roleChanged = !Objects.equals(newRoleId, targetRoleId);
                 user.setRoleId(newRoleId);
             }
 
             if (params.get("status") != null) {
-                user.setStatus(UserRoleUtil.isEnabledStatus(UserRoleUtil.safeString(params.get("status"))));
+                newStatus = UserRoleUtil.isEnabledStatus(UserRoleUtil.safeString(params.get("status")));
+                statusChanged = user.getStatus() == null || !user.getStatus().equals(newStatus);
+                user.setStatus(newStatus);
             }
 
             user.setUpdatedAt(LocalDateTime.now());
@@ -260,6 +275,22 @@ public class SystemUserController {
             boolean success = userService.updateById(user);
             if (success) {
                 SYSTEM_LOG.info("管理员编辑用户成功: userId={}", userId);
+                if (roleChanged) {
+                    auditRecordService.recordSuccess(
+                            AuditActionType.PERMISSION_CHANGE,
+                            AuditObjectType.USER,
+                            String.valueOf(userId),
+                            "ROLE_CHANGE:from=" + targetRoleId + ",to=" + newRoleId
+                    );
+                }
+                if (statusChanged) {
+                    auditRecordService.recordSuccess(
+                            AuditActionType.PERMISSION_CHANGE,
+                            AuditObjectType.USER,
+                            String.valueOf(userId),
+                            Boolean.TRUE.equals(newStatus) ? "USER_ENABLE" : "USER_DISABLE"
+                    );
+                }
                 return Result.success(null, "更新成功");
             } else {
                 SYSTEM_LOG.error("管理员编辑用户失败: userId={}", userId);
@@ -308,13 +339,33 @@ public class SystemUserController {
             boolean success = userService.softDeleteUser(id);
             if (success) {
                 SYSTEM_LOG.info("管理员删除用户成功: userId={}", id);
+                auditRecordService.recordSuccess(
+                        AuditActionType.DELETE,
+                        AuditObjectType.USER,
+                        String.valueOf(id),
+                        "USER_DELETE"
+                );
                 return Result.success(null, "删除成功");
             } else {
                 SYSTEM_LOG.error("管理员删除用户失败: userId={}", id);
+                auditRecordService.recordFailed(
+                        AuditActionType.DELETE,
+                        AuditObjectType.USER,
+                        String.valueOf(id),
+                        "删除失败",
+                        "USER_DELETE"
+                );
                 return Result.fail("删除失败");
             }
         } catch (Exception e) {
             SYSTEM_LOG.error("管理员删除用户异常: userId={}, error={}", id, e.getMessage());
+            auditRecordService.recordFailed(
+                    AuditActionType.DELETE,
+                    AuditObjectType.USER,
+                    String.valueOf(id),
+                    e.getMessage(),
+                    "USER_DELETE"
+            );
             return Result.fail("删除失败: " + e.getMessage());
         }
     }
@@ -356,14 +407,41 @@ public class SystemUserController {
             boolean success = userService.updateById(user);
             if (success) {
                 SYSTEM_LOG.info("管理员切换用户状态成功: userId={}", userId);
+                auditRecordService.recordSuccess(
+                        AuditActionType.PERMISSION_CHANGE,
+                        AuditObjectType.USER,
+                        String.valueOf(userId),
+                        status ? "USER_ENABLE" : "USER_DISABLE"
+                );
                 return Result.success(null, "状态更新成功");
             } else {
+                auditRecordService.recordFailed(
+                        AuditActionType.PERMISSION_CHANGE,
+                        AuditObjectType.USER,
+                        String.valueOf(userId),
+                        "状态更新失败",
+                        "USER_STATUS_CHANGE"
+                );
                 return Result.fail("状态更新失败");
             }
         } catch (IllegalArgumentException e) {
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    e.getMessage(),
+                    "USER_STATUS_CHANGE"
+            );
             return Result.fail(e.getMessage());
         } catch (Exception e) {
             SYSTEM_LOG.error("管理员切换用户状态异常: userId={}, error={}", userId, e.getMessage());
+            auditRecordService.recordFailed(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.USER,
+                    String.valueOf(userId),
+                    "状态更新失败",
+                    "USER_STATUS_CHANGE"
+            );
             return Result.fail("状态更新失败: " + e.getMessage());
         }
     }

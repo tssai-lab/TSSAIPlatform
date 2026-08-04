@@ -106,7 +106,7 @@ parameters:
 runtimes:
   - id: cv-cu
     deviceType: CPU
-    image: tss-cv-worker:local
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest
     imagePullPolicy: IfNotPresent
     productionDigestRequired: false
     resourceProfiles:

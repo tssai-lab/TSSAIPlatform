@@ -203,6 +203,7 @@ HTTP `400`，重复名称或并发重复创建返回 HTTP `409`。模型与数�
 | `DELETE` | `/delete?id={modelVersionId}` | 删除模型版本及对象文件 |
 
 `/list` 可选 query: `type`, `keyword`, `page`/`current`, `pageSize`。返回体包含 `data`, `total`, `page`, `pageSize`。
+`keyword` 去除首尾空白后，仅按模型显示名称做不区分大小写的子串匹配；空白值等同未传，`%`、`_`、`\` 按普通字符匹配。
 
 模型列表稳定字段：
 
@@ -474,6 +475,7 @@ GET /api/v2/dataset-samples/multimodal?externalId=scene-001&datasetVersionIds=ve
 | `GET` | `/list` | 查询当前用户可见数据集列表 |
 
 `/list` 可选 query: `type`, `keyword`, `page`/`current`, `pageSize`。返回体包含 `data`, `total`, `page`, `pageSize`。未传 `pageSize` 时 legacy V1 返回全部；传入时最大 `200`。
+legacy V1 与 `GET /api/v2/datasets` 共用搜索语义：`keyword` 去除首尾空白后，仅按数据集显示名称做不区分大小写的子串匹配；空白值等同未传，`%`、`_`、`\` 按普通字符匹配。
 
 数据集列表稳定字段：
 

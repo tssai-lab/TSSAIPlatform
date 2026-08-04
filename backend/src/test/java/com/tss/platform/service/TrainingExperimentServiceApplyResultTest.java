@@ -52,6 +52,8 @@ class TrainingExperimentServiceApplyResultTest {
                 mock(TrainingOutputValidator.class),
                 mock(TrainingExecutorRouter.class),
                 mock(JobScheduler.class),
+                new org.springframework.transaction.support.TransactionTemplate(
+                        mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
                 authContext
         );
