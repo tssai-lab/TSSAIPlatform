@@ -29,6 +29,8 @@ import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSnapshot;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +79,8 @@ public class TrainingExperimentService {
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
+
+    private static final Logger LOG = LoggerFactory.getLogger(TrainingExperimentService.class);
 
     public TrainingExperimentService(
             TrainingExperimentVersionRepository repo,
@@ -794,28 +798,44 @@ public class TrainingExperimentService {
     }
 
     private void scheduleOrStart(String trainingId) {
+        LOG.info("scheduleOrStart enter, trainingId={}", trainingId);
         String result = transactionTemplate.execute(status -> {
             TrainingExperimentVersion task = repo.findById(trainingId).orElse(null);
             if (task == null) {
+                LOG.warn("scheduleOrStart task not found, trainingId={}", trainingId);
                 return null;
             }
+            LOG.info("scheduleOrStart in tx, trainingId={}, planId={}", trainingId, task.getTrainingPlanId());
             if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
                 Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
                 String assignedNode = jobScheduler.assignNodeForTraining(task, nodeSelector);
                 if (assignedNode != null && !assignedNode.isBlank()) {
+                    LOG.info("bindTask will execute, assignedNode={}", assignedNode);
                     jobScheduler.bindTask(task, assignedNode);
+                    LOG.info("bindTask done inside tx, assignedNode={}", assignedNode);
                     return assignedNode;
                 } else {
+                    LOG.info("no available node, enqueueTask");
                     jobScheduler.enqueueTask(task);
                     return null;
                 }
             } else {
+                LOG.info("no trainingPlanId, return __start__");
                 return "__start__";
             }
         });
 
+        LOG.info("scheduleOrStart after tx commit, result={}", result);
         if (result != null) {
-            trainingExecutorRouter.start(trainingId);
+            if ("__start__".equals(result)) {
+                LOG.info("trigger start: no plan");
+                trainingExecutorRouter.start(trainingId);
+            } else {
+                LOG.info("trigger start: node assigned={}", result);
+                trainingExecutorRouter.start(trainingId);
+            }
+        } else {
+            LOG.info("result is null, skip start");
         }
     }
 
