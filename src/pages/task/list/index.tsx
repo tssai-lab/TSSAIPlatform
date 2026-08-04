@@ -1,7 +1,7 @@
 import { MoreOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { history } from '@umijs/max';
+import { history, useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -13,7 +13,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   deleteTask,
   fetchTaskList as fetchTaskListService,
@@ -34,6 +34,36 @@ import {
 const TaskList: React.FC = () => {
   const actionRef = useRef<ActionType | null>(null);
   const [loadError, setLoadError] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const listCurrent = Math.max(1, Number(searchParams.get('current')) || 1);
+  const listPageSize = Math.max(1, Number(searchParams.get('pageSize')) || 10);
+
+  const syncListPage = useCallback(
+    (page: number, pageSize: number) => {
+      const next = new URLSearchParams(searchParams);
+      next.set('current', String(page));
+      next.set('pageSize', String(pageSize));
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const buildDetailUrl = useCallback(
+    (taskOrExperimentId: string, hash?: string) => {
+      const qs = new URLSearchParams();
+      qs.set('fromCurrent', String(listCurrent));
+      qs.set('fromPageSize', String(listPageSize));
+      const path = `/task/detail/${encodeURIComponent(taskOrExperimentId)}?${qs.toString()}`;
+      return hash ? `${path}#${hash}` : path;
+    },
+    [listCurrent, listPageSize],
+  );
+
+  const tableParams = useMemo(
+    () => ({ current: listCurrent, pageSize: listPageSize }),
+    [listCurrent, listPageSize],
+  );
 
   const fetchTaskList = async (params: any) => {
     try {
@@ -169,7 +199,7 @@ const TaskList: React.FC = () => {
             style={{ paddingLeft: 0 }}
             onClick={() =>
               history.push(
-                `/task/detail/${encodeURIComponent(record.id || record.experimentId || '')}`,
+                buildDetailUrl(record.id || record.experimentId || ''),
               )
             }
           >
@@ -186,7 +216,10 @@ const TaskList: React.FC = () => {
                         label: '追溯历史版本',
                         onClick: () =>
                           history.push(
-                            `/task/detail/${encodeURIComponent(record.experimentId || '')}#version-history`,
+                            buildDetailUrl(
+                              record.experimentId || '',
+                              'version-history',
+                            ),
                           ),
                       },
                     ]
@@ -256,13 +289,18 @@ const TaskList: React.FC = () => {
         actionRef={actionRef}
         columns={columns}
         request={fetchTaskList}
+        params={tableParams}
         polling={3000}
         rowKey="id"
         search={{
           labelWidth: 'auto',
         }}
         pagination={{
-          pageSize: 10,
+          current: listCurrent,
+          pageSize: listPageSize,
+          showSizeChanger: true,
+          onChange: syncListPage,
+          onShowSizeChange: syncListPage,
         }}
       />
     </PageContainer>
