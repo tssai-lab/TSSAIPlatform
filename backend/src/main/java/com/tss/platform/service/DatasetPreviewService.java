@@ -51,7 +51,7 @@ public class DatasetPreviewService {
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
     );
-    private static final Set<String> TEXT_EXTENSIONS = Set.of(".txt", ".json", ".jsonl", ".xml");
+    private static final Set<String> TEXT_EXTENSIONS = Set.of(".txt", ".md", ".json", ".jsonl", ".xml");
     private static final Set<String> TABLE_EXTENSIONS = Set.of(".csv");
 
     private final DatasetVersionRepository datasetVersionRepo;
@@ -276,7 +276,7 @@ public class DatasetPreviewService {
         String extension = extensionOf(name);
         String kind = classifyKind(name);
         if (!KIND_TEXT.equals(kind) && !KIND_TABLE.equals(kind)) {
-            throw new IllegalArgumentException("dataset content preview only supports text, JSON, JSONL, XML, or CSV files");
+            throw new IllegalArgumentException("dataset content preview only supports text, Markdown, JSON, JSONL, XML, or CSV files");
         }
 
         LimitedText text = readLimitedText(inputStream);
@@ -490,8 +490,10 @@ public class DatasetPreviewService {
                 .orElseThrow(() -> new IllegalArgumentException("dataset not found or no permission"));
         DatasetAsset asset = datasetAssetRepo.findByIdAndDeletedFalse(version.getAssetId())
                 .orElseThrow(() -> new IllegalArgumentException("dataset asset not found or deleted"));
-        if (!"CV".equalsIgnoreCase(asset.getType()) && !"NLP".equalsIgnoreCase(asset.getType())) {
-            throw new IllegalArgumentException("common dataset preview only supports CV or NLP datasets; use point cloud preview for POINT_CLOUD datasets");
+        if (!"CV".equalsIgnoreCase(asset.getType())
+                && !"NLP".equalsIgnoreCase(asset.getType())
+                && !"LEROBOT".equalsIgnoreCase(asset.getType())) {
+            throw new IllegalArgumentException("common dataset preview only supports CV, NLP, or LEROBOT datasets; use the dedicated preview for other dataset types");
         }
 
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
@@ -578,6 +580,7 @@ public class DatasetPreviewService {
 
     private String contentTypeOf(String extension) {
         return switch (extension) {
+            case ".md" -> "MARKDOWN";
             case ".json" -> "JSON";
             case ".jsonl" -> "JSONL";
             case ".xml" -> "XML";

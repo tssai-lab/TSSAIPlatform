@@ -184,15 +184,24 @@ training_experiment_version
 
 ## MinIO 启动示例
 
-本地没有 MinIO 时，可在仓库根目录执行：
+本地没有 MinIO 时，可在仓库根目录执行。数据目录统一放在仓库上一级，
+避免被项目构建或清理操作影响：
 
 ```powershell
 docker run -d --name minio-tss `
   -p 9010:9000 -p 9011:9001 `
   -e MINIO_ROOT_USER=admin `
   -e MINIO_ROOT_PASSWORD=password123 `
-  -v ${PWD}\tss_minio_data:/data `
+  -v "$(Resolve-Path ..\minio-data):/data" `
   minio/minio server /data --console-address ":9001"
+```
+
+使用本机安装的 MinIO 时：
+
+```powershell
+$env:MINIO_ROOT_USER="admin"
+$env:MINIO_ROOT_PASSWORD="password123"
+minio.exe server D:\work\minio-data --address ":9010" --console-address ":9011"
 ```
 
 MinIO 控制台：

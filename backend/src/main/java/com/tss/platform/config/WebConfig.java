@@ -41,7 +41,13 @@ public class WebConfig implements WebMvcConfigurer {
         // 拦截所有/api开头的接口，实现权限校验
         registry.addInterceptor(permissionInterceptor)
                 .addPathPatterns("/api/**")
-                .excludePathPatterns("/api/user/login", "/api/user/register/**", "/api/user/sms/code", "/api/user/forget/password");
+                .excludePathPatterns(
+                        "/api/user/login",
+                        "/api/user/register/**",
+                        "/api/user/sms/code",
+                        "/api/user/forget/password",
+                        "/api/v2/dataset-versions/*/lerobot/media"
+                );
     }
 
     private String[] resolveAllowedOriginPatterns() {

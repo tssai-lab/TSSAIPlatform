@@ -13,6 +13,7 @@ class DatasetTaskTypeTest {
         assertEquals("NLP", DatasetTaskType.normalize(" nlp "));
         assertEquals("POINT_CLOUD", DatasetTaskType.normalize("point_cloud"));
         assertEquals("ROBOT", DatasetTaskType.normalize("robot"));
+        assertEquals("LEROBOT", DatasetTaskType.normalize("lerobot"));
         assertEquals("MULTIMODAL", DatasetTaskType.normalize("multimodal"));
     }
 

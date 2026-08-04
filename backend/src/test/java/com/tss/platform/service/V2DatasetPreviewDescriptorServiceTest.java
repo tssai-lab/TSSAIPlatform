@@ -20,6 +20,20 @@ import static org.mockito.Mockito.when;
 class V2DatasetPreviewDescriptorServiceTest {
 
     @Test
+    void leRobotKeepsArchivePreview() {
+        Fixture fixture = new Fixture("LEROBOT");
+
+        V2DatasetPreviewDescriptor descriptor = fixture.service.describe(fixture.version.getId());
+
+        assertEquals("ARCHIVE", descriptor.getMode());
+        assertTrue(descriptor.getCapabilities().contains("LIST_FILES"));
+        assertEquals(
+                "/api/dataset/preview/files?id=version-1",
+                descriptor.getLinks().get("items")
+        );
+    }
+
+    @Test
     void mapsCvAndNlpToArchivePreview() {
         Fixture fixture = new Fixture("CV");
 

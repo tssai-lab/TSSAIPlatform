@@ -7,9 +7,10 @@ public enum DatasetTaskType {
     NLP,
     POINT_CLOUD,
     ROBOT,
+    LEROBOT,
     MULTIMODAL;
 
-    private static final String SUPPORTED_TYPES = "CV, NLP, POINT_CLOUD, ROBOT, MULTIMODAL";
+    private static final String SUPPORTED_TYPES = "CV, NLP, POINT_CLOUD, ROBOT, LEROBOT, MULTIMODAL";
 
     public static String normalize(String value) {
         if (value == null || value.isBlank()) {

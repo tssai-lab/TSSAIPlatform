@@ -86,6 +86,26 @@ class DatasetPreviewServiceTest {
     }
 
     @Test
+    void markdownFileIsListedAndCanBePreviewed() throws Exception {
+        byte[] zip = zip(entry("docs/README.md", bytes("# Dataset\n\nLeRobot notes.")));
+        TestFixture fixture = fixture("dataset.zip", "LEROBOT", 7, (long) zip.length, zip);
+
+        DatasetPreviewFileDto file = fixture.service
+                .listFiles("dataset-ver-1", 1, 10, null, null)
+                .getFiles()
+                .get(0);
+        assertEquals("TEXT", file.getKind());
+        assertTrue(file.getPreviewAllowed());
+
+        DatasetContentPreviewDto result = fixture.service.previewContent(
+                "dataset-ver-1", "docs/README.md", null, null
+        );
+        assertEquals("MARKDOWN", result.getContentType());
+        assertEquals("# Dataset\n\nLeRobot notes.", result.getContent());
+        assertFalse(result.getPageable());
+    }
+
+    @Test
     void nlpDirectTxtCanBePreviewedWithoutPath() {
         byte[] content = bytes("hello dataset");
         TestFixture fixture = fixture("data.txt", "NLP", 7, (long) content.length, content);
@@ -166,6 +186,38 @@ class DatasetPreviewServiceTest {
     }
 
     @Test
+    void leRobotZipKeepsCommonFilePreview() throws Exception {
+        byte[] zip = zip(
+                entry("lerobot/meta/info.json", bytes("{\"fps\":30}")),
+                entry("lerobot/data/chunk-000/file-000.parquet", bytes("PAR1")),
+                entry("lerobot/videos/camera/chunk-000/file-000.mp4", bytes("video"))
+        );
+        TestFixture fixture = fixture("dataset.zip", "LEROBOT", 7, (long) zip.length, zip);
+
+        DatasetPreviewFileListDto files = fixture.service.listFiles(
+                "dataset-ver-1", 1, 20, null, null
+        );
+        assertEquals(3, files.getTotal());
+        assertEquals("LEROBOT", files.getType());
+        assertTrue(files.getFiles().stream()
+                .filter(file -> file.getPath().endsWith("meta/info.json"))
+                .findFirst()
+                .orElseThrow()
+                .getPreviewAllowed());
+        assertFalse(files.getFiles().stream()
+                .filter(file -> file.getPath().endsWith(".parquet"))
+                .findFirst()
+                .orElseThrow()
+                .getPreviewAllowed());
+
+        DatasetContentPreviewDto info = fixture.service.previewContent(
+                "dataset-ver-1", "lerobot/meta/info.json", null, null
+        );
+        assertEquals("JSON", info.getContentType());
+        assertTrue(info.getContent().contains("\"fps\" : 30"));
+    }
+
+    @Test
     void unsupportedDocumentFormatsAreListedButNotPreviewable() throws Exception {
         byte[] zip = zip(
                 entry("docs/a.pdf", bytes("pdf")),
@@ -218,7 +270,7 @@ class DatasetPreviewServiceTest {
                 fixture.service.listFiles("dataset-ver-1", null, null, null, null)
         );
 
-        assertTrue(error.getMessage().contains("point cloud preview"));
+        assertTrue(error.getMessage().contains("dedicated preview"));
     }
 
     @Test

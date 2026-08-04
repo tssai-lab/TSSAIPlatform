@@ -61,6 +61,49 @@ class SingleModalImportPlanBuilderTest {
     }
 
     @Test
+    void buildsLeRobotRepositoryFileIndex() {
+        ManifestImportPlan plan = builder.build(
+                "LEROBOT",
+                List.of(
+                        entry("lerobot/.gitattributes"),
+                        entry("lerobot/README.md"),
+                        entry("lerobot/meta/info.json"),
+                        entry("lerobot/data/chunk-000/file-000.parquet"),
+                        entry("lerobot/videos/camera/chunk-000/file-000.mp4")
+                ),
+                0
+        );
+
+        assertEquals(5, plan.totalSamples());
+        assertEquals(
+                List.of("OTHER", "TEXT", "OTHER", "TEXT", "VIDEO"),
+                plan.samples().stream()
+                        .map(sample -> sample.data().get(0).dataType())
+                        .toList()
+        );
+        ManifestData parquet = plan.samples().stream()
+                .map(sample -> sample.data().get(0))
+                .filter(data -> "parquet".equals(data.format()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("application/vnd.apache.parquet", parquet.contentType());
+    }
+
+    @Test
+    void indexesLeRobotMkvAsVideo() {
+        ManifestImportPlan plan = builder.build(
+                "LEROBOT",
+                List.of(entry("videos/chunk-000/depth/episode_000000.mkv")),
+                0
+        );
+
+        ManifestData video = plan.samples().get(0).data().get(0);
+        assertEquals("VIDEO", video.dataType());
+        assertEquals("mkv", video.format());
+        assertEquals("video/x-matroska", video.contentType());
+    }
+
+    @Test
     void rejectsEmptySingleModalZip() {
         assertThrows(
                 ManifestValidationException.class,

@@ -47,7 +47,7 @@ public class V2DatasetPreviewDescriptorService {
         V2DatasetPreviewDescriptor descriptor = new V2DatasetPreviewDescriptor();
         descriptor.setDatasetVersionId(version.getId());
         switch (asset.getType()) {
-            case "CV", "NLP" -> archive(descriptor, version.getId());
+            case "CV", "NLP", "LEROBOT" -> archive(descriptor, version.getId());
             case "POINT_CLOUD" -> pointCloud(descriptor, version.getId());
             case "MULTIMODAL" -> sampleGallery(descriptor, version.getId());
             default -> throw new V2BusinessException(

@@ -8,7 +8,7 @@ app:
   cors:
     allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
 
-# MinIO（与 Docker 容器 minio-tss 一致，数据持久化到仓库根目录 tss_minio_data）
+# MinIO（本地数据持久化到仓库上一级目录 D:\work\minio-data）
 minio:
   endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9010}
   access-key: ${MINIO_ACCESS_KEY}
@@ -25,6 +25,9 @@ dataset:
     max-text-bytes: ${DATASET_PREVIEW_MAX_TEXT_BYTES:1048576}
     max-image-bytes: ${DATASET_PREVIEW_MAX_IMAGE_BYTES:20971520}
     max-page-size: ${DATASET_PREVIEW_MAX_PAGE_SIZE:200}
+  lerobot:
+    cache-directory: ${LEROBOT_PREVIEW_CACHE_DIRECTORY:${java.io.tmpdir}/tss-lerobot-preview}
+    media-ticket-seconds: ${LEROBOT_MEDIA_TICKET_SECONDS:300}
 
 code-assets:
   risk:
