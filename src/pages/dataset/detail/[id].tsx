@@ -259,6 +259,7 @@ const DATASET_TYPE_LABEL: Record<string, string> = {
   POINT_CLOUD: '点云',
   MULTIMODAL: '多模态',
   ROBOT: '机器人',
+  LEROBOT: 'LeRobot',
 };
 
 const DATASET_TYPE_COLOR: Record<string, string> = {
@@ -267,6 +268,7 @@ const DATASET_TYPE_COLOR: Record<string, string> = {
   POINT_CLOUD: 'purple',
   MULTIMODAL: 'magenta',
   ROBOT: 'default',
+  LEROBOT: 'blue',
 };
 
 const DatasetDetail: React.FC = () => {
@@ -941,7 +943,9 @@ const DatasetDetail: React.FC = () => {
     ? (datasetInfo.type as WorkspaceEditableDatasetType)
     : undefined;
   const supportsInlinePreview =
-    datasetInfo?.type === 'CV' || datasetInfo?.type === 'NLP';
+    datasetInfo?.type === 'CV' ||
+    datasetInfo?.type === 'NLP' ||
+    datasetInfo?.type === 'LEROBOT';
   /** 有活动 V2 工作区即展示面板（不依赖预览是否切到 target DRAFT 行） */
   const showWorkspacePanel = !!activeWorkspace && !!workspaceDatasetType;
   const previewIsImportDraft = isImportDraftVersion(
@@ -1405,16 +1409,30 @@ const DatasetDetail: React.FC = () => {
             }
             extra={
               previewVersion ? (
-                <Typography.Text
-                  type="secondary"
-                  ellipsis={{ tooltip: previewVersion.fileName }}
-                  style={{ maxWidth: 480 }}
-                >
-                  当前版本：{previewVersion.version}
-                  {previewVersion.fileName
-                    ? ` · ${previewVersion.fileName}`
-                    : ''}
-                </Typography.Text>
+                <Space>
+                  <Typography.Text
+                    type="secondary"
+                    ellipsis={{ tooltip: previewVersion.fileName }}
+                    style={{ maxWidth: 480 }}
+                  >
+                    当前版本：{previewVersion.version}
+                    {previewVersion.fileName
+                      ? ` · ${previewVersion.fileName}`
+                      : ''}
+                  </Typography.Text>
+                  {datasetInfo.type === 'LEROBOT' && previewVersionId ? (
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        history.push(
+                          `/dataset/lerobot-timeline/${encodeURIComponent(previewVersionId)}?assetId=${encodeURIComponent(datasetInfo.id)}`,
+                        )
+                      }
+                    >
+                      按时序查看
+                    </Button>
+                  ) : null}
+                </Space>
               ) : null
             }
           >
@@ -1479,6 +1497,7 @@ const DatasetDetail: React.FC = () => {
                   key={previewVersionId}
                   versionId={previewVersionId}
                   compact
+                  hierarchical={datasetInfo.type === 'LEROBOT'}
                   samplesOnly={!!previewVersion?.parentVersionId}
                 />
               </>

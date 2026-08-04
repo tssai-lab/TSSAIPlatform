@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import dayjs from 'dayjs';
 import qs from 'qs';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
 
@@ -58,11 +59,12 @@ export interface LogListResponse {
   };
 }
 
-/** 页面展示用日志项（对齐后端 LogItemVO） */
+/** 页面展示用日志项（operateTime 已转为浏览器本地时区） */
 export interface LogItem {
   id: number;
   username: string;
   operateType: string;
+  /** 本地时区展示，格式 YYYY-MM-DD HH:mm:ss */
   operateTime: string;
   ip: string;
   content: string;
@@ -80,9 +82,15 @@ function getResultMessage(res?: Module1Result<unknown>): string {
   return res?.message ?? res?.msg ?? '';
 }
 
+/**
+ * 后端返回 UTC ISO（如 2026-08-04T04:09:27Z）→ 转浏览器本地时区展示。
+ * dayjs 会按带 Z / 偏移的 ISO 解析为 Instant，再 format 为本地墙钟时间。
+ */
 function formatOperateTime(value?: string): string {
-  if (!value) return '';
-  return value.replace('T', ' ').slice(0, 19);
+  if (!value?.trim()) return '';
+  const parsed = dayjs(value.trim());
+  if (!parsed.isValid()) return value.trim();
+  return parsed.format('YYYY-MM-DD HH:mm:ss');
 }
 
 function normalizeResult(result?: string): 'success' | 'failed' {

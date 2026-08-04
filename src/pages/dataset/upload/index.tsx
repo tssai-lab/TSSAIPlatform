@@ -51,6 +51,7 @@ function isPointCloudFileName(fileName: string) {
 }
 
 const ROBOT_ACCEPT = '.xml,.yaml,.yml,.zip';
+const LEROBOT_ACCEPT = '.zip';
 
 function isRobotFileName(fileName: string) {
   const ext = fileName.split('.').pop()?.toLowerCase();
@@ -144,7 +145,9 @@ const DatasetUpload: React.FC = () => {
     }
     if (
       type &&
-      ['CV', 'NLP', 'POINT_CLOUD', 'MULTIMODAL', 'ROBOT'].includes(type)
+      ['CV', 'NLP', 'POINT_CLOUD', 'MULTIMODAL', 'ROBOT', 'LEROBOT'].includes(
+        type,
+      )
     ) {
       form.setFieldValue('type', type);
     }
@@ -250,6 +253,13 @@ const DatasetUpload: React.FC = () => {
       }
       if (!isRobotFileName(files[0].name)) {
         message.error('机器人数据集仅支持 .xml、.yaml、.yml 或 .zip 格式');
+        return;
+      }
+    }
+
+    if (type === 'LEROBOT') {
+      if (files.length !== 1 || !files[0].name.toLowerCase().endsWith('.zip')) {
+        message.error('LeRobot 数据集仅支持上传单个 LeRobot v3 zip 文件');
         return;
       }
     }
@@ -464,6 +474,7 @@ const DatasetUpload: React.FC = () => {
               多模态（MULTIMODAL）
             </Select.Option>
             <Select.Option value="ROBOT">机器人（ROBOT，预留）</Select.Option>
+            <Select.Option value="LEROBOT">LeRobot（时序数据集）</Select.Option>
           </Select>
         </Form.Item>
         {datasetType === 'MULTIMODAL' && (
@@ -613,7 +624,8 @@ const DatasetUpload: React.FC = () => {
               datasetType !== 'POINT_CLOUD' &&
               datasetType !== 'NLP' &&
               datasetType !== 'MULTIMODAL' &&
-              datasetType !== 'ROBOT'
+              datasetType !== 'ROBOT' &&
+              datasetType !== 'LEROBOT'
             }
             accept={
               datasetType === 'POINT_CLOUD'
@@ -622,7 +634,9 @@ const DatasetUpload: React.FC = () => {
                   ? '.zip'
                   : datasetType === 'ROBOT'
                     ? ROBOT_ACCEPT
-                    : undefined
+                    : datasetType === 'LEROBOT'
+                      ? LEROBOT_ACCEPT
+                      : undefined
             }
             beforeUpload={() => false}
             onChange={(e) => {
@@ -630,7 +644,8 @@ const DatasetUpload: React.FC = () => {
               if (
                 (datasetType === 'POINT_CLOUD' ||
                   datasetType === 'MULTIMODAL' ||
-                  datasetType === 'ROBOT') &&
+                  datasetType === 'ROBOT' ||
+                  datasetType === 'LEROBOT') &&
                 fileList.length > 1
               ) {
                 fileList = fileList.slice(-1);
@@ -646,7 +661,9 @@ const DatasetUpload: React.FC = () => {
                   ? '选择多模态 zip（单文件分片上传）'
                   : datasetType === 'ROBOT'
                     ? '选择机器人配置（.xml / .yaml / .yml / .zip）'
-                    : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
+                    : datasetType === 'LEROBOT'
+                      ? '选择 LeRobot v3 数据集（.zip）'
+                      : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
@@ -660,7 +677,9 @@ const DatasetUpload: React.FC = () => {
                   : ' AUTO_DIRECTORY：zip 根目录为样本子目录，无需 manifest；上传后 DRAFT，后台异步导入。'
                 : datasetType === 'ROBOT'
                   ? ' ROBOT：支持单文件 .xml/.yaml/.yml 或仅含配置类文件的 zip；上传完成后为 READY。'
-                  : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
+                  : datasetType === 'LEROBOT'
+                    ? ' LeRobot：上传标准 LeRobot v3 zip，包含 meta、data 与 videos 目录；上传完成后可按时序查看。'
+                    : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
           </div>
         </Form.Item>
         {uploading && (
