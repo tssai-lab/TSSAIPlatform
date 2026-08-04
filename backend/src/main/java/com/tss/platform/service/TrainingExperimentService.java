@@ -36,6 +36,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -801,29 +802,20 @@ public class TrainingExperimentService {
             if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
                 Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
                 String assignedNode = jobScheduler.assignNodeForTraining(task, nodeSelector);
-                if (assignedNode != null) {
+                if (assignedNode != null && !assignedNode.isBlank()) {
                     jobScheduler.bindTask(task, assignedNode);
-                    // 事务内只做DB修改，不启动异步，返回分配到的节点
                     return assignedNode;
                 } else {
-                    // 分配不到节点，入队，不需要调用start
                     jobScheduler.enqueueTask(task);
                     return null;
                 }
             } else {
-                // 无调度计划，标记需要直接start
                 return "__start__";
             }
         });
 
-        // ✅ 事务已经提交完成，再触发异步启动
         if (result != null) {
-            if ("__start__".equals(result)) {
-                trainingExecutorRouter.start(trainingId);
-            } else {
-                // 分配到节点的场景，提交后再启动
-                trainingExecutorRouter.start(trainingId);
-            }
+            trainingExecutorRouter.start(trainingId);
         }
     }
 

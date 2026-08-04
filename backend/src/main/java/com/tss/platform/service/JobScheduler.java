@@ -63,12 +63,11 @@ public class JobScheduler {
     /**
      * 调度时将任务绑定到节点，状态变为 scheduled（已分配，等待启动）。
      */
-    @Transactional
+
     public void bindTask(TrainingExperimentVersion task, String nodeName) {
         task.setServerIp(nodeName);
         task.setStatus("scheduled");
         task.setUpdatedAt(java.time.Instant.now());
-        trainingRepo.save(task);
         LOG.info("任务已绑定节点: taskId={}, node={}, status=scheduled", task.getId(), nodeName);
     }
 
