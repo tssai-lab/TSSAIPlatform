@@ -6,6 +6,7 @@
 - `compose.frontend.yml`：独立前端及其到本机后端/MLflow 的代理。
 - `deploy-backend-image.sh`：校验后端镜像标签、ID、摘要，更新并失败回滚。
 - `deploy-frontend-image.sh`：校验前端镜像标签、ID、摘要，更新并失败回滚。
+- `rollback-frontend.sh`：部署成功后按保存的上一状态执行人工回滚；首次部署可回到“未部署前端”。
 - `install-deploy-assets.sh`：一次性安装或升级上述固定文件，不重启服务。
 
 正式启用顺序：先人工审查并安装这些资产，再合并工作流。GitHub Runner 不检出仓库，只能调用已安装的固定脚本。前后端部署共用 `.platform-deploy.lock`，不会同时修改 Compose。

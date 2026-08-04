@@ -9,6 +9,7 @@ image_env="$install_root/images.env"
 runtime_env="$install_root/.env"
 base_compose="$install_root/compose.control.yml"
 frontend_compose="$install_root/compose.frontend.yml"
+rollback_state="$install_root/frontend-rollback.env"
 project="tss4080-control"
 
 [[ "$image" =~ ^ghcr\.io/tssai-lab/tssai-frontend:[0-9a-f]{40}$ ]] || {
@@ -34,6 +35,7 @@ docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end
 old_image="$(awk -F= '$1 == "TSS_FRONTEND_IMAGE" {print substr($0, index($0, "=") + 1)}' "$image_env")"
 backup_env="$(mktemp "$install_root/images.env.rollback.XXXXXX")"
 next_env="$(mktemp "$install_root/images.env.next.XXXXXX")"
+next_rollback_state="$(mktemp "$install_root/frontend-rollback.next.XXXXXX")"
 rollback_required=false
 compose=()
 cleanup() {
@@ -49,11 +51,17 @@ cleanup() {
       "${compose[@]}" up -d --no-deps frontend || true
     fi
   fi
-  rm -f "$backup_env" "$next_env"
+  rm -f "$backup_env" "$next_env" "$next_rollback_state"
   exit "$status"
 }
 trap cleanup EXIT
 cp -p "$image_env" "$backup_env"
+if [[ -n "$old_image" ]]; then
+  printf 'TSS_FRONTEND_PRESENT=true\nTSS_FRONTEND_IMAGE=%s\n' "$old_image" >"$next_rollback_state"
+else
+  printf 'TSS_FRONTEND_PRESENT=false\nTSS_FRONTEND_IMAGE=\n' >"$next_rollback_state"
+fi
+chmod 600 "$next_rollback_state"
 awk -v image="$image" '
   BEGIN { replaced = 0 }
   $1 == "TSS_FRONTEND_IMAGE" { print "TSS_FRONTEND_IMAGE=" image; replaced = 1; next }
@@ -83,6 +91,7 @@ if [[ "$healthy" != true ]]; then
   exit 1
 fi
 
+mv "$next_rollback_state" "$rollback_state"
 rollback_required=false
 echo "deployed $image ($actual_image_id, $expected_digest)"
 "${compose[@]}" ps frontend
