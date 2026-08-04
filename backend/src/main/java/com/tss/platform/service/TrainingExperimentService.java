@@ -141,15 +141,17 @@ public class TrainingExperimentService {
 
         String experimentId = "exp-" + System.currentTimeMillis() + "-"
                 + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+
+        // 组装数据库实体
         TrainingExperimentVersion version = new TrainingExperimentVersion();
-        version.setId(newVersionId());
-        version.setExperimentId(experimentId);
-        version.setVersionNo(1);
-        version.setName(defaultName(req.getName(), experimentId));
+        version.setId(newVersionId()); //版本主键
+        version.setExperimentId(experimentId); //同一个实验的多版本共用experimentId
+        version.setVersionNo(1); //新建实验，第一个版本号=1
+        version.setName(defaultName(req.getName(), experimentId)); //名字为空就用默认名
         version.setModelVersionId(blankToNull(req.getModelVersionId()));
         version.setCodeVersionId(req.getCodeVersionId().trim());
         version.setTrainingProfile(effectivePlanId);
-        version.setTrainingMode("FROM_SCRATCH");
+        version.setTrainingMode("FROM_SCRATCH"); //固定训练模式：从头训练（非微调续训）
         version.setDatasetVersionId(req.getDatasetVersionId().trim());
         version.setStatus(STATUS_PENDING);
         version.setProgress(progressOf(STATUS_PENDING));
@@ -158,6 +160,8 @@ public class TrainingExperimentService {
         Instant now = Instant.now();
         version.setCreatedAt(now);
         version.setUpdatedAt(now);
+
+        // 创建训练运行快照 TrainingRunSnapshot
         TrainingRunSnapshot snapshot = trainingRunSpecFactory.create(
                 new TrainingRunSpecFactory.CreateCommand(
                         version.getId(),
@@ -176,7 +180,11 @@ public class TrainingExperimentService {
         );
         applyRunSnapshot(version, snapshot);
         version.setHyperParamsJson(toJson(snapshot.resolvedParameters()));
+
+        // save 持久化到数据库；
         TrainingExperimentVersion saved = repo.save(version);
+
+        // 一般是事务提交之后，异步调用，通知调度系统启动训练任务
         startTrainingAfterCommit(saved.getId());
         return toDto(saved);
     }
@@ -785,24 +793,38 @@ public class TrainingExperimentService {
     }
 
     private void scheduleOrStart(String trainingId) {
-        transactionTemplate.executeWithoutResult(status -> {
+        String result = transactionTemplate.execute(status -> {
             TrainingExperimentVersion task = repo.findById(trainingId).orElse(null);
-            if (task == null) return;
-
+            if (task == null) {
+                return null;
+            }
             if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
                 Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);
-                String node = jobScheduler.assignNodeForTraining(task, nodeSelector);
-                if (node != null) {
-                    jobScheduler.bindTask(task, node);
-                    trainingExecutorRouter.start(trainingId);
-                    return;
+                String assignedNode = jobScheduler.assignNodeForTraining(task, nodeSelector);
+                if (assignedNode != null) {
+                    jobScheduler.bindTask(task, assignedNode);
+                    // 事务内只做DB修改，不启动异步，返回分配到的节点
+                    return assignedNode;
+                } else {
+                    // 分配不到节点，入队，不需要调用start
+                    jobScheduler.enqueueTask(task);
+                    return null;
                 }
-                jobScheduler.enqueueTask(task);
-                return;
+            } else {
+                // 无调度计划，标记需要直接start
+                return "__start__";
             }
-
-            trainingExecutorRouter.start(trainingId);
         });
+
+        // ✅ 事务已经提交完成，再触发异步启动
+        if (result != null) {
+            if ("__start__".equals(result)) {
+                trainingExecutorRouter.start(trainingId);
+            } else {
+                // 分配到节点的场景，提交后再启动
+                trainingExecutorRouter.start(trainingId);
+            }
+        }
     }
 
     private String newVersionId() {
