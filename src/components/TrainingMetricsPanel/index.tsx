@@ -48,6 +48,105 @@ type TrainingMetricsPanelProps = {
   onManualRunId?: (runId: string) => void;
 };
 
+/** 安全销毁：避免 ECharts dispose 与 React 卸载抢同一 DOM 触发 removeChild */
+function disposeChart(instance: echarts.ECharts | null | undefined) {
+  if (!instance || instance.isDisposed?.()) return;
+  try {
+    instance.dispose();
+  } catch {
+    // DOM 可能已被 React 卸掉，忽略
+  }
+}
+
+type CombinedChartProps = {
+  metricsData: MetricsDataMap;
+  selectedKeys: string[];
+  chartStyle: ChartStyle;
+};
+
+const CombinedMetricsChart: React.FC<CombinedChartProps> = ({
+  metricsData,
+  selectedKeys,
+  chartStyle,
+}) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = hostRef.current;
+    if (!el || !selectedKeys.length) return;
+
+    const instance = echarts.init(el);
+    instance.setOption(
+      buildMetricsChartOption(metricsData, selectedKeys, chartStyle),
+      { notMerge: true },
+    );
+
+    const onResize = () => instance.resize();
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      disposeChart(instance);
+    };
+  }, [metricsData, selectedKeys, chartStyle]);
+
+  return <div ref={hostRef} style={{ height: 400, width: '100%' }} />;
+};
+
+type SplitChartProps = {
+  metricKey: string;
+  metricsData: MetricsDataMap;
+  selectedKeys: string[];
+};
+
+const SplitMetricChart: React.FC<SplitChartProps> = ({
+  metricKey,
+  metricsData,
+  selectedKeys,
+}) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+
+    const instance = echarts.init(el);
+    instance.setOption(
+      buildMetricsChartOption(
+        metricsData,
+        selectedKeys,
+        'split-line',
+        metricKey,
+      ),
+      { notMerge: true },
+    );
+    instance.resize();
+
+    const onResize = () => instance.resize();
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      disposeChart(instance);
+    };
+  }, [metricKey, metricsData, selectedKeys]);
+
+  return (
+    <div
+      style={{
+        border: '1px solid #f0f0f0',
+        borderRadius: 8,
+        padding: 12,
+      }}
+    >
+      <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+        {METRIC_LABELS[metricKey] || metricKey}
+      </Typography.Text>
+      <div ref={hostRef} style={{ height: 280, width: '100%' }} />
+    </div>
+  );
+};
+
 const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   runId,
   taskStatus,
@@ -70,13 +169,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   });
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
-
-  const combinedChartRef = useRef<HTMLDivElement>(null);
-  const combinedChartInstance = useRef<echarts.ECharts | null>(null);
-  const splitChartRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const splitChartInstances = useRef<Record<string, echarts.ECharts | null>>(
-    {},
-  );
+  const autoSwitchedToBarRef = useRef(false);
 
   const isActive = isActiveTaskStatus(taskStatus);
   const hasAnyMetricPoints = useMemo(
@@ -86,7 +179,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       ),
     [metricsData],
   );
-  // 训练中持续刷新；结束后若指标仍空，再补拉一段时间（MLflow 落盘可能稍晚）
   const shouldPoll =
     !!runId &&
     autoRefresh &&
@@ -108,9 +200,15 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       effectiveSelected.every((key) => (metricsData[key]?.length ?? 0) <= 1),
     [effectiveSelected, metricsData],
   );
-  const effectiveChartStyle: ChartStyle =
-    onlyFinalMetrics && chartStyle !== 'bar-latest' ? 'bar-latest' : chartStyle;
-  const useSplitLayout = effectiveChartStyle === 'split-line';
+
+  // 仅首次检测到「全是终值」时默认切到柱状图；之后尊重用户手动选择（含分指标）
+  useEffect(() => {
+    if (!onlyFinalMetrics || autoSwitchedToBarRef.current) return;
+    autoSwitchedToBarRef.current = true;
+    setChartStyle('bar-latest');
+  }, [onlyFinalMetrics]);
+
+  const useSplitLayout = chartStyle === 'split-line';
 
   const loadMetrics = useCallback(
     async (silent = false) => {
@@ -134,6 +232,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   useEffect(() => {
     if (!runId) {
       setMetricsData({});
+      autoSwitchedToBarRef.current = false;
       return;
     }
     loadMetrics(false);
@@ -141,7 +240,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
 
   useEffect(() => {
     if (!shouldPoll) return;
-    // 结束后只补拉有限次数，避免 success 后无限请求
     if (isActive) {
       const timer = window.setInterval(() => {
         loadMetrics(true);
@@ -180,99 +278,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     localStorage.setItem(CHART_STYLE_STORAGE_KEY, chartStyle);
   }, [chartStyle]);
 
-  const disposeCombinedChart = useCallback(() => {
-    combinedChartInstance.current?.dispose();
-    combinedChartInstance.current = null;
-  }, []);
-
-  const disposeSplitCharts = useCallback(() => {
-    Object.values(splitChartInstances.current).forEach((inst) => {
-      inst?.dispose();
-    });
-    splitChartInstances.current = {};
-    splitChartRefs.current = {};
-  }, []);
-
-  const renderCombinedChart = useCallback(() => {
-    if (!combinedChartRef.current || !effectiveSelected.length) return;
-    const option = buildMetricsChartOption(
-      metricsData,
-      effectiveSelected,
-      effectiveChartStyle,
-    );
-    if (!combinedChartInstance.current) {
-      combinedChartInstance.current = echarts.init(combinedChartRef.current);
-    }
-    combinedChartInstance.current.setOption(option, { notMerge: true });
-  }, [metricsData, effectiveSelected, effectiveChartStyle]);
-
-  const renderSplitCharts = useCallback(() => {
-    const activeKeys = new Set(effectiveSelected);
-    Object.keys(splitChartInstances.current).forEach((key) => {
-      if (!activeKeys.has(key)) {
-        splitChartInstances.current[key]?.dispose();
-        delete splitChartInstances.current[key];
-        delete splitChartRefs.current[key];
-      }
-    });
-
-    for (const key of effectiveSelected) {
-      const el = splitChartRefs.current[key];
-      if (!el) continue;
-      const option = buildMetricsChartOption(
-        metricsData,
-        effectiveSelected,
-        'split-line',
-        key,
-      );
-      if (!splitChartInstances.current[key]) {
-        splitChartInstances.current[key] = echarts.init(el);
-      }
-      splitChartInstances.current[key]?.setOption(option, { notMerge: true });
-      splitChartInstances.current[key]?.resize();
-    }
-  }, [metricsData, effectiveSelected]);
-
-  useEffect(() => {
-    if (useSplitLayout) {
-      disposeCombinedChart();
-      return;
-    }
-    disposeSplitCharts();
-  }, [useSplitLayout, disposeCombinedChart, disposeSplitCharts]);
-
-  useLayoutEffect(() => {
-    if (!useSplitLayout || !effectiveSelected.length) return;
-    renderSplitCharts();
-    const raf = window.requestAnimationFrame(() => {
-      renderSplitCharts();
-    });
-    return () => window.cancelAnimationFrame(raf);
-  }, [useSplitLayout, renderSplitCharts, effectiveSelected.length]);
-
-  useEffect(() => {
-    if (useSplitLayout) return;
-    renderCombinedChart();
-  }, [useSplitLayout, renderCombinedChart]);
-
-  useEffect(() => {
-    const onResize = () => {
-      combinedChartInstance.current?.resize();
-      Object.values(splitChartInstances.current).forEach((inst) => {
-        inst?.resize();
-      });
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      disposeCombinedChart();
-      disposeSplitCharts();
-    };
-  }, [disposeCombinedChart, disposeSplitCharts]);
-
   const metricSummaries = extractMetricSummaries(backendMetrics);
   const hasCharts = availableMetrics.length > 0;
 
@@ -306,7 +311,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       <Space wrap style={{ marginBottom: 16 }} align="center">
         <span style={{ color: '#8c8c8c', fontSize: 12 }}>图表样式</span>
         <Select
-          value={effectiveChartStyle}
+          value={chartStyle}
           onChange={setChartStyle}
           options={CHART_STYLE_OPTIONS}
           style={{ width: 160 }}
@@ -363,8 +368,11 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
           </Tag>
         )}
         {onlyFinalMetrics && hasCharts && (
-          <Tag color="blue">当前 MLflow 只有终值，已按末值柱状图展示</Tag>
+          <Tag color="blue">当前 MLflow 多为终值点，折线可能只显示单个点</Tag>
         )}
+        {typeof progress === 'number' && progress > 0 && isActive ? (
+          <Tag>进度 {progress}%</Tag>
+        ) : null}
       </Space>
 
       {runId && mlflowMetricSummaries.length > 0 && (
@@ -393,6 +401,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
       ) : hasCharts ? (
         useSplitLayout ? (
           <div
+            key={`split-${effectiveSelected.join('|')}`}
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
@@ -400,36 +409,21 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             }}
           >
             {effectiveSelected.map((key) => (
-              <div
+              <SplitMetricChart
                 key={key}
-                style={{
-                  border: '1px solid #f0f0f0',
-                  borderRadius: 8,
-                  padding: 12,
-                }}
-              >
-                <Typography.Text
-                  strong
-                  style={{ display: 'block', marginBottom: 8 }}
-                >
-                  {METRIC_LABELS[key] || key}
-                </Typography.Text>
-                <div
-                  ref={(el) => {
-                    splitChartRefs.current[key] = el;
-                    if (el && useSplitLayout) {
-                      window.requestAnimationFrame(() => {
-                        renderSplitCharts();
-                      });
-                    }
-                  }}
-                  style={{ height: 280, width: '100%', overflow: 'hidden' }}
-                />
-              </div>
+                metricKey={key}
+                metricsData={metricsData}
+                selectedKeys={effectiveSelected}
+              />
             ))}
           </div>
         ) : (
-          <div ref={combinedChartRef} style={{ height: 400, width: '100%' }} />
+          <CombinedMetricsChart
+            key={`combined-${chartStyle}`}
+            metricsData={metricsData}
+            selectedKeys={effectiveSelected}
+            chartStyle={chartStyle}
+          />
         )
       ) : (
         <div
