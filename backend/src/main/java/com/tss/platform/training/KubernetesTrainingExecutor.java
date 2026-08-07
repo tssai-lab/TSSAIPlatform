@@ -89,12 +89,23 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
 
     private void submitJob(String trainingId) {
         try {
+            // 1. 根据训练ID查数据库拿到任务实体
             TrainingExperimentVersion task = repository.findById(trainingId)
                     .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
+
+            // 2. 获取要调度到的K8s节点IP，即JobScheduler绑定出来的节点
             String targetNode = task.getServerIp();
+
+            // 重点：构建K8s Job完整YAML清单
             String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket, targetNode);
+
+            // 拿到kubeconfig配置文件路径，用来执行kubectl命令操作集群
             Path kubeconfig = environmentService.resolveKubeconfig();
+
+            // 组装kubectl apply -f - 命令：从标准输入读yaml内容创建资源
             List<String> applyCmd = environmentService.kubectlCommand(kubeconfig, "apply", "-f", "-");
+
+            // 执行shell命令，把上面生成的yaml通过stdin传给kubectl，超时120秒
             ShellCommandRunner.CommandResult result = runWithStdin(
                     applyCmd, environmentService.resolveProjectRoot(), yaml, 120
             );
@@ -108,6 +119,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                 if (jobAlreadyExists(kubeconfig, trainingId)) {
                     LOG.info("K8s Job already exists for trainingId={}; treating concurrent apply failure as submitted: {}",
                             trainingId, out);
+                    // 更新DB状态为queued排队，进度0
                     updateStatus(trainingId, "queued", 0, null);
                     LOG.info("K8s training Job already submitted: trainingId={}, plan={}, job={}",
                             trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
@@ -115,6 +127,9 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                 }
                 throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + out);
             }
+
+            // kubectl apply成功：更新数据库状态为 queued(排队)，进度0
+            // queue只代表k8s收下Job，不代表Pod已经启动
             updateStatus(trainingId, "queued", 0, null);
             LOG.info("K8s training Job submitted: trainingId={}, plan={}, job={}",
                     trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
