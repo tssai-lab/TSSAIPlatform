@@ -79,6 +79,7 @@ public class TrainingExperimentService {
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
+    private final MlflowTrackingService mlflowTrackingService;
 
     private static final Logger LOG = LoggerFactory.getLogger(TrainingExperimentService.class);
 
@@ -98,7 +99,8 @@ public class TrainingExperimentService {
             @Lazy JobScheduler jobScheduler,
             TransactionTemplate transactionTemplate,
             ObjectMapper objectMapper,
-            AuthContext authContext
+            AuthContext authContext,
+            MlflowTrackingService mlflowTrackingService
     ) {
         this.repo = repo;
         this.modelVersionRepo = modelVersionRepo;
@@ -116,6 +118,7 @@ public class TrainingExperimentService {
         this.transactionTemplate = transactionTemplate;
         this.objectMapper = objectMapper;
         this.authContext = authContext;
+        this.mlflowTrackingService = mlflowTrackingService;
     }
 
     @Transactional
@@ -585,6 +588,7 @@ public class TrainingExperimentService {
         String nextStatus = req.getStatus() == null || req.getStatus().isBlank()
                 ? version.getStatus()
                 : normalizeStatus(req.getStatus());
+        boolean wasSuccess = "success".equals(version.getStatus());
         TrainingOutputValidator.ValidatedOutput validatedOutput = null;
         if ("success".equals(nextStatus) && version.getRunSpecJson() != null) {
             validatedOutput = trainingOutputValidator.validate(
@@ -639,6 +643,61 @@ public class TrainingExperimentService {
             version.setRemark(req.getRemark());
         }
         version.setUpdatedAt(Instant.now());
+        // 本次回调把任务置为成功：把最终指标补写到 MLflow（供前端指标可视化读取）
+        if ("success".equals(nextStatus) && !wasSuccess) {
+            syncMetricsToMlflow(version);
+        }
+    }
+
+    /**
+     * 训练成功回调时，把最终指标补写到训练脚本上报的 MLflow run 里。
+     * 只写数值型指标（MLflow metrics 只接受数值），非数值字段（如 trainingPlan 名称）自动跳过。
+     */
+    private void syncMetricsToMlflow(TrainingExperimentVersion version) {
+        try {
+            if (version.getRunId() == null || version.getRunId().isBlank()) {
+                return;
+            }
+            Map<String, Double> numeric = numericMetrics(version.getMetricsJson());
+            if (numeric.isEmpty()) {
+                return;
+            }
+            mlflowTrackingService.logMetricsToUri(
+                    version.getMlflowTrackingUri(),
+                    version.getRunId(),
+                    numeric,
+                    0
+            );
+        } catch (Exception e) {
+            LOG.warn("训练指标同步到 MLflow 失败: trainingId={}, error={}", version.getId(), e.getMessage());
+        }
+    }
+
+    private Map<String, Double> numericMetrics(String metricsJson) {
+        Map<String, Double> result = new LinkedHashMap<>();
+        try {
+            JsonNode node = metricsJson == null || metricsJson.isBlank()
+                    ? objectMapper.createObjectNode()
+                    : objectMapper.readTree(metricsJson);
+            if (!node.isObject()) {
+                return result;
+            }
+            node.fields().forEachRemaining(entry -> {
+                JsonNode value = entry.getValue();
+                if (value.isNumber()) {
+                    result.put(entry.getKey(), value.asDouble());
+                } else if (value.isTextual()) {
+                    try {
+                        result.put(entry.getKey(), Double.parseDouble(value.asText()));
+                    } catch (NumberFormatException ignored) {
+                        // 非数值字符串指标（如 trainingPlan 名称）跳过
+                    }
+                }
+            });
+        } catch (Exception ignored) {
+            // 指标 JSON 解析失败则视为无可写指标
+        }
+        return result;
     }
 
     private void applyValidatedOutput(

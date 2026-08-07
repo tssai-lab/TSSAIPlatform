@@ -5,6 +5,8 @@ import com.tss.platform.config.TrainingMlflowProperties;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -22,6 +24,9 @@ import java.util.Map;
 
 @Service
 public class MlflowTrackingService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(MlflowTrackingService.class);
+
     private final TrainingMlflowProperties properties;
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate = new RestTemplate();
@@ -81,6 +86,41 @@ public class MlflowTrackingService {
                 "run_id", runId,
                 "metrics", records
         ));
+    }
+
+    /**
+     * 把训练指标写入指定的 MLflow 实例（K8s 训练 worker 回调携带的 tracking-uri + runId）。
+     * 与 {@link #logMetrics} 不同：这里不依赖后端配置的 tracking-uri，而是直接用回调带来的地址，
+     * 用于把训练脚本产出的最终指标补写到 MLflow，供前端指标可视化读取。
+     * 最佳努力写入：失败仅记录日志，不影响训练结果回调。
+     */
+    public void logMetricsToUri(String trackingUri, String runId, Map<String, Double> metrics, int step) {
+        if (runId == null || runId.isBlank() || metrics == null || metrics.isEmpty()) {
+            return;
+        }
+        String base = trackingUri;
+        if (base == null || base.isBlank()) {
+            return;
+        }
+        base = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        long timestamp = Instant.now().toEpochMilli();
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Map.Entry<String, Double> metric : metrics.entrySet()) {
+            records.add(Map.of(
+                    "key", metric.getKey(),
+                    "value", metric.getValue(),
+                    "timestamp", timestamp,
+                    "step", step
+            ));
+        }
+        try {
+            postToBase(base, "/api/2.0/mlflow/runs/log-batch", Map.of(
+                    "run_id", runId,
+                    "metrics", records
+            ));
+        } catch (Exception e) {
+            LOG.warn("训练指标同步到 MLflow 失败: runId={}, error={}", runId, e.getMessage());
+        }
     }
 
     public void logParams(String runId, Map<String, String> params) {
@@ -164,11 +204,15 @@ public class MlflowTrackingService {
     }
 
     private Map<?, ?> post(String path, Object body) {
+        return postToBase(baseUrl(), path, body);
+    }
+
+    private Map<?, ?> postToBase(String base, String path, Object body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         try {
             String raw = objectMapper.writeValueAsString(body);
-            return restTemplate.postForObject(baseUrl() + path, new HttpEntity<>(raw, headers), Map.class);
+            return restTemplate.postForObject(base + path, new HttpEntity<>(raw, headers), Map.class);
         } catch (Exception e) {
             throw new IllegalStateException("调用 MLflow 失败: " + e.getMessage(), e);
         }

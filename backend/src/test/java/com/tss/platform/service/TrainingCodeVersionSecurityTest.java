@@ -96,7 +96,8 @@ class TrainingCodeVersionSecurityTest {
                 new org.springframework.transaction.support.TransactionTemplate(
                         mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
-                authContext
+                authContext,
+                mock(MlflowTrackingService.class)
         );
 
         doNothing().when(authContext).requireOwnerAccess(anyInt(), org.mockito.ArgumentMatchers.anyString());
