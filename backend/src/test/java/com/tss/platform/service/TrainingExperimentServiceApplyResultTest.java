@@ -55,7 +55,8 @@ class TrainingExperimentServiceApplyResultTest {
                 new org.springframework.transaction.support.TransactionTemplate(
                         mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
-                authContext
+                authContext,
+                mock(MlflowTrackingService.class)
         );
     }
 
