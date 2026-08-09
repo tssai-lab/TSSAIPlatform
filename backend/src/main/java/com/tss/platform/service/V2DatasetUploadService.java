@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 @Service
 public class V2DatasetUploadService {
@@ -281,10 +282,13 @@ public class V2DatasetUploadService {
         dto.setStrictManifest(Boolean.TRUE.equals(session.getStrictManifest()));
         dto.setDisplayStatus(displayStatus(source.getStatus(), job));
         dto.setImportProgress(job == null ? null : job.getProgress());
-        dto.setUserError(V2ImportJobDisplayHelper.userError(
+        V2UserError importError = V2ImportJobDisplayHelper.userError(
                 job,
                 objectMapper
-        ));
+        );
+        dto.setUserError(importError == null
+                ? uploadFailure(session)
+                : importError);
         dto.setCreatedAt(source.getCreatedAt());
         dto.setUpdatedAt(source.getUpdatedAt());
         return dto;
@@ -355,7 +359,26 @@ public class V2DatasetUploadService {
         if ("DISCARDED".equals(uploadStatus)) {
             return "CANCELLED";
         }
+        if ("FAILED".equals(uploadStatus)) {
+            return "UPLOAD_FAILED";
+        }
         return "UPLOADING";
+    }
+
+    private V2UserError uploadFailure(DatasetUploadSession session) {
+        if (!"FAILED".equals(session.getStatus())
+                || session.getCompletionErrorCode() == null
+                || session.getCompletionErrorMessage() == null) {
+            return null;
+        }
+        Map<String, Object> details = session.getCompletionErrorDetails() == null
+                ? Map.of()
+                : Map.copyOf(session.getCompletionErrorDetails());
+        return new V2UserError(
+                session.getCompletionErrorCode(),
+                session.getCompletionErrorMessage(),
+                details
+        );
     }
 
     private V2BusinessException notFound() {
@@ -375,6 +398,11 @@ public class V2DatasetUploadService {
     }
 
     private Map<String, Object> reasonDetails(IllegalArgumentException exception) {
+        if (exception instanceof DatasetUploadCompletionException completion) {
+            Map<String, Object> details = new LinkedHashMap<>(completion.getDetails());
+            details.put("reasonCode", completion.getReasonCode());
+            return Map.copyOf(details);
+        }
         String message = exception.getMessage();
         return message == null || message.isBlank()
                 ? Map.of()

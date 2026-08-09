@@ -565,7 +565,11 @@ class CodeAssetPublishIntegrationTest {
     }
 
     private CodeAsset persistAsset(String assetId) {
-        return persistAsset(assetId, OWNER_USER_ID, "Integration code asset");
+        return persistAsset(
+                assetId,
+                OWNER_USER_ID,
+                "Integration code asset " + assetId
+        );
     }
 
     private CodeAsset persistAsset(

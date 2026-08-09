@@ -11,6 +11,7 @@ import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeVersionRepository;
 import com.tss.platform.repository.CodeWorkspaceRepository;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -61,10 +62,12 @@ public class V2CodeAssetService {
             throw invalid("INVALID_REQUEST", "Code asset request is required");
         }
         Integer ownerUserId = currentUserId();
+        String name = AssetNamePolicy.normalizeRequired(request.name());
+        requireUniqueAssetName(ownerUserId, name, null);
         Instant now = Instant.now();
         CodeAsset asset = new CodeAsset();
         asset.setId("code-asset-" + compactUuid());
-        asset.setName(required(request.name(), "name", 255));
+        asset.setName(name);
         asset.setTrainingProfile(supportedTrainingProfile(request.trainingProfile()));
         asset.setPurpose(optional(request.purpose(), "purpose", 1024));
         asset.setRuntime(optional(request.runtime(), "runtime", 128));
@@ -75,7 +78,7 @@ public class V2CodeAssetService {
         asset.setCreatedAt(now);
         asset.setUpdatedAt(now);
         asset.setDeleted(false);
-        CodeAsset saved = assetRepository.saveAndFlush(asset);
+        CodeAsset saved = saveAsset(asset);
         auditService.assetCreated(saved.getId(), revision(saved));
         return toDto(saved, false);
     }
@@ -150,7 +153,9 @@ public class V2CodeAssetService {
             }
         }
         if (request.isNamePresent()) {
-            asset.setName(required(request.getName(), "name", 255));
+            String name = AssetNamePolicy.normalizeRequired(request.getName());
+            requireUniqueAssetName(asset.getOwnerUserId(), name, asset.getId());
+            asset.setName(name);
         }
         if (trainingProfileChanged) {
             asset.setTrainingProfile(normalizedTrainingProfile);
@@ -172,7 +177,7 @@ public class V2CodeAssetService {
         }
         if (trainingProfileChanged || hasNonProfileChanges(request)) {
             asset.setUpdatedAt(Instant.now());
-            asset = assetRepository.saveAndFlush(asset);
+            asset = saveAsset(asset);
             auditService.assetUpdated(asset.getId(), revision(asset));
         }
         return toDto(asset, workspaceRepository.findOpenByAssetId(asset.getId()).isPresent());
@@ -353,6 +358,31 @@ public class V2CodeAssetService {
 
     private Integer currentUserId() {
         return accessPolicy.currentUserId();
+    }
+
+    private void requireUniqueAssetName(
+            Integer ownerUserId,
+            String name,
+            String excludedId
+    ) {
+        if (assetRepository.existsActiveNormalizedName(
+                ownerUserId,
+                name,
+                excludedId
+        )) {
+            throw new AssetNameConflictException("code");
+        }
+    }
+
+    private CodeAsset saveAsset(CodeAsset asset) {
+        try {
+            return assetRepository.saveAndFlush(asset);
+        } catch (DataIntegrityViolationException exception) {
+            if (AssetNamePolicy.isNameConstraintViolation(exception)) {
+                throw new AssetNameConflictException("code");
+            }
+            throw exception;
+        }
     }
 
     private static V2CodeAssetDto toDto(CodeAsset asset, boolean hasOpenWorkspace) {

@@ -1,5 +1,6 @@
 package com.tss.platform.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.time.Instant;
@@ -17,6 +18,7 @@ public class ModelUploadProgressDto {
     private Integer uploadedChunks;
     private Long uploadedBytes;
     private List<Integer> uploadedPartIndexes;
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String storagePath;
     private String assetId;
     private String versionId;

@@ -72,6 +72,7 @@ public class DatasetUploadService {
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String STATUS_FAILED = "FAILED";
     private static final String VERSION_STATUS_DRAFT = "DRAFT";
     private static final String VERSION_STATUS_READY = "READY";
     private static final String IMPORT_STATUS_PENDING = "PENDING";
@@ -253,9 +254,9 @@ public class DatasetUploadService {
         String fingerprint = normalizeText(req.getFileFingerprint());
         if (fingerprint != null) {
             DatasetUploadSession existing = sessionRepo
-                    .findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
+                    .findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(
                             fingerprint,
-                            STATUS_UPLOADING,
+                            List.of(STATUS_UPLOADING, STATUS_FAILED),
                             ownerUserId
                     )
                     .orElse(null);
@@ -371,7 +372,8 @@ public class DatasetUploadService {
         if (STATUS_COMPLETED.equals(snapshot.getStatus())) {
             return progress(snapshot);
         }
-        if (!STATUS_UPLOADING.equals(snapshot.getStatus())) {
+        if (!STATUS_UPLOADING.equals(snapshot.getStatus())
+                && !isRetryableFailedInitial(snapshot)) {
             throw new IllegalArgumentException(
                     "上传状态不允许继续上传分片: " + snapshot.getStatus()
             );
@@ -464,7 +466,10 @@ public class DatasetUploadService {
         if (STATUS_COMPLETED.equals(session.getStatus())) {
             return new ChunkPersistenceResult(session, false);
         }
-        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+        if (isRetryableFailedInitial(session)) {
+            session.setStatus(STATUS_UPLOADING);
+            clearCompletionFailure(session);
+        } else if (!STATUS_UPLOADING.equals(session.getStatus())) {
             throw new IllegalArgumentException(
                     "上传状态不允许继续上传分片: " + session.getStatus()
             );
@@ -542,6 +547,7 @@ public class DatasetUploadService {
 
         String destinationObject = reservation.destinationObject();
         DatasetUploadSession completed;
+        UploadFailure failure = storageFailure();
         try {
             List<ComposeSource> sources = chunks.stream()
                     .map(chunk -> ComposeSource.builder()
@@ -556,6 +562,7 @@ public class DatasetUploadService {
                             .sources(sources)
                             .build()
             );
+            failure = validationFailure();
             Long fileCount = validateDatasetObjectFormat(
                     reservation.session().getType(),
                     reservation.session().getAnnotationFormat(),
@@ -571,6 +578,7 @@ public class DatasetUploadService {
                                     reservation.asset(),
                                     reservation.version()
                             );
+            failure = finalizationFailure();
             completed = transactionTemplate.execute(
                     status -> finalizeSingleModalUpload(
                             reservation,
@@ -583,15 +591,21 @@ public class DatasetUploadService {
             }
         } catch (Exception exception) {
             removeObjectQuietly(destinationObject);
+            UploadFailure persistedFailure = failure;
             try {
                 transactionTemplate.executeWithoutResult(
-                        status -> rollbackSingleModalReservation(uploadId)
+                        status -> rollbackSingleModalReservation(
+                                uploadId,
+                                persistedFailure
+                        )
                 );
             } catch (RuntimeException ignored) {
                 // 保留原始合并、校验或发布错误。
             }
-            throw new IllegalArgumentException(
-                    "合并文件失败: " + rootMessage(exception)
+            throw new DatasetUploadCompletionException(
+                    failure.reasonCode(),
+                    failure.userMessage(),
+                    failure.details()
             );
         }
 
@@ -811,6 +825,7 @@ public class DatasetUploadService {
         versionRepo.saveAndFlush(version);
 
         session.setStatus(STATUS_COMPLETED);
+        clearCompletionFailure(session);
         session.setStoragePath(reservation.destinationObject());
         session.setUpdatedAt(now);
         sessionRepo.saveAndFlush(session);
@@ -820,7 +835,10 @@ public class DatasetUploadService {
         return session;
     }
 
-    private void rollbackSingleModalReservation(String uploadId) {
+    private void rollbackSingleModalReservation(
+            String uploadId,
+            UploadFailure failure
+    ) {
         DatasetUploadSession session = sessionRepo.findById(uploadId).orElse(null);
         if (session == null || STATUS_COMPLETED.equals(session.getStatus())) {
             return;
@@ -829,7 +847,7 @@ public class DatasetUploadService {
         String assetId = session.getAssetId();
         boolean deleteAsset = Boolean.TRUE.equals(session.getAssetCreatedByUpload());
 
-        session.setStatus(STATUS_UPLOADING);
+        applyCompletionFailure(session, failure);
         session.setStoragePath(null);
         session.setVersionId(null);
         session.setVersionNo(null);
@@ -867,6 +885,7 @@ public class DatasetUploadService {
 
         String destName = reservation.destinationObject();
         DatasetUploadSession completed;
+        UploadFailure failure = storageFailure();
         try {
             List<ComposeSource> sources = chunks.stream()
                     .map(chunk -> ComposeSource.builder()
@@ -891,6 +910,7 @@ public class DatasetUploadService {
                 throw new IllegalArgumentException("合并后文件大小与上传会话不一致");
             }
 
+            failure = finalizationFailure();
             completed = transactionTemplate.execute(
                     status -> finalizeManifestUpload(uploadId, destName, stat.size())
             );
@@ -899,14 +919,22 @@ public class DatasetUploadService {
             }
         } catch (Exception e) {
             removeObjectQuietly(destName);
+            UploadFailure persistedFailure = failure;
             try {
                 transactionTemplate.executeWithoutResult(
-                        status -> rollbackManifestReservation(uploadId)
+                        status -> rollbackManifestReservation(
+                                uploadId,
+                                persistedFailure
+                        )
                 );
             } catch (RuntimeException ignored) {
                 // 保留原始合并或落库错误。
             }
-            throw new IllegalArgumentException("合并文件失败: " + rootMessage(e));
+            throw new DatasetUploadCompletionException(
+                    failure.reasonCode(),
+                    failure.userMessage(),
+                    failure.details()
+            );
         }
         registerChunkCleanup(uploadId, chunks);
         launchPendingImport(completed);
@@ -1081,6 +1109,7 @@ public class DatasetUploadService {
         session.setStoragePath(storagePath);
         session.setImportJobId(job.getId());
         session.setStatus(STATUS_COMPLETED);
+        clearCompletionFailure(session);
         session.setUpdatedAt(now);
         return sessionRepo.saveAndFlush(session);
     }
@@ -1173,7 +1202,10 @@ public class DatasetUploadService {
         sessionRepo.saveAndFlush(session);
     }
 
-    private void rollbackManifestReservation(String uploadId) {
+    private void rollbackManifestReservation(
+            String uploadId,
+            UploadFailure failure
+    ) {
         DatasetUploadSession session = sessionRepo.findById(uploadId).orElse(null);
         if (session == null || STATUS_COMPLETED.equals(session.getStatus())) {
             return;
@@ -1182,7 +1214,7 @@ public class DatasetUploadService {
         String assetId = session.getAssetId();
         boolean deleteAsset = Boolean.TRUE.equals(session.getAssetCreatedByUpload());
 
-        session.setStatus(STATUS_UPLOADING);
+        applyCompletionFailure(session, failure);
         session.setStoragePath(null);
         session.setVersionId(null);
         session.setVersionNo(null);
@@ -1633,7 +1665,9 @@ public class DatasetUploadService {
         if (STATUS_COMPLETING.equals(session.getStatus())) {
             throw new IllegalArgumentException("数据集文件正在合并中，请稍后查询进度");
         }
-        if (!STATUS_UPLOADING.equals(session.getStatus())) {
+        String expectedStatus = session.getStatus();
+        if (!STATUS_UPLOADING.equals(expectedStatus)
+                && !isRetryableFailedInitial(session)) {
             throw new IllegalArgumentException("上传状态不允许完成: " + session.getStatus());
         }
 
@@ -1641,7 +1675,7 @@ public class DatasetUploadService {
         int updated = sessionRepo.updateStatusIfCurrent(
                 session.getId(),
                 session.getOwnerUserId(),
-                STATUS_UPLOADING,
+                expectedStatus,
                 STATUS_COMPLETING,
                 now
         );
@@ -1653,8 +1687,58 @@ public class DatasetUploadService {
             throw new IllegalArgumentException("数据集文件正在合并中，请稍后查询进度");
         }
         session.setStatus(STATUS_COMPLETING);
+        clearCompletionFailure(session);
         session.setUpdatedAt(now);
         return session;
+    }
+
+    private boolean isRetryableFailedInitial(DatasetUploadSession session) {
+        return STATUS_FAILED.equals(session.getStatus())
+                && UPLOAD_PURPOSE_INITIAL.equals(session.getUploadPurpose());
+    }
+
+    private void applyCompletionFailure(
+            DatasetUploadSession session,
+            UploadFailure failure
+    ) {
+        Instant now = Instant.now();
+        session.setStatus(STATUS_FAILED);
+        session.setCompletionErrorCode(failure.reasonCode());
+        session.setCompletionErrorMessage(failure.userMessage());
+        session.setCompletionErrorDetails(failure.details());
+        session.setCompletionFailedAt(now);
+        session.setUpdatedAt(now);
+    }
+
+    private void clearCompletionFailure(DatasetUploadSession session) {
+        session.setCompletionErrorCode(null);
+        session.setCompletionErrorMessage(null);
+        session.setCompletionErrorDetails(null);
+        session.setCompletionFailedAt(null);
+    }
+
+    private UploadFailure storageFailure() {
+        return new UploadFailure(
+                "DATASET_UPLOAD_STORAGE_FAILED",
+                "数据集文件处理失败，请稍后重试",
+                Map.of("stage", "STORAGE")
+        );
+    }
+
+    private UploadFailure validationFailure() {
+        return new UploadFailure(
+                "INVALID_DATASET_CONTENT",
+                "数据集内容格式无效，请检查文件后重试",
+                Map.of("stage", "VALIDATION")
+        );
+    }
+
+    private UploadFailure finalizationFailure() {
+        return new UploadFailure(
+                "DATASET_UPLOAD_FINALIZATION_FAILED",
+                "数据集版本确认失败，请稍后重试",
+                Map.of("stage", "FINALIZATION")
+        );
     }
 
     private DatasetUploadProgressDto progress(DatasetUploadSession session) {
@@ -1987,9 +2071,19 @@ public class DatasetUploadService {
         String cvTaskType = CvTaskType.normalizeForTask(taskType, req.getCvTaskType());
         String annotationFormat = CvAnnotationFormat.normalizeForTask(taskType, req.getAnnotationFormat());
         String requestAssetId = normalizeText(req.getAssetId());
+        Integer resumeDefaultVersionNo = requestAssetId == null
+                ? Integer.valueOf(1)
+                : session.getVersionNo();
         String requestLabel = defaultVersionLabel(req.getVersionLabel(), req.getVersion(),
-                requestAssetId == null ? 1 : session.getVersionNo());
+                resumeDefaultVersionNo);
         boolean requestLabelGenerated = isVersionLabelGenerated(req.getVersionLabel(), req.getVersion());
+        if (requestLabel == null && requestLabelGenerated) {
+            requestLabel = displayVersionLabel(
+                    session.getVersionLabel(),
+                    session.getVersion(),
+                    session.getVersionNo()
+            );
+        }
         String requestSampleGrouping = normalizeSampleGroupingForTask(taskType, req.getSampleGrouping());
         String requestManifestPath = normalizeManifestPath(
                 requestSampleGrouping,
@@ -2519,6 +2613,13 @@ public class DatasetUploadService {
     private record ChunkPersistenceResult(
             DatasetUploadSession session,
             boolean persisted
+    ) {
+    }
+
+    private record UploadFailure(
+            String reasonCode,
+            String userMessage,
+            Map<String, Object> details
     ) {
     }
 }

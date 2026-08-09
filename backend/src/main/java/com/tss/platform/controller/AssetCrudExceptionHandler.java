@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
         ModelAssetCrudController.class,
         DatasetAssetCrudController.class,
         ModelUploadController.class,
-        DatasetUploadController.class
+        DatasetUploadController.class,
+        CodeUploadController.class
 })
 public class AssetCrudExceptionHandler {
 

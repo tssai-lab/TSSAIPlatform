@@ -1,5 +1,7 @@
 package com.tss.platform.controller;
 
+import com.tss.platform.dto.CodeUploadResultDto;
+import com.tss.platform.module1.common.AuditObjectType;
 import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.CodeApprovalForbiddenException;
 import com.tss.platform.service.CodeArtifactStorageException;
@@ -13,6 +15,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LegacyCodeControllerSecurityTest {
@@ -82,5 +85,33 @@ class LegacyCodeControllerSecurityTest {
         assertFalse(response.isSuccess());
         assertEquals("代码资产导入失败", response.getErrorMessage());
         assertFalse(response.getErrorMessage().contains("storage"));
+    }
+
+    @Test
+    void successfulUploadAuditsStableAssetIdWithoutStoragePath() {
+        CodeUploadService service = mock(CodeUploadService.class);
+        AuditHooks auditHooks = mock(AuditHooks.class);
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "source.zip", "application/zip", new byte[]{1}
+        );
+        CodeUploadResultDto result = CodeUploadResultDto.builder()
+                .codeAssetId("code-asset-1")
+                .codeVersionId("code-version-1")
+                .storagePath("users/99/private/artifact.zip")
+                .build();
+        when(service.upload(file, "asset", "v1", "profile-1", null))
+                .thenReturn(result);
+
+        CodeUploadController controller = new CodeUploadController(service);
+        ReflectionTestUtils.setField(controller, "auditHooks", auditHooks);
+        controller.upload(file, "asset", "v1", "profile-1", null);
+
+        verify(auditHooks).upload(
+                AuditObjectType.TRAINING_CODE,
+                "code-asset-1",
+                "CODE_UPLOAD",
+                true,
+                null
+        );
     }
 }

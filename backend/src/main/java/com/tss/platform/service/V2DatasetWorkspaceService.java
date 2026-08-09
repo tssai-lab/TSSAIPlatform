@@ -419,6 +419,8 @@ public class V2DatasetWorkspaceService {
         }
 
         workspace.setStatus(ABANDONED);
+        workspace.setDeleted(true);
+        workspace.setDeletedAt(now);
         workspace.setUpdatedAt(now);
         long revision = commandService.incrementRevision(workspace);
         auditService.recordUserAction(
@@ -431,6 +433,8 @@ public class V2DatasetWorkspaceService {
                 null,
                 Map.of(
                         "workspaceRevision", revision,
+                        "releasedVersionLabel", workspace.getVersionLabel(),
+                        "releasedVersionNo", workspace.getVersionNo(),
                         "uploadCount", uploads.size(),
                         "packageCount", workspaceOwnedPackages.size()
                 )

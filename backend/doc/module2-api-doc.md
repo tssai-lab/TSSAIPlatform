@@ -383,7 +383,6 @@ POST /api/model/upload/init
   "uploadedChunks": 0,
   "uploadedBytes": 0,
   "uploadedPartIndexes": [],
-  "storagePath": null,
   "assetId": null,
   "versionId": null,
   "createdAt": "2026-05-16T10:00:00Z",
@@ -484,7 +483,6 @@ POST /api/model/upload/complete
   "type": "CV",
   "remark": "baseline model",
   "fileName": "resnet50.zip",
-  "storagePath": "users/3/models/model-asset-8e2b/v1/model-upload-1710000000000-abc/resnet50.zip",
   "sizeBytes": 10485760,
   "artifactSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "commitInfo": "train: imagenet baseline",
@@ -1010,7 +1008,6 @@ POST /api/dataset/upload/complete
   "annotationFormat": "FOLDER_CLASSIFICATION",
   "remark": "sample dataset",
   "fileName": "casting.zip",
-  "storagePath": "users/3/datasets/dataset-asset-8e2b/v1/casting.zip",
   "sizeBytes": 10485760,
   "status": "COMPLETED",
   "uploadStatus": "COMPLETED",
@@ -1023,6 +1020,20 @@ POST /api/dataset/upload/complete
   "updatedAt": "2026-05-16T10:00:10Z"
 }
 ```
+
+首次数据集上传在合并、同步内容校验或版本确认阶段失败时，会话进入可重试的
+`FAILED` 状态。已上传分片继续保留；调用方可以使用原 `uploadId` 再次 complete，或
+重新上传任一分片后重试。重新上传分片会把会话切回 `UPLOADING`，成功抢占 complete
+会切到 `COMPLETING`，两种重试都会清除旧错误。缺少分片等尚未进入完成阶段的错误
+仍保持 `UPLOADING`。
+
+V2 `POST /api/v2/dataset-uploads/{uploadId}/complete` 对上述失败继续返回 HTTP `422 / DATASET_UPLOAD_NOT_COMPLETABLE`，`details.reasonCode` 为
+`INVALID_DATASET_CONTENT`、`DATASET_UPLOAD_STORAGE_FAILED` 或
+`DATASET_UPLOAD_FINALIZATION_FAILED`。随后查询原上传 ID 返回
+`status=FAILED`、`displayStatus=UPLOAD_FAILED` 和同一稳定错误码的 `userError`；错误内容
+不包含对象路径、SQL、堆栈或内部异常类名。相同文件指纹重新 init 时也会恢复原
+`UPLOADING/FAILED` 会话。该状态只适用于首次数据集上传，工作区组件和 APPEND 继续
+使用各自的 revision/ImportJob 错误生命周期。
 
 MULTIMODAL + MANIFEST/AUTO_DIRECTORY 响应示例：
 
@@ -1051,7 +1062,7 @@ MULTIMODAL + MANIFEST/AUTO_DIRECTORY 响应示例：
 - MULTIMODAL complete 只执行 MinIO compose 和 stat，不调用现有 zip 全量格式校验。
 - MULTIMODAL complete 会为当前 ZIP 创建一个物理 `dataset_package`，并以 `PRIMARY`、`packageOrder=0` 关联到新版本；`ImportJob.packageId` 指向该 package。
 - 导入生成的 Sample、Data 和 Annotation 会记录来源 package。初始导入成功后版本变为 READY，`DatasetVersion.storagePath` 仍保留，兼容没有 packageId 的旧数据。
-- MULTIMODAL complete 失败时会清理目标对象和本次创建的 DRAFT；若本次创建了空资产也会清理，并把会话恢复为 `UPLOADING`。
+- MULTIMODAL 首次上传 complete 在合并或版本确认失败时会清理目标对象和本次创建的 DRAFT；若本次创建了空资产也会清理，并把会话置为可重试的 `FAILED`。异步 ImportJob 失败仍使用 `IMPORT_FAILED/IMPORT_PARTIAL` 语义。
 - complete 可对已完成的 `uploadId` 重试并返回原结果；状态为 `COMPLETING` 时应停止重复提交并轮询 progress。
 - 数据集名称、类型和版本说明来自 init 会话，complete 请求只接受 `uploadId`。
 
@@ -1441,7 +1452,6 @@ GET /api/dataset/list
 | `versionId` | 当前推荐数据集版本 ID |
 | `version` | 当前推荐版本展示标签 |
 | `fileName` | 当前推荐版本文件名 |
-| `storagePath` | 当前推荐版本存储路径 |
 | `sizeBytes` | 文件大小 |
 | `size` | 格式化后的文件大小 |
 | `versionRemark` | 版本备注 |
@@ -1783,6 +1793,9 @@ PUT /api/dataset-versions/{id}
 
 `assetId` 对普通用户和管理员都不可修改。数据集版本还关联当前版本指针、package 资产归属和存储路径，不能通过通用版本更新接口迁移到其他资产；需要在目标资产下创建新版本时应使用上传或专用版本创建流程。存储元数据对所有角色都不能通过该接口修改。
 
+模型/数据集版本 CRUD 响应不序列化 `storagePath`。请求中的该字段仍会被绑定，以便按
+现有规则拒绝客户端篡改服务端管理的存储元数据。
+
 `remark`、`description`、`changeLog` 会直接使用请求值覆盖，省略时会被更新为 `null`；编辑页应先读取详情并提交完整可编辑字段。
 
 ### 9.12 更新数据集版本状态
@@ -1831,6 +1844,12 @@ DELETE /api/dataset-versions/{id}
 | `GET` | `/api/code/version/{codeVersionId}/training-check?trainingProfile=...` | 按训练方案校验或幂等复用证据；真正的新证据进入系统审核模式分流 |
 
 `/api/code/upload` 使用 `multipart/form-data`，字段为 `file`、`codeName`、`version`、`trainingProfile`、`remark`。代码包只支持 `.zip`，包内允许 `.py`、`.json`、`.yaml`、`.yml`、`.txt`、`.md`、`.jsonl`，禁止 `.sh`、`.bash`、`.exe`、`.bat`、`.cmd`、`.dll`、`.so`、`.jar`，并会检查 zip slip 路径、条目数和解压后体积。Windows ZIP 条目中的 `\\` 会按 18.8 规范化为 `/`。结构校验通过后进入 `DIRECT_PASS` 或 `STANDARD_REVIEW` 系统审核模式；后者再按 `MANUAL_ONLY/SHADOW/ENFORCE` 风险模式分流。静态 LOW 或系统直通都不是完整安全审计证明。
+
+`codeName` 会去除首尾空白，并在同一 owner 的未删除代码资产中按不区分大小写保持唯一；不同 owner 可以同名，同一代码资产发布多个版本不受影响。名称冲突在读取和上传 ZIP 前预检，并由数据库唯一索引处理并发竞争；`/api/code/upload` 统一返回 HTTP `409`，响应体仍使用原 `ApiResponse` 结构（`success=false`）。已软删除代码资产不占用名称。
+
+Legacy 代码上传成功结果返回代码资产、版本、文件、大小、训练方案和审核状态等业务
+字段，不返回 `storagePath`；后续消费使用 `codeVersionId`、consumer manifest 或内部
+制品解析器。
 
 当前启用的训练方案为 `image_text_consistency_fusion_logreg` 和
 `yolo_object_detection`；方案入口、数据集类型和运行参数以
@@ -2872,7 +2891,7 @@ V2 不再提供 `dataset-edit-sessions` 路由别名，前端必须按后述路�
 当时锁定的 `currentVersionId` 作为 head 快照，该内部字段不对前端暴露。
 
 显式标签会先 trim，长度必须为 1–64；显式空白或超长返回
-`400 / INVALID_VERSION_LABEL`，大小写比较规则保持现状。未传标签时，后端在资产行锁内按包含软删除记录的历史最大 `versionNo` 分配下一内部序号，并生成默认标签
+`400 / INVALID_VERSION_LABEL`，大小写比较规则保持现状。未传标签时，后端在资产行锁内按历史最大 `versionNo` 分配下一内部序号；普通软删除版本仍计入历史，只有“软删除且状态为 `ABANDONED`”的工作区审计墓碑会被忽略。后端据此生成默认标签
 `v{nextVersionNo}`；若该默认标签已被任一历史版本占用，则继续向后寻找。最终标签会在首次保存时同时写入 `version` 和 `versionLabel`，V2 前端不需要再调用 Legacy PUT。
 
 已有活动 DRAFT 时，省略基线或显式传相同基线可继续；显式传不同基线返回
@@ -2909,7 +2928,7 @@ GET /api/v2/datasets/dataset-xxx/version-allocation?versionLabel=1.0.2
 
 `unavailableReason` 只可能为 `ACTIVE_VERSION_EXISTS` 或
 `DELETED_VERSION_RESERVED`，不返回已删除版本 ID。不传 `versionLabel` 时仅返回
-`nextVersionNo/defaultVersionLabel`；预检只用于界面提示，POST 会在事务和资产行锁内重新校验。软删除版本的标签永久保留，版本列表继续过滤软删除记录。
+`nextVersionNo/defaultVersionLabel`；预检只用于界面提示，POST 会在事务和资产行锁内重新校验。READY、DEPRECATED、ARCHIVED 等普通软删除历史版本继续永久占用标签和内部序号，并返回 `DELETED_VERSION_RESERVED`；只有放弃工作区产生的 ABANDONED 审计墓碑会释放原 `versionLabel` 和 `versionNo`。版本列表继续过滤所有软删除记录。
 
 标签占用或并发唯一冲突统一返回 `409 / DATASET_VERSION_LABEL_CONFLICT`：
 
@@ -2999,7 +3018,7 @@ ZIP 与 RAW 均可在 DRAFT 预览和下载。所有读取执行 owner、工作�
 
 数据集列表、工作区详情和发布使用同一套 readiness 规则，覆盖空样本、上传/导入状态、包关系与顺序、重复 ID/索引、数据—标注关联、文件描述、版本元数据和版本谱系。所选父版本可以是历史 READY；发布在同一锁和 revision 下重新检查资产 current 是否仍等于工作区创建时的 head 快照。head 漂移返回 `409 / BASE_VERSION_STALE`，不会静默改用新 current；其他业务阻塞返回 `422 / DATASET_NOT_PUBLISHABLE`。列表通过数据库存在性聚合计算等价的 `canPublish`，每种 blocker code 至多返回一项，`resourceType/resourceId` 可以为 `null`；工作区详情和发布复检可返回具体资源 blocker。因此无状态变化时，某 revision 的 `canPublish=true` 保证发布不会再因同一业务规则返回 422。
 
-发布会物理清除草稿内已软删除的样本和组件，解除无引用的工作区独占 `OVERLAY` 包并排队清理对象，然后将 DRAFT 转为不可变 READY。放弃会把工作区转为 `ABANDONED`、上传转为 `DISCARDED`、导入转为 `SUPERSEDED`，只清理工作区独占对象并立即释放资产的活动 DRAFT 约束。
+发布会物理清除草稿内已软删除的样本和组件，解除无引用的工作区独占 `OVERLAY` 包并排队清理对象，然后将 DRAFT 转为不可变 READY。放弃会把工作区转为 `ABANDONED` 并软删除为内部审计墓碑，上传转为 `DISCARDED`、导入转为 `SUPERSEDED`，只清理工作区独占对象并立即释放资产的活动 DRAFT 约束、原版本标签和内部序号。放弃后的目标版本不再出现在版本列表、版本详情或工作区读取中；使用原 `workspaceId` 重复 DELETE 仍幂等返回原 `ABANDONED` 结果。墓碑及已有审计行不会被生命周期清理物理删除。
 
 历史非 ZIP READY 版本在创建 DRAFT 时懒规范化：来源可唯一推导时，仅在新工作区中创建或复用 RAW 主包并补齐资源引用，不修改父 READY；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，列表会在 `editability.blockers` 中预先展示。
 
@@ -3039,7 +3058,7 @@ package APPEND init 请求：
 不返回 `storagePath`、owner ID、内部 package ID、MinIO objectName 或 ZIP
 offset。
 
-上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。
+上传响应的 `displayStatus` 可能为 `UPLOADING`、`PROCESSING`、`UPLOAD_FAILED`、`IMPORTING`、`IMPORT_FAILED`、`IMPORT_PARTIAL` 或 `READY`；它与 18.1 数据集列表的聚合状态集合不同。首次上传完成失败时 `UPLOAD_FAILED` 对应原始 `status=FAILED`，`userError` 返回稳定错误码、用户可读消息和安全阶段信息；保留原 `uploadId` 与分片用于重试。
 
 工作区 DTO 不直接返回 `importJobId`。它只在上传或导入状态为活动状态时返回
 `activeOperation`：`type=UPLOAD` 时 `id` 是 `uploadId`，`type=IMPORT` 时 `id`
@@ -3283,6 +3302,8 @@ V2 代码管理以 `codeAssetId`、`workspaceId` 和不可变 `codeVersionId` �
 | `GET` | `/api/v2/code-assets/{assetId}/workspaces` | 查询打开的工作区 |
 | `POST` | `/api/v2/code-assets/{assetId}/workspaces` | 打开工作区，可传 `baseVersionId`，成功为 `201` |
 
+资产名称会去除首尾空白，并在同一 owner 的未删除代码资产范围内按不区分大小写保持唯一。不同 owner 可以同名；同一 `codeAssetId` 下创建多个不可变版本不属于资产重名。该规则同时适用于空资产创建、ZIP 导入以及 owner/管理员重命名；已软删除代码资产释放名称。预检失败或数据库并发唯一冲突统一返回 `409 / CODE_ASSET_NAME_CONFLICT`。导入预检发生在 MinIO 上传前；上传后才发生的并发冲突仍执行原有对象补偿清理。
+
 创建资产或在首个未删除代码版本产生前修改 `trainingProfile` 时，非空值必须能由
 `TrainingPlanRegistry` 解析为当前启用方案；未知、已禁用或带不受支持版本的值返回
 `422 / CODE_VALIDATION_FAILED`，`details.reasonCode=UNSUPPORTED_TRAINING_PROFILE`，
@@ -3451,6 +3472,7 @@ V2 代码顶层错误码：
 | --- | --- | --- |
 | `404` | `CODE_ASSET_NOT_FOUND` | 不存在或 owner 不匹配 |
 | `403` | `CODE_APPROVAL_FORBIDDEN` | 缺少代码管理、审批或恢复管理员权限 |
+| `409` | `CODE_ASSET_NAME_CONFLICT` | 同一 owner 已有去除首尾空白且不区分大小写的同名未删除代码资产 |
 | `409` | `CODE_ASSET_CONFLICT` | CAS、生命周期或恢复冲突，细分见 `details.reasonCode` |
 | `413` | `CODE_CONTENT_TOO_LARGE` | 超出在线内容上限 |
 | `422` | `CODE_VALIDATION_FAILED` | 代码包、证据或消费完整性校验失败 |

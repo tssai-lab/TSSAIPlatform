@@ -774,7 +774,6 @@ public class ModelUploadService {
         data.put("type", type);
         data.put("remark", remark);
         data.put("fileName", session.getFileName());
-        data.put("storagePath", session.getStoragePath());
         data.put("sizeBytes", session.getFileSize());
         data.put("status", session.getStatus());
         data.put("ownerUserId", session.getOwnerUserId());

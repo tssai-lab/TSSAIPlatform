@@ -548,13 +548,24 @@ V2 数据集版本工作区的稳定路径为：
 | 追加 ZIP | `POST .../{workspaceId}/package-uploads` |
 | 分片、轮询、完成、取消 | `/api/v2/dataset-uploads/{uploadId}` 下的 `chunks`、`GET`、`complete`、`cancel` |
 
+首次数据集上传在合并、同步内容校验或版本确认失败后进入可重试的 `FAILED`，V2 展示为
+`UPLOAD_FAILED`。会话保留原 `uploadId` 和分片；原 ID 可以再次 complete，也可以先
+替换分片，替换成功后回到 `UPLOADING`。相同文件指纹 init 会恢复
+`UPLOADING/FAILED` 会话。V2 complete 仍返回
+`422 / DATASET_UPLOAD_NOT_COMPLETABLE`，`details.reasonCode` 与后续 GET 的
+`userError.errorCode` 一致，只可能为 `INVALID_DATASET_CONTENT`、
+`DATASET_UPLOAD_STORAGE_FAILED` 或 `DATASET_UPLOAD_FINALIZATION_FAILED`。错误详情只包含
+安全阶段，不返回对象路径、SQL、堆栈或底层异常。缺少分片保持 `UPLOADING`；该语义
+不扩展到工作区组件和 APPEND 上传。
+
 创建请求无请求体、`{}` 或 JSON `null` 时，新建工作区默认从资产当前 READY 派生。
 显式 `baseVersionId` 时，所选版本必须属于该资产、未删除且为 READY；工作区
 `baseVersion`、`parentVersionId` 和物化内容都来自该版本，不会静默改用当前版本。
 服务端同时在内部记录创建事务锁定时的 `currentVersionId` 作为 head 快照。
 
-后端在资产行锁内分配包含软删除历史的下一 `versionNo` 并生成
-`v{nextVersionNo}`；默认标签已被历史记录占用时继续向后寻找。显式 `versionLabel`
+后端在资产行锁内分配下一 `versionNo` 并生成 `v{nextVersionNo}`。READY、DEPRECATED、
+ARCHIVED 等普通软删除历史仍参与分配和占用；只有软删除且状态为 `ABANDONED` 的工作区
+审计墓碑被忽略。默认标签已被其他保留记录占用时继续向后寻找。显式 `versionLabel`
 会 trim，长度必须为 1–64，空白或超长返回 `400 / INVALID_VERSION_LABEL`。标签在创建
 事务内首次保存到 `version/versionLabel`，不需要 Legacy PUT。已有活动工作区时，省略
 基线或显式传相同基线可幂等继续；显式传不同基线返回
@@ -569,7 +580,7 @@ V2 数据集版本工作区的稳定路径为：
 
 分配提示返回
 `nextVersionNo/defaultVersionLabel/requestedVersionLabel/requestedVersionLabelAvailable/unavailableReason`。请求标签不可用时，原因仅为
-`ACTIVE_VERSION_EXISTS` 或 `DELETED_VERSION_RESERVED`，不暴露已删除版本 ID；未传查询标签时只提供下一内部序号和默认标签。该结果仅用于提示，POST 会重新原子校验。软删除标签永久占用，现有全历史标签与 `versionNo` 唯一索引保持不变。
+`ACTIVE_VERSION_EXISTS` 或 `DELETED_VERSION_RESERVED`，不暴露已删除版本 ID；未传查询标签时只提供下一内部序号和默认标签。该结果仅用于提示，POST 会重新原子校验。普通软删除版本永久占用标签和 `versionNo`；放弃工作区的 ABANDONED 墓碑同时释放原标签和内部序号，可由后续工作区复用。
 
 所有标签冲突的 409 `details` 都包含
 `reasonCode/requestedVersionLabel/nextVersionNo/defaultVersionLabel`；活动工作区标签不一致时再包含
@@ -603,7 +614,7 @@ V2 数据集版本工作区的稳定路径为：
 
 发布响应中的 `versionLabel` 来自持久化版本标签，不根据 `versionNo` 重新拼接。
 
-放弃工作区幂等转入 `ABANDONED`，上传转 `DISCARDED`，导入转 `SUPERSEDED`，仅清理工作区独占对象。历史非 ZIP READY 来源可唯一推导时只在新 DRAFT 懒规范化为 RAW；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，并由列表 `editability.blockers` 提前展示。
+放弃工作区幂等转入 `ABANDONED` 并软删除为内部审计墓碑，上传转 `DISCARDED`，导入转 `SUPERSEDED`，仅清理工作区独占对象。放弃版本从版本列表、版本详情和工作区读取中隐藏，同时释放原 `versionLabel/versionNo`；使用原 `workspaceId` 重复 DELETE 仍返回原 `ABANDONED` 结果。墓碑和已有审计行继续保留且不进入生命周期物理清理。历史非 ZIP READY 来源可唯一推导时只在新 DRAFT 懒规范化为 RAW；无法唯一推导时返回 `DATASET_WORKSPACE_SOURCE_AMBIGUOUS`，并由列表 `editability.blockers` 提前展示。
 
 V2 上传、状态查询和重试 DTO 会返回 `importJobId`，用于导入失败后的 V2 重试。工作区 DTO 不提供失败任务的持久重试句柄：
 
@@ -649,6 +660,8 @@ V2 代码资源按以下稳定路径分组：
 | 管理员审核 | `/api/v2/admin/code-review-tasks` 的列表、详情、目录树、内容、findings 和 `rescan` |
 
 资产、版本和工作区的普通读取与编辑都是 owner-only；跨用户访问按 `404 / CODE_ASSET_NOT_FOUND` 处理。全部 `/api/v2/admin/**` 路径在参数绑定和资源查询前检查管理员身份，非管理员统一返回 `403 / CODE_APPROVAL_FORBIDDEN`。管理员管理面可维护普通用户资产及其唯一 OPEN 工作区，但不能转移 owner；新版本及对象仍写入原 owner 的 `users/{owner}/codes/**` 命名空间。已发布版本不可修改，继续编辑必须创建基于版本的工作区。工作区写、移动、删除、校验、发布和放弃必须使用 `expectedWorkspaceRevision` 做 CAS；已有文件的修改、移动和删除还必须携带匹配的 `expectedContentHash`，新建文件不传内容哈希，冲突为 `409 / CODE_ASSET_CONFLICT`。
+
+代码资产名称在去除首尾空白后，按同一 owner、未删除资产范围内不区分大小写唯一；不同 owner 可以同名，同一资产的多个版本不受此规则影响。空资产创建、V2/Legacy ZIP 导入及 owner/管理员重命名都执行相同校验，已软删除资产释放名称。V2 预检和数据库并发冲突统一返回 `409 / CODE_ASSET_NAME_CONFLICT`；Legacy `/api/code/upload` 返回 HTTP `409` 并保留 `ApiResponse` JSON 结构。导入预检发生在对象上传前，上传后并发冲突继续执行补偿清理。
 
 在线文件仅支持 `.py`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.txt`、`.md`。后端返回 `python`、`json`、`yaml`、`markdown` 或 `plaintext` 形式的 `languageId`，前端据此选择 Monaco Editor 高亮器；后端不返回高亮 HTML，也不执行源码。在线内容必须是 UTF-8 且原始字节不超过 `1,048,576` bytes；大文件仍可列出和下载，但内容接口返回 `413 / CODE_CONTENT_TOO_LARGE`。`contentHash` 针对原始字节计算，不规范化 BOM 或换行。`GET .../files/metadata?path=...` 不受在线内容上限限制，返回原始内容哈希和 `workspaceRevision`，使大文件保持不可预览/编辑但仍可按 CAS 安全删除；删除在草稿中写 `DELETE` 墓碑，不修改基础 ZIP。
 
@@ -957,10 +970,13 @@ MinIO objectName
 
 ### 11.1 Legacy 与 V2 调用边界
 
-部分 Legacy 数据集或上传接口可能继续返回兼容字段，例如 `storagePath`、
-`latestDraftVersionId`；这些字段只服务现有页面兼容，不作为新模块的稳定集成契约。
-Legacy 模型 `/api/model/list` 与 `/api/model/detail` 已不再返回 `storagePath`。V2 代码
-DTO、`consumer-manifest` 和 `artifact-upgrade` 响应永不返回存储路径。`importJobId` 已在
+数据资产公开响应不再返回 `storagePath`：包括 Legacy 模型上传、模型版本 CRUD、
+数据集列表/上传/版本 CRUD 和训练代码上传，以及全部 V2 数据资产 DTO。实体字段仍仅供
+后端存储定位、下载、预览、训练和清理使用；客户端必须使用资产/版本/上传任务 ID 与
+授权下载接口。推理脚本 `/api/inference/scripts` 保持独立的既有兼容契约，不属于本次
+收口范围。`latestDraftVersionId` 等其他 Legacy 展示字段仍可能保留，但不作为新模块的
+稳定集成契约。V2 代码 DTO、`consumer-manifest` 和 `artifact-upgrade` 响应永不返回
+存储路径。`importJobId` 已在
 V2 中重分类为导入状态查询和失败重试句柄，稳定暴露于 V2 上传、状态查询和重试结果；
 版本工作区只在导入活动期间通过 `activeOperation.id` 暴露它，失败后不能重新发现。新模块应保留上传响应中的句柄，并使用 `GET /api/v2/import-jobs/{importJobId}` 和请求体携带
 mode/revision 的 `POST /api/v2/import-jobs/{importJobId}/retry`，而不是 Legacy retry

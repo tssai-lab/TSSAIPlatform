@@ -61,7 +61,15 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
 
     Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseAndStatusOrderByVersionNoDesc(String assetId, String status);
 
-    List<DatasetVersion> findByDeletedTrueAndDeletedAtBefore(java.time.Instant deletedBefore);
+    @Query("""
+            select v from DatasetVersion v
+            where v.deleted = true
+              and v.deletedAt < :deletedBefore
+              and v.status <> 'ABANDONED'
+            """)
+    List<DatasetVersion> findByDeletedTrueAndDeletedAtBefore(
+            @Param("deletedBefore") java.time.Instant deletedBefore
+    );
 
     List<DatasetVersion> findByParentVersionIdAndDeletedFalse(String parentVersionId);
 
@@ -69,14 +77,48 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
 
     long countByParentVersionId(String parentVersionId);
 
-    @Query("select coalesce(max(v.versionNo), 0) from DatasetVersion v where v.assetId = :assetId")
+    @Query("""
+            select coalesce(max(v.versionNo), 0)
+            from DatasetVersion v
+            where v.assetId = :assetId
+              and not (v.deleted = true and v.status = 'ABANDONED')
+            """)
     Integer findMaxVersionNoByAssetId(@Param("assetId") String assetId);
 
-    Optional<DatasetVersion> findByAssetIdAndVersion(String assetId, String version);
+    @Query("""
+            select v from DatasetVersion v
+            where v.assetId = :assetId
+              and v.version = :version
+              and not (v.deleted = true and v.status = 'ABANDONED')
+            """)
+    Optional<DatasetVersion> findByAssetIdAndVersion(
+            @Param("assetId") String assetId,
+            @Param("version") String version
+    );
 
-    boolean existsByAssetIdAndVersion(String assetId, String version);
+    @Query("""
+            select (count(v) > 0) from DatasetVersion v
+            where v.assetId = :assetId
+              and v.version = :version
+              and not (v.deleted = true and v.status = 'ABANDONED')
+            """)
+    boolean existsByAssetIdAndVersion(
+            @Param("assetId") String assetId,
+            @Param("version") String version
+    );
 
-    boolean existsByAssetIdAndVersionAndIdNot(String assetId, String version, String id);
+    @Query("""
+            select (count(v) > 0) from DatasetVersion v
+            where v.assetId = :assetId
+              and v.version = :version
+              and v.id <> :id
+              and not (v.deleted = true and v.status = 'ABANDONED')
+            """)
+    boolean existsByAssetIdAndVersionAndIdNot(
+            @Param("assetId") String assetId,
+            @Param("version") String version,
+            @Param("id") String id
+    );
 
     boolean existsByStoragePathAndDeletedFalseAndIdNot(String storagePath, String id);
 

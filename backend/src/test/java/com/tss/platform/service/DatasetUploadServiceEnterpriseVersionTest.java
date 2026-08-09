@@ -275,7 +275,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(authContext.canAccessOwner(7)).thenReturn(true);
         when(assetRepo.findByIdAndDeletedFalse("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findByIdAndDeletedFalse("dataset-ver-1")).thenReturn(Optional.of(parent));
-        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
+        when(sessionRepo.findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
@@ -339,7 +339,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(assetRepo.findByIdAndDeletedFalse("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findByIdAndDeletedFalse("dataset-ver-1")).thenReturn(Optional.of(parent));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
-        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
+        when(sessionRepo.findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
@@ -376,7 +376,7 @@ class DatasetUploadServiceEnterpriseVersionTest {
         req.setStrictManifest(true);
 
         when(authContext.currentUserId()).thenReturn(7);
-        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
+        when(sessionRepo.findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
@@ -456,8 +456,8 @@ class DatasetUploadServiceEnterpriseVersionTest {
         when(assetRepo.findByIdAndDeletedFalse("dataset-asset-1")).thenReturn(Optional.of(asset));
         when(versionRepo.findByIdAndDeletedFalse("dataset-ver-1")).thenReturn(Optional.of(parent));
         when(versionRepo.findMaxVersionNoByAssetId("dataset-asset-1")).thenReturn(1);
-        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
-                "sha256:abc", "UPLOADING", 7
+        when(sessionRepo.findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(
+                "sha256:abc", List.of("UPLOADING", "FAILED"), 7
         )).thenReturn(Optional.of(existing));
         when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc("dataset-upload-existing")).thenReturn(List.of());
@@ -512,8 +512,8 @@ class DatasetUploadServiceEnterpriseVersionTest {
         req.setStrictManifest(true);
 
         when(authContext.currentUserId()).thenReturn(7);
-        when(sessionRepo.findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
-                "sha256:abc", "UPLOADING", 7
+        when(sessionRepo.findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(
+                "sha256:abc", List.of("UPLOADING", "FAILED"), 7
         )).thenReturn(Optional.of(existing));
         when(sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(chunkRepo.findByUploadIdOrderByPartIndexAsc(any())).thenReturn(List.of());
