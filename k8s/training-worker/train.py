@@ -290,6 +290,29 @@ class MlflowLogger:
         except Exception as exc:
             log(f"MLflow finish failed: {exc}")
 
+    def log_metric_history(self, records: list[dict[str, Any]]) -> None:
+        """把按 step 累积的过程指标整批写入 MLflow（best effort，失败不影响训练）。
+
+        records: [{"step": int, "key": str, "value": float}, ...]，供前端按 step 画曲线。
+        """
+        if not self.run_id or not records:
+            return
+        try:
+            timestamp = int(time.time() * 1000)
+            metrics = [
+                {
+                    "key": record["key"],
+                    "value": float(record["value"]),
+                    "timestamp": timestamp,
+                    "step": int(record["step"]),
+                }
+                for record in records
+            ]
+            self._post("/api/2.0/mlflow/runs/log-batch", {"run_id": self.run_id, "metrics": metrics})
+            log(f"MLflow log metric history: {len(metrics)} points")
+        except Exception as exc:
+            log(f"MLflow metric history write failed; training continues: {exc}")
+
     def _ensure_experiment(self) -> str:
         try:
             path = "/api/2.0/mlflow/experiments/get-by-name?experiment_name=" + urllib.parse.quote(self.experiment_name)
@@ -431,12 +454,15 @@ def install_user_requirements() -> None:
     log("user requirements installed")
 
 
-def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, dict[str, Any]]:
+def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
     argv = spec["execution"]["argv"]
     entrypoint = Path(argv[1])
     if not entrypoint.is_file():
         raise WorkerError("ENTRYPOINT_INVALID", f"approved entrypoint is missing: {entrypoint}")
-    event_metrics: dict[str, Any] = {}
+    # 按 step 累积指标历史，供训练结束后写入 MLflow 绘制过程曲线。
+    # 事件可用 {"type":"metric","step":<epoch>,"metrics":{...}} 指定 step；不指定则自动递增。
+    metric_history: list[dict[str, Any]] = []
+    auto_step = 0
     log(f"execute argv={json.dumps(argv, ensure_ascii=False)}")
     child_env = os.environ.copy()
     child_env.update({
@@ -470,8 +496,20 @@ def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[
             mapped = 45 + int(max(0, min(100, event["progress"])) * 0.4)
             reporter.report("running", mapped)
         if event.get("type") == "metric" and isinstance(event.get("metrics"), dict):
-            event_metrics.update(event["metrics"])
-    return process.wait(), event_metrics
+            step = event.get("step")
+            if isinstance(step, (int, float)) and not isinstance(step, bool):
+                current_step = int(step)
+            else:
+                auto_step += 1
+                current_step = auto_step
+            for key, value in event["metrics"].items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    metric_history.append({"step": current_step, "key": key, "value": float(value)})
+    # 最终值 = 每个 key 最后一个 step 的值（与旧 event_metrics.update 语义一致）
+    event_metrics: dict[str, Any] = {}
+    for record in metric_history:
+        event_metrics[record["key"]] = record["value"]
+    return process.wait(), metric_history, event_metrics
 
 
 def parse_training_event(line: str) -> dict[str, Any] | None:
@@ -670,7 +708,9 @@ def run() -> None:
             mlflowExperimentId=mlflow.experiment_id,
             mlflowTrackingUri=mlflow.base_url or None,
         )
-        exit_code, event_metrics = execute_training(spec, reporter)
+        exit_code, metric_history, event_metrics = execute_training(spec, reporter)
+        # 训练结束后把按 step 累积的过程指标写入 MLflow（best effort，失败不影响训练）
+        mlflow.log_metric_history(metric_history)
         if exit_code != 0:
             raise WorkerError("PROCESS_FAILED", f"training process exited with code {exit_code}")
         reporter.stage(86, "validate", "training process completed; validating outputs")
