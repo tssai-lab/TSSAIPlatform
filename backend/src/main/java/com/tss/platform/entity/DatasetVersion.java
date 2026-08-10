@@ -1,6 +1,7 @@
 package com.tss.platform.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
@@ -48,6 +49,7 @@ public class DatasetVersion {
     private String fileName;
 
     @Column(name = "storage_path", length = 1024)
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String storagePath;
 
     @Column(name = "size_bytes")

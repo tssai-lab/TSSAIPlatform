@@ -13,6 +13,7 @@ import com.tss.platform.training.plan.TrainingPlanRegistry;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -124,13 +125,14 @@ public class CodeAssetImportService {
             CodeAssetImportCommand command
     ) {
         NormalizedImport normalized = normalize(file, command);
+        Integer ownerUserId = currentUserId();
+        requireUniqueAssetName(ownerUserId, normalized.name(), null);
         byte[] sourceBytes = readArchive(file);
         LinkedHashMap<String, byte[]> files = zipArchiveService.readEntries(
                 new ByteArrayInputStream(sourceBytes)
         );
         byte[] deterministicBytes = zipArchiveService.writeDeterministic(files);
 
-        Integer ownerUserId = currentUserId();
         String assetId = "code-asset-" + compactUuid();
         String versionId = "code-version-" + compactUuid();
         CodeAsset assetMetadata = newAsset(
@@ -187,7 +189,9 @@ public class CodeAssetImportService {
             }
             if (exception instanceof CodeValidationException
                     || exception instanceof CodeArtifactStorageException
-                    || exception instanceof CodeAssetImportException) {
+                    || exception instanceof CodeAssetImportException
+                    || exception instanceof AssetNameConflictException
+                    || exception instanceof AssetNameValidationException) {
                 throw exception;
             }
             throw new CodeAssetImportException();
@@ -205,7 +209,7 @@ public class CodeAssetImportService {
         Instant now = Instant.now();
         asset.setCreatedAt(now);
         asset.setUpdatedAt(now);
-        assetRepository.saveAndFlush(asset);
+        saveNewAsset(asset);
 
         CodeVersion version = new CodeVersion();
         version.setId(versionId);
@@ -302,7 +306,7 @@ public class CodeAssetImportService {
             throw new IllegalArgumentException("Code import metadata is required");
         }
         String fileName = normalizeZipFileName(file.getOriginalFilename());
-        String name = required(command.name(), 255, "Code asset name is required");
+        String name = AssetNamePolicy.normalizeRequired(command.name());
         String version = normalizeVersion(command.version());
         String trainingProfile = required(
                 command.trainingProfile(), 128, "Training profile is required"
@@ -358,6 +362,31 @@ public class CodeAssetImportService {
             throw new CodeAssetAccessException();
         }
         return userId;
+    }
+
+    private void requireUniqueAssetName(
+            Integer ownerUserId,
+            String name,
+            String excludedId
+    ) {
+        if (assetRepository.existsActiveNormalizedName(
+                ownerUserId,
+                name,
+                excludedId
+        )) {
+            throw new AssetNameConflictException("code");
+        }
+    }
+
+    private CodeAsset saveNewAsset(CodeAsset asset) {
+        try {
+            return assetRepository.saveAndFlush(asset);
+        } catch (DataIntegrityViolationException exception) {
+            if (AssetNamePolicy.isNameConstraintViolation(exception)) {
+                throw new AssetNameConflictException("code");
+            }
+            throw exception;
+        }
     }
 
     private void compensate(String objectName, String versionId, Integer ownerUserId) {

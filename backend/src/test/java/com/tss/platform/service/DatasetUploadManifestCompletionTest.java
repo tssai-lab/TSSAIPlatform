@@ -315,7 +315,7 @@ class DatasetUploadManifestCompletionTest {
     }
 
     @Test
-    void composeFailureRestoresUploadingAndDeletesDraftAndEmptyAsset() throws Exception {
+    void composeFailurePersistsRetryableFailureAndDeletesDraftAndEmptyAsset() throws Exception {
         Fixture fixture = new Fixture();
         DatasetUploadSession session = fixture.multimodalSession();
         DatasetUploadChunk chunk = fixture.chunk(session);
@@ -344,8 +344,16 @@ class DatasetUploadManifestCompletionTest {
         DatasetUploadCompleteRequest request = new DatasetUploadCompleteRequest();
         request.setUploadId(session.getId());
 
-        assertThrows(IllegalArgumentException.class, () -> fixture.service.complete(request));
-        assertEquals("UPLOADING", session.getStatus());
+        DatasetUploadCompletionException error = assertThrows(
+                DatasetUploadCompletionException.class,
+                () -> fixture.service.complete(request)
+        );
+        assertEquals("DATASET_UPLOAD_STORAGE_FAILED", error.getReasonCode());
+        assertEquals("FAILED", session.getStatus());
+        assertEquals(
+                "DATASET_UPLOAD_STORAGE_FAILED",
+                session.getCompletionErrorCode()
+        );
         assertNull(session.getVersionId());
         assertNull(session.getAssetId());
         verify(fixture.versionRepo).delete(savedVersion.get());

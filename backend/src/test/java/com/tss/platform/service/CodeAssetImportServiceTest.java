@@ -13,6 +13,7 @@ import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -217,6 +218,47 @@ class CodeAssetImportServiceTest {
 
         verify(storageService, never()).upload(anyString(), any(byte[].class));
         verify(assetRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void duplicateNameIsRejectedBeforeArchiveReadOrObjectUpload() {
+        when(assetRepository.existsActiveNormalizedName(
+                7,
+                "Training asset",
+                null
+        )).thenReturn(true);
+
+        AssetNameConflictException error = assertThrows(
+                AssetNameConflictException.class,
+                () -> service.importAsset(validFile(), command())
+        );
+
+        assertEquals("code", error.getAssetType());
+        verify(assetRepository).existsActiveNormalizedName(
+                7,
+                "Training asset",
+                null
+        );
+        verify(storageService, never()).upload(anyString(), any(byte[].class));
+        verify(assetRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void concurrentNameConflictAfterUploadQueuesCompensationAndStaysConflict() {
+        when(assetRepository.saveAndFlush(any(CodeAsset.class)))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate key violates unique constraint "
+                                + "uk_code_asset_owner_normalized_name"
+                ));
+
+        AssetNameConflictException error = assertThrows(
+                AssetNameConflictException.class,
+                () -> service.importAsset(validFile(), command())
+        );
+
+        assertEquals("code", error.getAssetType());
+        assertExactCleanup();
+        verify(versionRepository, never()).saveAndFlush(any());
     }
 
     @Test

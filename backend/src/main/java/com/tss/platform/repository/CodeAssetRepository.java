@@ -21,4 +21,18 @@ public interface CodeAssetRepository extends JpaRepository<CodeAsset, String>,
     Optional<CodeAsset> findByIdAndDeletedFalseForUpdate(@Param("id") String id);
 
     List<CodeAsset> findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(Integer ownerUserId);
+
+    @Query("""
+            select (count(a) > 0)
+            from CodeAsset a
+            where a.deleted = false
+              and a.ownerUserId = :ownerUserId
+              and function('normalize_asset_name', a.name) = lower(:normalizedName)
+              and (:excludedId is null or a.id <> :excludedId)
+            """)
+    boolean existsActiveNormalizedName(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("normalizedName") String normalizedName,
+            @Param("excludedId") String excludedId
+    );
 }

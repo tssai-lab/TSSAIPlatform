@@ -13,6 +13,7 @@ import com.tss.platform.service.CodeContentTooLargeException;
 import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.CodeWorkspaceConflictException;
 import com.tss.platform.service.CodeWorkspacePublishException;
+import com.tss.platform.service.AssetNameConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -36,6 +37,20 @@ public class V2ExceptionHandler {
 
     private static final String TRACE_HEADER = "X-Trace-Id";
     private static final Pattern STABLE_REASON_CODE = Pattern.compile("[A-Z0-9_]+");
+
+    @ExceptionHandler(AssetNameConflictException.class)
+    public ResponseEntity<V2ErrorResponse> handleCodeAssetNameConflict(
+            AssetNameConflictException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.CONFLICT,
+                "CODE_ASSET_NAME_CONFLICT",
+                "同一用户下已存在同名训练代码资产",
+                Map.of(),
+                request
+        );
+    }
 
     @ExceptionHandler(CodeAssetAccessException.class)
     public ResponseEntity<V2ErrorResponse> handleCodeAssetAccess(

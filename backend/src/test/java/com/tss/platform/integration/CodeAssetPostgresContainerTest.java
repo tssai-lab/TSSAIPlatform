@@ -136,6 +136,8 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("49");
         expectedVersions.add("50");
         expectedVersions.add("51");
+        expectedVersions.add("52");
+        expectedVersions.add("53");
         Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version
@@ -265,6 +267,234 @@ class CodeAssetPostgresContainerTest {
         }
     }
 
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    void v52PreservesHistoricalCodeDuplicatesAndReleasesOnlyAbandonedVersions()
+            throws SQLException {
+        String schema = "v52_" + UUID.randomUUID().toString()
+                .replace("-", "")
+                .substring(0, 16);
+        try {
+            migrateSchema(schema, MigrationVersion.fromVersion("51"));
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("SET search_path TO " + schema);
+                statement.executeUpdate("""
+                        INSERT INTO code_asset (
+                            id, name, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES
+                            ('v52-code-a', ' Trainer ', 7,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE),
+                            ('v52-code-b', 'trainer', 7,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE),
+                            ('v52-code-deleted', 'Reusable', 7,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE)
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO dataset_asset (
+                            id, name, type, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES (
+                            'v52-dataset', 'V52 dataset', 'NLP', 7,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE
+                        )
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO dataset_version (
+                            id, asset_id, version, version_no, version_label,
+                            status, owner_user_id, created_by,
+                            created_at, updated_at, deleted, deleted_at,
+                            active_draft_asset_id
+                        )
+                        VALUES
+                            ('v52-ready', 'v52-dataset', 'v1', 1, 'v1',
+                             'READY', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, FALSE, NULL, NULL),
+                            ('v52-abandoned', 'v52-dataset', 'v2', 2, 'v2',
+                             'ABANDONED', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, FALSE, NULL, NULL),
+                            ('v52-reserved', 'v52-dataset', 'v3', 3, 'v3',
+                             'ARCHIVED', 7, 7, CURRENT_TIMESTAMP,
+                             CURRENT_TIMESTAMP, TRUE, CURRENT_TIMESTAMP, NULL)
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO dataset_workspace_audit_log (
+                            id, dataset_asset_id, dataset_version_id,
+                            operation, actor_type, owner_user_id, created_at
+                        )
+                        VALUES (
+                            'v52-audit', 'v52-dataset', 'v52-abandoned',
+                            'WORKSPACE_ABANDONED', 'USER', 7, CURRENT_TIMESTAMP
+                        )
+                        """);
+            }
+
+            migrateSchema(schema, null);
+
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("SET search_path TO " + schema);
+                try (ResultSet result = statement.executeQuery("""
+                        SELECT deleted, deleted_at IS NOT NULL, active_draft_asset_id
+                        FROM dataset_version
+                        WHERE id = 'v52-abandoned'
+                        """)) {
+                    assertTrue(result.next());
+                    assertTrue(result.getBoolean(1));
+                    assertTrue(result.getBoolean(2));
+                    assertEquals(null, result.getString(3));
+                }
+                try (ResultSet result = statement.executeQuery("""
+                        SELECT COUNT(*), COUNT(normalized_name)
+                        FROM code_asset
+                        WHERE owner_user_id = 7
+                          AND deleted = FALSE
+                          AND normalize_asset_name(name) = 'trainer'
+                        """)) {
+                    assertTrue(result.next());
+                    assertEquals(2L, result.getLong(1));
+                    assertEquals(1L, result.getLong(2));
+                }
+
+                SQLException duplicateCode = assertThrows(
+                        SQLException.class,
+                        () -> statement.executeUpdate("""
+                                INSERT INTO code_asset (
+                                    id, name, owner_user_id,
+                                    created_at, updated_at, deleted
+                                )
+                                VALUES (
+                                    'v52-code-new', ' TRAINER ', 7,
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE
+                                )
+                                """)
+                );
+                assertEquals(UNIQUE_VIOLATION, duplicateCode.getSQLState());
+                assertTrue(lowerCaseMessage(duplicateCode).contains(
+                        "uk_code_asset_owner_normalized_name"
+                ));
+
+                statement.executeUpdate("""
+                        INSERT INTO code_asset (
+                            id, name, owner_user_id,
+                            created_at, updated_at, deleted
+                        )
+                        VALUES
+                            ('v52-code-other-owner', 'TRAINER', 8,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE),
+                            ('v52-code-reused', ' reusable ', 7,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                        """);
+
+                SQLException blankCode = assertThrows(
+                        SQLException.class,
+                        () -> statement.executeUpdate("""
+                                INSERT INTO code_asset (
+                                    id, name, owner_user_id,
+                                    created_at, updated_at, deleted
+                                )
+                                VALUES (
+                                    'v52-code-blank', E'\\t\\r\\n', 7,
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE
+                                )
+                                """)
+                );
+                assertEquals(CHECK_VIOLATION, blankCode.getSQLState());
+                assertTrue(lowerCaseMessage(blankCode).contains(
+                        "ck_code_asset_name_not_blank"
+                ));
+
+                statement.executeUpdate("""
+                        INSERT INTO dataset_version (
+                            id, asset_id, version, version_no, version_label,
+                            status, owner_user_id, created_by,
+                            created_at, updated_at, deleted,
+                            active_draft_asset_id
+                        )
+                        VALUES (
+                            'v52-reused', 'v52-dataset', 'v2', 2, 'v2',
+                            'READY', 7, 7, CURRENT_TIMESTAMP,
+                            CURRENT_TIMESTAMP, FALSE, NULL
+                        )
+                        """);
+
+                SQLException reservedLabel = assertThrows(
+                        SQLException.class,
+                        () -> statement.executeUpdate("""
+                                INSERT INTO dataset_version (
+                                    id, asset_id, version, version_no, version_label,
+                                    status, owner_user_id, created_by,
+                                    created_at, updated_at, deleted,
+                                    active_draft_asset_id
+                                )
+                                VALUES (
+                                    'v52-label-conflict', 'v52-dataset',
+                                    'v3', 4, 'v3', 'READY', 7, 7,
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                                    FALSE, NULL
+                                )
+                                """)
+                );
+                assertEquals(UNIQUE_VIOLATION, reservedLabel.getSQLState());
+                assertTrue(lowerCaseMessage(reservedLabel).contains(
+                        "uk_dataset_version_asset_version"
+                ));
+
+                SQLException reservedNumber = assertThrows(
+                        SQLException.class,
+                        () -> statement.executeUpdate("""
+                                INSERT INTO dataset_version (
+                                    id, asset_id, version, version_no, version_label,
+                                    status, owner_user_id, created_by,
+                                    created_at, updated_at, deleted,
+                                    active_draft_asset_id
+                                )
+                                VALUES (
+                                    'v52-number-conflict', 'v52-dataset',
+                                    'v4', 3, 'v4', 'READY', 7, 7,
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                                    FALSE, NULL
+                                )
+                                """)
+                );
+                assertEquals(UNIQUE_VIOLATION, reservedNumber.getSQLState());
+                assertTrue(lowerCaseMessage(reservedNumber).contains(
+                        "uk_dataset_version_asset_version_no"
+                ));
+
+                try (ResultSet result = statement.executeQuery("""
+                        SELECT COUNT(*)
+                        FROM dataset_workspace_audit_log
+                        WHERE id = 'v52-audit'
+                          AND dataset_version_id = 'v52-abandoned'
+                        """)) {
+                    assertTrue(result.next());
+                    assertEquals(1L, result.getLong(1));
+                }
+            }
+        } finally {
+            try (Connection connection = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(),
+                    POSTGRES.getUsername(),
+                    POSTGRES.getPassword()
+            );
+                 Statement statement = connection.createStatement()) {
+                statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+            }
+        }
+    }
+
     private static void migrateSchema(
             String schema,
             MigrationVersion target
@@ -287,7 +517,7 @@ class CodeAssetPostgresContainerTest {
     }
 
     @Test
-    void v44RejectsBlankNamesAndSerializesRapidDuplicateAssetCreation()
+    void assetNameConstraintsRejectBlankNamesAndSerializeRapidDuplicates()
             throws Exception {
         assertCheckViolation(
                 "ck_model_asset_name_not_blank",
@@ -323,6 +553,11 @@ class CodeAssetPostgresContainerTest {
                 "dataset_asset",
                 "uk_dataset_asset_owner_normalized_name",
                 "Rapid Dataset " + UUID.randomUUID()
+        );
+        assertOneRapidAssetInsert(
+                "code_asset",
+                "uk_code_asset_owner_normalized_name",
+                "Rapid Code " + UUID.randomUUID()
         );
     }
 
@@ -1206,7 +1441,9 @@ class CodeAssetPostgresContainerTest {
             CountDownLatch ready,
             CountDownLatch start
     ) throws Exception {
-        if (!"model_asset".equals(table) && !"dataset_asset".equals(table)) {
+        if (!"model_asset".equals(table)
+                && !"dataset_asset".equals(table)
+                && !"code_asset".equals(table)) {
             throw new IllegalArgumentException("unsupported asset table");
         }
         try (Connection connection = connection()) {
@@ -1216,12 +1453,18 @@ class CodeAssetPostgresContainerTest {
                 throw new IllegalStateException("concurrent insert start signal timed out");
             }
             try {
+                String typeColumn = "code_asset".equals(table)
+                        ? ""
+                        : "type, ";
+                String typeValue = "code_asset".equals(table)
+                        ? ""
+                        : "'CV', ";
                 executeUpdate(
                         connection,
                         "INSERT INTO " + table + " ("
-                                + "id, name, type, owner_user_id, "
+                                + "id, name, " + typeColumn + "owner_user_id, "
                                 + "created_at, updated_at, deleted"
-                                + ") VALUES (?, ?, 'CV', 7, "
+                                + ") VALUES (?, ?, " + typeValue + "7, "
                                 + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)",
                         assetId,
                         name

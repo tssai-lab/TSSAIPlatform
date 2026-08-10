@@ -44,6 +44,7 @@ public class ModelVersion {
     private String fileName;
 
     @Column(name = "storage_path", length = 1024)
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String storagePath;
 
     @Column(name = "size_bytes")
@@ -98,4 +99,3 @@ public class ModelVersion {
     @JsonProperty("isCurrent")
     private Boolean current;
 }
-

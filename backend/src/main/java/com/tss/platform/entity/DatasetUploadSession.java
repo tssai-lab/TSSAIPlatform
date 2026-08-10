@@ -101,6 +101,19 @@ public class DatasetUploadSession {
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
+    @Column(name = "completion_error_code", length = 64)
+    private String completionErrorCode;
+
+    @Column(name = "completion_error_message", length = 512)
+    private String completionErrorMessage;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "completion_error_details", columnDefinition = "jsonb")
+    private Map<String, Object> completionErrorDetails;
+
+    @Column(name = "completion_failed_at")
+    private Instant completionFailedAt;
+
     @Column(name = "storage_path", length = 1024)
     private String storagePath;
 

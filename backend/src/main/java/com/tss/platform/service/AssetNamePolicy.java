@@ -12,8 +12,10 @@ public final class AssetNamePolicy {
     private static final Set<String> NAME_CONSTRAINTS = Set.of(
             "uk_model_asset_owner_normalized_name",
             "uk_dataset_asset_owner_normalized_name",
+            "uk_code_asset_owner_normalized_name",
             "ck_model_asset_name_not_blank",
-            "ck_dataset_asset_name_not_blank"
+            "ck_dataset_asset_name_not_blank",
+            "ck_code_asset_name_not_blank"
     );
 
     private AssetNamePolicy() {

@@ -266,6 +266,24 @@ Flyway repair 或重新基线化。
 - 不改变审计表 append-only trigger，也不修改代码资产、工作区、版本或对象存储的
   owner。
 
+## V52__code_asset_names_and_abandoned_workspace_tombstones.sql
+
+补齐代码资产名称唯一性，并释放已放弃数据集工作区占用的版本号和版本标签。
+
+- 为代码资产增加 `normalized_name`、非空白约束、维护 trigger 及 owner 范围内的部分唯一索引。
+- 保留历史重名代码资产；每组仅由一个确定性代表占用规范化名称，新写入必须满足唯一性。
+- 将 `ABANDONED` 数据集版本转为审计墓碑，并允许其版本号和标签被后续正式版本复用。
+
+## V53__dataset_upload_completion_failure.sql
+
+为首次数据集上传增加可重试的完成失败状态。
+
+- `dataset_upload_session` 增加 `FAILED`，并增加稳定错误码、用户消息、安全 JSON 详情和
+  失败时间字段。
+- 约束 `FAILED` 必须具有完整错误记录，其他状态不得遗留失败字段；重试抢占必须在同一
+  SQL 更新中清空旧错误。
+- 不删除失败会话的分片；工作区组件和 APPEND 上传继续使用原有生命周期。
+
 ## 维护规则
 
 - 已执行的版本化迁移只读维护，不修改文件内容或 checksum。

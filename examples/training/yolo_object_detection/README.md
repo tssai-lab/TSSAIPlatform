@@ -4,6 +4,47 @@
 
 基础模型 ZIP 必须包含 `yolo11n.pt`；数据集 ZIP 必须包含 `data.yaml`、图片目录和 YOLO 标签目录。创建任务时选择 `yolo_object_detection` 方案。
 
+## 训练进度与指标
+
+原先版本使用训练完后写入metrics.json 文件的方式来上报指标
+
+新版本增加了TSS_EVENT 事件 用于上报进度与指标
+
+训练指标：两种方式都可采用，推荐TSS_EVENT 事件
+
+训练进度：只能使用TSS_EVENT progress 事件
+
+### 训练进度上报
+
+```python
+def event(payload: dict) -> None:
+      """向平台上报一条 TSS_EVENT 进度事件，打印后立即 flush
+      progress 必须是 0~100 的完成度数值（不是 epoch 序号），平台会把它映射到
+      训练阶段的进度区间（45~85）实时显示在进度条上。
+      """
+      print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+
+event({"type": "progress", "progress": 0})
+event({"type": "progress", "progress": 100}) 
+```
+
+注意事项：
+- 训练阶段进度只在训练循环期间上报，数据加载/验证阶段还是走 worker 自动上报的固定阶段（0~45 / 85~100），这是正常的
+- 上报的 0~100 会被 worker 映射到 45%~85% 这段区间（mapped = 45 + progress * 0.4），也就是"训练真正跑起来"的那段。前后
+  0~45%（准备阶段）和 85%~100%（校验/上传）是 worker 自动上报的
+- 其他几个进度的节点是写死在k8s/training-worker/train.py的 run()
+  - 5 准备
+  - 15 下载模型
+  - 28 下载数据集
+  - 40 下载代码
+  - 45 开始训练（reporter.report("running", 45, ...)）
+  - 86 校验
+  - 96 上传
+  - 100 成功
+
+### 训练指标上报
+
+
 ## 训练进度与指标上报协议（必读）
 
 平台的训练进度条和指标曲线，依赖你的训练代码向 stdout 打印 **TSS_EVENT 事件**。本目录的 `train.py` 模板已内置上报逻辑（每个 epoch 自动上报进度和指标），直接使用即可。**如果你编写自己的训练代码，请遵循以下协议，否则进度条会卡住、指标无法显示。**

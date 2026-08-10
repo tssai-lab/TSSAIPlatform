@@ -8,6 +8,7 @@ import com.tss.platform.dto.v2.V2CodeAssetDto;
 import com.tss.platform.dto.v2.V2CodeAssetPatchRequest;
 import com.tss.platform.dto.v2.V2CodeWorkspaceDto;
 import com.tss.platform.service.CodeAssetAccessException;
+import com.tss.platform.service.AssetNameConflictException;
 import com.tss.platform.entity.CodeAsset;
 import com.tss.platform.entity.CodeVersion;
 import com.tss.platform.repository.CodeAssetRepository;
@@ -24,6 +25,7 @@ import com.tss.platform.service.CodeValidationException;
 import com.tss.platform.service.V2CodeAssetService;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -132,6 +134,122 @@ class V2CodeAssetControllerTest {
         mvc.perform(get("/api/v2/code-assets"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value("asset-1"));
+    }
+
+    @Test
+    void duplicateNameReturnsStableV2ConflictContract() throws Exception {
+        V2CodeAssetService service = mock(V2CodeAssetService.class);
+        when(service.create(any())).thenThrow(new AssetNameConflictException("code"));
+
+        mvc(service).perform(post("/api/v2/code-assets")
+                        .header("X-Trace-Id", "trace-code-name")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name":" Trainer ",
+                                  "trainingProfile":"profile-a"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("X-Trace-Id", "trace-code-name"))
+                .andExpect(jsonPath("$.errorCode")
+                        .value("CODE_ASSET_NAME_CONFLICT"))
+                .andExpect(jsonPath("$.errorMessage")
+                        .value("同一用户下已存在同名训练代码资产"))
+                .andExpect(jsonPath("$.details").isEmpty());
+    }
+
+    @Test
+    void createPrecheckAndDatabaseRaceUseTheSameNameConflict() {
+        CodeAssetRepository assets = mock(CodeAssetRepository.class);
+        AuthContext auth = mock(AuthContext.class);
+        when(auth.currentUserId()).thenReturn(7);
+        V2CodeAssetService service = service(
+                assets,
+                mock(CodeVersionRepository.class),
+                mock(CodeWorkspaceRepository.class),
+                mock(CodeAssetAuditService.class),
+                auth
+        );
+        V2CodeAssetCreateRequest request = new V2CodeAssetCreateRequest(
+                "  Trainer  ", null, null, null, null, null, null
+        );
+        when(assets.existsActiveNormalizedName(7, "Trainer", null))
+                .thenReturn(true);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AssetNameConflictException.class,
+                () -> service.create(request)
+        );
+        verify(assets, never()).saveAndFlush(any());
+
+        when(assets.existsActiveNormalizedName(7, "Trainer", null))
+                .thenReturn(false);
+        when(assets.saveAndFlush(any())).thenThrow(
+                new DataIntegrityViolationException(
+                        "uk_code_asset_owner_normalized_name"
+                )
+        );
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AssetNameConflictException.class,
+                () -> service.create(request)
+        );
+    }
+
+    @Test
+    void ownerAndAdministratorRenameCheckTheAssetsOwnerScope() throws Exception {
+        CodeAssetRepository ownerAssets = mock(CodeAssetRepository.class);
+        AuthContext ownerAuth = mock(AuthContext.class);
+        CodeAsset owned = entity(7, 3L);
+        when(ownerAssets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(owned));
+        when(ownerAuth.currentUserId()).thenReturn(7);
+        when(ownerAssets.existsActiveNormalizedName(
+                7,
+                "Renamed",
+                "asset-1"
+        )).thenReturn(true);
+        V2CodeAssetPatchRequest patch = new ObjectMapper().readValue(
+                "{\"assetRevision\":3,\"name\":\"  Renamed  \"}",
+                V2CodeAssetPatchRequest.class
+        );
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AssetNameConflictException.class,
+                () -> service(
+                        ownerAssets,
+                        mock(CodeVersionRepository.class),
+                        mock(CodeWorkspaceRepository.class),
+                        mock(CodeAssetAuditService.class),
+                        ownerAuth
+                ).patch("asset-1", patch)
+        );
+        verify(ownerAssets, never()).saveAndFlush(any());
+
+        CodeAssetRepository adminAssets = mock(CodeAssetRepository.class);
+        AuthContext adminAuth = mock(AuthContext.class);
+        CodeAsset foreign = entity(19, 3L);
+        when(adminAssets.findByIdAndDeletedFalseForUpdate("asset-1"))
+                .thenReturn(Optional.of(foreign));
+        when(adminAuth.isAdmin()).thenReturn(true);
+        when(adminAssets.existsActiveNormalizedName(
+                19,
+                "Renamed",
+                "asset-1"
+        )).thenReturn(true);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                AssetNameConflictException.class,
+                () -> service(
+                        adminAssets,
+                        mock(CodeVersionRepository.class),
+                        mock(CodeWorkspaceRepository.class),
+                        mock(CodeAssetAuditService.class),
+                        adminAuth
+                ).patchAdmin("asset-1", patch)
+        );
+        verify(adminAssets, never()).saveAndFlush(any());
     }
 
     @Test

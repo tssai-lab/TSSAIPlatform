@@ -3,6 +3,7 @@ package com.tss.platform.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
 import com.tss.platform.dto.ModelUploadProgressDto;
+import com.tss.platform.dto.UploadCompleteRequest;
 import com.tss.platform.dto.v2.V2ModelUploadDto;
 import com.tss.platform.dto.v2.V2ModelUploadInitRequest;
 import com.tss.platform.entity.ModelAsset;
@@ -29,6 +30,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -148,6 +150,16 @@ class ModelUploadServiceV2Test {
         assertTrue(result.getModelId().startsWith("model-ver-"));
         assertEquals(fixture.sha256(zipBytes()), result.getArtifactSha256());
         assertEquals(true, result.getIsCurrent());
+        UploadCompleteRequest legacyRequest = new UploadCompleteRequest();
+        legacyRequest.setUploadId(session.getId());
+        legacyRequest.setModelName(session.getModelName());
+        legacyRequest.setVersion(session.getModelVersion());
+        legacyRequest.setType(session.getTaskType());
+        legacyRequest.setRemark(session.getRemark());
+        legacyRequest.setCommitInfo(session.getCommitInfo());
+        legacyRequest.setHyperParams(session.getHyperParams());
+        Map<String, Object> legacyResult = fixture.service.complete(legacyRequest);
+        assertTrue(!legacyResult.containsKey("storagePath"));
         String json = new ObjectMapper()
                 .findAndRegisterModules()
                 .writeValueAsString(result);

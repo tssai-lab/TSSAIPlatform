@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +28,12 @@ public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUpl
     Optional<DatasetUploadSession> findFirstByFileFingerprintAndStatusAndOwnerUserIdOrderByUpdatedAtDesc(
             String fileFingerprint,
             String status,
+            Integer ownerUserId
+    );
+
+    Optional<DatasetUploadSession> findFirstByFileFingerprintAndStatusInAndOwnerUserIdOrderByUpdatedAtDesc(
+            String fileFingerprint,
+            Collection<String> statuses,
             Integer ownerUserId
     );
 
@@ -51,7 +58,12 @@ public interface DatasetUploadSessionRepository extends JpaRepository<DatasetUpl
     @Modifying(flushAutomatically = true, clearAutomatically = false)
     @Query("""
             update DatasetUploadSession s
-            set s.status = :nextStatus, s.updatedAt = :updatedAt
+            set s.status = :nextStatus,
+                s.completionErrorCode = null,
+                s.completionErrorMessage = null,
+                s.completionErrorDetails = null,
+                s.completionFailedAt = null,
+                s.updatedAt = :updatedAt
             where s.id = :id
               and s.ownerUserId = :ownerUserId
               and s.status = :expectedStatus

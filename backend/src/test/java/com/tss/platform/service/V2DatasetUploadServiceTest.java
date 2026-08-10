@@ -14,6 +14,7 @@ import com.tss.platform.repository.ImportJobRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -178,6 +179,51 @@ class V2DatasetUploadServiceTest {
         assertFalse(json.contains("storagePath"));
         assertFalse(json.contains("ownerUserId"));
         assertFalse(json.contains("objectName"));
+    }
+
+    @Test
+    void failedCompletionReturnsStableUploadError() {
+        Fixture fixture = new Fixture();
+        DatasetUploadProgressDto progress = fixture.progress();
+        progress.setStatus("FAILED");
+        when(fixture.uploadService.getProgress("upload-1")).thenReturn(progress);
+        DatasetUploadSession session = fixture.initialSession();
+        session.setStatus("FAILED");
+        session.setCompletionErrorCode("INVALID_DATASET_CONTENT");
+        session.setCompletionErrorMessage("数据集内容格式无效，请检查文件后重试");
+        session.setCompletionErrorDetails(Map.of("stage", "VALIDATION"));
+        fixture.stubSession(session);
+
+        V2DatasetUploadDto result = fixture.service.get("upload-1");
+
+        assertEquals("FAILED", result.getStatus());
+        assertEquals("UPLOAD_FAILED", result.getDisplayStatus());
+        assertEquals("INVALID_DATASET_CONTENT", result.getUserError().getErrorCode());
+        assertEquals("VALIDATION", result.getUserError().getDetails().get("stage"));
+    }
+
+    @Test
+    void completionFailureUsesSafeReasonCodeInImmediate422() {
+        Fixture fixture = new Fixture();
+        DatasetUploadProgressDto progress = fixture.progress();
+        when(fixture.uploadService.getProgress("upload-1")).thenReturn(progress);
+        fixture.stubSession(fixture.initialSession());
+        when(fixture.uploadService.complete(any(DatasetUploadCompleteRequest.class)))
+                .thenThrow(new DatasetUploadCompletionException(
+                        "DATASET_UPLOAD_STORAGE_FAILED",
+                        "数据集文件处理失败，请稍后重试",
+                        Map.of("stage", "STORAGE")
+                ));
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> fixture.service.complete("upload-1")
+        );
+
+        assertEquals("DATASET_UPLOAD_NOT_COMPLETABLE", error.getErrorCode());
+        assertEquals("DATASET_UPLOAD_STORAGE_FAILED", error.getDetails().get("reasonCode"));
+        assertEquals("STORAGE", error.getDetails().get("stage"));
+        assertFalse(error.getDetails().toString().contains("users/"));
     }
 
     private static final class Fixture {
