@@ -42,6 +42,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -120,6 +121,10 @@ class InferenceTaskServiceTest {
         assertEquals(InferenceTaskService.INPUT_MODE_DATASET_VERSION, dto.getInputMode());
         assertEquals("dataset-ver-1", dto.getDatasetVersionId());
         assertEquals("pending", dto.getStatus());
+        assertEquals(1, dto.getCurrentAttempt());
+        assertEquals(0, dto.getRetryCount());
+        assertEquals(3, dto.getMaxRetries());
+        assertEquals(false, dto.getRetryable());
         assertEquals(dto.getId(), executorRouter.startedTaskId);
         verify(attestation).attestReady("model-ver-1");
     }
@@ -201,6 +206,244 @@ class InferenceTaskServiceTest {
         assertEquals(100, saved.getProgress());
         assertEquals("{\"count\":3}", saved.getResultJson());
         assertEquals("minio://inference-results/infer-task-1/outputs/", saved.getOutputPath());
+    }
+
+    @Test
+    void retryFailedTaskStartsNewAttemptAndClearsCurrentResult() {
+        modelVersionRepo.model = modelVersion();
+        scriptService.version = scriptVersion();
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setModelVersionId("model-ver-1");
+        task.setStatus("failed");
+        task.setProgress(0);
+        task.setCurrentAttempt(1);
+        task.setRetryCount(0);
+        task.setMaxRetries(3);
+        task.setScriptVersionId("script-ver-1");
+        task.setInputMode(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT);
+        task.setInputObjectName("users/7/files/input.jpg");
+        task.setOwnerUserId(7);
+        task.setResultJson("{\"old\":true}");
+        task.setLogPath("minio://users/7/inference-results/infer-task-1/attempt-1/infer.log");
+        task.setOutputPath("minio://users/7/inference-results/infer-task-1/attempt-1/outputs/");
+        task.setErrorMessage("script failed");
+        task.setStartedAt(java.time.Instant.parse("2026-08-10T01:00:00Z"));
+        task.setFinishedAt(java.time.Instant.parse("2026-08-10T01:01:00Z"));
+        task.setServerIp("10.0.0.10");
+        task.setQueueSortIndex(9);
+        taskRepo.tasks.put(task.getId(), task);
+
+        InferenceTaskDto dto = service.retryTask("infer-task-1");
+
+        InferenceTask saved = taskRepo.tasks.get("infer-task-1");
+        assertEquals("pending", saved.getStatus());
+        assertEquals(0, saved.getProgress());
+        assertEquals(2, saved.getCurrentAttempt());
+        assertEquals(1, saved.getRetryCount());
+        assertNull(saved.getResultJson());
+        assertNull(saved.getLogPath());
+        assertNull(saved.getOutputPath());
+        assertNull(saved.getErrorMessage());
+        assertNull(saved.getStartedAt());
+        assertNull(saved.getFinishedAt());
+        assertNull(saved.getServerIp());
+        assertEquals(0, saved.getQueueSortIndex());
+        assertEquals("infer-task-1", executorRouter.stoppedTaskId);
+        assertEquals("infer-task-1", executorRouter.startedTaskId);
+        assertEquals(2, executorRouter.startedAttempt);
+        assertEquals(1, executorRouter.stoppedAttempt);
+        assertEquals(2, dto.getCurrentAttempt());
+        assertEquals(false, dto.getRetryable());
+    }
+
+    @Test
+    void retryRejectsNonFailedTask() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("running");
+        task.setCurrentAttempt(1);
+        task.setRetryCount(0);
+        task.setMaxRetries(3);
+        task.setOwnerUserId(7);
+        taskRepo.tasks.put(task.getId(), task);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.retryTask("infer-task-1")
+        );
+
+        assertEquals("only failed inference tasks can be retried", error.getMessage());
+    }
+
+    @Test
+    void retryRejectsTaskOwnedByAnotherUser() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("failed");
+        task.setCurrentAttempt(1);
+        task.setRetryCount(0);
+        task.setMaxRetries(3);
+        task.setOwnerUserId(8);
+        taskRepo.tasks.put(task.getId(), task);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.retryTask("infer-task-1")
+        );
+
+        assertEquals("推理任务不存在或无权限", error.getMessage());
+        assertEquals(1, task.getCurrentAttempt());
+        assertEquals(0, task.getRetryCount());
+    }
+
+    @Test
+    void retryRejectsTaskAtRetryLimit() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("failed");
+        task.setCurrentAttempt(4);
+        task.setRetryCount(3);
+        task.setMaxRetries(3);
+        task.setOwnerUserId(7);
+        taskRepo.tasks.put(task.getId(), task);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.retryTask("infer-task-1")
+        );
+
+        assertEquals("inference task retry limit exceeded", error.getMessage());
+    }
+
+    @Test
+    void ignoresStaleAttemptCallback() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("running");
+        task.setProgress(55);
+        task.setCurrentAttempt(2);
+        task.setRetryCount(1);
+        task.setMaxRetries(3);
+        taskRepo.tasks.put(task.getId(), task);
+
+        UpdateInferenceResultRequest req = new UpdateInferenceResultRequest();
+        req.setStatus("failed");
+        req.setErrorMessage("old attempt failed late");
+
+        service.updateResultInternal("infer-task-1", 1, req);
+
+        InferenceTask saved = taskRepo.tasks.get("infer-task-1");
+        assertEquals("running", saved.getStatus());
+        assertEquals(55, saved.getProgress());
+        assertNull(saved.getErrorMessage());
+    }
+
+    @Test
+    void ignoresLegacyCallbackWithoutAttemptAfterRetry() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("running");
+        task.setProgress(55);
+        task.setCurrentAttempt(2);
+        task.setRetryCount(1);
+        task.setMaxRetries(3);
+        taskRepo.tasks.put(task.getId(), task);
+
+        UpdateInferenceResultRequest req = new UpdateInferenceResultRequest();
+        req.setStatus("failed");
+        req.setErrorMessage("old callback without attempt");
+
+        service.updateResultInternal("infer-task-1", null, req);
+
+        InferenceTask saved = taskRepo.tasks.get("infer-task-1");
+        assertEquals("running", saved.getStatus());
+        assertEquals(55, saved.getProgress());
+        assertNull(saved.getErrorMessage());
+    }
+
+    @Test
+    void ignoresCallbackAfterAttemptReachedTerminalState() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("success");
+        task.setProgress(100);
+        task.setCurrentAttempt(2);
+        task.setRetryCount(1);
+        task.setMaxRetries(3);
+        taskRepo.tasks.put(task.getId(), task);
+
+        UpdateInferenceResultRequest req = new UpdateInferenceResultRequest();
+        req.setStatus("running");
+        req.setProgress(35);
+
+        service.updateResultInternal("infer-task-1", 2, req);
+
+        InferenceTask saved = taskRepo.tasks.get("infer-task-1");
+        assertEquals("success", saved.getStatus());
+        assertEquals(100, saved.getProgress());
+    }
+
+    @Test
+    void sameAttemptProgressDoesNotMoveBackwards() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("running");
+        task.setProgress(55);
+        task.setCurrentAttempt(1);
+        taskRepo.tasks.put(task.getId(), task);
+
+        UpdateInferenceResultRequest req = new UpdateInferenceResultRequest();
+        req.setStatus("running");
+        req.setProgress(35);
+
+        service.updateResultInternal("infer-task-1", 1, req);
+
+        assertEquals(55, taskRepo.tasks.get("infer-task-1").getProgress());
+    }
+
+    @Test
+    void retryRejectsUnavailableDependenciesWithoutConsumingAttempt() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setModelVersionId("missing-model-version");
+        task.setScriptVersionId("script-ver-1");
+        task.setInputMode(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT);
+        task.setInputObjectName("users/7/files/input.jpg");
+        task.setStatus("failed");
+        task.setCurrentAttempt(1);
+        task.setRetryCount(0);
+        task.setMaxRetries(3);
+        task.setOwnerUserId(7);
+        taskRepo.tasks.put(task.getId(), task);
+
+        assertThrows(IllegalArgumentException.class, () -> service.retryTask("infer-task-1"));
+
+        assertEquals("failed", task.getStatus());
+        assertEquals(1, task.getCurrentAttempt());
+        assertEquals(0, task.getRetryCount());
+        assertNull(executorRouter.startedTaskId);
+        assertNull(executorRouter.stoppedTaskId);
+    }
+
+    @Test
+    void resultIncludesRetryMetadata() {
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-task-1");
+        task.setStatus("failed");
+        task.setProgress(0);
+        task.setCurrentAttempt(2);
+        task.setRetryCount(1);
+        task.setMaxRetries(3);
+        task.setOwnerUserId(7);
+        taskRepo.tasks.put(task.getId(), task);
+
+        var result = service.getResult("infer-task-1");
+
+        assertEquals(2, result.getCurrentAttempt());
+        assertEquals(1, result.getRetryCount());
+        assertEquals(3, result.getMaxRetries());
+        assertEquals(true, result.getRetryable());
     }
 
     @Test
@@ -295,6 +538,7 @@ class InferenceTaskServiceTest {
 
     private static class FakeInferenceTaskRepository {
         final Map<String, InferenceTask> tasks = new HashMap<>();
+        int findForUpdateCount;
 
         InferenceTaskRepository proxy() {
             return (InferenceTaskRepository) Proxy.newProxyInstance(
@@ -307,6 +551,10 @@ class InferenceTaskServiceTest {
                             yield task;
                         }
                         case "findById" -> Optional.ofNullable(tasks.get((String) args[0]));
+                        case "findByIdForUpdate" -> {
+                            findForUpdateCount++;
+                            yield Optional.ofNullable(tasks.get((String) args[0]));
+                        }
                         case "delete" -> {
                             InferenceTask task = (InferenceTask) args[0];
                             tasks.remove(task.getId());
@@ -383,6 +631,8 @@ class InferenceTaskServiceTest {
     private static class FakeExecutorRouter extends InferenceExecutorRouter {
         String startedTaskId;
         String stoppedTaskId;
+        Integer startedAttempt;
+        Integer stoppedAttempt;
 
         FakeExecutorRouter() {
             super(
@@ -400,8 +650,20 @@ class InferenceTaskServiceTest {
         }
 
         @Override
+        public void start(String taskId, Integer attempt) {
+            this.startedTaskId = taskId;
+            this.startedAttempt = attempt;
+        }
+
+        @Override
         public void stop(String taskId) {
             this.stoppedTaskId = taskId;
+        }
+
+        @Override
+        public void stop(String taskId, Integer attempt) {
+            this.stoppedTaskId = taskId;
+            this.stoppedAttempt = attempt;
         }
     }
 

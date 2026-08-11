@@ -30,6 +30,7 @@ public class InternalInferenceCallbackController {
     @PostMapping("/result")
     public ApiResponse<InferenceTaskDto> updateResult(
             @RequestParam String id,
+            @RequestParam(required = false) Integer attempt,
             @RequestBody UpdateInferenceResultRequest req,
             HttpServletRequest request
     ) {
@@ -38,7 +39,7 @@ public class InternalInferenceCallbackController {
             return ApiResponse.fail("无效的内部回调 token");
         }
         try {
-            return ApiResponse.ok(taskService.updateResultInternal(id, req));
+            return ApiResponse.ok(taskService.updateResultInternal(id, attempt, req));
         } catch (IllegalArgumentException e) {
             return ApiResponse.fail(e.getMessage());
         }

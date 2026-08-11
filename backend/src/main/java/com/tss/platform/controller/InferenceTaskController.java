@@ -80,6 +80,18 @@ public class InferenceTaskController {
         }
     }
 
+    @PostMapping("/{id}/retry")
+    public ApiResponse<InferenceTaskDto> retry(@PathVariable String id) {
+        try {
+            var __auditData = taskService.retryTask(id);
+            auditHooks.inference(id, "INFERENCE_RETRY", true, null);
+            return ApiResponse.ok(__auditData);
+        } catch (IllegalArgumentException e) {
+            auditHooks.inference(id, "INFERENCE_RETRY", false, e.getMessage());
+            return ApiResponse.fail(e.getMessage());
+        }
+    }
+
     @GetMapping("/{id}/result")
     public ApiResponse<InferenceTaskResultDto> result(@PathVariable String id) {
         try {

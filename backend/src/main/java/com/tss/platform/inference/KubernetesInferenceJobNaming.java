@@ -21,6 +21,21 @@ public final class KubernetesInferenceJobNaming {
         return prefix + (suffix.isEmpty() ? "task" : suffix);
     }
 
+    public static String jobNameForInference(String taskId, Integer attempt) {
+        int safeAttempt = Math.max(attempt == null ? 1 : attempt, 1);
+        if (safeAttempt == 1) {
+            return jobNameForInference(taskId);
+        }
+        String suffix = sanitizeLabelValue(taskId);
+        String attemptSuffix = "-a" + safeAttempt;
+        String prefix = "tss-infer-";
+        int maxSuffixLen = MAX_LEN - prefix.length() - attemptSuffix.length();
+        if (suffix.length() > maxSuffixLen) {
+            suffix = trimHyphens(suffix.substring(0, maxSuffixLen));
+        }
+        return prefix + (suffix.isEmpty() ? "task" : suffix) + attemptSuffix;
+    }
+
     public static String sanitizeLabelValue(String value) {
         if (value == null || value.isBlank()) {
             return "unknown";
