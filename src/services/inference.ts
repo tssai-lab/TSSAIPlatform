@@ -4,6 +4,7 @@ export type InferenceInputMode = 'SINGLE_OBJECT' | 'DATASET_VERSION';
 export type InferenceTaskStatus =
   | 'pending'
   | 'queued'
+  | 'scheduled'
   | 'running'
   | 'success'
   | 'failed'
@@ -50,6 +51,11 @@ export type InferenceTask = {
   params?: Record<string, unknown>;
   status: InferenceTaskStatus | string;
   progress?: number;
+  currentAttempt?: number;
+  retryCount?: number;
+  maxRetries?: number;
+  retryable?: boolean;
+  lastRetryAt?: string | null;
   result?: Record<string, unknown>;
   logPath?: string | null;
   outputPath?: string | null;
@@ -64,7 +70,18 @@ export type InferenceTask = {
 
 export type InferenceTaskResult = Pick<
   InferenceTask,
-  'id' | 'status' | 'progress' | 'result' | 'logPath' | 'outputPath' | 'errorMessage'
+  | 'id'
+  | 'status'
+  | 'progress'
+  | 'currentAttempt'
+  | 'retryCount'
+  | 'maxRetries'
+  | 'retryable'
+  | 'lastRetryAt'
+  | 'result'
+  | 'logPath'
+  | 'outputPath'
+  | 'errorMessage'
 >;
 
 export type CreateInferenceTaskBody = {
@@ -201,6 +218,16 @@ export async function getInferenceTask(id: string, options?: { [key: string]: un
 export async function stopInferenceTask(id: string, options?: { [key: string]: unknown }) {
   return request<{ data: InferenceTask }>(
     `/inference/tasks/${encodeURIComponent(id)}/stop`,
+    {
+      method: 'POST',
+      ...(options || {}),
+    },
+  );
+}
+
+export async function retryInferenceTask(id: string, options?: { [key: string]: unknown }) {
+  return request<{ data: InferenceTask }>(
+    `/inference/tasks/${encodeURIComponent(id)}/retry`,
     {
       method: 'POST',
       ...(options || {}),

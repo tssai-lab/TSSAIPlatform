@@ -40,6 +40,7 @@ import {
   fetchDatasetList,
   fetchModelList,
   formatInferenceBytes,
+  getInferenceTask,
   getInferenceTaskResult,
   type InferenceInputMode,
   type InferenceScriptVersion,
@@ -47,6 +48,7 @@ import {
   listInferenceScripts,
   listInferenceTasks,
   objectNameFromMinioPath,
+  retryInferenceTask,
   stopInferenceTask,
   uploadInferenceScript,
   uploadObject,
@@ -131,6 +133,7 @@ const InferenceWorkbench: React.FC = () => {
   );
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const [scriptUploading, setScriptUploading] = useState(false);
   const [scriptModalOpen, setScriptModalOpen] = useState(false);
   const [scriptFileList, setScriptFileList] = useState<UploadFile[]>([]);
@@ -151,15 +154,7 @@ const InferenceWorkbench: React.FC = () => {
       if (!latest) return;
       setSelectedTask((prev) =>
         prev && prev.id === task.id
-          ? {
-              ...prev,
-              status: latest.status ?? prev.status,
-              progress: latest.progress ?? prev.progress,
-              result: latest.result ?? prev.result,
-              logPath: latest.logPath ?? prev.logPath,
-              outputPath: latest.outputPath ?? prev.outputPath,
-              errorMessage: latest.errorMessage ?? prev.errorMessage,
-            }
+          ? { ...prev, ...latest }
           : prev,
       );
     } catch {
@@ -367,6 +362,35 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
+  const handleRetryTask = async (task: InferenceTask) => {
+    setRetryingTaskId(task.id);
+    try {
+      const res = await retryInferenceTask(task.id, { skipErrorHandler: true });
+      message.success('推理任务已重新提交');
+      if (selectedTask?.id === task.id && res?.data) {
+        setSelectedTask(res.data);
+      }
+      actionRef.current?.reload();
+    } catch (error: any) {
+      message.error(error?.message || '重试推理任务失败');
+      actionRef.current?.reload();
+      if (selectedTask?.id === task.id) {
+        try {
+          const latest = await getInferenceTask(task.id, {
+            skipErrorHandler: true,
+          });
+          if (latest?.data) {
+            setSelectedTask(latest.data);
+          }
+        } catch {
+          // 保留当前详情，列表刷新仍会恢复服务端状态
+        }
+      }
+    } finally {
+      setRetryingTaskId(undefined);
+    }
+  };
+
   const handleDeleteTask = async (task: InferenceTask) => {
     try {
       await deleteInferenceTask(task.id, { skipErrorHandler: true });
@@ -442,6 +466,18 @@ const InferenceWorkbench: React.FC = () => {
       render: (_, record) => statusTag(record.status),
     },
     {
+      title: '重试',
+      dataIndex: 'retryCount',
+      hideInSearch: true,
+      width: 90,
+      render: (_, record) => {
+        if (record.retryCount === undefined || record.maxRetries === undefined) {
+          return '-';
+        }
+        return `${record.retryCount}/${record.maxRetries}`;
+      },
+    },
+    {
       title: '进度',
       dataIndex: 'progress',
       hideInSearch: true,
@@ -473,11 +509,14 @@ const InferenceWorkbench: React.FC = () => {
       key: 'action',
       hideInSearch: true,
       fixed: 'right',
-      width: 250,
+      width: 320,
       render: (_, record) => {
-        const isActive = ['pending', 'queued', 'running'].includes(
+        const isActive = ['pending', 'queued', 'scheduled', 'running'].includes(
           record.status,
         );
+        const retryCount = record.retryCount ?? 0;
+        const maxRetries = record.maxRetries ?? 3;
+        const canRetry = record.status === 'failed' && record.retryable === true;
         return (
           <Space size={4}>
             <Button
@@ -497,6 +536,23 @@ const InferenceWorkbench: React.FC = () => {
               >
                 <Button danger type="link" icon={<StopOutlined />}>
                   停止
+                </Button>
+              </Popconfirm>
+            )}
+            {canRetry && (
+              <Popconfirm
+                title="重试推理任务"
+                description={`确认重新提交该任务吗？当前已重试 ${retryCount}/${maxRetries} 次。`}
+                okText="重试"
+                cancelText="取消"
+                onConfirm={() => handleRetryTask(record)}
+              >
+                <Button
+                  type="link"
+                  icon={<ReloadOutlined />}
+                  loading={retryingTaskId === record.id}
+                >
+                  重试
                 </Button>
               </Popconfirm>
             )}
@@ -686,7 +742,7 @@ const InferenceWorkbench: React.FC = () => {
               columns={columns}
               rowKey="id"
               polling={3000}
-              scroll={{ x: 900 }}
+              scroll={{ x: 1300 }}
               search={{ labelWidth: 'auto' }}
               request={async (params) => {
                 const res = await listInferenceTasks(
@@ -882,6 +938,13 @@ const InferenceWorkbench: React.FC = () => {
                     )
                   : selectedTask.inputObjectName || '-'}
               </Descriptions.Item>
+              <Descriptions.Item label="执行轮次">
+                {selectedTask.currentAttempt === undefined ||
+                selectedTask.retryCount === undefined ||
+                selectedTask.maxRetries === undefined
+                  ? '-'
+                  : `第 ${selectedTask.currentAttempt} 次执行，已重试 ${selectedTask.retryCount}/${selectedTask.maxRetries} 次`}
+              </Descriptions.Item>
               <Descriptions.Item label="进度">
                 <Progress
                   percent={selectedTask.progress ?? 0}
@@ -910,6 +973,26 @@ const InferenceWorkbench: React.FC = () => {
               </Descriptions.Item>
             </Descriptions>
             <Space wrap>
+              {selectedTask.status === 'failed' &&
+                selectedTask.retryable === true && (
+                  <Popconfirm
+                    title="重试推理任务"
+                    description={`确认重新提交该任务吗？当前已重试 ${
+                      selectedTask.retryCount ?? 0
+                    }/${selectedTask.maxRetries ?? 3} 次。`}
+                    okText="重试"
+                    cancelText="取消"
+                    onConfirm={() => handleRetryTask(selectedTask)}
+                  >
+                    <Button
+                      type="primary"
+                      icon={<ReloadOutlined />}
+                      loading={retryingTaskId === selectedTask.id}
+                    >
+                      重试
+                    </Button>
+                  </Popconfirm>
+                )}
               <Button
                 icon={<DownloadOutlined />}
                 disabled={!selectedTask.outputPath}

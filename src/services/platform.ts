@@ -291,6 +291,7 @@ export {
   listInferenceTasks,
   getInferenceTask,
   stopInferenceTask,
+  retryInferenceTask,
   deleteInferenceTask,
   getInferenceTaskResult,
   objectNameFromMinioPath,
