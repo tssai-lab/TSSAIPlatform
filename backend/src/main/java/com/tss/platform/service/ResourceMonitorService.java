@@ -190,6 +190,22 @@ public class ResourceMonitorService {
         LOG.info("服务器已删除: {}", serverIp);
     }
 
+    // ────────── 5.5b UPDATE SERVER ENABLED ──────────
+
+    @Transactional
+    public ServerItem updateServerEnabled(String serverIp, UpdateServerEnabledRequest req) {
+        ComputeServer server = serverRepo.findByServerIpAndDeletedFalse(serverIp)
+                .orElseThrow(() -> new IllegalArgumentException("服务器不存在: " + serverIp));
+        if (req == null || req.getEnabled() == null) {
+            throw new IllegalArgumentException("enabled 不能为空");
+        }
+        server.setEnabled(req.getEnabled());
+        server.setUpdatedAt(Instant.now());
+        serverRepo.save(server);
+        LOG.info("服务器启用状态已更新: {} enabled={}", serverIp, req.getEnabled());
+        return getServerDetail(serverIp);
+    }
+
     // ────────── 5.6 METRICS ──────────
 
     public MetricsResponse getMetrics(String serverIp, String interval) {
@@ -334,6 +350,7 @@ public class ResourceMonitorService {
         ServerItem item = new ServerItem();
         item.setServerIp(server.getServerIp());
         item.setHostname(server.getHostname());
+        item.setEnabled(server.getEnabled());
 
         if (snap != null) {
             item.setStatus(snap.getStatus());

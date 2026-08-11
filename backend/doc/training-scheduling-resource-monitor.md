@@ -151,11 +151,14 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 | GET | `/api/resource-monitor/servers?keyword=&status=` | 登录用户 | 服务器列表（含实时 CPU/内存/GPU 使用率） |
 | POST | `/api/resource-monitor/servers` | 管理员 | 手动添加服务器 |
 | GET | `/api/resource-monitor/servers/{serverIp}` | 登录用户 | 服务器详情（含运行中/排队任务列表） |
-| DELETE | `/api/resource-monitor/servers/{serverIp}` | 管理员 | 删除服务器（有运行任务时拒绝） |
+| DELETE | `/api/resource-monitor/servers/{serverIp}` | 管理员 | 删除服务器（软删除，有运行任务时拒绝） |
+| PUT | `/api/resource-monitor/servers/{serverIp}/enabled` | 管理员 | 启用/禁用服务器（`enabled`：false=不再分配新任务，已跑任务继续） |
 | GET | `/api/resource-monitor/servers/{serverIp}/metrics?interval=` | 登录用户 | 资源使用趋势（支持 1min/10min/1hour/1day） |
 | PUT | `/api/resource-monitor/servers/{serverIp}/queue/reorder` | 管理员 | 排队任务上移/下移 |
 | PUT | `/api/resource-monitor/servers/{serverIp}/queue/priority` | 管理员 | 修改排队任务优先级 |
 | DELETE | `/api/resource-monitor/servers/{serverIp}/queue/{taskId}` | 管理员 | 取消排队任务 |
+
+> **删除 vs 启用/禁用**：删除（`deleted=true`）为软删除。对仍存在于 K8s 集群的节点，`ServerMetricsCollector` 每 30 秒自动重新注册（`deleted=false`），删除会"失效"；**要让节点真正下线（不再分配新任务），应使用 `PUT /servers/{serverIp}/enabled` 禁用**（`enabled=false`），调度器 `assignNode` 会跳过禁用节点，已在其上运行的任务不受影响。
 
 ### 4.2 数据库设计（Flyway 迁移）
 
