@@ -4,75 +4,129 @@
 
 基础模型 ZIP 必须包含 `yolo11n.pt`；数据集 ZIP 必须包含 `data.yaml`、图片目录和 YOLO 标签目录。创建任务时选择 `yolo_object_detection` 方案。
 
-## 训练进度与指标
+## 训练与推理镜像
 
-原先版本使用训练完后写入metrics.json 文件的方式来上报指标
+### 训练镜像
 
-新版本增加了TSS_EVENT 事件 用于上报进度与指标
+| 镜像 | 存放位置 | 对应训练方案 |
+|---|---|---|
+| `tss-cv-worker` | 阿里云 | `yolo_object_detection`、`hf_image_classification` |
+| `tss-nlp-worker` | 阿里云 | `image_text_consistency_fusion_logreg` |
 
-训练指标：两种方式都可采用，推荐TSS_EVENT 事件
+### 推理镜像
 
-训练进度：只能使用TSS_EVENT progress 事件
+| 镜像 | 存放位置 | 用途 |
+|---|---|---|
+| `tss-inference-worker-cpu` | GitHub 容器仓库（ghcr.io） | CPU 推理 |
 
-### 训练进度上报
+---
+
+## 训练进度与指标上报（如何实现）
+
+**平台靠训练代码向 stdout 打印 `TSS_EVENT 事件` 来感知训练过程**。实现「训练过程中动态进度」和「训练过程中指标记录」，只需要在你的训练代码里按下面的协议打印事件行。
+
+本目录的 `train.py` 模板已内置 `event()` 辅助函数和每 epoch 上报逻辑，可直接使用；如果你自己写训练代码，请遵循以下协议。
+
+### 0. 事件辅助函数（统一封装）
 
 ```python
 def event(payload: dict) -> None:
-      """向平台上报一条 TSS_EVENT 进度事件，打印后立即 flush
-      progress 必须是 0~100 的完成度数值（不是 epoch 序号），平台会把它映射到
-      训练阶段的进度区间（45~85）实时显示在进度条上。
-      """
-      print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
-
-event({"type": "progress", "progress": 0})
-event({"type": "progress", "progress": 100}) 
+    """向平台上报一条 TSS_EVENT 事件，打印后立即 flush。"""
+    print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 ```
 
-注意事项：
-- 训练阶段进度只在训练循环期间上报，数据加载/验证阶段还是走 worker 自动上报的固定阶段（0~45 / 85~100），这是正常的
-- 上报的 0~100 会被 worker 映射到 45%~85% 这段区间（mapped = 45 + progress * 0.4），也就是"训练真正跑起来"的那段。前后
-  0~45%（准备阶段）和 85%~100%（校验/上传）是 worker 自动上报的
-- 其他几个进度的节点是写死在k8s/training-worker/train.py的 run()
-  - 5 准备
-  - 15 下载模型
-  - 28 下载数据集
-  - 40 下载代码
-  - 45 开始训练（reporter.report("running", 45, ...)）
-  - 86 校验
-  - 96 上传
-  - 100 成功
+> ⚠️ 三条铁律，违反会导致进度/指标出不来：
+> 1. **独占一行**，行首必须是 `TSS_EVENT `（含末尾空格），后面是合法 JSON；
+> 2. **必须 flush**（`print(..., flush=True)`）——训练容器 stdout 是管道而非终端，不 flush 会被缓冲，事件直到训练结束才一次到达，表现为"进度卡住/指标全无"；
+> 3. 数值必须是**数值类型**（int/float），字符串、对象等会被忽略。
 
-### 训练指标上报
+### 1. 训练过程中动态进度（进度条实时推进）
 
+**在训练循环里，每个 epoch（或周期性）打印一条进度事件：**
 
-## 训练进度与指标上报协议（必读）
-
-平台的训练进度条和指标曲线，依赖你的训练代码向 stdout 打印 **TSS_EVENT 事件**。本目录的 `train.py` 模板已内置上报逻辑（每个 epoch 自动上报进度和指标），直接使用即可。**如果你编写自己的训练代码，请遵循以下协议，否则进度条会卡住、指标无法显示。**
-
-### 1. 进度事件
-
-每个 epoch（或周期性）打印一行：
-
-```
-TSS_EVENT {"type": "progress", "progress": 50}
+```python
+for epoch in range(1, epochs + 1):
+    # ... 训练一个 epoch ...
+    progress = round(epoch * 100 / epochs)      # 完成度百分比 0~100
+    event({"type": "progress", "progress": progress})
 ```
 
-要求：
-1. **独占一行，行首必须是 `TSS_EVENT `**（含末尾空格），后面是合法 JSON；
-2. **`progress` 必须是 0~100 的完成度数值**（例如 `round(epoch / epochs * 100)`），**不能传 epoch 数或字符串**——传 1、2、3 这种 epoch 序号会被映射成接近 45 的同一个值，进度条看不出变化；
-3. **打印后必须 flush**（`print(..., flush=True)`）。训练容器里 stdout 是管道而非终端，不 flush 会被缓冲，事件直到训练结束才一次性到达，表现就是"进度一直卡在 45%"。
+**要求：**
+- `progress` 必须是 **0~100 的完成度数值**，不是 epoch 序号（传 1、2、3 这种会被映射成接近 45 的同一个值，进度条看不出变化）；
+- 建议训练开始前报 `progress: 0`、结束后报 `progress: 100`。
 
-### 2. 指标事件
+**平台如何显示（映射关系）：**
+- 你上报的 0~100 会被 worker 映射到 **45%~85%** 这段区间（`mapped = 45 + progress * 0.4`），即"训练真正跑起来"的那段；
+- 前后 **0~45%（准备阶段）** 和 **85%~100%（校验/上传）** 由 worker 自动上报，无需你处理；
+- 自动上报的固定节点（写死在 `k8s/training-worker/train.py` 的 `run()`）：`5`准备 → `15`下载模型 → `28`下载数据集 → `40`下载代码 → `45`开始训练 → `86`校验 → `96`上传 → `100`成功。
 
-训练算出的指标可同样上报，用于训练完成后的指标可视化：
+### 2. 训练过程中指标记录（指标可视化）
+
+有两种方式，**推荐 TSS_EVENT 指标事件**（能记录训练过程、画出曲线）；`metrics.json` 方式只能记录最终值。
+
+#### 方式一：TSS_EVENT 指标事件（推荐，支持训练过程曲线）
+
+**每个 epoch 上报一次，务必带 `step`：**
+
+```python
+event({"type": "metric", "step": epoch, "metrics": {"train_loss": 0.32, "val_mAP50": 0.81}})
+```
+
+**要求：**
+- **`step` 表示当前训练步数（如 epoch 序号），强烈建议传** —— 平台据此绘制"指标随训练过程变化"的折线曲线（如 loss 随 epoch 下降）；
+- 不带 `step` 时，该指标只会被记录为最终值（末值单点，无曲线）；
+- `metrics` 里的值必须是数值（int/float）。
+
+**实现后的效果：** 每个 epoch 都上报且带 step，训练完成后平台把每个 step 的指标写入 MLflow，任务详情页的指标面板即可显示训练过程曲线。
+
+> ⚠️ 曲线依赖 worker 按 step 累积并写入 MLflow（`k8s/training-worker/train.py` 的 `execute_training`）。若部署的 worker 版本较旧，只会展示最终值。
+
+#### 方式二：写入 metrics.json（仅最终值）
+
+把最终指标写入 RunSpec 声明的 metrics 输出路径（如 `metrics.json`）：
+
+```python
+metrics = {"train_loss": 0.32, "val_mAP50": 0.81, "val_mAP50_95": 0.55, "epochs": 10}
+(output / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False), encoding="utf-8")
+```
+
+**注意：** 这里写的是**最终值**，训练成功后平台展示末值（柱状图 / 摘要卡片），**没有训练过程曲线**；可与 TSS_EVENT 指标事件配合使用（最终值 + 曲线）。
+
+#### 标准指标名（平台可视化优先识别）
 
 ```
-TSS_EVENT {"type": "metric", "metrics": {"train_loss": 0.32, "val_mAP50": 0.81}}
+train_loss  val_loss  test_loss
+train_accuracy  val_accuracy  test_accuracy
+train_precision val_precision test_precision
+train_recall    val_recall    test_recall
+train_f1        val_f1        test_f1
+val_mAP50  val_mAP50_95
 ```
 
-平台可视化优先识别的标准指标名（写进 `metrics.json` 或 metric 事件均可）：`train_loss`、`val_loss`、`val_accuracy`、`val_precision`、`val_recall`、`val_mAP50`、`val_mAP50_95` 等。
+也兼容常见别名：`loss`（对应 train_loss）、`accuracy`（对应 val_accuracy）、`mAP50` / `val/mAP50`（对应 val_mAP50）、`mAP50-95` / `val/mAP50-95`（对应 val_mAP50_95）等。**指标名对不上时前端不会显示。**
 
-### 3. 平台侧显示说明
+#### 展示规则小结
 
-- 进度条在准备阶段显示 0~45，训练阶段显示 45~85，最后校验/上传阶段跳到 100。你的进度事件会按比例映射到训练阶段区间，所以训练中进度条数值不会精确等于你上报的数值，但会随上报实时推进。
-- 训练完成后，最终指标会被平台写入 MLflow，指标可视化页面即可展示曲线。
+| 上报方式 | 展示结果 |
+|---|---|
+| TSS_EVENT metric 事件 + `step` | 训练过程折线曲线（训练完成后显示，末值取最后一个 step） |
+| TSS_EVENT metric 事件，不带 `step` | 最终值单点（末值柱状图） |
+| `metrics.json` | 最终值（末值柱状图 / 摘要卡片） |
+| 都不上报 | 无指标展示 |
+
+---
+
+## 参考示例
+
+本目录 `train.py` 模板的做法（`on_epoch_end` 回调里，每个 epoch 上报进度 + 指标）：
+
+```python
+def on_epoch_end(trainer) -> None:
+    epoch = int(getattr(trainer, "epoch", 0) + 1)
+    total = int(getattr(trainer, "epochs", 1) or 1)
+    event({"type": "progress", "progress": round(epoch * 100.0 / total)})
+    snapshot = { "train_loss": ..., "val_mAP50": ... }   # 从 trainer.metrics 取数值
+    event({"type": "metric", "step": epoch, "metrics": snapshot})
+```
+
+> 注意：要出曲线，metric 事件必须带 `step`。如果模板里的 metric 事件没带 `step`，只有末值展示。
