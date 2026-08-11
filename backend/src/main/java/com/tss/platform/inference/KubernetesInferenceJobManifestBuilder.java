@@ -50,10 +50,12 @@ public class KubernetesInferenceJobManifestBuilder {
             String minioSecretKey,
             String minioBucket
     ) {
-        String jobName = KubernetesInferenceJobNaming.jobNameForInference(task.getId());
+        int attempt = currentAttempt(task);
+        String jobName = KubernetesInferenceJobNaming.jobNameForInference(task.getId(), attempt);
         String inferenceLabel = KubernetesInferenceJobNaming.sanitizeLabelValue(task.getId());
         String callbackUrl = properties.getBackendServiceUrl()
-                + "/api/internal/inference/result?id=" + task.getId();
+                + "/api/internal/inference/result?id=" + task.getId()
+                + "&attempt=" + attempt;
 
         return """
                 apiVersion: batch/v1
@@ -101,6 +103,8 @@ public class KubernetesInferenceJobManifestBuilder {
                           env:
                             - name: INFERENCE_TASK_ID
                               value: "%s"
+                            - name: INFERENCE_ATTEMPT
+                              value: "%d"
                             - name: MODEL_VERSION_ID
                               value: "%s"
                             - name: SCRIPT_VERSION_ID
@@ -160,6 +164,7 @@ public class KubernetesInferenceJobManifestBuilder {
                 workerImage,
                 workerImagePullPolicy,
                 escapeYaml(task.getId()),
+                attempt,
                 escapeYaml(task.getModelVersionId()),
                 escapeYaml(task.getScriptVersionId()),
                 escapeYaml(task.getInputMode()),
@@ -187,7 +192,13 @@ public class KubernetesInferenceJobManifestBuilder {
     }
 
     private String outputObjectPrefix(InferenceTask task) {
-        return "users/" + task.getOwnerUserId() + "/inference-results/" + task.getId();
+        return "users/" + task.getOwnerUserId()
+                + "/inference-results/" + task.getId()
+                + "/attempt-" + currentAttempt(task);
+    }
+
+    private int currentAttempt(InferenceTask task) {
+        return task.getCurrentAttempt() == null ? 1 : Math.max(task.getCurrentAttempt(), 1);
     }
 
     private String escapeYaml(String value) {

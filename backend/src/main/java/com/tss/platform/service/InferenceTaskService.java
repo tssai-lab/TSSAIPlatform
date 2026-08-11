@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -43,6 +44,7 @@ public class InferenceTaskService {
     public static final String INPUT_MODE_DATASET_VERSION = "DATASET_VERSION";
 
     private static final String STATUS_PENDING = "pending";
+    private static final int DEFAULT_MAX_RETRIES = 3;
     private static final String SOURCE_INFERENCE_TASK = "INFERENCE_TASK";
     private static final Set<String> ALLOWED_STATUSES = Set.of(
             "pending",
@@ -54,6 +56,7 @@ public class InferenceTaskService {
             "stopped"
     );
     private static final Set<String> ACTIVE_TASK_STATUSES = Set.of("pending", "queued", "scheduled", "running");
+    private static final Set<String> TERMINAL_TASK_STATUSES = Set.of("success", "failed", "stopped");
 
     private final InferenceTaskRepository taskRepo;
     private final ModelVersionRepository modelVersionRepo;
@@ -128,13 +131,16 @@ public class InferenceTaskService {
         task.setParamsJson(writeJson(params, "params 必须是合法 JSON"));
         task.setStatus(STATUS_PENDING);
         task.setProgress(progressOf(STATUS_PENDING));
+        task.setCurrentAttempt(1);
+        task.setRetryCount(0);
+        task.setMaxRetries(DEFAULT_MAX_RETRIES);
         task.setRemark(normalizeText(req.getRemark()));
         task.setOwnerUserId(authContext.currentUserId());
         task.setCreatedAt(now);
         task.setUpdatedAt(now);
 
         InferenceTask saved = taskRepo.save(task);
-        startInferenceAfterCommit(saved.getId());
+        startInferenceAfterCommit(saved.getId(), saved.getCurrentAttempt());
         return toDto(saved);
     }
 
@@ -180,6 +186,11 @@ public class InferenceTaskService {
         dto.setId(task.getId());
         dto.setStatus(task.getStatus());
         dto.setProgress(task.getProgress());
+        dto.setCurrentAttempt(safeInteger(task.getCurrentAttempt(), 1));
+        dto.setRetryCount(safeInteger(task.getRetryCount(), 0));
+        dto.setMaxRetries(safeInteger(task.getMaxRetries(), DEFAULT_MAX_RETRIES));
+        dto.setRetryable(isRetryable(task));
+        dto.setLastRetryAt(task.getLastRetryAt());
         dto.setResult(fromJson(task.getResultJson()));
         dto.setLogPath(task.getLogPath());
         dto.setOutputPath(task.getOutputPath());
@@ -189,24 +200,65 @@ public class InferenceTaskService {
 
     @Transactional
     public InferenceTaskDto stopTask(String id) {
-        InferenceTask task = requireAccessibleTask(id);
-        executorRouter.stop(task.getId());
+        InferenceTask task = requireAccessibleTaskForUpdate(id);
+        int attempt = safeInteger(task.getCurrentAttempt(), 1);
         task.setStatus("stopped");
         task.setProgress(progressOf("stopped"));
         task.setFinishedAt(Instant.now());
         task.setUpdatedAt(Instant.now());
-        return toDto(taskRepo.save(task));
+        InferenceTask saved = taskRepo.save(task);
+        stopInferenceAfterCommit(saved.getId(), attempt);
+        return toDto(saved);
+    }
+
+    @Transactional
+    public InferenceTaskDto retryTask(String id) {
+        InferenceTask task = requireAccessibleTaskForUpdate(id);
+        if (!"failed".equals(task.getStatus())) {
+            throw new IllegalArgumentException("only failed inference tasks can be retried");
+        }
+        int retryCount = safeInteger(task.getRetryCount(), 0);
+        int maxRetries = safeInteger(task.getMaxRetries(), DEFAULT_MAX_RETRIES);
+        if (retryCount >= maxRetries) {
+            throw new IllegalArgumentException("inference task retry limit exceeded");
+        }
+
+        validateRetryDependencies(task);
+
+        Instant now = Instant.now();
+        int previousAttempt = safeInteger(task.getCurrentAttempt(), 1);
+        int nextAttempt = previousAttempt + 1;
+        task.setCurrentAttempt(nextAttempt);
+        task.setRetryCount(retryCount + 1);
+        task.setStatus(STATUS_PENDING);
+        task.setProgress(progressOf(STATUS_PENDING));
+        task.setResultJson(null);
+        task.setLogPath(null);
+        task.setOutputPath(null);
+        task.setErrorMessage(null);
+        task.setStartedAt(null);
+        task.setFinishedAt(null);
+        task.setServerIp(null);
+        task.setQueueSortIndex(0);
+        task.setLastRetryAt(now);
+        task.setUpdatedAt(now);
+
+        InferenceTask saved = taskRepo.save(task);
+        restartInferenceAfterCommit(saved.getId(), previousAttempt, nextAttempt);
+        return toDto(saved);
     }
 
     @Transactional
     public Map<String, Object> deleteTask(String id) {
-        InferenceTask task = requireAccessibleTask(id);
-        if (ACTIVE_TASK_STATUSES.contains(task.getStatus())) {
-            executorRouter.stop(task.getId());
-        }
+        InferenceTask task = requireAccessibleTaskForUpdate(id);
+        boolean shouldStop = ACTIVE_TASK_STATUSES.contains(task.getStatus());
+        int attempt = safeInteger(task.getCurrentAttempt(), 1);
 
         int queuedObjectCount = queueTaskOutputDeletes(task);
         taskRepo.delete(task);
+        if (shouldStop) {
+            stopInferenceAfterCommit(task.getId(), attempt);
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", task.getId());
@@ -217,19 +269,30 @@ public class InferenceTaskService {
     }
 
     @Transactional
-    public InferenceTaskDto updateResultInternal(String taskId, UpdateInferenceResultRequest req) {
+    public InferenceTaskDto updateResultInternal(String taskId, Integer attempt, UpdateInferenceResultRequest req) {
         if (req == null) {
             throw new IllegalArgumentException("request body cannot be empty");
         }
-        InferenceTask task = taskRepo.findById(requireText(taskId, "id 不能为空"))
-                .orElseThrow(() -> new IllegalArgumentException("推理任务不存在: " + taskId));
+        InferenceTask task = taskRepo.findByIdForUpdate(requireText(taskId, "id cannot be empty"))
+                .orElseThrow(() -> new IllegalArgumentException("inference task does not exist: " + taskId));
+        if (shouldIgnoreCallback(task, attempt, req)) {
+            return toDto(task);
+        }
         applyResult(task, req);
         return toDto(taskRepo.save(task));
     }
 
     @Transactional
+    public InferenceTaskDto updateResultInternal(String taskId, UpdateInferenceResultRequest req) {
+        return updateResultInternal(taskId, null, req);
+    }
+
+    @Transactional
     public void markFailedFromExecutor(String taskId, String message) {
-        taskRepo.findById(taskId).ifPresent(task -> {
+        taskRepo.findByIdForUpdate(taskId).ifPresent(task -> {
+            if (TERMINAL_TASK_STATUSES.contains(task.getStatus())) {
+                return;
+            }
             task.setStatus("failed");
             task.setProgress(progressOf("failed"));
             task.setErrorMessage(normalizeText(message));
@@ -241,7 +304,10 @@ public class InferenceTaskService {
 
     @Transactional
     public void markQueuedFromExecutor(String taskId) {
-        taskRepo.findById(taskId).ifPresent(task -> {
+        taskRepo.findByIdForUpdate(taskId).ifPresent(task -> {
+            if (TERMINAL_TASK_STATUSES.contains(task.getStatus())) {
+                return;
+            }
             // scheduled 状态的任务已分配到节点，不要降级回 queued
             if ("scheduled".equals(task.getStatus())) {
                 return;
@@ -265,6 +331,11 @@ public class InferenceTaskService {
         dto.setParams(fromJson(task.getParamsJson()));
         dto.setStatus(task.getStatus());
         dto.setProgress(task.getProgress());
+        dto.setCurrentAttempt(safeInteger(task.getCurrentAttempt(), 1));
+        dto.setRetryCount(safeInteger(task.getRetryCount(), 0));
+        dto.setMaxRetries(safeInteger(task.getMaxRetries(), DEFAULT_MAX_RETRIES));
+        dto.setRetryable(isRetryable(task));
+        dto.setLastRetryAt(task.getLastRetryAt());
         dto.setResult(fromJson(task.getResultJson()));
         dto.setLogPath(task.getLogPath());
         dto.setOutputPath(task.getOutputPath());
@@ -278,16 +349,43 @@ public class InferenceTaskService {
         return dto;
     }
 
+    private boolean shouldIgnoreCallback(
+            InferenceTask task,
+            Integer attempt,
+            UpdateInferenceResultRequest req
+    ) {
+        int currentAttempt = safeInteger(task.getCurrentAttempt(), 1);
+        if ((attempt == null && currentAttempt > 1)
+                || (attempt != null && attempt != currentAttempt)) {
+            return true;
+        }
+        if (TERMINAL_TASK_STATUSES.contains(task.getStatus())) {
+            return true;
+        }
+        if (req.getStatus() == null || req.getStatus().isBlank()) {
+            return false;
+        }
+        String nextStatus = normalizeStatus(req.getStatus());
+        return statusOrder(nextStatus) < statusOrder(task.getStatus());
+    }
+
     private void applyResult(InferenceTask task, UpdateInferenceResultRequest req) {
+        String previousStatus = task.getStatus();
+        String nextStatus = previousStatus;
         if (req.getStatus() != null && !req.getStatus().isBlank()) {
-            String nextStatus = normalizeStatus(req.getStatus());
+            nextStatus = normalizeStatus(req.getStatus());
             task.setStatus(nextStatus);
             if (req.getProgress() == null) {
                 task.setProgress(progressOf(nextStatus));
             }
         }
         if (req.getProgress() != null) {
-            task.setProgress(validateProgress(req.getProgress()));
+            int nextProgress = validateProgress(req.getProgress());
+            if (Objects.equals(previousStatus, nextStatus)
+                    && !TERMINAL_TASK_STATUSES.contains(nextStatus)) {
+                nextProgress = Math.max(safeInteger(task.getProgress(), 0), nextProgress);
+            }
+            task.setProgress(nextProgress);
         }
         if (req.getResult() != null) {
             task.setResultJson(writeJson(toJsonNode(req.getResult(), "result 必须是合法 JSON"), "result 必须是合法 JSON"));
@@ -312,6 +410,20 @@ public class InferenceTaskService {
             task.setFinishedAt(Instant.now());
         }
         task.setUpdatedAt(Instant.now());
+    }
+
+    private int statusOrder(String status) {
+        if (status == null) {
+            return 0;
+        }
+        return switch (status) {
+            case "pending" -> 0;
+            case "queued" -> 1;
+            case "scheduled" -> 2;
+            case "running" -> 3;
+            case "success", "failed", "stopped" -> 4;
+            default -> 0;
+        };
     }
 
     private ModelVersion requireAccessibleModel(String modelVersionId) {
@@ -364,8 +476,26 @@ public class InferenceTaskService {
         return cleanName;
     }
 
+    private void validateRetryDependencies(InferenceTask task) {
+        requireAccessibleModel(task.getModelVersionId());
+        scriptService.requireAccessibleVersion(task.getScriptVersionId());
+        String inputMode = normalizeInputMode(task.getInputMode());
+        if (INPUT_MODE_DATASET_VERSION.equals(inputMode)) {
+            requireAccessibleReadyDataset(task.getDatasetVersionId());
+        } else {
+            requireAccessibleSingleObject(task.getInputObjectName());
+        }
+    }
+
     private InferenceTask requireAccessibleTask(String id) {
         InferenceTask task = taskRepo.findById(requireText(id, "id 不能为空"))
+                .orElseThrow(() -> new IllegalArgumentException("推理任务不存在"));
+        authContext.requireOwnerAccess(task.getOwnerUserId(), "推理任务不存在或无权限");
+        return task;
+    }
+
+    private InferenceTask requireAccessibleTaskForUpdate(String id) {
+        InferenceTask task = taskRepo.findByIdForUpdate(requireText(id, "id 不能为空"))
                 .orElseThrow(() -> new IllegalArgumentException("推理任务不存在"));
         authContext.requireOwnerAccess(task.getOwnerUserId(), "推理任务不存在或无权限");
         return task;
@@ -404,6 +534,15 @@ public class InferenceTaskService {
             }
         }
 
+        String taskOutputPrefix = taskOutputPrefix(task);
+        if (taskOutputPrefix != null) {
+            try {
+                objectNames.addAll(minioService.listObjectNames(taskOutputPrefix));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("failed to list inference output files: " + e.getMessage());
+            }
+        }
+
         int queuedCount = 0;
         for (String objectName : objectNames) {
             try {
@@ -419,6 +558,19 @@ public class InferenceTaskService {
             }
         }
         return queuedCount;
+    }
+
+    private boolean isRetryable(InferenceTask task) {
+        return task != null
+                && "failed".equals(task.getStatus())
+                && safeInteger(task.getRetryCount(), 0) < safeInteger(task.getMaxRetries(), DEFAULT_MAX_RETRIES);
+    }
+
+    private String taskOutputPrefix(InferenceTask task) {
+        if (task.getOwnerUserId() == null || task.getId() == null || task.getId().isBlank()) {
+            return null;
+        }
+        return "users/" + task.getOwnerUserId() + "/inference-results/" + task.getId() + "/";
     }
 
     private String minioPathToObjectName(String value) {
@@ -438,6 +590,10 @@ public class InferenceTaskService {
             throw new IllegalArgumentException("progress must be between 0 and 100");
         }
         return progress;
+    }
+
+    private int safeInteger(Integer value, int fallback) {
+        return value == null ? fallback : value;
     }
 
     private Integer progressOf(String status) {
@@ -489,17 +645,36 @@ public class InferenceTaskService {
         }
     }
 
-    private void startInferenceAfterCommit(String taskId) {
+    private void startInferenceAfterCommit(String taskId, Integer attempt) {
+        runAfterCommit(() -> executorRouter.start(taskId, attempt));
+    }
+
+    private void stopInferenceAfterCommit(String taskId, Integer attempt) {
+        runAfterCommit(() -> executorRouter.stop(taskId, attempt));
+    }
+
+    private void restartInferenceAfterCommit(
+            String taskId,
+            Integer previousAttempt,
+            Integer nextAttempt
+    ) {
+        runAfterCommit(() -> {
+            executorRouter.stop(taskId, previousAttempt);
+            executorRouter.start(taskId, nextAttempt);
+        });
+    }
+
+    private void runAfterCommit(Runnable action) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    executorRouter.start(taskId);
+                    action.run();
                 }
             });
             return;
         }
-        executorRouter.start(taskId);
+        action.run();
     }
 
     private String cleanObjectName(String objectName) {
