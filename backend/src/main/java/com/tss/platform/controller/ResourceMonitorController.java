@@ -59,6 +59,15 @@ public class ResourceMonitorController {
         return ApiResponse.ok(null);
     }
 
+    // ── 5.5b PUT /servers/{serverIp}/enabled ──
+    @PutMapping("/servers/{serverIp}/enabled")
+    public ApiResponse<ServerItem> updateServerEnabled(
+            @PathVariable String serverIp,
+            @RequestBody UpdateServerEnabledRequest req) {
+        requireAdmin();
+        return ApiResponse.ok(monitorService.updateServerEnabled(serverIp, req));
+    }
+
     // ── 5.6 GET /servers/{serverIp}/metrics ──
     @GetMapping("/servers/{serverIp}/metrics")
     public ApiResponse<MetricsResponse> metrics(
