@@ -18,6 +18,7 @@ import {
   Space,
   Spin,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   Tree,
@@ -26,6 +27,7 @@ import {
 import type { Key } from 'react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodePreview from '@/components/CodePreview';
+import ZipReadmePanel from '@/components/ZipReadmePanel';
 import { MODEL_TYPE_COLORS, MODEL_TYPE_OPTIONS } from '@/constants/model';
 import { resolveModelVersionId } from '@/services/model';
 import {
@@ -136,6 +138,13 @@ const ModelDetail: React.FC = () => {
   }, [selectedVersionId]);
 
   const codeFiles = versionCode?.codeFiles ?? [];
+  const readmeFilePaths = useMemo(
+    () =>
+      codeFiles
+        .map((f) => f.path || f.fileName)
+        .filter((p): p is string => !!p),
+    [codeFiles],
+  );
   const fileTreeData = useMemo(
     () => buildCodeFileTreeData(codeFiles),
     [codeFiles],
@@ -357,7 +366,8 @@ const ModelDetail: React.FC = () => {
             zip（预训练权重等）时填写版本号自动创建，用于资产归档与文件预览。
             <br />
             <strong>发起训练</strong>
-            ：在下方选中某一版本后，点击「用此版本发起训练」，会带上该版本进入创建页（作为基础模型权重）。训练代码与数据集请在创建页另行选择或上传。
+            ：在「版本」Tab
+            选中某一版本后，点击「用此版本发起训练」，会带上该版本进入创建页（作为基础模型权重）。训练代码与数据集请在创建页另行选择或上传。
             <br />
             <strong>继续调参训练</strong>
             ：若要在某次训练结果上继续，请到「训练任务详情」使用
@@ -407,298 +417,361 @@ const ModelDetail: React.FC = () => {
         </Descriptions>
       </Card>
 
-      <Card title="已上传版本" style={{ marginBottom: 16 }}>
-        <Table
-          dataSource={assetInfo.versions}
-          rowKey="id"
-          pagination={false}
-          scroll={{ x: 960 }}
-          locale={{
-            emptyText: '暂无版本，请通过「上传新版本」或模型上传页首次上传',
-          }}
-          onRow={(record) => ({
-            onClick: () => setSelectedVersionId(record.id),
-            style: {
-              cursor: 'pointer',
-              background:
-                record.id === selectedVersionId ? '#e6f4ff' : undefined,
-            },
-          })}
-          columns={[
+      <Card styles={{ body: { paddingTop: 8 } }}>
+        <Tabs
+          defaultActiveKey="readme"
+          items={[
             {
-              title: '版本号',
-              dataIndex: 'version',
-              key: 'version',
-              width: 120,
-              render: (value: string, record: API.ModelVersionDetail) => (
-                <Space size={4}>
-                  <span>{value}</span>
-                  {(record.isCurrent ||
-                    record.id === assetInfo.currentVersionId) && (
-                    <Tag color="blue">当前</Tag>
+              key: 'readme',
+              label: 'README',
+              children: (
+                <ZipReadmePanel
+                  source="model"
+                  versionId={selectedVersionId}
+                  filePaths={readmeFilePaths}
+                />
+              ),
+            },
+            {
+              key: 'files',
+              label: selectedVersion
+                ? `文件预览 · ${selectedVersion.version}`
+                : '文件预览',
+              children: (
+                <>
+                  {!selectedVersionId && (
+                    <Empty
+                      description="请从「版本」Tab 选择一个版本"
+                      style={{ padding: 48 }}
+                    />
                   )}
-                </Space>
-              ),
-            },
-            {
-              title: '版本 ID',
-              dataIndex: 'id',
-              key: 'id',
-              width: 160,
-              ellipsis: true,
-              render: (v: string) => (
-                <Tooltip title={v}>
-                  <Typography.Text code style={{ fontSize: 11 }}>
-                    {v}
-                  </Typography.Text>
-                </Tooltip>
-              ),
-            },
-            {
-              title: '文件名',
-              dataIndex: 'fileName',
-              key: 'fileName',
-              width: 140,
-              ellipsis: true,
-            },
-            { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
-            {
-              title: '上传时间',
-              dataIndex: 'createdAt',
-              key: 'createdAt',
-              width: 180,
-              render: (value?: string) => formatDisplayDateTime(value),
-            },
-            {
-              title: '操作',
-              key: 'action',
-              width: 360,
-              fixed: 'right',
-              align: 'left',
-              render: (_, record: API.ModelVersionDetail) => {
-                const isCurrent =
-                  record.isCurrent || record.id === assetInfo.currentVersionId;
-                return (
-                  <Space
-                    size={0}
-                    split={<span style={{ color: '#f0f0f0' }}>|</span>}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Button
-                      type="link"
-                      style={{ paddingLeft: 0 }}
-                      onClick={() => setSelectedVersionId(record.id)}
-                    >
-                      选中
-                    </Button>
-                    <Button
-                      type="link"
-                      onClick={() => handleStartTraining(record.id)}
-                    >
-                      发起训练
-                    </Button>
-                    <Button type="link" onClick={() => handleDownload(record)}>
-                      下载
-                    </Button>
-                    {!isCurrent && (
-                      <Popconfirm
-                        title="将此版本设为列表和训练的默认当前版本？"
-                        onConfirm={() => handleSetCurrentVersion(record)}
-                      >
-                        <Button type="link">设为当前</Button>
-                      </Popconfirm>
+                  {selectedVersionId && codeLoading && (
+                    <div style={{ textAlign: 'center', padding: 48 }}>
+                      <Spin tip="加载代码…" />
+                    </div>
+                  )}
+                  {selectedVersionId &&
+                    !codeLoading &&
+                    fileTreeData.length > 0 && (
+                      <Row gutter={16}>
+                        <Col xs={24} md={8}>
+                          <Typography.Text
+                            type="secondary"
+                            style={{ display: 'block', marginBottom: 8 }}
+                          >
+                            包内可预览文件（{codeFiles.length}）
+                          </Typography.Text>
+                          <div
+                            style={{
+                              maxHeight: 420,
+                              overflow: 'auto',
+                              border: '1px solid #f0f0f0',
+                              borderRadius: 6,
+                              padding: 8,
+                            }}
+                          >
+                            <Tree.DirectoryTree
+                              treeData={fileTreeData}
+                              selectedKeys={
+                                selectedCodePath ? [selectedCodePath] : []
+                              }
+                              expandedKeys={expandedFileKeys}
+                              onExpand={(keys) => setExpandedFileKeys(keys)}
+                              expandAction="click"
+                              onSelect={(keys, info) => {
+                                if (!info.node.isLeaf) return;
+                                const path = String(keys[0] || '');
+                                if (path) void handleSelectCodeFile(path);
+                              }}
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24} md={16}>
+                          {previewLoading ? (
+                            <div style={{ textAlign: 'center', padding: 48 }}>
+                              <Spin tip="加载文件内容…" />
+                            </div>
+                          ) : versionCode?.codeContent ? (
+                            <>
+                              <Descriptions
+                                size="small"
+                                column={1}
+                                style={{ marginBottom: 12 }}
+                              >
+                                <Descriptions.Item label="预览文件">
+                                  {versionCode.codeFileName ||
+                                    versionCode.codeFilePath ||
+                                    '-'}
+                                </Descriptions.Item>
+                                <Descriptions.Item label="存储路径">
+                                  <span
+                                    style={{
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    {versionCode.storagePath || '-'}
+                                  </span>
+                                </Descriptions.Item>
+                              </Descriptions>
+                              <pre
+                                style={{
+                                  background: '#f5f5f5',
+                                  border: '1px solid #d9d9d9',
+                                  borderRadius: 6,
+                                  padding: 16,
+                                  maxHeight: 400,
+                                  overflow: 'auto',
+                                  margin: 0,
+                                  fontFamily: 'Courier New, monospace',
+                                  fontSize: 13,
+                                  lineHeight: 1.6,
+                                }}
+                              >
+                                {versionCode.codeContent}
+                              </pre>
+                              <Space style={{ marginTop: 12 }}>
+                                <Button
+                                  type="primary"
+                                  size="small"
+                                  icon={<CodeOutlined />}
+                                  onClick={() => setCodePreviewVisible(true)}
+                                >
+                                  弹窗查看
+                                </Button>
+                              </Space>
+                            </>
+                          ) : (
+                            <Empty
+                              image={Empty.PRESENTED_IMAGE_SIMPLE}
+                              description="请从左侧文件树选择文件预览"
+                            />
+                          )}
+                        </Col>
+                      </Row>
                     )}
-                    <Popconfirm
-                      title="确认删除该版本？"
-                      onConfirm={() => handleDeleteVersion(record.id)}
+                  {selectedVersionId &&
+                    !codeLoading &&
+                    fileTreeData.length === 0 && (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={
+                          selectedVersion
+                            ? '当前版本包中没有可预览的代码/文本文件（权重等二进制不会出现在此列表）'
+                            : '该版本尚未绑定模型文件，请先上传'
+                        }
+                      />
+                    )}
+                </>
+              ),
+            },
+            {
+              key: 'versions',
+              label: '版本',
+              children: (
+                <>
+                  <Table
+                    dataSource={assetInfo.versions}
+                    rowKey="id"
+                    pagination={false}
+                    scroll={{ x: 960 }}
+                    locale={{
+                      emptyText:
+                        '暂无版本，请通过「上传新版本」或模型上传页首次上传',
+                    }}
+                    onRow={(record) => ({
+                      onClick: () => setSelectedVersionId(record.id),
+                      style: {
+                        cursor: 'pointer',
+                        background:
+                          record.id === selectedVersionId
+                            ? '#e6f4ff'
+                            : undefined,
+                      },
+                    })}
+                    columns={[
+                      {
+                        title: '版本号',
+                        dataIndex: 'version',
+                        key: 'version',
+                        width: 120,
+                        render: (
+                          value: string,
+                          record: API.ModelVersionDetail,
+                        ) => (
+                          <Space size={4}>
+                            <span>{value}</span>
+                            {(record.isCurrent ||
+                              record.id === assetInfo.currentVersionId) && (
+                              <Tag color="blue">当前</Tag>
+                            )}
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: '版本 ID',
+                        dataIndex: 'id',
+                        key: 'id',
+                        width: 160,
+                        ellipsis: true,
+                        render: (v: string) => (
+                          <Tooltip title={v}>
+                            <Typography.Text code style={{ fontSize: 11 }}>
+                              {v}
+                            </Typography.Text>
+                          </Tooltip>
+                        ),
+                      },
+                      {
+                        title: '文件名',
+                        dataIndex: 'fileName',
+                        key: 'fileName',
+                        width: 140,
+                        ellipsis: true,
+                      },
+                      {
+                        title: '大小',
+                        dataIndex: 'size',
+                        key: 'size',
+                        width: 100,
+                      },
+                      {
+                        title: '上传时间',
+                        dataIndex: 'createdAt',
+                        key: 'createdAt',
+                        width: 180,
+                        render: (value?: string) =>
+                          formatDisplayDateTime(value),
+                      },
+                      {
+                        title: '操作',
+                        key: 'action',
+                        width: 360,
+                        fixed: 'right',
+                        align: 'left',
+                        render: (_, record: API.ModelVersionDetail) => {
+                          const isCurrent =
+                            record.isCurrent ||
+                            record.id === assetInfo.currentVersionId;
+                          return (
+                            <Space
+                              size={0}
+                              split={
+                                <span style={{ color: '#f0f0f0' }}>|</span>
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Button
+                                type="link"
+                                style={{ paddingLeft: 0 }}
+                                onClick={() => setSelectedVersionId(record.id)}
+                              >
+                                选中
+                              </Button>
+                              <Button
+                                type="link"
+                                onClick={() => handleStartTraining(record.id)}
+                              >
+                                发起训练
+                              </Button>
+                              <Button
+                                type="link"
+                                onClick={() => handleDownload(record)}
+                              >
+                                下载
+                              </Button>
+                              {!isCurrent && (
+                                <Popconfirm
+                                  title="将此版本设为列表和训练的默认当前版本？"
+                                  onConfirm={() =>
+                                    handleSetCurrentVersion(record)
+                                  }
+                                >
+                                  <Button type="link">设为当前</Button>
+                                </Popconfirm>
+                              )}
+                              <Popconfirm
+                                title="确认删除该版本？"
+                                onConfirm={() => handleDeleteVersion(record.id)}
+                              >
+                                <Button type="link" danger>
+                                  删除
+                                </Button>
+                              </Popconfirm>
+                            </Space>
+                          );
+                        },
+                      },
+                    ]}
+                  />
+                  <Typography.Text
+                    type="secondary"
+                    style={{ display: 'block', marginTop: 8 }}
+                  >
+                    每个版本对应一次上传的 zip
+                    文件。可用「设为当前」指定推荐版本；选中后可用「用此版本发起训练」。
+                  </Typography.Text>
+
+                  {selectedVersion && (
+                    <Card
+                      type="inner"
+                      title="选中版本元信息"
+                      style={{ marginTop: 16 }}
                     >
-                      <Button type="link" danger>
-                        删除
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                );
-              },
+                      <Descriptions column={2} size="small">
+                        <Descriptions.Item label="版本号">
+                          {selectedVersion.version}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="状态">
+                          {selectedVersion.status || '-'}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Commit">
+                          {selectedVersion.commitInfo || '-'}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="SHA-256">
+                          <Typography.Text
+                            copyable={!!selectedVersion.artifactSha256}
+                            code
+                            style={{ fontSize: 11 }}
+                          >
+                            {selectedVersion.artifactSha256 || '-'}
+                          </Typography.Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="超参" span={2}>
+                          {selectedVersion.hyperParams &&
+                          Object.keys(selectedVersion.hyperParams).length >
+                            0 ? (
+                            <pre
+                              style={{
+                                margin: 0,
+                                maxHeight: 200,
+                                overflow: 'auto',
+                                background: '#fafafa',
+                                padding: 8,
+                                borderRadius: 4,
+                              }}
+                            >
+                              {JSON.stringify(
+                                selectedVersion.hyperParams,
+                                null,
+                                2,
+                              )}
+                            </pre>
+                          ) : (
+                            '无（未填写或为空对象）'
+                          )}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="备注" span={2}>
+                          {selectedVersion.remark || assetInfo.remark || '-'}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    </Card>
+                  )}
+                </>
+              ),
             },
           ]}
         />
-        <Typography.Text
-          type="secondary"
-          style={{ display: 'block', marginTop: 8 }}
-        >
-          每个版本对应一次上传的 zip
-          文件。可用「设为当前」指定推荐版本；选中后可用「用此版本发起训练」。
-        </Typography.Text>
-      </Card>
-
-      {selectedVersion && (
-        <Card title="选中版本元信息" style={{ marginBottom: 16 }}>
-          <Descriptions column={2} size="small">
-            <Descriptions.Item label="版本号">
-              {selectedVersion.version}
-            </Descriptions.Item>
-            <Descriptions.Item label="状态">
-              {selectedVersion.status || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Commit">
-              {selectedVersion.commitInfo || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="SHA-256">
-              <Typography.Text
-                copyable={!!selectedVersion.artifactSha256}
-                code
-                style={{ fontSize: 11 }}
-              >
-                {selectedVersion.artifactSha256 || '-'}
-              </Typography.Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="超参" span={2}>
-              {selectedVersion.hyperParams &&
-              Object.keys(selectedVersion.hyperParams).length > 0 ? (
-                <pre
-                  style={{
-                    margin: 0,
-                    maxHeight: 200,
-                    overflow: 'auto',
-                    background: '#fafafa',
-                    padding: 8,
-                    borderRadius: 4,
-                  }}
-                >
-                  {JSON.stringify(selectedVersion.hyperParams, null, 2)}
-                </pre>
-              ) : (
-                '无（未填写或为空对象）'
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="备注" span={2}>
-              {selectedVersion.remark || assetInfo.remark || '-'}
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-      )}
-
-      <Card
-        title={
-          <Space>
-            <CodeOutlined />
-            代码预览
-            {selectedVersion ? ` · ${selectedVersion.version}` : ''}
-          </Space>
-        }
-      >
-        {!selectedVersionId && (
-          <Empty
-            description="请从版本列表选择一个版本"
-            style={{ padding: 48 }}
-          />
-        )}
-        {selectedVersionId && codeLoading && (
-          <div style={{ textAlign: 'center', padding: 48 }}>
-            <Spin tip="加载代码…" />
-          </div>
-        )}
-        {selectedVersionId && !codeLoading && fileTreeData.length > 0 && (
-          <Row gutter={16}>
-            <Col xs={24} md={8}>
-              <Typography.Text
-                type="secondary"
-                style={{ display: 'block', marginBottom: 8 }}
-              >
-                包内可预览文件（{codeFiles.length}）
-              </Typography.Text>
-              <div
-                style={{
-                  maxHeight: 420,
-                  overflow: 'auto',
-                  border: '1px solid #f0f0f0',
-                  borderRadius: 6,
-                  padding: 8,
-                }}
-              >
-                <Tree.DirectoryTree
-                  treeData={fileTreeData}
-                  selectedKeys={selectedCodePath ? [selectedCodePath] : []}
-                  expandedKeys={expandedFileKeys}
-                  onExpand={(keys) => setExpandedFileKeys(keys)}
-                  expandAction="click"
-                  onSelect={(keys, info) => {
-                    if (!info.node.isLeaf) return;
-                    const path = String(keys[0] || '');
-                    if (path) void handleSelectCodeFile(path);
-                  }}
-                />
-              </div>
-            </Col>
-            <Col xs={24} md={16}>
-              {previewLoading ? (
-                <div style={{ textAlign: 'center', padding: 48 }}>
-                  <Spin tip="加载文件内容…" />
-                </div>
-              ) : versionCode?.codeContent ? (
-                <>
-                  <Descriptions
-                    size="small"
-                    column={1}
-                    style={{ marginBottom: 12 }}
-                  >
-                    <Descriptions.Item label="预览文件">
-                      {versionCode.codeFileName ||
-                        versionCode.codeFilePath ||
-                        '-'}
-                    </Descriptions.Item>
-                    <Descriptions.Item label="存储路径">
-                      <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                        {versionCode.storagePath || '-'}
-                      </span>
-                    </Descriptions.Item>
-                  </Descriptions>
-                  <pre
-                    style={{
-                      background: '#f5f5f5',
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 6,
-                      padding: 16,
-                      maxHeight: 400,
-                      overflow: 'auto',
-                      margin: 0,
-                      fontFamily: 'Courier New, monospace',
-                      fontSize: 13,
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {versionCode.codeContent}
-                  </pre>
-                  <Space style={{ marginTop: 12 }}>
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<CodeOutlined />}
-                      onClick={() => setCodePreviewVisible(true)}
-                    >
-                      弹窗查看
-                    </Button>
-                  </Space>
-                </>
-              ) : (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="请从左侧文件树选择文件预览"
-                />
-              )}
-            </Col>
-          </Row>
-        )}
-        {selectedVersionId && !codeLoading && fileTreeData.length === 0 && (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={
-              selectedVersion
-                ? '当前版本包中没有可预览的代码/文本文件（权重等二进制不会出现在此列表）'
-                : '该版本尚未绑定模型文件，请先上传'
-            }
-          />
-        )}
       </Card>
 
       {codePreviewVisible && versionCode?.codeContent && (
