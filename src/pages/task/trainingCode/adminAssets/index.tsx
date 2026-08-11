@@ -18,6 +18,7 @@ import {
   getAdminCodeAsset,
   listAdminCodeAssets,
   listAdminCodeAssetVersions,
+  normalizeAdminCodeAssetPage,
   openAdminCodeAssetWorkspace,
   patchAdminCodeAsset,
 } from '@/services/platform';
@@ -253,11 +254,11 @@ const AdminCodeAssetsPage: React.FC = () => {
               },
               { skipErrorHandler: true },
             );
-            const list = Array.isArray(res?.data) ? res.data : [];
+            const pageData = normalizeAdminCodeAssetPage(res);
             return {
-              data: list,
+              data: pageData.items,
               success: true,
-              total: res?.total ?? list.length,
+              total: pageData.total,
             };
           } catch (e: unknown) {
             message.error(getApiErrorMessage(e, '加载管理员代码资产失败'));

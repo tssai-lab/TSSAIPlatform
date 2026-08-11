@@ -1057,11 +1057,30 @@ export type V2AdminCodeAsset = V2CodeAsset & {
 };
 
 export type V2AdminCodeAssetPage = {
-  data: V2AdminCodeAsset[];
+  items?: V2AdminCodeAsset[];
+  page?: number;
+  pageSize?: number;
+  totalElements?: number;
+  totalPages?: number;
+};
+
+/** 归一化管理员代码资产分页（后端字段 items/totalElements） */
+export function normalizeAdminCodeAssetPage(
+  payload?: V2AdminCodeAssetPage | null,
+): {
+  items: V2AdminCodeAsset[];
   total: number;
   page: number;
   pageSize: number;
-};
+} {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return {
+    items,
+    total: payload?.totalElements ?? items.length,
+    page: payload?.page ?? 0,
+    pageSize: payload?.pageSize ?? items.length,
+  };
+}
 
 /** GET /api/v2/admin/code-assets — page 从 0 开始 */
 export async function listAdminCodeAssets(

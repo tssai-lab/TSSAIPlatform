@@ -35,8 +35,10 @@ import {
   deleteModelVersion,
   downloadModelVersion,
   fetchModelAssetDetail,
+  fetchModelConsumerManifest,
   fetchModelVersionCodePreview,
   getModelVersion,
+  type ModelConsumerManifest,
   previewModelCode,
   switchModelCurrentVersion,
   updateModelAsset,
@@ -61,6 +63,9 @@ const ModelDetail: React.FC = () => {
   const [selectedCodePath, setSelectedCodePath] = useState<string>();
   const [previewLoading, setPreviewLoading] = useState(false);
   const [expandedFileKeys, setExpandedFileKeys] = useState<Key[]>([]);
+  const [consumerManifest, setConsumerManifest] =
+    useState<ModelConsumerManifest | null>(null);
+  const [manifestLoading, setManifestLoading] = useState(false);
 
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [assetModalLoading, setAssetModalLoading] = useState(false);
@@ -157,6 +162,25 @@ const ModelDetail: React.FC = () => {
   useEffect(() => {
     setExpandedFileKeys(defaultExpandedKeys);
   }, [defaultExpandedKeys]);
+
+  useEffect(() => {
+    if (!selectedVersionId) {
+      setConsumerManifest(null);
+      return;
+    }
+    let cancelled = false;
+    setManifestLoading(true);
+    fetchModelConsumerManifest(selectedVersionId, { skipErrorHandler: true })
+      .then((manifest) => {
+        if (!cancelled) setConsumerManifest(manifest);
+      })
+      .finally(() => {
+        if (!cancelled) setManifestLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVersionId]);
 
   const handleSelectCodeFile = async (path: string) => {
     if (!selectedVersionId || !path) return;
@@ -717,49 +741,84 @@ const ModelDetail: React.FC = () => {
                       type="inner"
                       title="选中版本元信息"
                       style={{ marginTop: 16 }}
+                      extra={
+                        manifestLoading ? (
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12 }}
+                          >
+                            校验消费清单…
+                          </Typography.Text>
+                        ) : consumerManifest ? (
+                          <Tag
+                            color={
+                              consumerManifest.isCurrent ? 'blue' : 'default'
+                            }
+                          >
+                            {consumerManifest.isCurrent
+                              ? '当前版本'
+                              : consumerManifest.status}
+                          </Tag>
+                        ) : null
+                      }
                     >
                       <Descriptions column={2} size="small">
                         <Descriptions.Item label="版本号">
                           {selectedVersion.version}
                         </Descriptions.Item>
                         <Descriptions.Item label="状态">
-                          {selectedVersion.status || '-'}
+                          {consumerManifest?.status ||
+                            selectedVersion.status ||
+                            '-'}
                         </Descriptions.Item>
                         <Descriptions.Item label="Commit">
-                          {selectedVersion.commitInfo || '-'}
+                          {consumerManifest?.commitInfo ||
+                            selectedVersion.commitInfo ||
+                            '-'}
                         </Descriptions.Item>
                         <Descriptions.Item label="SHA-256">
                           <Typography.Text
-                            copyable={!!selectedVersion.artifactSha256}
+                            copyable={
+                              !!(
+                                consumerManifest?.artifactSha256 ||
+                                selectedVersion.artifactSha256
+                              )
+                            }
                             code
                             style={{ fontSize: 11 }}
                           >
-                            {selectedVersion.artifactSha256 || '-'}
+                            {consumerManifest?.artifactSha256 ||
+                              selectedVersion.artifactSha256 ||
+                              '-'}
                           </Typography.Text>
                         </Descriptions.Item>
+                        <Descriptions.Item label="制品大小" span={2}>
+                          {consumerManifest?.sizeBytes
+                            ? `${(consumerManifest.sizeBytes / 1024 / 1024).toFixed(2)} MB · ${consumerManifest.fileName}`
+                            : selectedVersion.fileName || '-'}
+                        </Descriptions.Item>
                         <Descriptions.Item label="超参" span={2}>
-                          {selectedVersion.hyperParams &&
-                          Object.keys(selectedVersion.hyperParams).length >
-                            0 ? (
-                            <pre
-                              style={{
-                                margin: 0,
-                                maxHeight: 200,
-                                overflow: 'auto',
-                                background: '#fafafa',
-                                padding: 8,
-                                borderRadius: 4,
-                              }}
-                            >
-                              {JSON.stringify(
-                                selectedVersion.hyperParams,
-                                null,
-                                2,
-                              )}
-                            </pre>
-                          ) : (
-                            '无（未填写或为空对象）'
-                          )}
+                          {(() => {
+                            const hp =
+                              consumerManifest?.hyperParams ??
+                              selectedVersion.hyperParams;
+                            return hp && Object.keys(hp).length > 0 ? (
+                              <pre
+                                style={{
+                                  margin: 0,
+                                  maxHeight: 200,
+                                  overflow: 'auto',
+                                  background: '#fafafa',
+                                  padding: 8,
+                                  borderRadius: 4,
+                                }}
+                              >
+                                {JSON.stringify(hp, null, 2)}
+                              </pre>
+                            ) : (
+                              '无（未填写或为空对象）'
+                            );
+                          })()}
                         </Descriptions.Item>
                         <Descriptions.Item label="备注" span={2}>
                           {selectedVersion.remark || assetInfo.remark || '-'}

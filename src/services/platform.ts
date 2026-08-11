@@ -16,6 +16,7 @@ export {
   modelUploadChunk,
   modelUploadProgress,
   modelUploadComplete,
+  fetchModelConsumerManifest,
   createModelAsset,
   getModelAsset,
   getModelDetail,
@@ -34,6 +35,7 @@ export {
   type ModelAsset,
   type ModelVersion,
   type ModelTaskType,
+  type ModelConsumerManifest,
 } from './model';
 
 export {
@@ -213,6 +215,7 @@ export {
   listAdminCodeAssetVersions,
   getAdminCodeAssetWorkspace,
   openAdminCodeAssetWorkspace,
+  normalizeAdminCodeAssetPage,
   buildV2ApprovalRequest,
   hasV2ApprovalEvidence,
   fetchAllV2CodeTreeFiles,

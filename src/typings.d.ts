@@ -71,6 +71,12 @@ declare namespace API {
     /** 提交说明；须与 init/complete 一致且非空（1～1024） */
     commitInfo: string;
     hyperParams?: Record<string, unknown>;
+    /** V2 init：新建资产必填；已有资产新增版本时传 targetAssetId */
+    modelName?: string;
+    modelVersion?: string;
+    taskType?: string;
+    remark?: string;
+    targetAssetId?: string;
   };
 
   /** 分片上传进度 / 初始化响应 */
