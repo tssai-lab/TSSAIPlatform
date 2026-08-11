@@ -46,9 +46,15 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
 
   return (
     <Card
-      hoverable
+      hoverable={server.enabled !== false}
       onClick={onClick}
-      style={{ cursor: 'pointer', height: '100%' }}
+      style={{
+        cursor: 'pointer',
+        height: '100%',
+        opacity: server.enabled === false ? 0.6 : 1,
+        background: server.enabled === false ? '#fafafa' : undefined,
+        border: server.enabled === false ? '1px solid #d9d9d9' : undefined,
+      }}
       styles={{ body: { padding: '16px 20px' } }}
     >
       <div
@@ -71,9 +77,15 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
           </div>
         </Space>
         <Space size={4} onClick={(e) => e.stopPropagation()}>
-          <Tag color={server.status === 'online' ? 'success' : 'warning'}>
-            {server.status === 'online' ? '在线' : '告警'}
-          </Tag>
+          {server.enabled === false ? (
+            <Tag color="default" style={{ fontWeight: 600 }}>
+              已禁用
+            </Tag>
+          ) : (
+            <Tag color={server.status === 'online' ? 'success' : 'warning'}>
+              {server.status === 'online' ? '在线' : '告警'}
+            </Tag>
+          )}
           {canManageNodes && (
             <Popconfirm
               title="确认删除该服务器？"
@@ -220,7 +232,11 @@ const ResourceMonitor = () => {
         s.serverIp.includes(searchText) ||
         s.hostname.includes(searchText) ||
         s.runningTasks?.some((t) => t.name.includes(searchText));
-      const matchStatus = statusFilter === 'all' || s.status === statusFilter;
+      const matchStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'disabled'
+          ? s.enabled === false
+          : s.status === statusFilter);
       return matchSearch && matchStatus;
     });
   }, [servers, searchText, statusFilter]);
@@ -343,6 +359,7 @@ const ResourceMonitor = () => {
                 { label: '全部状态', value: 'all' },
                 { label: '在线', value: 'online' },
                 { label: '告警', value: 'warning' },
+                { label: '已禁用', value: 'disabled' },
               ]}
             />
           </Space>

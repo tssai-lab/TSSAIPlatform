@@ -6,6 +6,7 @@ import {
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useAccess, useParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -374,6 +375,15 @@ const ServerDetail = () => {
         </Space>
       }
     >
+      {server.enabled === false && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="该服务器已禁用，不会分配新的训练任务"
+          description="已在其上运行的任务不受影响；如需恢复，请点击右上角开关启用。"
+        />
+      )}
       <Card title="硬件信息" style={{ marginBottom: 16 }}>
         <Descriptions column={4}>
           <Descriptions.Item label="主机名">
