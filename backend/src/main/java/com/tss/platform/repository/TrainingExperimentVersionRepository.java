@@ -114,7 +114,11 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
             select v from TrainingExperimentVersion v
              where v.serverIp is null
                and v.status in ('pending', 'queued')
-             order by v.priority asc, v.createdAt asc
+             order by
+               case when v.queueSortIndex is not null and v.queueSortIndex > 0 then 0 else 1 end asc,
+               coalesce(v.queueSortIndex, 0) asc,
+               case v.priority when '高' then 3 when '中' then 2 else 1 end desc,
+               v.createdAt asc
             """)
     List<TrainingExperimentVersion> findAllPendingWithLock();
 }
