@@ -19,6 +19,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -31,6 +32,7 @@ import {
   fetchResourceMonitorMetrics,
   fetchResourceMonitorServerDetail,
   reorderResourceQueueTask,
+  updateResourceMonitorServerEnabled,
 } from '@/services/platform';
 import {
   getIntervalSpanLabel,
@@ -134,6 +136,18 @@ const ServerDetail = () => {
     }
     message.success('服务器已删除');
     history.push('/task/resourceMonitor');
+  };
+
+  const handleToggleEnabled = async (enabled) => {
+    const res = await updateResourceMonitorServerEnabled(serverIp, enabled);
+    if (!res?.success) {
+      message.error(res?.errorMessage || '操作失败');
+      return;
+    }
+    if (res.data) setServer(res.data);
+    message.success(
+      enabled ? '服务器已启用' : '服务器已禁用（不再分配新任务）',
+    );
   };
 
   const runningColumns = useMemo(
@@ -323,6 +337,22 @@ const ServerDetail = () => {
           <Tag color={server.status === 'online' ? 'success' : 'warning'}>
             {server.status === 'online' ? '在线' : '告警'}
           </Tag>
+          {canManageResourceNodes && (
+            <Tooltip
+              title={
+                server.enabled === false
+                  ? '已禁用，点击启用恢复参与调度'
+                  : '已启用，点击禁用后不再分配新任务'
+              }
+            >
+              <Switch
+                checked={server.enabled !== false}
+                checkedChildren="启用"
+                unCheckedChildren="禁用"
+                onChange={handleToggleEnabled}
+              />
+            </Tooltip>
+          )}
           {canManageResourceNodes && (
             <Popconfirm
               title="确认删除该服务器？"

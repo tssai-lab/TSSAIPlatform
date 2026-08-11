@@ -376,6 +376,16 @@ export const mockDeleteResourceServer = (serverIp) => {
   return createSuccess(null);
 };
 
+/** PUT /resource-monitor/servers/{serverIp}/enabled — 启用/禁用服务器 */
+export const mockUpdateResourceServerEnabled = (serverIp, enabled) => {
+  const server = getServer(serverIp);
+  if (!server) {
+    return { success: false, data: null, errorMessage: '未找到该服务器' };
+  }
+  server.enabled = enabled;
+  return createSuccess(server);
+};
+
 /** PUT /resource-monitor/servers/{serverIp}/queue/reorder — 仅修改 queueSortIndex */
 export const mockReorderResourceQueueTask = (serverIp, body = {}) => {
   const { taskId, direction } = body;

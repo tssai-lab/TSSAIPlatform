@@ -43,6 +43,8 @@ export const API_CONFIG = {
     RESOURCE_MONITOR_SERVERS: '/resource-monitor/servers',
     RESOURCE_MONITOR_SERVER: (serverIp: string) =>
       `/resource-monitor/servers/${encodeURIComponent(serverIp)}`,
+    RESOURCE_MONITOR_SERVER_ENABLED: (serverIp: string) =>
+      `/resource-monitor/servers/${encodeURIComponent(serverIp)}/enabled`,
     RESOURCE_MONITOR_METRICS: (serverIp: string) =>
       `/resource-monitor/servers/${encodeURIComponent(serverIp)}/metrics`,
     RESOURCE_MONITOR_QUEUE_REORDER: (serverIp: string) =>

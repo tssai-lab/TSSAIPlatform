@@ -14,6 +14,7 @@ import {
   mockFetchResourceSummary,
   mockReorderResourceQueueTask,
   mockUpdateResourceQueuePriority,
+  mockUpdateResourceServerEnabled,
 } from '@/pages/task/resourceMonitor/mockData';
 
 export type MetricInterval = '1min' | '10min' | '1hour' | '1day';
@@ -127,6 +128,22 @@ export async function deleteResourceMonitorServer(
     );
   } catch {
     return mockDeleteResourceServer(serverIp);
+  }
+}
+
+/** PUT /resource-monitor/servers/{serverIp}/enabled（启用/禁用，禁用后不再分配新任务） */
+export async function updateResourceMonitorServerEnabled(
+  serverIp: string,
+  enabled: boolean,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<ResourceMonitorResponse<API.ResourceMonitorServerItem>>(
+      ENDPOINTS.RESOURCE_MONITOR_SERVER_ENABLED(serverIp),
+      { method: 'PUT', data: { enabled }, ...(options || {}) },
+    );
+  } catch {
+    return mockUpdateResourceServerEnabled(serverIp, enabled);
   }
 }
 

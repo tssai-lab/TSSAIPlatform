@@ -271,6 +271,7 @@ export {
   fetchResourceMonitorMetrics,
   createResourceMonitorServer,
   deleteResourceMonitorServer,
+  updateResourceMonitorServerEnabled,
   reorderResourceQueueTask,
   updateResourceQueuePriority,
   cancelResourceQueueTask,

@@ -359,6 +359,7 @@ declare namespace API {
   type ResourceMonitorServerItem = {
     serverIp: string;
     hostname: string;
+    enabled?: boolean;
     status: 'online' | 'warning';
     cpuRate: number;
     memRate: number;
