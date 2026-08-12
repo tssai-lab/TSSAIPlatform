@@ -12,6 +12,7 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
+import com.tss.platform.training.TrainingFailureDiagnosticService;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TrainingExperimentServiceApplyResultTest {
@@ -32,11 +34,13 @@ class TrainingExperimentServiceApplyResultTest {
     private TrainingExperimentVersionRepository repo;
     private TrainingExperimentService service;
     private AuthContext authContext;
+    private TrainingFailureDiagnosticService failureDiagnosticService;
 
     @BeforeEach
     void setUp() {
         repo = mock(TrainingExperimentVersionRepository.class);
         authContext = mock(AuthContext.class);
+        failureDiagnosticService = mock(TrainingFailureDiagnosticService.class);
         doNothing().when(authContext).requireOwnerAccess(anyInt(), anyString());
         service = new TrainingExperimentService(
                 repo,
@@ -56,7 +60,8 @@ class TrainingExperimentServiceApplyResultTest {
                         mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
                 authContext,
-                mock(MlflowTrackingService.class)
+                mock(MlflowTrackingService.class),
+                failureDiagnosticService
         );
     }
 
@@ -100,6 +105,22 @@ class TrainingExperimentServiceApplyResultTest {
 
         assertEquals("stopped", version.getStatus());
         assertEquals(42, version.getProgress());
+    }
+
+    @Test
+    void deletingExperimentQueuesItsFailureDiagnostics() {
+        TrainingExperimentVersion version = runningVersion("train-delete", 42);
+        version.setOwnerUserId(7);
+        version.setLogPath(
+                "minio://users/7/training-failure-diagnostics/train-delete/failure.log"
+        );
+        when(repo.findById("train-delete")).thenReturn(Optional.of(version));
+        when(repo.findByExperimentIdOrderByVersionNoAsc("exp-1")).thenReturn(java.util.List.of(version));
+
+        service.deleteExperiment("train-delete");
+
+        verify(failureDiagnosticService).enqueueDeletion(version);
+        verify(repo).deleteByExperimentId("exp-1");
     }
 
     private static TrainingExperimentVersion runningVersion(String id, int progress) {
