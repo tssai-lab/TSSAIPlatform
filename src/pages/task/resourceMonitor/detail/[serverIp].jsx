@@ -1,8 +1,4 @@
-import {
-  ArrowDownOutlined,
-  ArrowUpOutlined,
-  CloseOutlined,
-} from '@ant-design/icons';
+import { CloseOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useAccess, useParams } from '@umijs/max';
 import {
@@ -32,7 +28,6 @@ import {
   deleteResourceMonitorServer,
   fetchResourceMonitorMetrics,
   fetchResourceMonitorServerDetail,
-  reorderResourceQueueTask,
   updateResourceMonitorServerEnabled,
 } from '@/services/platform';
 import {
@@ -95,26 +90,6 @@ const ServerDetail = () => {
       loadMetrics(timeInterval);
     }
   }, [serverIp, timeInterval, loadMetrics]);
-
-  const handleMoveQueueTask = useCallback(
-    async (taskId, direction) => {
-      const res = await reorderResourceQueueTask(serverIp, {
-        taskId,
-        direction,
-      });
-      if (!res?.success) {
-        message.error(res?.errorMessage || '调整失败');
-        return;
-      }
-      setQueuedTasks(res.data?.queuedTasks ?? []);
-      message.success(
-        direction === 'up'
-          ? '已上移（仅调整顺序，优先级不变）'
-          : '已下移（仅调整顺序，优先级不变）',
-      );
-    },
-    [serverIp],
-  );
 
   const handleCancelQueueTask = useCallback(
     async (taskId) => {
@@ -205,7 +180,7 @@ const ServerDetail = () => {
   const queuedColumns = useMemo(() => {
     const columns = [
       {
-        title: '排队序号',
+        title: '序号',
         key: 'queueOrder',
         width: 90,
         render: (_, __, index) => <Text strong>{index + 1}</Text>,
@@ -235,66 +210,28 @@ const ServerDetail = () => {
       columns.push({
         title: '操作',
         key: 'action',
-        width: 100,
+        width: 80,
         align: 'center',
-        render: (_, record, index) => (
-          <Space size={2}>
-            <Tooltip title="上移（仅改人工排序，优先级标签不变）">
+        render: (_, record) => (
+          <Popconfirm
+            title="确认取消该任务的排队？"
+            description="取消后该任务将不会启动（已调度待启动任务）。"
+            onConfirm={() => handleCancelQueueTask(record.id)}
+          >
+            <Tooltip title="取消排队（阻止启动）">
               <Button
                 type="text"
                 size="small"
-                disabled={index === 0}
-                icon={
-                  <ArrowUpOutlined
-                    style={{ color: index === 0 ? undefined : '#1677ff' }}
-                  />
-                }
-                onClick={() => handleMoveQueueTask(record.id, 'up')}
+                icon={<CloseOutlined style={{ color: '#ff4d4f' }} />}
               />
             </Tooltip>
-            <Tooltip title="下移（仅改人工排序，优先级标签不变）">
-              <Button
-                type="text"
-                size="small"
-                disabled={index === queuedTasks.length - 1}
-                icon={
-                  <ArrowDownOutlined
-                    style={{
-                      color:
-                        index === queuedTasks.length - 1
-                          ? undefined
-                          : '#1677ff',
-                    }}
-                  />
-                }
-                onClick={() => handleMoveQueueTask(record.id, 'down')}
-              />
-            </Tooltip>
-            <Popconfirm
-              title="确认取消该任务的排队？"
-              description="取消后任务将退出当前服务器队列。"
-              onConfirm={() => handleCancelQueueTask(record.id)}
-            >
-              <Tooltip title="取消排队">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined style={{ color: '#ff4d4f' }} />}
-                />
-              </Tooltip>
-            </Popconfirm>
-          </Space>
+          </Popconfirm>
         ),
       });
     }
 
     return columns;
-  }, [
-    canManageResourceQueue,
-    handleMoveQueueTask,
-    handleCancelQueueTask,
-    queuedTasks.length,
-  ]);
+  }, [canManageResourceQueue, handleCancelQueueTask]);
 
   if (loading) {
     return (
@@ -438,7 +375,7 @@ const ServerDetail = () => {
         <Col span={8}>
           <Card>
             <Statistic
-              title="排队中任务"
+              title="待启动任务"
               value={queuedTasks.length}
               suffix="个"
             />
@@ -495,13 +432,20 @@ const ServerDetail = () => {
         />
       </Card>
 
-      <Card title={`排队中的任务（${queuedTasks.length}）`}>
+      <Card
+        title={`已调度待启动的任务（${queuedTasks.length}）`}
+        extra={
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            已绑定节点、等待启动；启动顺序由调度器按优先级与提交时间决定
+          </Text>
+        }
+      >
         <Table
           rowKey="id"
           columns={queuedColumns}
           dataSource={queuedTasks}
           pagination={false}
-          locale={{ emptyText: '当前无排队任务' }}
+          locale={{ emptyText: '当前无待启动任务' }}
         />
       </Card>
     </PageContainer>

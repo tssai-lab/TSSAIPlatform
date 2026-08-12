@@ -397,4 +397,21 @@ declare namespace API {
     spanLabel: string;
     points: API.ResourceMonitorMetricPoint[];
   };
+
+  /** 全局排队任务（跨服务器，按资源池分组） */
+  type ResourceMonitorGlobalQueuedTask = {
+    id: string;
+    name: string;
+    model: string;
+    dataset: string;
+    submitTime: string;
+    priority: '高' | '中' | '低' | string;
+    queueSortIndex: number;
+    /** queued / pending */
+    status: string;
+    /** 分组键：tss.ai/node-pool 值（cpu/gpu/…），新增池自动出现新分组 */
+    nodePool: string;
+    /** 组内序号（1-based），仅同池内有意义 */
+    positionInPool: number;
+  };
 }

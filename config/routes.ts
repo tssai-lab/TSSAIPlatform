@@ -136,6 +136,12 @@ export default [
         access: 'canViewResourceStatus',
       },
       {
+        path: '/task/queue',
+        name: '全局排队',
+        component: './task/queue',
+        access: 'canViewResourceStatus',
+      },
+      {
         path: '/task/resourceMonitor/detail/:serverIp',
         name: '服务器详情',
         component: './task/resourceMonitor/detail/[serverIp]',

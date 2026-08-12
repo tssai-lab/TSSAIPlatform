@@ -53,6 +53,10 @@ export const API_CONFIG = {
       `/resource-monitor/servers/${encodeURIComponent(serverIp)}/queue/priority`,
     RESOURCE_MONITOR_QUEUE_TASK: (serverIp: string, taskId: string) =>
       `/resource-monitor/servers/${encodeURIComponent(serverIp)}/queue/${encodeURIComponent(taskId)}`,
+    RESOURCE_MONITOR_GLOBAL_QUEUE: '/resource-monitor/queue',
+    RESOURCE_MONITOR_GLOBAL_QUEUE_REORDER: '/resource-monitor/queue/reorder',
+    RESOURCE_MONITOR_GLOBAL_QUEUE_TASK: (taskId: string) =>
+      `/resource-monitor/queue/${encodeURIComponent(taskId)}`,
 
     /** 实验版本管理 */
     EXPERIMENT_VERSIONS: (experimentId: string) =>

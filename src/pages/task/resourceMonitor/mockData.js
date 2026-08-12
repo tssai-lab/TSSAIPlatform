@@ -455,3 +455,98 @@ export const mockCancelResourceQueueTask = (serverIp, taskId) => {
   server.waitTask = server.queuedTasks.length;
   return createSuccess({ queuedTasks: server.queuedTasks });
 };
+
+// ── 全局排队（跨服务器，按资源池分组）Mock ──
+
+/** 演示用的池划分：按服务器序号奇偶分到 cpu / gpu 池 */
+const poolOfServer = (index) => (index % 2 === 0 ? 'cpu' : 'gpu');
+
+/** 聚合所有服务器排队任务为全局队列，按资源池分组、组内排序，带 positionInPool */
+const buildGlobalQueue = () => {
+  const items = [];
+  ensureServers().forEach((s, si) => {
+    const pool = poolOfServer(si);
+    (s.queuedTasks || []).forEach((t) => {
+      items.push({ ...t, nodePool: pool, status: 'queued' });
+    });
+  });
+
+  const byPool = {};
+  items.forEach((it) => {
+    if (!byPool[it.nodePool]) byPool[it.nodePool] = [];
+    byPool[it.nodePool].push(it);
+  });
+
+  const result = [];
+  Object.keys(byPool)
+    .sort()
+    .forEach((pool) => {
+      byPool[pool].sort((a, b) => {
+        const am = a.queueSortIndex || 0;
+        const bm = b.queueSortIndex || 0;
+        if (am && bm) return am - bm;
+        if (am) return -1;
+        if (bm) return 1;
+        return a.submitTime.localeCompare(b.submitTime);
+      });
+      byPool[pool].forEach((it, i) => {
+        result.push({ ...it, positionInPool: i + 1 });
+      });
+    });
+  return result;
+};
+
+/** GET /resource-monitor/queue */
+export const mockFetchGlobalQueue = () => createSuccess(buildGlobalQueue());
+
+/** PUT /resource-monitor/queue/reorder — 同资源池内上移/下移 */
+export const mockReorderGlobalQueueTask = (body = {}) => {
+  const { taskId, direction } = body;
+  const queue = buildGlobalQueue();
+  const task = queue.find((t) => t.id === taskId);
+  if (!task) {
+    return { success: false, data: null, errorMessage: '任务不存在' };
+  }
+
+  const poolTasks = queue.filter((t) => t.nodePool === task.nodePool);
+  const idx = poolTasks.findIndex((t) => t.id === taskId);
+  const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (targetIdx < 0) {
+    return { success: false, data: null, errorMessage: '已在队首，无法上移' };
+  }
+  if (targetIdx >= poolTasks.length) {
+    return { success: false, data: null, errorMessage: '已在队尾，无法下移' };
+  }
+  poolTasks.splice(idx, 1);
+  poolTasks.splice(targetIdx, 0, task);
+
+  // 持久化：把同池顺序重排后的 queueSortIndex 写回各服务器队列
+  const setIndex = (id, index) => {
+    for (const s of ensureServers()) {
+      const t = (s.queuedTasks || []).find((x) => x.id === id);
+      if (t) {
+        t.queueSortIndex = index;
+        return;
+      }
+    }
+  };
+  poolTasks.forEach((t, i) => {
+    setIndex(t.id, i + 1);
+  });
+
+  return createSuccess(buildGlobalQueue());
+};
+
+/** DELETE /resource-monitor/queue/{taskId} */
+export const mockCancelGlobalQueueTask = (taskId) => {
+  for (const s of ensureServers()) {
+    const before = (s.queuedTasks || []).length;
+    s.queuedTasks = (s.queuedTasks || []).filter((t) => t.id !== taskId);
+    if (s.queuedTasks.length !== before) {
+      s.queuedTasks = renumberManualSortIndices(s.queuedTasks);
+      s.waitTask = s.queuedTasks.length;
+      return createSuccess(buildGlobalQueue());
+    }
+  }
+  return { success: false, data: null, errorMessage: '任务不存在' };
+};

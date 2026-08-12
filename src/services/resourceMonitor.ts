@@ -5,13 +5,16 @@
 import { request } from '@umijs/max';
 import { API_CONFIG } from '@/constants/platform';
 import {
+  mockCancelGlobalQueueTask,
   mockCancelResourceQueueTask,
   mockCreateResourceServer,
   mockDeleteResourceServer,
+  mockFetchGlobalQueue,
   mockFetchResourceMetrics,
   mockFetchResourceServerDetail,
   mockFetchResourceServers,
   mockFetchResourceSummary,
+  mockReorderGlobalQueueTask,
   mockReorderResourceQueueTask,
   mockUpdateResourceQueuePriority,
   mockUpdateResourceServerEnabled,
@@ -202,5 +205,54 @@ export async function cancelResourceQueueTask(
     );
   } catch {
     return mockCancelResourceQueueTask(serverIp, taskId);
+  }
+}
+
+/** GET /resource-monitor/queue（全局排队，按资源池分组） */
+export async function fetchResourceMonitorGlobalQueue(
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<ResourceMonitorResponse<API.ResourceMonitorGlobalQueuedTask[]>>(
+      ENDPOINTS.RESOURCE_MONITOR_GLOBAL_QUEUE,
+      { method: 'GET', ...(options || {}) },
+    );
+  } catch {
+    return mockFetchGlobalQueue();
+  }
+}
+
+/** PUT /resource-monitor/queue/reorder（全局排队同池内上移/下移） */
+export async function reorderResourceMonitorGlobalQueue(
+  body: { taskId: string; direction: 'up' | 'down' },
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<ResourceMonitorResponse<API.ResourceMonitorGlobalQueuedTask[]>>(
+      ENDPOINTS.RESOURCE_MONITOR_GLOBAL_QUEUE_REORDER,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        data: body,
+        ...(options || {}),
+      },
+    );
+  } catch {
+    return mockReorderGlobalQueueTask(body);
+  }
+}
+
+/** DELETE /resource-monitor/queue/{taskId}（取消全局排队） */
+export async function cancelResourceMonitorGlobalQueueTask(
+  taskId: string,
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<ResourceMonitorResponse<API.ResourceMonitorGlobalQueuedTask[]>>(
+      ENDPOINTS.RESOURCE_MONITOR_GLOBAL_QUEUE_TASK(taskId),
+      { method: 'DELETE', ...(options || {}) },
+    );
+  } catch {
+    return mockCancelGlobalQueueTask(taskId);
   }
 }
