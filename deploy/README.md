@@ -96,6 +96,71 @@ bash deploy/scripts/smoke-test-node.sh /etc/tss-platform/node.env
 The default smoke test is non-destructive. Authenticated and full business
 closed-loop tests are enabled only with controlled test credentials and data.
 
+## Physical-node model weight cache (inference)
+
+The inference cache is an opt-in optimization. A trusted init container streams
+the attested model artifact from MinIO, verifies its SHA-256 and size, then
+atomically materializes it under the physical node's cache directory. The user
+inference container receives only that digest's `data` directory and lock file
+as read-only subPath mounts; it never receives the full cache.
+
+Defaults:
+
+- physical host path: `/opt/tss-platform/model-cache`
+- kind node path: `/var/lib/tss-platform/model-cache`
+- trusted init-container path: `/var/cache/tss/models`
+- maximum materialized cache data: 20 GiB
+- reserved free filesystem space: 5 GiB
+- backend switch: disabled
+
+The runtime bootstrap creates the directory and sentinel file with UID/GID
+`10001`, renders the kind `extraMount`, and verifies an existing kind node.
+When an existing cluster lacks the mount, it exits with instructions and never
+deletes or recreates the cluster automatically.
+
+### Main maintenance migration
+
+Main's current kind cluster must be recreated once to add the physical-host
+mount. This interrupts active Kubernetes training and inference Jobs. PostgreSQL,
+MinIO and MLflow data live outside kind, but their health and backups must still
+be checked before the maintenance window.
+
+1. Keep `TSS_MODEL_CACHE_ENABLED=false` and wait for active Jobs to finish:
+
+   ```bash
+   kubectl --kubeconfig /opt/tss-platform/k8s/.kube/config \
+     get jobs -n tss-training
+   ```
+
+2. Run `bootstrap-node-training-runtime.sh` with Main's reviewed node config.
+   It stages the physical directory and stops safely if the old cluster has no
+   mount.
+3. After explicit maintenance approval, recreate only the named kind cluster:
+
+   ```bash
+   /opt/tss-platform/.tools/bin/kind delete cluster --name tss-training
+   TSS_NODE_CONFIG=/etc/tss-platform/node.env \
+     bash deploy/scripts/bootstrap-node-training-runtime.sh /path/to/repository
+   ```
+
+4. Verify the sentinel and the Docker mount source/destination before enabling
+   the backend switch:
+
+   ```bash
+   test -f /opt/tss-platform/model-cache/.tss-model-cache-root
+   docker inspect tss-training-control-plane \
+     --format '{{range .Mounts}}{{println .Source .Destination}}{{end}}'
+   ```
+
+5. Set `TSS_MODEL_CACHE_ENABLED=true`, rerun
+   `bootstrap-node-backend.sh`, and redeploy the current immutable backend image.
+   Run the same model twice: the first initializer log must report `populated`;
+   the second must report `hit`.
+
+Rollback is non-destructive: set the switch back to `false`, regenerate the
+backend runtime environment, and redeploy. Keep the mounted cache directory for
+inspection; deleting cached weights is a separate, explicit maintenance action.
+
 ## Rollback
 
 Redeploy an earlier verified SHA through the manual workflow. Only images that

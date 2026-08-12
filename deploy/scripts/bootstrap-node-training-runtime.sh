@@ -40,6 +40,10 @@ runtime_source="${TSS_RUNTIME_IMAGE_SOURCE:-build}"
 runtime_tag="${TSS_RUNTIME_IMAGE_TAG:-local}"
 image_registry="${TSS_IMAGE_REGISTRY:-ghcr.io/tssai-lab}"
 python_base_image="${TSS_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.11-slim}"
+model_cache_host_path="${TSS_MODEL_CACHE_HOST_PATH:-${platform_dir}/model-cache}"
+model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/var/lib/tss-platform/model-cache}"
+model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-21474836480}"
+model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
 
 if [[ ! $node_id =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
   echo "TSS_NODE_ID must be a lowercase DNS label." >&2
@@ -47,6 +51,21 @@ if [[ ! $node_id =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
 fi
 if [[ $platform_dir != /* || $platform_dir == / ]]; then
   echo "TSS_PLATFORM_DIR must be an absolute non-root path." >&2
+  exit 1
+fi
+for cache_path in "$model_cache_host_path" "$model_cache_node_path"; do
+  normalized_cache_path="/${cache_path#/}/"
+  if [[ ! $cache_path =~ ^/[A-Za-z0-9._/-]+$ \
+    || $cache_path == / \
+    || $cache_path == *"//"* \
+    || $normalized_cache_path == *"/./"* \
+    || $normalized_cache_path == *"/../"* ]]; then
+    echo "Model cache paths must be safe absolute paths without whitespace or dot segments." >&2
+    exit 1
+  fi
+done
+if [[ ! $model_cache_max_bytes =~ ^[1-9][0-9]*$ || ! $model_cache_min_free_bytes =~ ^[0-9]+$ ]]; then
+  echo "TSS_MODEL_CACHE_MAX_BYTES must be positive and TSS_MODEL_CACHE_MIN_FREE_BYTES non-negative." >&2
   exit 1
 fi
 if [[ $runtime_source != build && $runtime_source != registry ]]; then
@@ -119,6 +138,15 @@ install -d -m 755 \
   "${platform_dir}/mlflow-lite" \
   "${platform_dir}/mlflow-data"
 chown 10001:10001 "${platform_dir}/mlflow-data"
+install -d -m 750 -o 10001 -g 10001 \
+  "$model_cache_host_path" \
+  "${model_cache_host_path}/entries" \
+  "${model_cache_host_path}/locks" \
+  "${model_cache_host_path}/tmp"
+printf 'tss-model-cache-v1\n' > "${model_cache_host_path}/.tss-model-cache-root"
+chown 10001:10001 "${model_cache_host_path}/.tss-model-cache-root"
+chmod 640 "${model_cache_host_path}/.tss-model-cache-root"
+
 cp -a "$source_root/k8s/." "${platform_dir}/k8s/"
 install -m 755 \
   "$source_root/backend/scripts/k8s/bootstrap-local-kind.sh" \
@@ -166,6 +194,8 @@ docker compose -f "$compose_base" -f "$compose_overlay" up -d --no-deps mlflow
 SKIP_WORKER_BUILD=true \
 CLUSTER_NAME="$cluster_name" \
 BACKEND_HOST_PORT="$backend_host_port" \
+MODEL_CACHE_HOST_PATH="$model_cache_host_path" \
+MODEL_CACHE_NODE_PATH="$model_cache_node_path" \
 MINIO_HOST_PORT="$minio_host_port" \
 MLFLOW_HOST_PORT="$mlflow_host_port" \
   bash "${platform_dir}/backend/scripts/k8s/bootstrap-local-kind.sh"
@@ -222,9 +252,14 @@ TSS_RUNTIME_IMAGE_TAG=${runtime_tag}
 TSS_MLFLOW_IMAGE=${mlflow_image}
 TSS_TRAINING_WORKER_IMAGE=${training_worker_image}
 TSS_INFERENCE_WORKER_IMAGE=${inference_worker_image}
+TSS_MODEL_CACHE_HOST_PATH=${model_cache_host_path}
+TSS_MODEL_CACHE_NODE_PATH=${model_cache_node_path}
+TSS_MODEL_CACHE_MAX_BYTES=${model_cache_max_bytes}
+TSS_MODEL_CACHE_MIN_FREE_BYTES=${model_cache_min_free_bytes}
 EOF
 
 echo "Node training runtime bootstrap completed."
 echo "Node: $node_id"
 echo "Cluster: $cluster_name"
 echo "Runtime tag: $runtime_tag"
+echo "Physical model cache: $model_cache_host_path -> $model_cache_node_path"
