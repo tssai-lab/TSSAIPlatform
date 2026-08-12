@@ -20,6 +20,8 @@ import com.tss.platform.service.JobScheduler;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.OutputStream;
@@ -67,7 +69,7 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
             DatasetVersionRepository datasetVersionRepository,
             InferenceScriptVersionRepository scriptVersionRepository,
             KubernetesInferenceJobManifestBuilder manifestBuilder,
-            TransactionTemplate transactionTemplate
+            PlatformTransactionManager transactionManager
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
@@ -76,7 +78,8 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         this.datasetVersionRepository = datasetVersionRepository;
         this.scriptVersionRepository = scriptVersionRepository;
         this.manifestBuilder = manifestBuilder;
-        this.transactionTemplate = transactionTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Autowired

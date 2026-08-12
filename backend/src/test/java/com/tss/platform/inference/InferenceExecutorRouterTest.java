@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +28,7 @@ class InferenceExecutorRouterTest {
     private KubernetesInferenceExecutor kubernetesExecutor;
     private InferenceTaskRepository taskRepository;
     private InferenceExecutorRouter router;
+    private NoOpTransactionManager transactionManager;
 
     @BeforeEach
     void setUp() {
@@ -37,13 +37,13 @@ class InferenceExecutorRouterTest {
         environmentService = mock(TrainingEnvironmentService.class);
         kubernetesExecutor = mock(KubernetesInferenceExecutor.class);
         taskRepository = mock(InferenceTaskRepository.class);
-        TransactionTemplate transactionTemplate = new TransactionTemplate(new NoOpTransactionManager());
+        transactionManager = new NoOpTransactionManager();
         router = new InferenceExecutorRouter(
                 properties,
                 environmentService,
                 kubernetesExecutor,
                 taskRepository,
-                transactionTemplate
+                transactionManager
         );
     }
 
@@ -57,6 +57,8 @@ class InferenceExecutorRouterTest {
         router.start("task-1", 2);
 
         verify(kubernetesExecutor).start("task-1", 2);
+        assertEquals(TransactionDefinition.PROPAGATION_REQUIRES_NEW,
+                transactionManager.lastPropagationBehavior);
     }
 
     @Test
@@ -129,6 +131,8 @@ class InferenceExecutorRouterTest {
 
     private static final class NoOpTransactionManager extends AbstractPlatformTransactionManager {
 
+        private int lastPropagationBehavior = -1;
+
         @Override
         protected Object doGetTransaction() {
             return new Object();
@@ -136,7 +140,7 @@ class InferenceExecutorRouterTest {
 
         @Override
         protected void doBegin(Object transaction, TransactionDefinition definition) {
-            // Tests exercise transaction boundaries without an external database.
+            lastPropagationBehavior = definition.getPropagationBehavior();
         }
 
         @Override
