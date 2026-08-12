@@ -1,18 +1,22 @@
 package com.tss.platform.inference;
 
+import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
+import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.InferenceScriptVersionRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.repository.ComputeServerRepository;
 import com.tss.platform.service.InferenceTaskService;
 import com.tss.platform.training.ShellCommandRunner;
 import com.tss.platform.training.TrainingEnvironmentService;
 import org.slf4j.Logger;
+import com.tss.platform.service.JobScheduler;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -40,6 +45,10 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
     private final InferenceScriptVersionRepository scriptVersionRepository;
     private final KubernetesInferenceJobManifestBuilder manifestBuilder;
     private final TransactionTemplate transactionTemplate;
+    private JobScheduler jobScheduler;
+    private ComputeServerRepository computeServerRepository;
+    private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
+
 
     @Value("${minio.access-key:}")
     private String minioAccessKey;
@@ -68,6 +77,17 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         this.scriptVersionRepository = scriptVersionRepository;
         this.manifestBuilder = manifestBuilder;
         this.transactionTemplate = transactionTemplate;
+    }
+
+    @Autowired
+    void setNodeScheduling(
+            JobScheduler jobScheduler,
+            ComputeServerRepository computeServerRepository,
+            InferenceModelCacheProperties modelCacheProperties
+    ) {
+        this.jobScheduler = jobScheduler;
+        this.computeServerRepository = computeServerRepository;
+        this.modelCacheProperties = modelCacheProperties;
     }
 
     @Override
@@ -146,6 +166,28 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
                         .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在: " + task.getDatasetVersionId()));
             }
+            String targetNodeName = null;
+            if (modelCacheProperties.isEnabled()) {
+                if (jobScheduler == null || computeServerRepository == null) {
+                    throw new IllegalStateException("model cache node scheduling is not configured");
+                }
+                String assignedServerIp;
+                synchronized (jobScheduler) {
+                    assignedServerIp = jobScheduler.assignNodeForInference(
+                            task,
+                            modelVersion.getArtifactAttestedSha256()
+                    );
+                    if (assignedServerIp == null || assignedServerIp.isBlank()) {
+                        throw new IllegalStateException("no cache-ready node has enough resources for inference");
+                    }
+                    if (!bindInferenceNode(taskId, attempt, assignedServerIp)) {
+                        LOG.info("Skip stale inference node binding: taskId={}, attempt={}", taskId, attempt);
+                        return;
+                    }
+                }
+                targetNodeName = resolveNodeName(assignedServerIp);
+            }
+
 
             String yaml = manifestBuilder.buildJobYaml(
                     task,
@@ -154,7 +196,8 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                     datasetVersion,
                     minioAccessKey,
                     minioSecretKey,
-                    minioBucket
+                    minioBucket,
+                    targetNodeName
             );
 
             Path kubeconfig = environmentService.resolveKubeconfig();
@@ -230,6 +273,32 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         } catch (Exception e) {
             return ShellCommandRunner.CommandResult.failed(-1, "", e.getMessage());
         }
+    }
+
+    String resolveNodeName(String serverIp) {
+        return computeServerRepository.findByServerIpAndDeletedFalse(serverIp)
+                .map(ComputeServer::getK8sNodeName)
+                .filter(name -> !name.isBlank())
+                .orElse(serverIp);
+    }
+
+    private boolean bindInferenceNode(String taskId, Integer attempt, String serverIp) {
+        Boolean bound = transactionTemplate.execute(tx -> taskRepository.findByIdForUpdate(taskId)
+                .map(task -> {
+                    int currentAttempt = Math.max(
+                            task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(),
+                            1
+                    );
+                    if (currentAttempt != attempt || !"scheduled".equals(task.getStatus())) {
+                        return false;
+                    }
+                    task.setServerIp(serverIp);
+                    task.setUpdatedAt(Instant.now());
+                    taskRepository.save(task);
+                    return true;
+                })
+                .orElse(false));
+        return Boolean.TRUE.equals(bound);
     }
 
     private void updateStatus(

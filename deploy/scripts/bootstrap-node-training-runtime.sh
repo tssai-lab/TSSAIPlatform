@@ -146,6 +146,9 @@ install -d -m 750 -o 10001 -g 10001 \
 printf 'tss-model-cache-v1\n' > "${model_cache_host_path}/.tss-model-cache-root"
 chown 10001:10001 "${model_cache_host_path}/.tss-model-cache-root"
 chmod 640 "${model_cache_host_path}/.tss-model-cache-root"
+touch "${model_cache_host_path}/capacity.lock"
+chown 10001:10001 "${model_cache_host_path}/capacity.lock"
+chmod 640 "${model_cache_host_path}/capacity.lock"
 
 cp -a "$source_root/k8s/." "${platform_dir}/k8s/"
 install -m 755 \

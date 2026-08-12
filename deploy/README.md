@@ -96,13 +96,14 @@ bash deploy/scripts/smoke-test-node.sh /etc/tss-platform/node.env
 The default smoke test is non-destructive. Authenticated and full business
 closed-loop tests are enabled only with controlled test credentials and data.
 
-## Physical-node model weight cache (inference)
+## Physical-node model weight cache (training and inference)
 
-The inference cache is an opt-in optimization. A trusted init container streams
+The model cache is an opt-in optimization shared by training and inference. A trusted init container streams
 the attested model artifact from MinIO, verifies its SHA-256 and size, then
 atomically materializes it under the physical node's cache directory. The user
-inference container receives only that digest's `data` directory and lock file
-as read-only subPath mounts; it never receives the full cache.
+training or inference container receives only that digest's `data` directory and
+lock file as read-only subPath mounts; it never receives the full cache. MinIO
+remains the source of truth, so clearing a cache entry never deletes the model.
 
 Defaults:
 
@@ -112,6 +113,30 @@ Defaults:
 - maximum materialized cache data: 20 GiB
 - reserved free filesystem space: 5 GiB
 - backend switch: disabled
+
+Capacity and memory behavior:
+
+- downloads and SHA-256 checks are streamed in 1 MiB chunks; model artifacts are
+  not loaded into the backend or worker process heap as one byte array;
+- the limit is disk-cache capacity, not RAM capacity;
+- before materializing a miss, the worker checks both the configured cache limit
+  and reserved filesystem free space;
+- least-recently-used entries older than the eviction grace period are removed
+  first; entries with an active training or inference read lock are skipped;
+- a model larger than the configured cache limit bypasses caching at manifest
+  construction time and follows the existing direct-download path.
+
+Administration:
+
+- every administrator can open `/system/model-cache` and inspect per-node disk
+  use, entries, validity and active-use state;
+- only the super administrator (`role_id=1`) can clear selected entries or all
+  entries on selected nodes;
+- active entries are reported as `in use` and are never deleted; partial node
+  failures are returned per node and every clear operation is audit logged;
+- the API endpoints are `GET /api/system/model-cache` and
+  `POST /api/system/model-cache/clear`.
+
 
 The runtime bootstrap creates the directory and sentinel file with UID/GID
 `10001`, renders the kind `extraMount`, and verifies an existing kind node.

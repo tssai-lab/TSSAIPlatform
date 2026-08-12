@@ -45,6 +45,7 @@ CACHE_SCHEMA_VERSION = 1
 CACHE_KEY_PATTERN = re.compile(r"[0-9a-f]{64}")
 CACHE_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 CACHE_MAX_ZIP_ENTRIES = 10_000
+MODEL_CACHE_RESULT_PREFIX = "MODEL_CACHE_RESULT_JSON="
 _LOCAL_LOCKS: dict[str, threading.RLock] = {}
 _LOCAL_LOCKS_GUARD = threading.Lock()
 
@@ -105,7 +106,7 @@ def required_cache_int(name: str, minimum: int) -> int:
     return value
 
 
-def validate_cache_root_and_key() -> tuple[Path, str]:
+def validate_cache_root() -> Path:
     raw_root = env("MODEL_CACHE_ROOT")
     root = Path(raw_root)
     if not raw_root or not root.is_absolute() or root == Path("/"):
@@ -113,6 +114,12 @@ def validate_cache_root_and_key() -> tuple[Path, str]:
     sentinel = root / ".tss-model-cache-root"
     if sentinel.is_symlink() or not sentinel.is_file():
         raise RuntimeError(f"physical model cache sentinel is missing: {sentinel}")
+
+    return root
+
+
+def validate_cache_root_and_key() -> tuple[Path, str]:
+    root = validate_cache_root()
 
     key = env("MODEL_CACHE_KEY").lower()
     expected_sha256 = env("MODEL_EXPECTED_SHA256").lower()
@@ -281,6 +288,134 @@ def cache_usage(entries_dir: Path) -> int:
     for entry in entries_dir.iterdir():
         total += directory_size(entry)
     return total
+
+
+def read_cache_marker(entry: Path, key: str) -> dict:
+    marker = entry / ".complete.json"
+    if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > 64 * 1024:
+        return {}
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if payload.get("schemaVersion") != CACHE_SCHEMA_VERSION or payload.get("sha256") != key:
+        return {}
+    return payload
+
+
+def inspect_model_cache(root: Path) -> dict:
+    entries_dir = root / "entries"
+    locks_dir = root / "locks"
+    entries_dir.mkdir(parents=True, exist_ok=True)
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict] = []
+
+    with cache_file_lock(root / "capacity.lock", exclusive=True) as acquired:
+        if not acquired:  # pragma: no cover - blocking locks always acquire.
+            raise RuntimeError("failed to acquire model cache capacity lock")
+        for entry in sorted(entries_dir.iterdir(), key=lambda path: path.name):
+            key = entry.name.lower()
+            if not CACHE_KEY_PATTERN.fullmatch(key) or entry.is_symlink() or not entry.is_dir():
+                continue
+            marker = read_cache_marker(entry, key)
+            lock_path = locks_dir / f"{key}.lock"
+            with cache_file_lock(lock_path, exclusive=True, blocking=False) as lock_acquired:
+                in_use = not lock_acquired
+            try:
+                size_bytes = directory_size(entry)
+                last_used = int((entry / ".complete.json").stat().st_mtime)
+            except (OSError, ValueError):
+                size_bytes = 0
+                last_used = 0
+            entries.append({
+                "sha256": key,
+                "storagePath": str(marker.get("storagePath", "")),
+                "artifactSizeBytes": int(marker.get("artifactSizeBytes", 0) or 0),
+                "dataSizeBytes": int(marker.get("dataSizeBytes", 0) or 0),
+                "diskSizeBytes": size_bytes,
+                "createdAtEpochSeconds": int(marker.get("createdAtEpochSeconds", 0) or 0),
+                "lastUsedAtEpochSeconds": last_used,
+                "inUse": in_use,
+                "valid": bool(marker),
+            })
+
+        used_bytes = cache_usage(entries_dir)
+        disk = shutil.disk_usage(root)
+
+    return {
+        "usedBytes": used_bytes,
+        "diskFreeBytes": disk.free,
+        "diskTotalBytes": disk.total,
+        "entries": entries,
+    }
+
+
+def clear_model_cache(root: Path, command: dict) -> dict:
+    clear_all = command.get("clearAll") is True
+    raw_keys = command.get("keys", [])
+    if not isinstance(raw_keys, list) or len(raw_keys) > 1000:
+        raise ValueError("keys must be an array with at most 1000 entries")
+    keys: list[str] = []
+    for raw_key in raw_keys:
+        key = str(raw_key).strip().lower()
+        if not CACHE_KEY_PATTERN.fullmatch(key):
+            raise ValueError("every cache key must be a SHA-256 digest")
+        if key not in keys:
+            keys.append(key)
+    if clear_all == bool(keys):
+        raise ValueError("choose either clearAll or one or more keys")
+
+    entries_dir = root / "entries"
+    locks_dir = root / "locks"
+    entries_dir.mkdir(parents=True, exist_ok=True)
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    if clear_all:
+        keys = sorted(
+            path.name.lower()
+            for path in entries_dir.iterdir()
+            if CACHE_KEY_PATTERN.fullmatch(path.name.lower())
+        )
+
+    cleared: list[str] = []
+    in_use: list[str] = []
+    not_found: list[str] = []
+    with cache_file_lock(root / "capacity.lock", exclusive=True) as acquired:
+        if not acquired:  # pragma: no cover - blocking locks always acquire.
+            raise RuntimeError("failed to acquire model cache capacity lock")
+        for key in keys:
+            entry = entries_dir / key
+            if entry.is_symlink() or not entry.exists():
+                not_found.append(key)
+                continue
+            with cache_file_lock(
+                locks_dir / f"{key}.lock", exclusive=True, blocking=False
+            ) as entry_acquired:
+                if not entry_acquired:
+                    in_use.append(key)
+                    continue
+                remove_cache_path(entry)
+                cleared.append(key)
+
+    return {"cleared": cleared, "inUse": in_use, "notFound": not_found}
+
+
+def manage_model_cache() -> dict:
+    root = validate_cache_root()
+    raw_command = env("MODEL_CACHE_COMMAND_JSON", '{"action":"inspect"}')
+    if len(raw_command.encode("utf-8")) > 64 * 1024:
+        raise ValueError("MODEL_CACHE_COMMAND_JSON is too large")
+    try:
+        command = json.loads(raw_command)
+    except json.JSONDecodeError as exc:
+        raise ValueError("MODEL_CACHE_COMMAND_JSON is invalid") from exc
+    if not isinstance(command, dict):
+        raise ValueError("MODEL_CACHE_COMMAND_JSON must be an object")
+    action = command.get("action")
+    if action == "inspect":
+        return inspect_model_cache(root)
+    if action == "clear":
+        return clear_model_cache(root, command)
+    raise ValueError("unsupported model cache action")
 
 
 def ensure_cache_capacity(
@@ -459,8 +594,8 @@ def prepare_model_cache(client: Minio, bucket: str) -> Path:
     temp_entry = temp_dir / f"{unique}.entry"
 
     with (
-        cache_file_lock(lock_path, exclusive=True) as acquired,
         cache_file_lock(capacity_lock_path, exclusive=True) as capacity_acquired,
+        cache_file_lock(lock_path, exclusive=True) as acquired,
     ):
         if not acquired:  # pragma: no cover - blocking locks always acquire.
             raise RuntimeError(f"failed to acquire model cache lock: {key}")
@@ -803,8 +938,18 @@ def run_user_script(input_path: Path) -> None:
 
 
 def main() -> int:
+    mode = env("INFERENCE_WORKER_MODE")
+    if mode == "manage-model-cache":
+        try:
+            result = manage_model_cache()
+            print(MODEL_CACHE_RESULT_PREFIX + json.dumps(result, separators=(",", ":")), flush=True)
+            return 0
+        except Exception as exc:
+            print(f"model cache management failed: {type(exc).__name__}: {exc}", flush=True)
+            return 1
+
     client, bucket = minio_client()
-    if env("INFERENCE_WORKER_MODE") == "prepare-model-cache":
+    if mode == "prepare-model-cache":
         try:
             prepare_model_cache(client, bucket)
             return 0
