@@ -15,7 +15,7 @@ const INTERVAL_MAX_OFFSET = {
   '1min': 60,
   '10min': 12,
   '1hour': 24,
-  '1day': 30,
+  '1day': 7,
 };
 
 /**

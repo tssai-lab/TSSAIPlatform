@@ -39,7 +39,7 @@ const METRIC_INTERVAL_INTERNAL = {
   '1min': { unit: 'minute', step: 1, points: 60 },
   '10min': { unit: 'minute', step: 10, points: 72 },
   '1hour': { unit: 'hour', step: 1, points: 24 },
-  '1day': { unit: 'day', step: 1, points: 30 },
+  '1day': { unit: 'day', step: 1, points: 7 },
 };
 
 const seededRandom = (seed) => {

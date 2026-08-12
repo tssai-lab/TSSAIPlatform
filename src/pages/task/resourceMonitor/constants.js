@@ -15,7 +15,7 @@ export const TIME_INTERVAL_CONFIG = {
   },
   '1day': {
     label: '1 天',
-    spanLabel: '近 30 天（按天）',
+    spanLabel: '近 7 天（按天）',
   },
 };
 
