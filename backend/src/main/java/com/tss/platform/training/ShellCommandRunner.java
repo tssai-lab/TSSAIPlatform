@@ -51,6 +51,60 @@ public class ShellCommandRunner {
         }
     }
 
+    public CommandResult runWithInput(
+            List<String> command,
+            Path workingDirectory,
+            String stdinContent,
+            int timeoutSeconds
+    ) {
+        List<String> safeCommand = List.copyOf(command);
+        ProcessBuilder builder = new ProcessBuilder(safeCommand);
+        if (workingDirectory != null) {
+            builder.directory(workingDirectory.toFile());
+        }
+        builder.redirectErrorStream(true);
+        Process process = null;
+        try {
+            process = builder.start();
+            try (var outputStream = process.getOutputStream()) {
+                outputStream.write((stdinContent == null ? "" : stdinContent)
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+
+            StringBuffer output = new StringBuffer();
+            Process started = process;
+            Thread reader = new Thread(() -> {
+                try (var input = started.inputReader(StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = input.readLine()) != null) {
+                        output.append(line).append('\n');
+                    }
+                } catch (Exception exception) {
+                    LOG.debug("Failed to drain command output: {}", exception.getMessage());
+                }
+            }, "shell-command-output-reader");
+            reader.setDaemon(true);
+            reader.start();
+
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+                reader.join(1_000);
+                return CommandResult.failed(-1, output.toString(), "command timed out: " + safeCommand);
+            }
+            reader.join(5_000);
+            int exitCode = process.exitValue();
+            return exitCode == 0
+                    ? CommandResult.success(output.toString())
+                    : CommandResult.failed(exitCode, output.toString(), "command failed exit=" + exitCode);
+        } catch (Exception exception) {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+            return CommandResult.failed(-1, "", exception.getMessage());
+        }
+    }
+
     public CommandResult runScript(Path scriptPath, Path workingDirectory, int timeoutSeconds, String... envPairs) {
         if (!Files.isRegularFile(scriptPath)) {
             return CommandResult.failed(-1, "", "脚本不存在: " + scriptPath);

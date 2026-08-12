@@ -173,7 +173,7 @@ public class OperationLogServiceImpl extends ServiceImpl<OperationLogMapper, Ope
         return wrapper;
     }
 
-    private List<Integer> listNormalUserIds() {
+    public List<Integer> listNormalUserIds() {
         return userMapper.selectList(
                 new LambdaQueryWrapper<User>()
                         .eq(User::getRoleId, 3)

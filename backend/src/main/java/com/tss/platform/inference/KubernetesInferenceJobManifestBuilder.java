@@ -56,7 +56,6 @@ public class KubernetesInferenceJobManifestBuilder {
         this.properties = properties;
         this.modelCacheProperties = modelCacheProperties;
     }
-
     public String buildJobYaml(
             InferenceTask task,
             ModelVersion modelVersion,
@@ -65,6 +64,22 @@ public class KubernetesInferenceJobManifestBuilder {
             String minioAccessKey,
             String minioSecretKey,
             String minioBucket
+    ) {
+        return buildJobYaml(
+                task, modelVersion, scriptVersion, datasetVersion,
+                minioAccessKey, minioSecretKey, minioBucket, null
+        );
+    }
+
+    public String buildJobYaml(
+            InferenceTask task,
+            ModelVersion modelVersion,
+            InferenceScriptVersion scriptVersion,
+            DatasetVersion datasetVersion,
+            String minioAccessKey,
+            String minioSecretKey,
+            String minioBucket,
+            String targetNodeName
     ) {
         int attempt = currentAttempt(task);
         String jobName = KubernetesInferenceJobNaming.jobNameForInference(task.getId(), attempt);
@@ -102,8 +117,7 @@ public class KubernetesInferenceJobManifestBuilder {
                       serviceAccountName: %s
                       automountServiceAccountToken: false
                       restartPolicy: Never
-                      nodeSelector:
-                        tss.ai/node-pool: cpu
+                %s
                       securityContext:
                         runAsNonRoot: true
                         runAsUser: 10001
@@ -183,6 +197,7 @@ public class KubernetesInferenceJobManifestBuilder {
                 properties.getJobTtlSecondsAfterFinished(),
                 inferenceLabel,
                 properties.getServiceAccount(),
+                placementYaml(targetNodeName, modelCache),
                 modelCache.volumeYaml(),
                 modelCache.initContainerYaml(),
                 workerImage,
@@ -355,12 +370,25 @@ public class KubernetesInferenceJobManifestBuilder {
         return path;
     }
 
+    private String placementYaml(String targetNodeName, ModelCacheSpec modelCache) {
+        if (targetNodeName != null && !targetNodeName.isBlank()) {
+            return "      nodeName: \"" + escapeYaml(targetNodeName.trim()) + "\"\n";
+        }
+        StringBuilder yaml = new StringBuilder("      nodeSelector:\n")
+                .append("        tss.ai/node-pool: cpu\n");
+        if (!modelCache.volumeYaml().isEmpty()) {
+            yaml.append("        tss.ai/model-cache-ready: \"true\"\n");
+        }
+        return yaml.toString();
+    }
+
     private record ModelCacheSpec(
             String volumeYaml,
             String initContainerYaml,
             String mainVolumeMountYaml,
             String mainEnvYaml
     ) {
+
         private static ModelCacheSpec disabled() {
             return new ModelCacheSpec("", "", "", "");
         }

@@ -198,6 +198,49 @@ class GenericTrainingWorkerTest(unittest.TestCase):
         self.assertIsNone(worker.parse_training_event("ordinary stdout"))
         self.assertIsNone(worker.parse_training_event("TSS_EVENT not-json"))
 
+    def test_cached_archive_model_validates_required_entries_without_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            model_dir = Path(temp) / "model"
+            model_dir.mkdir()
+            (model_dir / "config.json").write_text("{}", encoding="utf-8")
+            artifact = run_spec()["inputs"]["model"]
+            artifact["requiredEntries"] = ["config.json"]
+
+            with patch.object(worker, "MODEL_DIR", model_dir):
+                worker.validate_cached_model(artifact)
+
+    def test_cached_model_rejects_missing_required_entry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            model_dir = Path(temp) / "model"
+            model_dir.mkdir()
+            (model_dir / "weights.bin").write_bytes(b"cached")
+            artifact = run_spec()["inputs"]["model"]
+            artifact["requiredEntries"] = ["config.json"]
+
+            with patch.object(worker, "MODEL_DIR", model_dir):
+                with self.assertRaisesRegex(worker.WorkerError, "missing config.json"):
+                    worker.validate_cached_model(artifact)
+
+    def test_cache_lock_is_required_and_released(self):
+        with tempfile.TemporaryDirectory() as temp:
+            lock_path = Path(temp) / "model.lock"
+            lock_path.touch()
+            environment = {
+                "MODEL_CACHE_ENABLED": "true",
+                "MODEL_CACHE_LOCK_PATH": str(lock_path),
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                handle = worker.acquire_model_cache_read_lock()
+                self.assertIsNotNone(handle)
+                self.assertFalse(handle.closed)
+                worker.release_model_cache_read_lock(handle)
+                self.assertTrue(handle.closed)
+
+    def test_cache_lock_rejects_missing_mount(self):
+        with patch.dict(os.environ, {"MODEL_CACHE_ENABLED": "true"}, clear=True):
+            with self.assertRaisesRegex(worker.WorkerError, "lock mount is missing"):
+                worker.acquire_model_cache_read_lock()
+
 
 if __name__ == "__main__":
     unittest.main()

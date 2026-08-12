@@ -57,6 +57,7 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertTrue(yaml.contains("value: \"2\""));
         assertTrue(yaml.contains("users/7/inference-results/infer-task-abc/attempt-2"));
         assertFalse(yaml.contains("model-cache-initializer"));
+        assertFalse(yaml.contains("tss.ai/model-cache-ready"));
     }
 
     @Test
@@ -113,6 +114,7 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertTrue(yaml.contains("mountPath: /var/run/tss-model-cache/model.lock"));
         assertTrue(yaml.contains("readOnly: true"));
         assertTrue(yaml.contains("name: MODEL_CACHE_ENABLED"));
+        assertTrue(yaml.contains("tss.ai/model-cache-ready: \"true\""));
 
         JsonNode podSpec = YAMLMapper.builder().build().readTree(yaml)
                 .path("spec").path("template").path("spec");
@@ -122,6 +124,21 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertEquals(
                 "Directory",
                 podSpec.path("volumes").path(1).path("hostPath").path("type").asText());
+
+        String pinnedYaml = builder.buildJobYaml(
+                task,
+                modelVersion,
+                scriptVersion,
+                null,
+                "access",
+                "secret",
+                "models",
+                "worker-2"
+        );
+        JsonNode pinnedSpec = YAMLMapper.builder().build().readTree(pinnedYaml)
+                .path("spec").path("template").path("spec");
+        assertEquals("worker-2", pinnedSpec.path("nodeName").asText());
+        assertTrue(pinnedSpec.path("nodeSelector").isMissingNode());
     }
 
     @Test

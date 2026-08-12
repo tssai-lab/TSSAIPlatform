@@ -1,5 +1,6 @@
 package com.tss.platform.training;
 
+import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
@@ -55,5 +56,71 @@ class KubernetesJobManifestBuilderTest {
 
         assertTrue(yaml.contains("workingDir: /workspace/job\n"));
         assertFalse(yaml.contains("workingDir: /workspace/job/code\n"));
+    }
+
+    @Test
+    void enabledCachePreparesTrainingModelAndMountsOnlyDigestReadOnly() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        properties.setInternalCallbackToken("test-callback-token");
+        InferenceModelCacheProperties cacheProperties = new InferenceModelCacheProperties();
+        cacheProperties.setEnabled(true);
+        cacheProperties.setMaxBytes(4096);
+        cacheProperties.setMinFreeBytes(128);
+
+        TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
+        when(task.getId()).thenReturn("train-cache-test");
+        when(task.getRunSpecJson()).thenReturn("{}");
+        when(task.getRunSpecSha256()).thenReturn("b".repeat(64));
+
+        TrainingRunSpec runSpec = mock(TrainingRunSpec.class);
+        TrainingPlanDefinition.Security security = mock(TrainingPlanDefinition.Security.class);
+        TrainingRunSpec.Resources resources = mock(TrainingRunSpec.Resources.class);
+        TrainingRunSpec.Runtime runtime = mock(TrainingRunSpec.Runtime.class);
+        String digest = "a".repeat(64);
+        TrainingRunSpec.InputArtifact model = new TrainingRunSpec.InputArtifact(
+                "model-version-1",
+                "users/7/models/model.zip",
+                digest,
+                512L,
+                "MODEL_ZIP",
+                "model.zip",
+                true,
+                java.util.List.of("config.json")
+        );
+        when(runSpec.inputs()).thenReturn(new TrainingRunSpec.Inputs(model, null, null));
+        when(runSpec.security()).thenReturn(security);
+        when(security.maxRuntimeSeconds()).thenReturn(3600);
+        when(security.runAsNonRoot()).thenReturn(true);
+        when(security.allowPrivilegeEscalation()).thenReturn(false);
+        when(runSpec.resources()).thenReturn(resources);
+        when(resources.nodeSelector()).thenReturn(Map.of());
+        when(resources.ephemeralStorageLimit()).thenReturn("1Gi");
+        when(resources.cpuRequest()).thenReturn("1");
+        when(resources.cpuLimit()).thenReturn("2");
+        when(resources.memoryRequest()).thenReturn("1Gi");
+        when(resources.memoryLimit()).thenReturn("2Gi");
+        when(resources.gpuCount()).thenReturn(0);
+        when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
+
+        TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
+        when(codec.decode(task)).thenReturn(runSpec);
+        TrainingRuntimeImageService runtimeImageService = mock(TrainingRuntimeImageService.class);
+        when(runtimeImageService.resolveImage(runSpec)).thenReturn("registry.example/training-worker:test");
+        KubernetesJobManifestBuilder builder =
+                new KubernetesJobManifestBuilder(properties, codec, runtimeImageService);
+        builder.setModelCacheProperties(cacheProperties);
+
+        String yaml = builder.buildJobYaml(
+                task, "access", "secret", "models", "kind-worker");
+
+        assertTrue(yaml.contains("name: model-cache-initializer"));
+        assertTrue(yaml.contains("value: \"prepare-model-cache\""));
+        assertTrue(yaml.contains("subPath: \"entries/" + digest + "/data\""));
+        assertTrue(yaml.contains("subPath: \"locks/" + digest + ".lock\""));
+        assertTrue(yaml.contains("mountPath: /workspace/job/model"));
+        assertTrue(yaml.contains("readOnly: true"));
+        assertTrue(yaml.contains("name: MODEL_CACHE_ENABLED"));
+        assertTrue(yaml.contains("nodeName: kind-worker"));
     }
 }

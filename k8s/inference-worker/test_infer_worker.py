@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import sys
 import threading
@@ -231,6 +232,95 @@ class ModelCacheTest(unittest.TestCase):
             downloaded_names,
             ["users/7/scripts/script.zip", "users/7/files/input.bin"],
         )
+
+    def test_admin_inspect_reports_capacity_and_entry(self) -> None:
+        payload = model_zip()
+        digest = hashlib.sha256(payload).hexdigest()
+        with patch.dict(os.environ, self.cache_env(payload), clear=True):
+            infer_worker.prepare_model_cache(FakeMinio(payload), "models")
+            result = infer_worker.inspect_model_cache(self.root)
+
+        self.assertGreater(result["usedBytes"], 0)
+        self.assertGreater(result["diskFreeBytes"], 0)
+        self.assertEqual(digest, result["entries"][0]["sha256"])
+        self.assertTrue(result["entries"][0]["valid"])
+        self.assertFalse(result["entries"][0]["inUse"])
+
+    def test_admin_can_clear_selected_entry_without_touching_other_entry(self) -> None:
+        first_payload = model_zip()
+        second_buffer = io.BytesIO()
+        with zipfile.ZipFile(second_buffer, "w") as archive:
+            archive.writestr("weights/second.bin", b"second")
+        second_payload = second_buffer.getvalue()
+        first_key = hashlib.sha256(first_payload).hexdigest()
+        second_key = hashlib.sha256(second_payload).hexdigest()
+
+        with patch.dict(os.environ, self.cache_env(first_payload), clear=True):
+            infer_worker.prepare_model_cache(FakeMinio(first_payload), "models")
+        with patch.dict(os.environ, self.cache_env(second_payload), clear=True):
+            infer_worker.prepare_model_cache(FakeMinio(second_payload), "models")
+            result = infer_worker.clear_model_cache(
+                self.root,
+                {"action": "clear", "clearAll": False, "keys": [first_key]},
+            )
+
+        self.assertEqual([first_key], result["cleared"])
+        self.assertFalse((self.root / "entries" / first_key).exists())
+        self.assertTrue((self.root / "entries" / second_key).exists())
+
+    def test_admin_clear_skips_entry_while_worker_holds_read_lock(self) -> None:
+        payload = model_zip()
+        key = hashlib.sha256(payload).hexdigest()
+        environment = self.cache_env(payload)
+        with patch.dict(os.environ, environment, clear=True):
+            infer_worker.prepare_model_cache(FakeMinio(payload), "models")
+            entered = threading.Event()
+            release = threading.Event()
+
+            def hold_read_lock() -> None:
+                lock_path = self.root / "locks" / f"{key}.lock"
+                with infer_worker.cache_file_lock(lock_path, exclusive=False):
+                    entered.set()
+                    release.wait(timeout=5)
+
+            holder = threading.Thread(target=hold_read_lock)
+            holder.start()
+            self.assertTrue(entered.wait(timeout=2))
+            try:
+                result = infer_worker.clear_model_cache(
+                    self.root,
+                    {"action": "clear", "clearAll": False, "keys": [key]},
+                )
+            finally:
+                release.set()
+                holder.join(timeout=2)
+
+        self.assertEqual([key], result["inUse"])
+        self.assertTrue((self.root / "entries" / key).exists())
+
+    def test_admin_clear_rejects_invalid_key_and_ambiguous_scope(self) -> None:
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            infer_worker.clear_model_cache(
+                self.root,
+                {"action": "clear", "clearAll": False, "keys": ["../escape"]},
+            )
+        with self.assertRaisesRegex(ValueError, "either clearAll"):
+            infer_worker.clear_model_cache(
+                self.root,
+                {"action": "clear", "clearAll": True, "keys": ["a" * 64]},
+            )
+
+    def test_admin_mode_does_not_create_minio_client(self) -> None:
+        command = json.dumps({"action": "inspect"})
+        with (
+            patch.dict(os.environ, {
+                "INFERENCE_WORKER_MODE": "manage-model-cache",
+                "MODEL_CACHE_ROOT": str(self.root),
+                "MODEL_CACHE_COMMAND_JSON": command,
+            }, clear=True),
+            patch.object(infer_worker, "minio_client", side_effect=AssertionError("unexpected")),
+        ):
+            self.assertEqual(0, infer_worker.main())
 
 if __name__ == "__main__":
     unittest.main()

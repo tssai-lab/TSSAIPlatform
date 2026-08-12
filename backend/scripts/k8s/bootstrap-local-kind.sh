@@ -139,6 +139,11 @@ fi
 export KUBECONFIG="${KUBECONFIG_PATH}"
 
 "${KUBECTL}" wait --for=condition=Ready node --all --timeout=180s
+if [[ -n $MODEL_CACHE_HOST_PATH ]]; then
+  "${KUBECTL}" label node --all tss.ai/model-cache-ready=true --overwrite
+else
+  "${KUBECTL}" label node --all tss.ai/model-cache-ready- >/dev/null 2>&1 || true
+fi
 "${KUBECTL}" apply -f "${ROOT_DIR}/k8s/base/training-namespace.yaml"
 "${KUBECTL}" apply -f "${ROOT_DIR}/k8s/base/training-resource-policy.yaml"
 "${KUBECTL}" apply -f "${ROOT_DIR}/k8s/base/training-service-account.yaml"

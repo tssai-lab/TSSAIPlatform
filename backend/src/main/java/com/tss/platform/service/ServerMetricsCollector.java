@@ -70,9 +70,11 @@ public class ServerMetricsCollector {
         // 获取各节点容量（CPU/内存/GPU）和 OS 信息
         Map<String, double[]> capacities = fetchNodeCapacities();
         Map<String, String> osInfo = fetchNodeOsInfo();
+        Map<String, String> nodeLabels = fetchNodeLabelsJson();
 
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
+        syncNodeLabels(servers, nodeLabels);
         Map<String, ComputeServer> ipMap = new LinkedHashMap<>();
         for (ComputeServer s : servers) {
             ipMap.put(s.getServerIp(), s);
@@ -227,6 +229,48 @@ public class ServerMetricsCollector {
     }
 
     /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数、内存总量(GiB)、GPU 数量和 OS 信息 */
+    Map<String, String> fetchNodeLabelsJson() {
+        Map<String, String> labelsByNode = new LinkedHashMap<>();
+        try {
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult result =
+                    shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (!result.success()) {
+                return labelsByNode;
+            }
+            JsonNode root = objectMapper.readTree(result.output());
+            for (JsonNode item : root.path("items")) {
+                String name = item.path("metadata").path("name").asText();
+                JsonNode labels = item.path("metadata").path("labels");
+                if (!name.isBlank() && labels.isObject()) {
+                    labelsByNode.put(name, objectMapper.writeValueAsString(labels));
+                }
+            }
+        } catch (Exception exception) {
+            LOG.warn("Failed to fetch Kubernetes node labels: {}", exception.getMessage());
+        }
+        return labelsByNode;
+    }
+
+    void syncNodeLabels(List<ComputeServer> servers, Map<String, String> labelsByNode) {
+        if (labelsByNode == null || labelsByNode.isEmpty()) {
+            return;
+        }
+        for (ComputeServer server : servers) {
+            String nodeName = server.getK8sNodeName();
+            if (nodeName == null || nodeName.isBlank()) {
+                nodeName = server.getServerIp();
+            }
+            String labelsJson = labelsByNode.get(nodeName);
+            if (labelsJson != null && !Objects.equals(labelsJson, server.getK8sLabelsJson())) {
+                server.setK8sLabelsJson(labelsJson);
+                server.setUpdatedAt(Instant.now());
+                serverRepo.save(server);
+            }
+        }
+    }
+
     Map<String, double[]> fetchNodeCapacities() {
         Map<String, double[]> caps = new LinkedHashMap<>();
         try {

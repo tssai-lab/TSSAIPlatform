@@ -133,7 +133,6 @@ public class SystemLogController {
 
     private Result<Map<String, Object>> checkLogAccess(LogAccessScope scope, String currentUsername) {
         if (scope == LogAccessScope.SELF_ONLY) {
-            // 普通用户：允许查本人；currentUsername 若传则必须与 Token 一致
             if (currentUsername != null && !currentUsername.isBlank()) {
                 String loginUser = getLoginUsername();
                 if (loginUser == null || !loginUser.equals(currentUsername.trim())) {
@@ -142,7 +141,6 @@ public class SystemLogController {
             }
             return null;
         }
-        // 管理员可查管理端日志；若带 currentUsername 则按个人中心处理
         if (currentUsername != null && !currentUsername.isBlank()) {
             String loginUser = getLoginUsername();
             if (loginUser == null || !loginUser.equals(currentUsername.trim())) {
@@ -153,7 +151,6 @@ public class SystemLogController {
     }
 
     private void applyScope(LogListQueryDTO query, LogAccessScope scope, String currentUsername) {
-        // 不信任前端 currentUserRole
         query.setCurrentUserRole(null);
 
         if (scope == LogAccessScope.SELF_ONLY
@@ -166,8 +163,8 @@ public class SystemLogController {
             return;
         }
 
-        // 超管/普管管理端：看全部人；普管隐藏 IP
-        query.setForceNormalUsersOnly(false);
+        boolean normalOnly = scope == LogAccessScope.NORMAL_USERS_ONLY;
+        query.setForceNormalUsersOnly(normalOnly);
         query.setHideIp(!isSuperAdmin());
         if (!isSuperAdmin()) {
             query.setIp(null);
@@ -190,8 +187,11 @@ public class SystemLogController {
 
     private LogAccessScope resolveScope() {
         Integer roleId = (Integer) StpUtil.getTokenSession().get("roleId");
-        if (roleId != null && (roleId == 1 || roleId == 2)) {
+        if (roleId != null && roleId == 1) {
             return LogAccessScope.ALL;
+        }
+        if (roleId != null && roleId == 2) {
+            return LogAccessScope.NORMAL_USERS_ONLY;
         }
         return LogAccessScope.SELF_ONLY;
     }
