@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -34,13 +36,14 @@ public class InferenceExecutorRouter implements InferenceExecutor {
             TrainingEnvironmentService environmentService,
             KubernetesInferenceExecutor kubernetesInferenceExecutor,
             InferenceTaskRepository taskRepository,
-            TransactionTemplate transactionTemplate
+            PlatformTransactionManager transactionManager
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
         this.kubernetesInferenceExecutor = kubernetesInferenceExecutor;
         this.taskRepository = taskRepository;
-        this.transactionTemplate = transactionTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Override

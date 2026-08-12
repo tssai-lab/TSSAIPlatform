@@ -640,7 +640,7 @@ class InferenceTaskServiceTest {
                     nullTrainingEnvironmentService(),
                     nullKubernetesInferenceExecutor(),
                     emptyProxy(InferenceTaskRepository.class),
-                    null
+                    noopTransactionManager()
             );
         }
 
