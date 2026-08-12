@@ -5,7 +5,7 @@ import com.tss.platform.entity.*;
 import com.tss.platform.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -237,9 +237,9 @@ public class ResourceMonitorService {
                 maxPoints = 24;
                 break;
             case "1day":
-                duration = Duration.ofDays(30);
-                spanLabel = "近 30 天（按天）";
-                maxPoints = 30;
+                duration = Duration.ofDays(7);
+                spanLabel = "近 7 天（按天）";
+                maxPoints = 7;
                 break;
             default:
                 duration = Duration.ofHours(24);
@@ -249,9 +249,12 @@ public class ResourceMonitorService {
 
         Instant to = Instant.now();
         Instant from = to.minus(duration);
+        // 采集频率约 30s/条，窗口内记录数远超 maxPoints*10；
+        // 之前用 PageRequest 分页取前 N 条（升序）会截掉最新数据，导致趋势图右侧全 0。
+        // 这里一次取全窗口数据，窗口最大 7 天 ≈ 2 万条，量级可接受。
         List<ServerMetricHistory> history = historyRepo
                 .findByServerIpAndCollectedAtBetweenOrderByCollectedAtAsc(
-                        serverIp, from, to, PageRequest.of(0, maxPoints * 10));
+                        serverIp, from, to, Pageable.unpaged());
 
         // 按时间桶聚合
         long bucketMs = duration.toMillis() / maxPoints;
