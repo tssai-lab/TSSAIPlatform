@@ -103,6 +103,26 @@ public class ResourceMonitorController {
         return ApiResponse.ok(monitorService.cancelQueueTask(serverIp, taskId));
     }
 
+    // ── 5.10 GET /queue（全局排队，按资源池分组）──
+    @GetMapping("/queue")
+    public ApiResponse<List<GlobalQueuedTask>> globalQueue() {
+        return ApiResponse.ok(monitorService.listGlobalQueued());
+    }
+
+    // ── 5.11 PUT /queue/reorder（全局排队同池内调整）──
+    @PutMapping("/queue/reorder")
+    public ApiResponse<List<GlobalQueuedTask>> reorderGlobalQueue(@RequestBody ReorderRequest req) {
+        requireAdmin();
+        return ApiResponse.ok(monitorService.reorderGlobalQueue(req));
+    }
+
+    // ── 5.12 DELETE /queue/{taskId}（取消全局排队）──
+    @DeleteMapping("/queue/{taskId}")
+    public ApiResponse<List<GlobalQueuedTask>> cancelGlobalQueue(@PathVariable String taskId) {
+        requireAdmin();
+        return ApiResponse.ok(monitorService.cancelGlobalQueueTask(taskId));
+    }
+
     private void requireAdmin() {
         if (!authContext.isAdmin()) {
             throw new IllegalArgumentException("仅管理员可执行此操作");

@@ -157,6 +157,11 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 | PUT | `/api/resource-monitor/servers/{serverIp}/queue/reorder` | 管理员 | 排队任务上移/下移 |
 | PUT | `/api/resource-monitor/servers/{serverIp}/queue/priority` | 管理员 | 修改排队任务优先级 |
 | DELETE | `/api/resource-monitor/servers/{serverIp}/queue/{taskId}` | 管理员 | 取消排队任务 |
+| GET | `/api/resource-monitor/queue` | 登录用户 | 全局排队列表（跨服务器，按资源池 `nodePool` 分组） |
+| PUT | `/api/resource-monitor/queue/reorder` | 管理员 | 全局排队同资源池内上移/下移 |
+| DELETE | `/api/resource-monitor/queue/{taskId}` | 管理员 | 取消全局排队任务 |
+
+> **服务器详情 vs 全局排队**：服务器详情只展示已分配节点（`server_ip` 非空）的 `running` / `scheduled` 任务；`queued` / `pending`（`server_ip` 为空）的任务不属于任何服务器，统一在「全局排队」页按资源池展示与管理。全局排队按任务的 `nodeSelector`（`tss.ai/node-pool` 标签值）分组，新增节点池（新标签值）无需改代码自动出现新分组。
 
 > **删除 vs 启用/禁用**：删除（`deleted=true`）为软删除。对仍存在于 K8s 集群的节点，`ServerMetricsCollector` 每 30 秒自动重新注册（`deleted=false`），删除会"失效"；**要让节点真正下线（不再分配新任务），应使用 `PUT /servers/{serverIp}/enabled` 禁用**（`enabled=false`），调度器 `assignNode` 会跳过禁用节点，已在其上运行的任务不受影响。
 

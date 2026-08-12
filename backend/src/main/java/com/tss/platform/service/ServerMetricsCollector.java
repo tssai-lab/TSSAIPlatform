@@ -67,9 +67,10 @@ public class ServerMetricsCollector {
     public void collectMetrics() {
         if (!isK8sReady()) return;
 
-        // 获取各节点容量（CPU/内存/GPU）和 OS 信息
+        // 获取各节点容量（CPU/内存/GPU）、OS 信息和节点标签
         Map<String, double[]> capacities = fetchNodeCapacities();
         Map<String, String> osInfo = fetchNodeOsInfo();
+        Map<String, String> nodeLabels = fetchNodeLabels();
 
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
@@ -103,6 +104,13 @@ public class ServerMetricsCollector {
                         server.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
                         updated = true;
                     }
+                    // 同步节点标签（决定任务可按哪个 nodeSelector 匹配到该节点，供调度器按池过滤）
+                    String nodeKey = server.getK8sNodeName() != null ? server.getK8sNodeName() : server.getServerIp();
+                    String labelsJson = nodeLabels.get(nodeKey);
+                    if (labelsJson != null && !labelsJson.equals(server.getK8sLabelsJson())) {
+                        server.setK8sLabelsJson(labelsJson);
+                        updated = true;
+                    }
                     if (updated) {
                         serverRepo.save(server);
                     }
@@ -118,7 +126,8 @@ public class ServerMetricsCollector {
             if (!ipMap.containsKey(name)) {
                 double[] cap = capacities.get(name);
                 String osImage = osInfo.get(name);
-                autoRegisterK8sNode(name, cap, osImage);
+                String labelsJson = nodeLabels.get(name);
+                autoRegisterK8sNode(name, cap, osImage, labelsJson);
             }
         }
 
@@ -202,7 +211,7 @@ public class ServerMetricsCollector {
         historyRepo.save(hist);
     }
 
-    private void autoRegisterK8sNode(String name, double[] capacity, String osImage) {
+    private void autoRegisterK8sNode(String name, double[] capacity, String osImage, String labelsJson) {
         ComputeServer s = new ComputeServer();
         s.setServerIp(name);
         s.setHostname(name);
@@ -220,10 +229,15 @@ public class ServerMetricsCollector {
         if (osImage != null && !osImage.isEmpty()) {
             s.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
         }
+        // 节点标签（tss.ai/node-pool 等），供调度器按 nodeSelector 过滤节点
+        if (labelsJson != null && !labelsJson.isBlank()) {
+            s.setK8sLabelsJson(labelsJson);
+        }
         s.setCreatedAt(Instant.now());
         s.setUpdatedAt(Instant.now());
         serverRepo.save(s);
-        LOG.info("自动注册K8s节点: {} (GPU={}, OS={})", name, s.getGpuCount(), s.getSpecOs());
+        LOG.info("自动注册K8s节点: {} (GPU={}, OS={}, labels={})",
+                name, s.getGpuCount(), s.getSpecOs(), labelsJson != null ? "yes" : "no");
     }
 
     /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数、内存总量(GiB)、GPU 数量和 OS 信息 */
@@ -284,6 +298,30 @@ public class ServerMetricsCollector {
             LOG.warn("获取节点OS信息失败: {}", e.getMessage());
         }
         return osMap;
+    }
+
+    /** 从 kubectl get nodes -o json 获取每个节点的标签（含 tss.ai/node-pool 等），序列化后存入 k8s_labels_json */
+    Map<String, String> fetchNodeLabels() {
+        Map<String, String> labelMap = new LinkedHashMap<>();
+        try {
+            Path kubectl = envService.resolveKubectl();
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (r.success()) {
+                JsonNode root = objectMapper.readTree(r.output());
+                for (JsonNode item : root.path("items")) {
+                    String name = item.path("metadata").path("name").asText();
+                    JsonNode labels = item.path("metadata").path("labels");
+                    if (labels.isObject() && !labels.isEmpty()) {
+                        labelMap.put(name, objectMapper.writeValueAsString(labels));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("获取节点标签失败: {}", e.getMessage());
+        }
+        return labelMap;
     }
 
     // ── top / GPU ──
