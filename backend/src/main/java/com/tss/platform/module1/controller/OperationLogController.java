@@ -36,6 +36,12 @@ public class OperationLogController {
             return Result.noAuth("无权限访问，仅管理员可操作");
         }
         List<OperationLog> logList = logService.list();
+        if (scope == LogAccessScope.NORMAL_USERS_ONLY) {
+            List<Integer> normalIds = logService.listNormalUserIds();
+            logList = logList.stream()
+                    .filter(item -> item.getUserId() != null && normalIds.contains(item.getUserId()))
+                    .collect(Collectors.toList());
+        }
         if (!isSuperAdmin()) {
             logList.forEach(item -> item.setIpAddress(null));
         }
@@ -44,7 +50,7 @@ public class OperationLogController {
 
     /**
      * 操作日志查询（日志管理 + 个人操作记录共用）
-     * 超管/普管：管理端看全部；普通用户及个人中心：仅本人。IP 仅超管返回。
+     * 超管：全部；普管：仅普通用户；个人中心/普通用户：仅本人。IP 仅超管返回。
      */
     @PostMapping("/query")
     public Result<Map<String, Object>> queryLogs(@RequestBody(required = false) OperationLogQueryDTO queryDTO) {
@@ -106,11 +112,13 @@ public class OperationLogController {
             queryDTO.setForceOperatorUserIds(null);
             return;
         }
-        // 超管/普管管理端：可查全部
-        queryDTO.setForceOperatorUserIds(null);
-        if (!isSuperAdmin()) {
+        if (scope == LogAccessScope.NORMAL_USERS_ONLY) {
+            queryDTO.setForceOperatorUserIds(logService.listNormalUserIds());
+            queryDTO.setUserId(null);
             queryDTO.setIpAddress(null);
+            return;
         }
+        queryDTO.setForceOperatorUserIds(null);
     }
 
     private Map<String, Object> toRecordMap(OperationLog log, boolean hideIp) {
@@ -147,8 +155,11 @@ public class OperationLogController {
 
     private LogAccessScope resolveScope() {
         Integer roleId = (Integer) StpUtil.getTokenSession().get("roleId");
-        if (roleId != null && (roleId == 1 || roleId == 2)) {
+        if (roleId != null && roleId == 1) {
             return LogAccessScope.ALL;
+        }
+        if (roleId != null && roleId == 2) {
+            return LogAccessScope.NORMAL_USERS_ONLY;
         }
         return LogAccessScope.SELF_ONLY;
     }

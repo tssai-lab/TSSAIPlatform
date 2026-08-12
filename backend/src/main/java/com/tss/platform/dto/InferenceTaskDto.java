@@ -17,6 +17,11 @@ public class InferenceTaskDto {
     private JsonNode params;
     private String status;
     private Integer progress;
+    private Integer currentAttempt;
+    private Integer retryCount;
+    private Integer maxRetries;
+    private Boolean retryable;
+    private Instant lastRetryAt;
     private JsonNode result;
     private String logPath;
     private String outputPath;

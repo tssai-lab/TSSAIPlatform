@@ -6,15 +6,22 @@ import com.tss.platform.repository.InferenceTaskRepository;
 import com.tss.platform.training.TrainingEnvironmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 
 @Service
 public class InferenceExecutorRouter implements InferenceExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(InferenceExecutorRouter.class);
+    private static final Duration STALE_SUBMISSION_AGE = Duration.ofMinutes(5);
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final List<String> RECOVERABLE_STATUSES = List.of("pending", "queued", "scheduled");
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
@@ -48,25 +55,93 @@ public class InferenceExecutorRouter implements InferenceExecutor {
 
     @Override
     public void start(String taskId) {
-        if (!isAvailable()) {
-            LOG.warn("K8s 推理环境不可用: taskId={}", taskId);
-            markFailed(taskId, "K8s 推理环境不可用，无法执行推理任务");
+        Integer attempt = taskRepository.findById(taskId)
+                .map(InferenceTask::getCurrentAttempt)
+                .orElse(null);
+        if (attempt == null) {
+            LOG.debug("Skip missing inference task submission: taskId={}", taskId);
             return;
         }
-        LOG.info("启动推理: taskId={}, executor={}", taskId, kubernetesInferenceExecutor.getType());
-        kubernetesInferenceExecutor.start(taskId);
+        start(taskId, attempt);
+    }
+
+    public void start(String taskId, Integer attempt) {
+        int safeAttempt = Math.max(attempt == null ? 1 : attempt, 1);
+        Integer claimed = transactionTemplate.execute(tx ->
+                taskRepository.claimForSubmission(taskId, safeAttempt, Instant.now()));
+        if (claimed == null || claimed != 1) {
+            LOG.debug("Skip duplicate or stale inference submission: taskId={}, attempt={}", taskId, safeAttempt);
+            return;
+        }
+
+        try {
+            if (!isAvailable()) {
+                LOG.warn("K8s inference environment unavailable: taskId={}, attempt={}", taskId, safeAttempt);
+                markFailed(taskId, safeAttempt, "K8s 推理环境不可用，无法执行推理任务");
+                return;
+            }
+            LOG.info("Start inference: taskId={}, attempt={}, executor={}",
+                    taskId, safeAttempt, kubernetesInferenceExecutor.getType());
+            kubernetesInferenceExecutor.start(taskId, safeAttempt);
+        } catch (RuntimeException e) {
+            LOG.error("Failed to start inference submission: taskId={}, attempt={}", taskId, safeAttempt, e);
+            markFailed(taskId, safeAttempt, e.getMessage());
+        }
     }
 
     @Override
     public void stop(String taskId) {
+        Integer attempt = taskRepository.findById(taskId)
+                .map(InferenceTask::getCurrentAttempt)
+                .orElse(1);
+        stop(taskId, attempt);
+    }
+
+    public void stop(String taskId, Integer attempt) {
         if (!properties.isEnabled()) {
             return;
         }
-        kubernetesInferenceExecutor.stop(taskId);
+        try {
+            kubernetesInferenceExecutor.stop(taskId, attempt);
+        } catch (RuntimeException e) {
+            LOG.warn("Failed to stop inference job: taskId={}, attempt={}, error={}",
+                    taskId, attempt, e.getMessage());
+        }
     }
 
-    private void markFailed(String taskId, String message) {
-        transactionTemplate.executeWithoutResult(tx -> taskRepository.findById(taskId).ifPresent(task -> {
+    @Scheduled(fixedDelayString = "${tss.inference.recovery-delay-ms:30000}")
+    public void recoverStaleSubmissions() {
+        Instant staleBefore = Instant.now().minus(STALE_SUBMISSION_AGE);
+        List<InferenceTask> staleTasks = taskRepository
+                .findTop100ByStatusInAndUpdatedAtBeforeOrderByUpdatedAtAsc(
+                        RECOVERABLE_STATUSES,
+                        staleBefore
+                );
+        for (InferenceTask snapshot : staleTasks) {
+            int attempt = Math.max(snapshot.getCurrentAttempt() == null ? 1 : snapshot.getCurrentAttempt(), 1);
+            if ("scheduled".equals(snapshot.getStatus())) {
+                Integer reset = transactionTemplate.execute(tx -> taskRepository.resetStaleSubmission(
+                        snapshot.getId(),
+                        attempt,
+                        staleBefore,
+                        Instant.now()
+                ));
+                if (reset == null || reset != 1) {
+                    continue;
+                }
+            }
+            LOG.warn("Recover stale inference submission: taskId={}, attempt={}, status={}",
+                    snapshot.getId(), attempt, snapshot.getStatus());
+            start(snapshot.getId(), attempt);
+        }
+    }
+
+    private void markFailed(String taskId, Integer attempt, String message) {
+        transactionTemplate.executeWithoutResult(tx -> taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
+            int currentAttempt = Math.max(task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(), 1);
+            if (currentAttempt != attempt || TERMINAL_STATUSES.contains(task.getStatus())) {
+                return;
+            }
             task.setStatus("failed");
             task.setProgress(0);
             task.setErrorMessage(message);

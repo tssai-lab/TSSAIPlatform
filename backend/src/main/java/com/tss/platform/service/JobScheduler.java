@@ -1,5 +1,6 @@
 package com.tss.platform.service;
 
+import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.InferenceTask;
@@ -10,12 +11,16 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.training.TrainingExecutorRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -38,6 +43,8 @@ public class JobScheduler {
     private final TrainingKubernetesProperties k8sProperties;
     private final TrainingExecutorRouter executorRouter;
     private final TransactionTemplate transactionTemplate;
+    private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
+
 
     public JobScheduler(
             ComputeServerRepository computeServerRepo,
@@ -54,6 +61,11 @@ public class JobScheduler {
         this.transactionTemplate = transactionTemplate;
     }
 
+    @Autowired
+    void setModelCacheProperties(InferenceModelCacheProperties modelCacheProperties) {
+        this.modelCacheProperties = modelCacheProperties;
+    }
+
     /**
      * 为训练任务分配节点。从 task.runSpecJson 读取资源需求，匹配 nodeSelector 的在线节点中选剩余最多的。
      * @return 分配的 nodeName，资源不足返回 null
@@ -61,8 +73,16 @@ public class JobScheduler {
     public String assignNodeForTraining(TrainingExperimentVersion task, Map<String, String> nodeSelector) {
         double[] req = resolveResourceRequest(task);
         Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
-        return assignNode(nodeSelector, req[0], req[1], gpuReq);
+        return assignNode(nodeSelector, req[0], req[1], gpuReq, task.getInputModelSha256());
     }
+
+    public String assignNodeForInference(InferenceTask task, String modelDigest) {
+        double[] req = resolveResourceRequest(task);
+        return assignNode(Map.of("tss.ai/node-pool", "cpu"),
+                req[0], req[1], null, modelDigest);
+    }
+
+
 
     /**
      * 原子绑定任务到节点（状态变为 scheduled，已分配，等待启动）。
@@ -120,7 +140,7 @@ public class JobScheduler {
                     Map<String, String> nodeSelector = resolveNodeSelector(task);
                     double[] req = resolveResourceRequest(task);
                     Integer gpuReq = req[2] > 0 ? (int) req[2] : null;
-                    String node = assignNode(nodeSelector, req[0], req[1], gpuReq);
+                    String node = assignNode(nodeSelector, req[0], req[1], gpuReq, task.getInputModelSha256());
                     if (node != null) {
                         if (bindTask(task.getId(), node)) {
                             bound.add(task.getId());
@@ -171,10 +191,21 @@ public class JobScheduler {
      * 3. 算剩余容量 = 总容量 - 已分配
      * 4. 选剩余最多的，且能满足本次请求的
      */
-    private String assignNode(Map<String, String> nodeSelector, double cpuReq, double memReq, Integer gpuReq) {
+    private String assignNode(
+            Map<String, String> nodeSelector,
+            double cpuReq,
+            double memReq,
+            Integer gpuReq,
+            String affinityKey
+    ) {
         List<ComputeServer> candidates = computeServerRepo.findByDeletedFalse().stream()
                 .filter(n -> "online".equals(n.getStatus()) && Boolean.TRUE.equals(n.getEnabled()))
                 .collect(Collectors.toList());
+        if (modelCacheProperties.isEnabled()) {
+            candidates = candidates.stream()
+                    .filter(this::isCacheReady)
+                    .collect(Collectors.toList());
+        }
 
         if (candidates.isEmpty()) return null;
 
@@ -230,6 +261,7 @@ public class JobScheduler {
         // 选剩余最多的
         ComputeServer best = null;
         double bestRemaining = -1;
+        long bestAffinity = 0;
         for (ComputeServer node : candidates) {
             double usedCpu = allocatedCpu.getOrDefault(node.getServerIp(), 0.0);
             double usedMem = allocatedMemGib.getOrDefault(node.getServerIp(), 0.0);
@@ -244,8 +276,18 @@ public class JobScheduler {
             double remScore = Math.min(remCpu / Math.max(cpuReq, 0.001), remMem / Math.max(memReq, 0.001));
 
             boolean gpuOk = gpuReq == null || remGpu >= gpuReq;
-            if (remCpu >= cpuReq && remMem >= memReq && gpuOk && remScore > bestRemaining) {
+            if (remCpu < cpuReq || remMem < memReq || !gpuOk) {
+                continue;
+            }
+            long affinity = affinityScore(affinityKey, node.getServerIp());
+            boolean affinityEnabled = modelCacheProperties.isEnabled()
+                    && affinityKey != null && !affinityKey.isBlank();
+            boolean preferred = best == null
+                    || (affinityEnabled && Long.compareUnsigned(affinity, bestAffinity) > 0)
+                    || (!affinityEnabled && remScore > bestRemaining);
+            if (preferred) {
                 bestRemaining = remScore;
+                bestAffinity = affinity;
                 best = node;
             }
         }
@@ -321,6 +363,39 @@ public class JobScheduler {
     }
 
     // ── 工具方法 ──
+
+    boolean isCacheReady(ComputeServer node) {
+        String labelsJson = node.getK8sLabelsJson();
+        if (labelsJson == null || labelsJson.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode labels = new ObjectMapper().readTree(labelsJson);
+            return "true".equalsIgnoreCase(
+                    labels.path("tss.ai/model-cache-ready").asText());
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    static long affinityScore(String affinityKey, String nodeId) {
+        if (affinityKey == null || affinityKey.isBlank()) {
+            return 0;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                    (affinityKey.trim().toLowerCase(Locale.ROOT) + "\\0" + nodeId)
+                            .getBytes(StandardCharsets.UTF_8)
+            );
+            long score = 0;
+            for (int index = 0; index < Long.BYTES; index++) {
+                score = (score << 8) | (digest[index] & 0xffL);
+            }
+            return score;
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
 
     static double parseCpuToCores(String s) {
         if (s == null || s.isEmpty()) return 0.5;

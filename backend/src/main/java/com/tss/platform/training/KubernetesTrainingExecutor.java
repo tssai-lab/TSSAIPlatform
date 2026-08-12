@@ -1,8 +1,11 @@
 package com.tss.platform.training;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
+import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.repository.ComputeServerRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +32,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
     private final KubernetesJobManifestBuilder manifestBuilder;
     private final ShellCommandRunner shellCommandRunner;
     private final TransactionTemplate transactionTemplate;
+    private ComputeServerRepository computeServerRepository;
 
     @Value("${minio.access-key:}")
     private String minioAccessKey;
@@ -54,6 +58,12 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
         this.shellCommandRunner = shellCommandRunner;
         this.transactionTemplate = transactionTemplate;
     }
+    @Autowired
+    void setComputeServerRepository(ComputeServerRepository computeServerRepository) {
+        this.computeServerRepository = computeServerRepository;
+    }
+
+
 
     @Override
     public boolean isAvailable() {
@@ -94,7 +104,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                     .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
 
             // 2. 获取要调度到的K8s节点IP，即JobScheduler绑定出来的节点
-            String targetNode = task.getServerIp();
+            String targetNode = resolveNodeName(task.getServerIp());
 
             // 重点：构建K8s Job完整YAML清单
             String yaml = manifestBuilder.buildJobYaml(task, minioAccessKey, minioSecretKey, minioBucket, targetNode);
@@ -133,6 +143,16 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             LOG.error("K8s training Job submission failed: trainingId={}", trainingId, e);
             updateStatus(trainingId, "failed", 0, e.getMessage());
         }
+    }
+
+    String resolveNodeName(String serverIp) {
+        if (serverIp == null || serverIp.isBlank() || computeServerRepository == null) {
+            return serverIp;
+        }
+        return computeServerRepository.findByServerIpAndDeletedFalse(serverIp)
+                .map(ComputeServer::getK8sNodeName)
+                .filter(name -> !name.isBlank())
+                .orElse(serverIp);
     }
 
     private boolean jobAlreadyExists(Path kubeconfig, String trainingId) {

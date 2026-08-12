@@ -25,6 +25,11 @@ try:
 except ImportError:  # Allows the standard-library unit tests to import this module.
     Minio = None  # type: ignore[assignment]
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - production worker images are Linux.
+    fcntl = None
+
 
 WORKSPACE = Path("/workspace/job")
 MODEL_DIR = WORKSPACE / "model"
@@ -57,6 +62,13 @@ class WorkerError(RuntimeError):
 def env(name: str, default: str = "") -> str:
     value = os.environ.get(name, default)
     return value.strip() if value else default
+
+
+def truthy_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def utc_now() -> str:
@@ -419,6 +431,53 @@ def materialize_input(
             raise WorkerError("INPUT_REQUIRED_ENTRY_MISSING", f"inputs.{name} is missing {required}")
 
 
+def validate_cached_model(artifact: dict[str, Any]) -> None:
+    if not MODEL_DIR.is_dir() or MODEL_DIR.is_symlink():
+        raise WorkerError("MODEL_CACHE_INVALID", "model cache mount is missing")
+    if next((path for path in MODEL_DIR.rglob("*") if path.is_file()), None) is None:
+        raise WorkerError("MODEL_CACHE_INVALID", "model cache mount is empty")
+
+    required_entries = list(artifact["requiredEntries"])
+    if not artifact["archive"]:
+        required_entries.append(artifact["fileName"])
+    for required in required_entries:
+        relative = safe_relative_path(required, "inputs.model.requiredEntries")
+        target = MODEL_DIR.joinpath(*relative.parts)
+        if target.is_symlink() or not target.exists():
+            raise WorkerError(
+                "INPUT_REQUIRED_ENTRY_MISSING",
+                f"cached model is missing {required}",
+            )
+
+
+def acquire_model_cache_read_lock():
+    if not truthy_env("MODEL_CACHE_ENABLED"):
+        return None
+    raw_path = env("MODEL_CACHE_LOCK_PATH")
+    lock_path = Path(raw_path)
+    if not raw_path or not lock_path.is_absolute() or not lock_path.is_file():
+        raise WorkerError("MODEL_CACHE_INVALID", "model cache lock mount is missing")
+    handle = lock_path.open("rb")
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+        log("model cache read lock acquired")
+        return handle
+    except Exception:
+        handle.close()
+        raise
+
+
+def release_model_cache_read_lock(handle) -> None:
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
 def write_parameters(spec: dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     PARAMS_FILE.write_text(
@@ -688,11 +747,17 @@ def run() -> None:
     temp_dir = WORKSPACE / ".downloads"
     temp_dir.mkdir(parents=True, exist_ok=True)
     mlflow = MlflowLogger(spec)
+    model_cache_lock = None
 
     try:
+        model_cache_lock = acquire_model_cache_read_lock()
         reporter.stage(5, "prepare", "RunSpec verified")
-        materialize_input(client, bucket, "model", spec["inputs"]["model"], MODEL_DIR, temp_dir)
-        reporter.stage(15, "model", "base model downloaded and verified")
+        if truthy_env("MODEL_CACHE_ENABLED"):
+            validate_cached_model(spec["inputs"]["model"])
+            reporter.stage(15, "model", "base model reused from physical-node cache")
+        else:
+            materialize_input(client, bucket, "model", spec["inputs"]["model"], MODEL_DIR, temp_dir)
+            reporter.stage(15, "model", "base model downloaded and verified")
         materialize_input(client, bucket, "dataset", spec["inputs"]["dataset"], DATA_DIR, temp_dir)
         reporter.stage(28, "dataset", "dataset downloaded and verified")
         materialize_input(client, bucket, "code", spec["inputs"]["code"], CODE_DIR, temp_dir)
@@ -767,6 +832,7 @@ def run() -> None:
         mlflow.finish(False)
         raise
     finally:
+        release_model_cache_read_lock(model_cache_lock)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 

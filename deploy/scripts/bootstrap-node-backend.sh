@@ -60,6 +60,32 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
   inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-$inference_worker_image}"
 fi
 
+model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
+model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/var/lib/tss-platform/model-cache}"
+model_cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
+model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-21474836480}"
+model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
+
+if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
+  echo "TSS_MODEL_CACHE_ENABLED must be true or false." >&2
+  exit 1
+fi
+for cache_path in "$model_cache_node_path" "$model_cache_mount_path"; do
+  normalized_cache_path="/${cache_path#/}/"
+  if [[ ! $cache_path =~ ^/[A-Za-z0-9._/-]+$ \
+    || $cache_path == / \
+    || $cache_path == *"//"* \
+    || $normalized_cache_path == *"/./"* \
+    || $normalized_cache_path == *"/../"* ]]; then
+    echo "Model cache paths must be safe absolute paths without whitespace or dot segments." >&2
+    exit 1
+  fi
+done
+if [[ ! $model_cache_max_bytes =~ ^[1-9][0-9]*$ || ! $model_cache_min_free_bytes =~ ^[0-9]+$ ]]; then
+  echo "TSS_MODEL_CACHE_MAX_BYTES must be positive and TSS_MODEL_CACHE_MIN_FREE_BYTES non-negative." >&2
+  exit 1
+fi
+
 for command_name in ctr curl docker flock gzip openssl visudo; do
   command -v "$command_name" >/dev/null
 done
@@ -147,6 +173,11 @@ TRAINING_K8S_MLFLOW_SERVICE_URL=${k8s_mlflow_service_url}
 TRAINING_K8S_INTERNAL_CALLBACK_TOKEN=${callback_token}
 INFERENCE_KUBERNETES_WORKER_IMAGE=${inference_worker_image}
 INFERENCE_KUBERNETES_WORKER_IMAGE_PULL_POLICY=IfNotPresent
+INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED=${model_cache_enabled}
+INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH=${model_cache_node_path}
+INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH=${model_cache_mount_path}
+INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES=${model_cache_max_bytes}
+INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES=${model_cache_min_free_bytes}
 EOF
 chmod 600 "$runtime_env"
 

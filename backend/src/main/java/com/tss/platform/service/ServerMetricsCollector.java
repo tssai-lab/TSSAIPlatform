@@ -70,10 +70,11 @@ public class ServerMetricsCollector {
         // 获取各节点容量（CPU/内存/GPU）、OS 信息和节点标签
         Map<String, double[]> capacities = fetchNodeCapacities();
         Map<String, String> osInfo = fetchNodeOsInfo();
-        Map<String, String> nodeLabels = fetchNodeLabels();
+        Map<String, String> nodeLabels = fetchNodeLabelsJson();
 
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
+        syncNodeLabels(servers, nodeLabels);
         Map<String, ComputeServer> ipMap = new LinkedHashMap<>();
         for (ComputeServer s : servers) {
             ipMap.put(s.getServerIp(), s);
@@ -102,13 +103,6 @@ public class ServerMetricsCollector {
                     if (osImage != null && !osImage.isEmpty()
                             && (server.getSpecOs() == null || server.getSpecOs().isBlank())) {
                         server.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
-                        updated = true;
-                    }
-                    // 同步节点标签（决定任务可按哪个 nodeSelector 匹配到该节点，供调度器按池过滤）
-                    String nodeKey = server.getK8sNodeName() != null ? server.getK8sNodeName() : server.getServerIp();
-                    String labelsJson = nodeLabels.get(nodeKey);
-                    if (labelsJson != null && !labelsJson.equals(server.getK8sLabelsJson())) {
-                        server.setK8sLabelsJson(labelsJson);
                         updated = true;
                     }
                     if (updated) {
@@ -241,6 +235,50 @@ public class ServerMetricsCollector {
     }
 
     /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数、内存总量(GiB)、GPU 数量和 OS 信息 */
+    Map<String, String> fetchNodeLabelsJson() {
+        Map<String, String> labelsByNode = new LinkedHashMap<>();
+        try {
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult result =
+                    shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (!result.success()) {
+                return labelsByNode;
+            }
+            JsonNode root = objectMapper.readTree(result.output());
+            for (JsonNode item : root.path("items")) {
+                String name = item.path("metadata").path("name").asText();
+                JsonNode labels = item.path("metadata").path("labels");
+                // 空标签节点不写入：保持 k8s_labels_json 为 null，matchesNodeSelector 对空标签视为匹配全部，
+                // 避免把无标签节点写成 "{}" 后对所有 nodeSelector 都不匹配、导致该节点一个任务都分不到
+                if (!name.isBlank() && labels.isObject() && !labels.isEmpty()) {
+                    labelsByNode.put(name, objectMapper.writeValueAsString(labels));
+                }
+            }
+        } catch (Exception exception) {
+            LOG.warn("Failed to fetch Kubernetes node labels: {}", exception.getMessage());
+        }
+        return labelsByNode;
+    }
+
+    void syncNodeLabels(List<ComputeServer> servers, Map<String, String> labelsByNode) {
+        if (labelsByNode == null || labelsByNode.isEmpty()) {
+            return;
+        }
+        for (ComputeServer server : servers) {
+            String nodeName = server.getK8sNodeName();
+            if (nodeName == null || nodeName.isBlank()) {
+                nodeName = server.getServerIp();
+            }
+            String labelsJson = labelsByNode.get(nodeName);
+            if (labelsJson != null && !Objects.equals(labelsJson, server.getK8sLabelsJson())) {
+                server.setK8sLabelsJson(labelsJson);
+                server.setUpdatedAt(Instant.now());
+                serverRepo.save(server);
+            }
+        }
+    }
+
     Map<String, double[]> fetchNodeCapacities() {
         Map<String, double[]> caps = new LinkedHashMap<>();
         try {
@@ -298,30 +336,6 @@ public class ServerMetricsCollector {
             LOG.warn("获取节点OS信息失败: {}", e.getMessage());
         }
         return osMap;
-    }
-
-    /** 从 kubectl get nodes -o json 获取每个节点的标签（含 tss.ai/node-pool 等），序列化后存入 k8s_labels_json */
-    Map<String, String> fetchNodeLabels() {
-        Map<String, String> labelMap = new LinkedHashMap<>();
-        try {
-            Path kubectl = envService.resolveKubectl();
-            Path kubeconfig = envService.resolveKubeconfig();
-            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
-            ShellCommandRunner.CommandResult r = shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
-            if (r.success()) {
-                JsonNode root = objectMapper.readTree(r.output());
-                for (JsonNode item : root.path("items")) {
-                    String name = item.path("metadata").path("name").asText();
-                    JsonNode labels = item.path("metadata").path("labels");
-                    if (labels.isObject() && !labels.isEmpty()) {
-                        labelMap.put(name, objectMapper.writeValueAsString(labels));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LOG.warn("获取节点标签失败: {}", e.getMessage());
-        }
-        return labelMap;
     }
 
     // ── top / GPU ──

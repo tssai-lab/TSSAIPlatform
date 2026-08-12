@@ -139,6 +139,15 @@ training:
     monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
     bootstrap-timeout-seconds: ${TRAINING_K8S_BOOTSTRAP_TIMEOUT_SECONDS:600}
 
+inference:
+  kubernetes:
+    model-cache:
+      enabled: ${INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED:false}
+      node-path: ${INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH:/var/lib/tss-platform/model-cache}
+      mount-path: ${INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH:/var/cache/tss/models}
+      max-bytes: ${INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES:21474836480}
+      min-free-bytes: ${INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES:5368709120}
+
 resource-monitor:
   metrics:
     collect-interval-ms: ${RESOURCE_MONITOR_COLLECT_INTERVAL_MS:30000}

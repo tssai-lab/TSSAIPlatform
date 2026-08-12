@@ -22,6 +22,17 @@ public class AuthContext {
         return false;
     }
 
+    public boolean isSuperAdmin() {
+        Object roleValue = StpUtil.getTokenSession().get("roleId");
+        if (roleValue instanceof Integer roleId) {
+            return roleId == 1;
+        }
+        if (roleValue instanceof Number number) {
+            return number.intValue() == 1;
+        }
+        return false;
+    }
+
     public boolean canAccessOwner(Integer ownerUserId) {
         return isAdmin() || (ownerUserId != null && ownerUserId.equals(currentUserId()));
     }

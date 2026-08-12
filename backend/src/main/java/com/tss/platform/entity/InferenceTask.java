@@ -55,6 +55,18 @@ public class InferenceTask {
     @Column(name = "progress")
     private Integer progress;
 
+    @Column(name = "current_attempt", nullable = false)
+    private Integer currentAttempt = 1;
+
+    @Column(name = "retry_count", nullable = false)
+    private Integer retryCount = 0;
+
+    @Column(name = "max_retries", nullable = false)
+    private Integer maxRetries = 3;
+
+    @Column(name = "last_retry_at")
+    private Instant lastRetryAt;
+
     @Column(name = "result_json", columnDefinition = "TEXT")
     private String resultJson;
 

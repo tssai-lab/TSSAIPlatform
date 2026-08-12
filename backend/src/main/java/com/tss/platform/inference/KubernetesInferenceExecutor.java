@@ -1,18 +1,22 @@
 package com.tss.platform.inference;
 
+import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
+import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.InferenceScriptVersionRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
 import com.tss.platform.repository.ModelVersionRepository;
+import com.tss.platform.repository.ComputeServerRepository;
 import com.tss.platform.service.InferenceTaskService;
 import com.tss.platform.training.ShellCommandRunner;
 import com.tss.platform.training.TrainingEnvironmentService;
 import org.slf4j.Logger;
+import com.tss.platform.service.JobScheduler;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,13 +25,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class KubernetesInferenceExecutor implements InferenceExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesInferenceExecutor.class);
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
@@ -36,8 +44,11 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
     private final DatasetVersionRepository datasetVersionRepository;
     private final InferenceScriptVersionRepository scriptVersionRepository;
     private final KubernetesInferenceJobManifestBuilder manifestBuilder;
-    private final ShellCommandRunner shellCommandRunner;
     private final TransactionTemplate transactionTemplate;
+    private JobScheduler jobScheduler;
+    private ComputeServerRepository computeServerRepository;
+    private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
+
 
     @Value("${minio.access-key:}")
     private String minioAccessKey;
@@ -56,7 +67,6 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
             DatasetVersionRepository datasetVersionRepository,
             InferenceScriptVersionRepository scriptVersionRepository,
             KubernetesInferenceJobManifestBuilder manifestBuilder,
-            ShellCommandRunner shellCommandRunner,
             TransactionTemplate transactionTemplate
     ) {
         this.properties = properties;
@@ -66,8 +76,18 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         this.datasetVersionRepository = datasetVersionRepository;
         this.scriptVersionRepository = scriptVersionRepository;
         this.manifestBuilder = manifestBuilder;
-        this.shellCommandRunner = shellCommandRunner;
         this.transactionTemplate = transactionTemplate;
+    }
+
+    @Autowired
+    void setNodeScheduling(
+            JobScheduler jobScheduler,
+            ComputeServerRepository computeServerRepository,
+            InferenceModelCacheProperties modelCacheProperties
+    ) {
+        this.jobScheduler = jobScheduler;
+        this.computeServerRepository = computeServerRepository;
+        this.modelCacheProperties = modelCacheProperties;
     }
 
     @Override
@@ -82,14 +102,32 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
 
     @Override
     public void start(String taskId) {
-        Thread thread = new Thread(() -> submitJob(taskId), "k8s-inference-submit-" + taskId);
+        Integer attempt = taskRepository.findById(taskId)
+                .map(InferenceTask::getCurrentAttempt)
+                .orElse(1);
+        start(taskId, attempt);
+    }
+
+    public void start(String taskId, Integer attempt) {
+        int safeAttempt = Math.max(attempt == null ? 1 : attempt, 1);
+        Thread thread = new Thread(
+                () -> submitJob(taskId, safeAttempt),
+                "k8s-inference-submit-" + taskId + "-a" + safeAttempt
+        );
         thread.setDaemon(true);
         thread.start();
     }
 
     @Override
     public void stop(String taskId) {
-        String jobName = KubernetesInferenceJobNaming.jobNameForInference(taskId);
+        Integer attempt = taskRepository.findById(taskId)
+                .map(InferenceTask::getCurrentAttempt)
+                .orElse(1);
+        stop(taskId, attempt);
+    }
+
+    public void stop(String taskId, Integer attempt) {
+        String jobName = KubernetesInferenceJobNaming.jobNameForInference(taskId, attempt);
         Path kubeconfig = environmentService.resolveKubeconfig();
         List<String> deleteCmd = environmentService.kubectlCommand(
                 kubeconfig,
@@ -97,9 +135,10 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 "-n", properties.getNamespace(),
                 "--ignore-not-found"
         );
-        ShellCommandRunner.CommandResult result = shellCommandRunner.run(
+        ShellCommandRunner.CommandResult result = runWithStdin(
                 deleteCmd,
                 environmentService.resolveProjectRoot(),
+                "",
                 60
         );
         if (!result.success()) {
@@ -107,11 +146,17 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         }
     }
 
-    private void submitJob(String taskId) {
-        updateStatus(taskId, "queued", 0, null);
+    private void submitJob(String taskId, Integer attempt) {
+        updateStatus(taskId, attempt, "queued", 0, null);
         try {
             InferenceTask task = taskRepository.findById(taskId)
                     .orElseThrow(() -> new IllegalArgumentException("推理任务不存在: " + taskId));
+            int currentAttempt = Math.max(task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(), 1);
+            if (currentAttempt != attempt || TERMINAL_STATUSES.contains(task.getStatus())) {
+                LOG.info("Skip stale inference submission: taskId={}, expectedAttempt={}, currentAttempt={}, status={}",
+                        taskId, attempt, currentAttempt, task.getStatus());
+                return;
+            }
             ModelVersion modelVersion = modelVersionRepository.findByIdAndDeletedFalse(task.getModelVersionId())
                     .orElseThrow(() -> new IllegalArgumentException("模型版本不存在: " + task.getModelVersionId()));
             InferenceScriptVersion scriptVersion = scriptVersionRepository.findByIdAndDeletedFalse(task.getScriptVersionId())
@@ -121,6 +166,28 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
                         .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在: " + task.getDatasetVersionId()));
             }
+            String targetNodeName = null;
+            if (modelCacheProperties.isEnabled()) {
+                if (jobScheduler == null || computeServerRepository == null) {
+                    throw new IllegalStateException("model cache node scheduling is not configured");
+                }
+                String assignedServerIp;
+                synchronized (jobScheduler) {
+                    assignedServerIp = jobScheduler.assignNodeForInference(
+                            task,
+                            modelVersion.getArtifactAttestedSha256()
+                    );
+                    if (assignedServerIp == null || assignedServerIp.isBlank()) {
+                        throw new IllegalStateException("no cache-ready node has enough resources for inference");
+                    }
+                    if (!bindInferenceNode(taskId, attempt, assignedServerIp)) {
+                        LOG.info("Skip stale inference node binding: taskId={}, attempt={}", taskId, attempt);
+                        return;
+                    }
+                }
+                targetNodeName = resolveNodeName(assignedServerIp);
+            }
+
 
             String yaml = manifestBuilder.buildJobYaml(
                     task,
@@ -129,7 +196,8 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                     datasetVersion,
                     minioAccessKey,
                     minioSecretKey,
-                    minioBucket
+                    minioBucket,
+                    targetNodeName
             );
 
             Path kubeconfig = environmentService.resolveKubeconfig();
@@ -144,14 +212,14 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 throw new IllegalStateException("提交 K8s 推理 Job 失败: " + result.errorMessage() + "\n" + result.output());
             }
             LOG.info("K8s 推理 Job 已提交: taskId={}, job={}",
-                    taskId, KubernetesInferenceJobNaming.jobNameForInference(taskId));
+                    taskId, KubernetesInferenceJobNaming.jobNameForInference(taskId, task.getCurrentAttempt()));
         } catch (Exception e) {
-            LOG.error("K8s 推理 Job 提交失败: taskId={}", taskId, e);
-            updateStatus(taskId, "failed", 0, e.getMessage());
+            LOG.error("K8s 推理 Job 提交失败: taskId={}, attempt={}", taskId, attempt, e);
+            updateStatus(taskId, attempt, "failed", 0, e.getMessage());
         }
     }
 
-    private ShellCommandRunner.CommandResult runWithStdin(
+    ShellCommandRunner.CommandResult runWithStdin(
             List<String> command,
             Path workingDirectory,
             String stdinContent,
@@ -162,35 +230,89 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
             builder.directory(workingDirectory.toFile());
         }
         builder.redirectErrorStream(true);
+        Process process = null;
         try {
-            Process process = builder.start();
+            process = builder.start();
+            Process startedProcess = process;
             try (OutputStream outputStream = process.getOutputStream()) {
                 outputStream.write(stdinContent.getBytes(StandardCharsets.UTF_8));
             }
-            StringBuilder output = new StringBuilder();
-            try (var reader = process.inputReader(StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append('\n');
+            StringBuffer output = new StringBuffer();
+            Thread outputReader = new Thread(() -> {
+                try (var reader = startedProcess.inputReader(StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append('\n');
+                    }
+                } catch (Exception e) {
+                    LOG.debug("Failed to drain kubectl output: {}", e.getMessage());
                 }
-            }
-            boolean finished = process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+            }, "k8s-inference-output-reader");
+            outputReader.setDaemon(true);
+            outputReader.start();
+
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+                outputReader.join(1_000);
                 return ShellCommandRunner.CommandResult.failed(-1, output.toString(), "kubectl apply 超时");
             }
+            outputReader.join(5_000);
             int exitCode = process.exitValue();
             if (exitCode == 0) {
                 return ShellCommandRunner.CommandResult.success(output.toString());
             }
             return ShellCommandRunner.CommandResult.failed(exitCode, output.toString(), "kubectl apply 失败 exit=" + exitCode);
+        } catch (InterruptedException e) {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+            Thread.currentThread().interrupt();
+            return ShellCommandRunner.CommandResult.failed(-1, "", "kubectl apply interrupted");
         } catch (Exception e) {
             return ShellCommandRunner.CommandResult.failed(-1, "", e.getMessage());
         }
     }
 
-    private void updateStatus(String taskId, String status, int progress, String errorMessage) {
-        transactionTemplate.executeWithoutResult(tx -> taskRepository.findById(taskId).ifPresent(task -> {
+    String resolveNodeName(String serverIp) {
+        return computeServerRepository.findByServerIpAndDeletedFalse(serverIp)
+                .map(ComputeServer::getK8sNodeName)
+                .filter(name -> !name.isBlank())
+                .orElse(serverIp);
+    }
+
+    private boolean bindInferenceNode(String taskId, Integer attempt, String serverIp) {
+        Boolean bound = transactionTemplate.execute(tx -> taskRepository.findByIdForUpdate(taskId)
+                .map(task -> {
+                    int currentAttempt = Math.max(
+                            task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(),
+                            1
+                    );
+                    if (currentAttempt != attempt || !"scheduled".equals(task.getStatus())) {
+                        return false;
+                    }
+                    task.setServerIp(serverIp);
+                    task.setUpdatedAt(Instant.now());
+                    taskRepository.save(task);
+                    return true;
+                })
+                .orElse(false));
+        return Boolean.TRUE.equals(bound);
+    }
+
+    private void updateStatus(
+            String taskId,
+            Integer attempt,
+            String status,
+            int progress,
+            String errorMessage
+    ) {
+        transactionTemplate.executeWithoutResult(tx -> taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
+            int currentAttempt = Math.max(task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(), 1);
+            if (currentAttempt != attempt || TERMINAL_STATUSES.contains(task.getStatus())) {
+                return;
+            }
             // scheduled 状态的任务已分配到节点，不要降级回 queued
             if ("queued".equals(status) && "scheduled".equals(task.getStatus())) {
                 return;
