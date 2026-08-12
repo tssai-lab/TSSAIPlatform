@@ -139,7 +139,7 @@ export default [
         path: '/task/queue',
         name: '全局排队',
         component: './task/queue',
-        access: 'canViewResourceStatus',
+        access: 'isSuperAdmin',
       },
       {
         path: '/task/resourceMonitor/detail/:serverIp',
