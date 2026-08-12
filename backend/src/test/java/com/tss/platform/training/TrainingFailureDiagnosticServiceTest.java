@@ -124,7 +124,13 @@ class TrainingFailureDiagnosticServiceTest {
         );
         verify(shellCommandRunner, atLeastOnce()).run(
                 org.mockito.ArgumentMatchers.argThat(command -> command.stream()
-                        .anyMatch(argument -> argument.contains(".items[0:10]"))),
+                        .anyMatch(argument -> argument.contains(".items[*]"))),
+                any(Path.class),
+                anyInt()
+        );
+        verify(shellCommandRunner, never()).run(
+                org.mockito.ArgumentMatchers.argThat(command -> command.stream()
+                        .anyMatch(argument -> argument.matches(".*\\.items\\[[0-9]+:[0-9]+].*"))),
                 any(Path.class),
                 anyInt()
         );

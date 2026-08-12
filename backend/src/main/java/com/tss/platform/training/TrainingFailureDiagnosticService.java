@@ -287,7 +287,7 @@ public class TrainingFailureDiagnosticService {
                 "get", "pods",
                 "-n", properties.getNamespace(),
                 "-l", "job-name=" + jobName,
-                "-o", "jsonpath={range .items[0:10]}{.metadata.name}{\"\\n\"}{end}"
+                "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}"
         );
         List<String> podNames = safeNames(podNamesResult);
         if (!podNamesResult.success()) {
@@ -347,7 +347,7 @@ public class TrainingFailureDiagnosticService {
                 "-n", properties.getNamespace(),
                 "--field-selector=involvedObject.kind=" + kind + ",involvedObject.name=" + name + ",type=Warning",
                 "--sort-by=.lastTimestamp",
-                "-o", "jsonpath={range .items[0:50]}EVENT_REASON={.reason}{\"\\n\"}EVENT_COUNT={.count}{\"\\n\"}"
+                "-o", "jsonpath={range .items[*]}EVENT_REASON={.reason}{\"\\n\"}EVENT_COUNT={.count}{\"\\n\"}"
                         + "EVENT_FIRST={.firstTimestamp}{\"\\n\"}EVENT_LAST={.lastTimestamp}{\"\\n\"}"
                         + "EVENT_MESSAGE={.message}{\"\\n\"}---{\"\\n\"}{end}"
         );
