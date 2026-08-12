@@ -128,8 +128,13 @@ public class ServerMetricsCollector {
         cleanupHistory();
     }
 
-    private void collectOne(ComputeServer server, TopData top, double[] capacity) {
-        ServerMetricSnapshot snap = snapshotRepo.findByServerIp(server.getServerIp())
+    void collectOne(ComputeServer server, TopData top, double[] capacity) {
+        Optional<ServerMetricSnapshot> existingSnapshot = snapshotRepo.findByServerIp(server.getServerIp());
+        if (top == null && existingSnapshot.isEmpty()) {
+            // A missing first sample is not a real zero. Leave the snapshot absent so the API reports unavailable.
+            return;
+        }
+        ServerMetricSnapshot snap = existingSnapshot
                 .orElseGet(() -> {
                     ServerMetricSnapshot s = new ServerMetricSnapshot();
                     s.setServerIp(server.getServerIp());
@@ -149,9 +154,6 @@ public class ServerMetricsCollector {
                 snap.setCpuRate(top.cpuPct);
                 snap.setMemRate(top.memPct);
             }
-        } else {
-            snap.setCpuRate(0.0);
-            snap.setMemRate(0.0);
         }
 
         // 磁盘 / 网络：从 kubelet stats summary 接口采集
@@ -159,9 +161,10 @@ public class ServerMetricsCollector {
                 server.getK8sNodeName() != null ? server.getK8sNodeName() : server.getServerIp(),
                 server.getServerIp());
         if (nodeStats != null) {
-            if (nodeStats.diskRate() > 0) snap.setDiskRate(nodeStats.diskRate());
-            if (nodeStats.networkRxRate() > 0) snap.setNetworkIn(nodeStats.networkRxRate());
-            if (nodeStats.networkTxRate() > 0) snap.setNetworkOut(nodeStats.networkTxRate());
+            // Zero is a valid successful sample. Do not preserve an old non-zero value in that case.
+            snap.setDiskRate(nodeStats.diskRate());
+            snap.setNetworkIn(nodeStats.networkRxRate());
+            snap.setNetworkOut(nodeStats.networkTxRate());
         }
         // 首次采集或采集失败时，保留已有值；仅在全新快照时设默认 0
         if (snap.getDiskRate() == null) snap.setDiskRate(0.0);
@@ -183,14 +186,24 @@ public class ServerMetricsCollector {
             collectGpu(server.getServerIp(), snap);
         }
 
-        // status calc
-        double maxRate = Math.max(Math.max(snap.getCpuRate(), snap.getMemRate()), snap.getGpuRate());
-        snap.setStatus(maxRate >= 85.0 ? "warning" : "online");
-        snap.setLastHeartbeat(now);
+        // lastHeartbeat means the last successful core Metrics API sample. updatedAt is the latest attempt.
+        // Their difference lets the API distinguish stale/unavailable data without a schema change.
+        if (top != null) {
+            double maxRate = Math.max(Math.max(snap.getCpuRate(), snap.getMemRate()), snap.getGpuRate());
+            snap.setStatus(maxRate >= 85.0 ? "warning" : "online");
+            snap.setLastHeartbeat(now);
+        } else {
+            snap.setStatus("warning");
+        }
         snap.setUpdatedAt(now);
         snapshotRepo.save(snap);
 
-        // history — 注意：networkIn/Out 存累计字节(MB)，供下次增量计算，不是速率
+        if (top == null) {
+            // Do not create a fresh chart point from preserved CPU/memory values.
+            return;
+        }
+
+        // history — networkIn/Out store cumulative bytes for the next delta calculation, not rates.
         ServerMetricHistory hist = new ServerMetricHistory();
         hist.setServerIp(server.getServerIp());
         hist.setCpuRate(snap.getCpuRate());
@@ -290,22 +303,26 @@ public class ServerMetricsCollector {
                 JsonNode root = objectMapper.readTree(r.output());
                 for (JsonNode item : root.path("items")) {
                     String name = item.path("metadata").path("name").asText();
-                    JsonNode cap = item.path("status").path("capacity");
-                    double cpu = parseCpu(cap.path("cpu").asText());
-                    double memGiB = parseMemToBytes(cap.path("memory").asText()) / (1024.0 * 1024.0 * 1024.0);
-                    // GPU count from nvidia.com/gpu capacity
-                    double gpuCount = 0;
-                    String gpuStr = cap.path("nvidia.com/gpu").asText();
-                    if (!gpuStr.isEmpty()) {
-                        try { gpuCount = Double.parseDouble(gpuStr); } catch (NumberFormatException ignored) {}
+                    try {
+                        JsonNode cap = item.path("status").path("capacity");
+                        double cpu = parseCpu(cap.path("cpu").asText());
+                        double memGiB = parseMemToBytes(cap.path("memory").asText()) / (1024.0 * 1024.0 * 1024.0);
+                        // GPU count from nvidia.com/gpu capacity
+                        double gpuCount = 0;
+                        String gpuStr = cap.path("nvidia.com/gpu").asText();
+                        if (!gpuStr.isEmpty()) {
+                            try { gpuCount = Double.parseDouble(gpuStr); } catch (NumberFormatException ignored) {}
+                        }
+                        // 磁盘总容量 from ephemeral-storage capacity (GiB)
+                        double diskCapacityGiB = 0;
+                        String diskCapStr = cap.path("ephemeral-storage").asText();
+                        if (!diskCapStr.isEmpty()) {
+                            diskCapacityGiB = parseMemToBytes(diskCapStr) / (1024.0 * 1024.0 * 1024.0);
+                        }
+                        caps.put(name, new double[]{cpu, memGiB, gpuCount, diskCapacityGiB});
+                    } catch (RuntimeException exception) {
+                        LOG.warn("忽略无效节点容量 node={}: {}", name, exception.getMessage());
                     }
-                    // 磁盘总容量 from ephemeral-storage capacity (GiB)
-                    double diskCapacityGiB = 0;
-                    String diskCapStr = cap.path("ephemeral-storage").asText();
-                    if (!diskCapStr.isEmpty()) {
-                        diskCapacityGiB = parseMemToBytes(diskCapStr) / (1024.0 * 1024.0 * 1024.0);
-                    }
-                    caps.put(name, new double[]{cpu, memGiB, gpuCount, diskCapacityGiB});
                 }
             }
         } catch (Exception e) {
@@ -360,15 +377,19 @@ public class ServerMetricsCollector {
                 JsonNode root = objectMapper.readTree(r.output());
                 for (JsonNode item : root.path("items")) {
                     String name = item.path("metadata").path("name").asText();
-                    JsonNode usage = item.path("usage");
-                    String cpuS = usage.path("cpu").asText();
-                    String memS = usage.path("memory").asText();
-                    double cpuUsed = parseCpu(cpuS);
-                    long memBytes = parseMemToBytes(memS);
-                    // ephemeral-storage usage (may not exist on all clusters)
-                    String diskS = usage.path("ephemeral-storage").asText();
-                    long diskBytes = diskS.isEmpty() ? 0 : parseMemToBytes(diskS);
-                    result.put(name, new TopData(cpuUsed, memBytes, 0, 0, diskBytes));
+                    try {
+                        JsonNode usage = item.path("usage");
+                        String cpuS = usage.path("cpu").asText();
+                        String memS = usage.path("memory").asText();
+                        double cpuUsed = parseCpu(cpuS);
+                        long memBytes = parseMemToBytes(memS);
+                        // ephemeral-storage usage (may not exist on all clusters)
+                        String diskS = usage.path("ephemeral-storage").asText();
+                        long diskBytes = diskS.isEmpty() ? 0 : parseMemToBytes(diskS);
+                        result.put(name, new TopData(cpuUsed, memBytes, 0, 0, diskBytes));
+                    } catch (RuntimeException exception) {
+                        LOG.warn("忽略无效节点指标 node={}: {}", name, exception.getMessage());
+                    }
                 }
             }
         } catch (Exception e) {
@@ -386,12 +407,16 @@ public class ServerMetricsCollector {
                         Matcher m = TOP_LINE.matcher(line.trim());
                         if (m.matches()) {
                             String name = m.group(1);
-                            double cpu = parseCpu(m.group(2));
-                            // % from group(3)
-                            double cpuPct = parsePct(m.group(3));
-                            long mem = parseMemToBytes(m.group(4));
-                            double memPct = parsePct(m.group(5));
-                            result.put(name, new TopData(cpu, mem, cpuPct, memPct, 0));
+                            try {
+                                double cpu = parseCpu(m.group(2));
+                                // % from group(3)
+                                double cpuPct = parsePct(m.group(3));
+                                long mem = parseMemToBytes(m.group(4));
+                                double memPct = parsePct(m.group(5));
+                                result.put(name, new TopData(cpu, mem, cpuPct, memPct, 0));
+                            } catch (RuntimeException exception) {
+                                LOG.warn("忽略无效 top 指标 node={}: {}", name, exception.getMessage());
+                            }
                         }
                     }
                 }
@@ -474,24 +499,20 @@ public class ServerMetricsCollector {
                 Instant now = Instant.now();
                 ServerMetricHistory prev = historyRepo.findFirstByServerIpOrderByCollectedAtDesc(serverIp);
                 if (prev != null && prev.getCollectedAt() != null) {
-                    // history 中 networkIn/Out 存的是上次的累计字节（MB）
+                    // history 中 networkIn/Out 存的是上次的累计字节。
                     long prevRx = (long)(prev.getNetworkIn() != null ? prev.getNetworkIn() : 0);
                     long prevTx = (long)(prev.getNetworkOut() != null ? prev.getNetworkOut() : 0);
                     double elapsedSec = Math.max(1,
                             (now.toEpochMilli() - prev.getCollectedAt().toEpochMilli()) / 1000.0);
-                    if (prevRx > 0 && rxBytes > prevRx) {
-                        rxRate = Math.round((rxBytes - prevRx) * 10.0 / (1024 * 1024 * elapsedSec)) / 10.0;
-                    }
-                    if (prevTx > 0 && txBytes > prevTx) {
-                        txRate = Math.round((txBytes - prevTx) * 10.0 / (1024 * 1024 * elapsedSec)) / 10.0;
-                    }
+                    rxRate = networkRate(rxBytes, prevRx, elapsedSec);
+                    txRate = networkRate(txBytes, prevTx, elapsedSec);
                 }
             }
 
             LOG.info("kubelet stats 采集成功 node={}, disk={}%, rx={}MB/s, tx={}MB/s",
                     nodeName, diskRate, rxRate, txRate);
             return new NodeStats(diskRate, rxRate, txRate,
-                    rxBytes / (1024 * 1024), txBytes / (1024 * 1024));  // 累计字节转为 MB 存储
+                    rxBytes, txBytes);
         } catch (Exception e) {
             LOG.warn("kubelet stats 采集异常 node={}: {}", nodeName, e.getMessage());
             return null;
@@ -513,20 +534,24 @@ public class ServerMetricsCollector {
 
     // ── parsing ──
     static double parseCpu(String s) {
-        if (s == null || s.isEmpty()) return 0;
-        s = s.trim();
-        if (s.endsWith("m")) return Double.parseDouble(s.replace("m", "")) / 1000.0;
-        if (s.endsWith("n")) return Double.parseDouble(s.replace("n", "")) / 1_000_000_000.0;
-        return Double.parseDouble(s);
+        return KubernetesQuantityParser.cpuCores(s);
     }
 
     static long parseMemToBytes(String s) {
-        if (s == null || s.isEmpty()) return 0;
-        s = s.trim();
-        if (s.endsWith("Ki")) return (long)(Double.parseDouble(s.replace("Ki","")) * 1024);
-        if (s.endsWith("Mi")) return (long)(Double.parseDouble(s.replace("Mi","")) * 1024 * 1024);
-        if (s.endsWith("Gi")) return (long)(Double.parseDouble(s.replace("Gi","")) * 1024 * 1024 * 1024);
-        return Long.parseLong(s);
+        return KubernetesQuantityParser.memoryBytes(s);
+    }
+
+    static double networkRate(long currentBytes, long previousBytes, double elapsedSeconds) {
+        if (currentBytes <= previousBytes || previousBytes <= 0 || elapsedSeconds <= 0) {
+            return 0;
+        }
+        // Versions before G1 stored MiB in this column. Skip one transition sample instead of
+        // reporting a huge false spike; the current full-byte value is persisted for the next run.
+        if (previousBytes < currentBytes / 1024L) {
+            return 0;
+        }
+        return Math.round((currentBytes - previousBytes) * 10.0
+                / (1024 * 1024 * elapsedSeconds)) / 10.0;
     }
 
     static double parsePct(String s) {
