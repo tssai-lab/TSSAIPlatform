@@ -116,6 +116,18 @@ class TrainingFailureDiagnosticServiceTest {
                 any(Path.class),
                 anyInt()
         );
+        verify(shellCommandRunner, never()).run(
+                org.mockito.ArgumentMatchers.argThat(command -> command.stream()
+                        .anyMatch(argument -> argument.startsWith("--limit="))),
+                any(Path.class),
+                anyInt()
+        );
+        verify(shellCommandRunner, atLeastOnce()).run(
+                org.mockito.ArgumentMatchers.argThat(command -> command.stream()
+                        .anyMatch(argument -> argument.contains(".items[0:10]"))),
+                any(Path.class),
+                anyInt()
+        );
         verify(shellCommandRunner, atLeastOnce()).run(
                 org.mockito.ArgumentMatchers.argThat(command -> command.contains("pod-2")),
                 any(Path.class),
