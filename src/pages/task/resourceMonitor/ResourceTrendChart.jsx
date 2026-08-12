@@ -34,12 +34,27 @@ const transformChartData = (data = [], interval = '1hour') => {
     return b.fullTime.localeCompare(a.fullTime);
   });
 
-  const maxIndex = Math.max(sorted.length - 1, 1);
+  // 按 type 分组，各自用组内序号算 offset。
+  // 若用整段数组下标，三条曲线交织时每条线的首尾点都会内缩，
+  // 导致线两端够不到横轴边缘、看起来短一截。
+  const groups = new Map();
+  for (const d of sorted) {
+    const key = d.type ?? 'default';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(d);
+  }
 
-  return sorted.map((d, index) => ({
-    ...d,
-    offset: +((index * maxOffset) / maxIndex).toFixed(2),
-  }));
+  const result = [];
+  for (const series of groups.values()) {
+    const maxIndex = Math.max(series.length - 1, 1);
+    series.forEach((d, index) => {
+      result.push({
+        ...d,
+        offset: +((index * maxOffset) / maxIndex).toFixed(2),
+      });
+    });
+  }
+  return result;
 };
 
 /** 生成 X 轴刻度（右 0 → 左 max，中间均分） */
