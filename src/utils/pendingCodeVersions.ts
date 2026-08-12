@@ -1,11 +1,8 @@
 /**
- * 待审核训练代码本地登记。
+ * 待审核训练代码本地登记（兜底）。
  *
- * 现网 GET /api/code/version/list 仅返回 APPROVED（listApproved），
- * 管理员无法从官方列表拿到 PENDING。上传成功后写入本机队列，
- * 并支持管理员手工录入 codeVersionId，方便在「待审核」页集中处理。
- *
- * 跨浏览器/跨机器仍需后端提供 PENDING 列表接口。
+ * 正式待审队列以 GET /api/v2/admin/code-review-tasks 为准；
+ * 本机登记仅用于手工录入 codeVersionId 等运维场景。
  */
 
 export type PendingCodeVersionRecord = {

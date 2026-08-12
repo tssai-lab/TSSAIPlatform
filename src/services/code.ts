@@ -259,62 +259,69 @@ export async function decideCodeVersion(
   options?: { [key: string]: any } & { reason?: string },
 ) {
   const reason = options?.reason;
+  if ((decision === 'REJECT' || decision === 'REVOKE') && !reason?.trim()) {
+    throw new Error('拒绝或撤销时必须填写原因');
+  }
+
+  let detail: Awaited<ReturnType<typeof getAdminCodeReviewTaskDetail>> | undefined;
+  let detailError: unknown;
   try {
-    const detail = await getAdminCodeReviewTaskDetail(codeVersionId, options);
-    if (hasV2ApprovalEvidence(detail) || decision === 'REVOKE') {
+    detail = await getAdminCodeReviewTaskDetail(codeVersionId, options);
+  } catch (error) {
+    detailError = error;
+  }
+
+  const mapApprovalResult = (data: Record<string, unknown>) => ({
+    success: true as const,
+    data: {
+      codeVersionId,
+      approvalStatus:
+        (data?.decision as string) ||
+        (data?.approvalStatus as string) ||
+        (decision === 'APPROVE'
+          ? 'APPROVED'
+          : decision === 'REJECT'
+            ? 'REJECTED'
+            : 'REVOKED'),
+      decisionSource:
+        typeof data?.decisionSource === 'string'
+          ? data.decisionSource
+          : undefined,
+    } as CodeVersionApprovalResult,
+  });
+
+  if (detail) {
+    if (decision === 'REVOKE' || hasV2ApprovalEvidence(detail)) {
       const data = await approveV2CodeVersion(
         codeVersionId,
         buildV2ApprovalRequest(detail, decision, reason),
         options,
       );
-      return {
-        success: true,
-        data: {
-          codeVersionId,
-          approvalStatus:
-            (data?.decision as string) ||
-            (data?.approvalStatus as string) ||
-            (decision === 'APPROVE'
-              ? 'APPROVED'
-              : decision === 'REJECT'
-                ? 'REJECTED'
-                : 'REVOKED'),
-          decisionSource:
-            typeof data?.decisionSource === 'string'
-              ? data.decisionSource
-              : undefined,
-        } as CodeVersionApprovalResult,
-      };
+      return mapApprovalResult(data as Record<string, unknown>);
     }
-  } catch {
-    // fallback below
+    if (decision === 'APPROVE' || decision === 'REJECT') {
+      const risk = detail.riskAssessment;
+      const riskHint = risk?.status
+        ? `风险扫描状态：${risk.status}`
+        : '风险证据尚未生成';
+      throw new Error(
+        `审批证据未就绪，无法${decision === 'APPROVE' ? '通过' : '拒绝'}。${riskHint}；请等待扫描 COMPLETED 或在「更多」中触发重扫。`,
+      );
+    }
   }
+
+  if (decision === 'REJECT' || decision === 'REVOKE') {
+    if (detailError) throw detailError;
+    throw new Error('无法获取审核任务详情，请确认版本仍在待审队列中');
+  }
+
+  // APPROVE：管理员详情不可用时尝试 V2（无 expected*）再回退 legacy
   try {
-    const body: { decision: typeof decision; reason?: string } = { decision };
+    const body: { decision: 'APPROVE'; reason?: string } = { decision: 'APPROVE' };
     if (reason?.trim()) body.reason = reason.trim();
     const data = await approveV2CodeVersion(codeVersionId, body, options);
-    return {
-      success: true,
-      data: {
-        codeVersionId,
-        approvalStatus:
-          (data?.decision as string) ||
-          (data?.approvalStatus as string) ||
-          (decision === 'APPROVE'
-            ? 'APPROVED'
-            : decision === 'REJECT'
-              ? 'REJECTED'
-              : 'REVOKED'),
-        decisionSource:
-          typeof data?.decisionSource === 'string'
-            ? data.decisionSource
-            : undefined,
-      } as CodeVersionApprovalResult,
-    };
-  } catch (error) {
-    if (decision !== 'APPROVE') {
-      throw error;
-    }
+    return mapApprovalResult(data as Record<string, unknown>);
+  } catch {
     return request<{
       success: boolean;
       data: CodeVersionApprovalResult;

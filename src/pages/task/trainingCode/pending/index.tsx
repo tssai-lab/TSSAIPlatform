@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
+import type { CodeVersionListItem } from '@/services/code';
 import {
   approveCodeVersion,
   CONSISTENCY_TRAINING_PROFILE,
@@ -50,6 +51,15 @@ function approvalTag(status?: string) {
   return <Tag>{status || 'PENDING'}</Tag>;
 }
 
+function riskLevelTag(level?: string) {
+  const v = String(level || '').toUpperCase();
+  if (v === 'HIGH') return <Tag color="error">HIGH</Tag>;
+  if (v === 'MEDIUM') return <Tag color="warning">MEDIUM</Tag>;
+  if (v === 'LOW') return <Tag color="success">LOW</Tag>;
+  if (v === 'UNKNOWN') return <Tag>UNKNOWN</Tag>;
+  return <Tag>{level || '-'}</Tag>;
+}
+
 type FindingRow = {
   id?: string;
   ruleId?: string;
@@ -61,6 +71,22 @@ type FindingRow = {
   description?: string;
 };
 
+function manualRecordToRow(
+  record: PendingCodeVersionRecord,
+): CodeVersionListItem {
+  return {
+    codeVersionId: record.codeVersionId,
+    codeAssetId: '',
+    codeAssetName: record.codeAssetName || '',
+    version: '',
+    fileName: record.fileName || '',
+    trainingProfile: record.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+    approvalStatus: record.approvalStatus || 'PENDING',
+    status: 'READY',
+    submittedAt: record.uploadedAt,
+  };
+}
+
 const TrainingCodePending: React.FC = () => {
   const access = useAccess();
   const { initialState } = useModel('@@initialState');
@@ -69,8 +95,9 @@ const TrainingCodePending: React.FC = () => {
   const [addForm] = Form.useForm();
   const [adding, setAdding] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectTarget, setRejectTarget] =
-    useState<PendingCodeVersionRecord | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<CodeVersionListItem | null>(
+    null,
+  );
   const [rejectForm] = Form.useForm();
   const [rejecting, setRejecting] = useState(false);
   const [findingsOpen, setFindingsOpen] = useState(false);
@@ -80,66 +107,61 @@ const TrainingCodePending: React.FC = () => {
 
   useEffect(() => {
     if (!access.isAdmin) {
-      message.warning('仅管理员可访问训练代码待审核');
-      history.push('/task/code/list');
+      history.replace('/403');
     }
   }, [access.isAdmin]);
 
-  const requestList = async () => {
-    const local = listPendingCodeVersions().filter((item) => {
-      const status = String(item.approvalStatus || 'PENDING').toUpperCase();
-      return status !== 'APPROVED' && status !== 'REJECTED';
-    });
+  const requestList = async (params: {
+    current?: number;
+    pageSize?: number;
+    riskLevel?: string;
+    keyword?: string;
+  }) => {
+    const current = params.current ?? 1;
+    const pageSize = params.pageSize ?? 10;
 
-    let remote: PendingCodeVersionRecord[] = [];
+    let remote: CodeVersionListItem[] = [];
+    let total = 0;
     try {
       const res = await fetchPendingCodeReviewTasks(
-        { current: 1, pageSize: 100 },
+        {
+          current,
+          pageSize,
+          riskLevel: params.riskLevel?.trim() || undefined,
+          keyword: params.keyword?.trim() || undefined,
+        },
         { skipErrorHandler: true },
       );
-      const rows = Array.isArray(res?.data) ? res.data : [];
-      remote = rows
-        .filter((item) => {
-          const status = String(item.approvalStatus || 'PENDING').toUpperCase();
-          return status === 'PENDING';
-        })
-        .map((item) => ({
-          codeVersionId: item.codeVersionId,
-          codeAssetName: item.codeAssetName,
-          fileName: item.fileName,
-          trainingProfile: item.trainingProfile,
-          approvalStatus: 'PENDING',
-          source: 'api' as const,
-          uploadedAt: item.submittedAt,
-        }));
-      remote.forEach((item) => {
-        upsertPendingCodeVersion(item);
-      });
-    } catch {
-      // ignore
+      remote = Array.isArray(res?.data) ? res.data : [];
+      total = res?.total ?? remote.length;
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '加载待审核队列失败'));
     }
 
-    const merged = new Map<string, PendingCodeVersionRecord>();
-    // 远端优先补全 fileName 等字段，本地登记可覆盖审批状态
-    [...local, ...remote].forEach((item) => {
-      if (!item.codeVersionId) return;
-      const prev = merged.get(item.codeVersionId);
-      merged.set(item.codeVersionId, {
-        ...prev,
-        ...item,
-        fileName: item.fileName?.trim() || prev?.fileName,
-        codeAssetName: item.codeAssetName?.trim() || prev?.codeAssetName,
-        trainingProfile: item.trainingProfile?.trim() || prev?.trainingProfile,
-        approvalStatus:
-          item.approvalStatus || prev?.approvalStatus || 'PENDING',
-      });
-    });
+    // 仅合并手工登记、且不在远端队列中的条目（第一页展示）
+    const remoteIds = new Set(remote.map((item) => item.codeVersionId));
+    const manualOnly =
+      current === 1
+        ? listPendingCodeVersions()
+            .filter((item) => item.source === 'manual')
+            .filter((item) => {
+              const status = String(
+                item.approvalStatus || 'PENDING',
+              ).toUpperCase();
+              return status === 'PENDING' && !remoteIds.has(item.codeVersionId);
+            })
+            .map(manualRecordToRow)
+        : [];
 
-    const data = [...merged.values()];
-    return { data, success: true, total: data.length };
+    const data = [...manualOnly, ...remote];
+    return {
+      data,
+      success: true,
+      total: total + manualOnly.length,
+    };
   };
 
-  const handleApprove = async (record: PendingCodeVersionRecord) => {
+  const handleApprove = async (record: CodeVersionListItem) => {
     try {
       try {
         await checkCodeVersionForTraining(
@@ -160,12 +182,12 @@ const TrainingCodePending: React.FC = () => {
       markPendingCodeApproved(record.codeVersionId);
       message.success('审核通过，已可在「训练代码」列表中查看');
       actionRef.current?.reload();
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(getApiErrorMessage(error, '审核失败'));
     }
   };
 
-  const openReject = (record: PendingCodeVersionRecord) => {
+  const openReject = (record: CodeVersionListItem) => {
     setRejectTarget(record);
     rejectForm.resetFields();
     setRejectOpen(true);
@@ -190,26 +212,26 @@ const TrainingCodePending: React.FC = () => {
       setRejectOpen(false);
       setRejectTarget(null);
       actionRef.current?.reload();
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(getApiErrorMessage(error, '拒绝失败'));
     } finally {
       setRejecting(false);
     }
   };
 
-  const handleRescan = async (record: PendingCodeVersionRecord) => {
+  const handleRescan = async (record: CodeVersionListItem) => {
     try {
       await rescanCodeReviewTask(record.codeVersionId, {
         skipErrorHandler: true,
       });
       message.success('已触发风险重扫');
       actionRef.current?.reload();
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(getApiErrorMessage(error, '重扫失败'));
     }
   };
 
-  const handleUpgrade = async (record: PendingCodeVersionRecord) => {
+  const handleUpgrade = async (record: CodeVersionListItem) => {
     try {
       const res = await upgradeCodeArtifact(record.codeVersionId, {
         skipErrorHandler: true,
@@ -220,12 +242,12 @@ const TrainingCodePending: React.FC = () => {
           : '制品升级完成，请重新审核',
       );
       actionRef.current?.reload();
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(getApiErrorMessage(error, '制品升级失败'));
     }
   };
 
-  const handleOpenFindings = async (record: PendingCodeVersionRecord) => {
+  const handleOpenFindings = async (record: CodeVersionListItem) => {
     setFindingsTitle(record.codeAssetName || record.codeVersionId);
     setFindingsOpen(true);
     setFindingsLoading(true);
@@ -235,7 +257,7 @@ const TrainingCodePending: React.FC = () => {
         skipErrorHandler: true,
       });
       setFindings(res.data || []);
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(getApiErrorMessage(error, 'Findings 加载失败'));
     } finally {
       setFindingsLoading(false);
@@ -266,7 +288,7 @@ const TrainingCodePending: React.FC = () => {
     }
   };
 
-  const columns: ProColumns<PendingCodeVersionRecord>[] = [
+  const columns: ProColumns<CodeVersionListItem>[] = [
     {
       title: '代码名称',
       dataIndex: 'codeAssetName',
@@ -285,8 +307,35 @@ const TrainingCodePending: React.FC = () => {
       dataIndex: 'trainingProfile',
       ellipsis: true,
       hideInSearch: true,
-      width: 220,
+      width: 200,
       render: (_, r) => r.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+    },
+    {
+      title: '校验',
+      dataIndex: 'validationStatus',
+      width: 90,
+      hideInSearch: true,
+      render: (_, r) => r.validationStatus || '-',
+    },
+    {
+      title: '风险等级',
+      dataIndex: 'riskLevel',
+      width: 100,
+      valueType: 'select',
+      valueEnum: {
+        LOW: { text: 'LOW' },
+        MEDIUM: { text: 'MEDIUM' },
+        HIGH: { text: 'HIGH' },
+        UNKNOWN: { text: 'UNKNOWN' },
+      },
+      render: (_, r) => riskLevelTag(r.riskLevel),
+    },
+    {
+      title: '风险扫描',
+      dataIndex: 'riskStatus',
+      width: 110,
+      hideInSearch: true,
+      render: (_, r) => r.riskStatus || '-',
     },
     {
       title: '审核状态',
@@ -296,11 +345,11 @@ const TrainingCodePending: React.FC = () => {
       render: (_, r) => approvalTag(r.approvalStatus),
     },
     {
-      title: '登记时间',
-      dataIndex: 'uploadedAt',
+      title: '提交时间',
+      dataIndex: 'submittedAt',
       width: 180,
       hideInSearch: true,
-      render: (_, r) => formatDisplayDateTime(r.uploadedAt),
+      render: (_, r) => formatDisplayDateTime(r.submittedAt),
     },
     {
       title: 'codeVersionId',
@@ -440,22 +489,26 @@ const TrainingCodePending: React.FC = () => {
                 当前已开启「训练代码管理员审核」，新上传/发布的版本需在本页人工处理。{' '}
               </>
             )}
-            待审列表优先走管理员 V2 审核队列；「拒绝」需填写原因并携带审批证据。
-            「重扫 / 制品升级」为运维操作。当前管理员：
+            列表来自{' '}
+            <Typography.Text code>
+              GET /api/v2/admin/code-review-tasks
+            </Typography.Text>
+            ；通过/拒绝会携带四个 expected*
+            审批证据。重扫与制品升级为运维操作。当前管理员：
             {initialState?.currentUser?.name ||
               initialState?.currentUser?.userid ||
               '-'}
           </span>
         }
       />
-      <ProTable<PendingCodeVersionRecord>
+      <ProTable<CodeVersionListItem>
         actionRef={actionRef}
         columns={columns}
         request={requestList}
         rowKey="codeVersionId"
-        search={false}
-        pagination={{ pageSize: 10 }}
-        scroll={{ x: 1200 }}
+        search={{ labelWidth: 'auto' }}
+        pagination={{ pageSize: 10, showSizeChanger: true }}
+        scroll={{ x: 1400 }}
         toolBarRender={() => [
           <Button key="reload" onClick={() => actionRef.current?.reload()}>
             刷新

@@ -218,6 +218,12 @@ export default [
         access: 'canAccessSystemLog',
       },
       {
+        path: '/system/model-cache',
+        name: '模型缓存',
+        component: './system/modelCache',
+        access: 'canAccessModelCache',
+      },
+      {
         path: '/system/config',
         name: '系统配置',
         component: './system/config',

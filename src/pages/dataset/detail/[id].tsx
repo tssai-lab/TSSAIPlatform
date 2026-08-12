@@ -15,6 +15,7 @@ import {
   Space,
   Spin,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -26,6 +27,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import ZipReadmePanel from '@/components/ZipReadmePanel';
 import PointCloudPreviewPanel, {
   type PointCloudPreviewPanelRef,
 } from '@/pages/dataset/components/point-cloud/PointCloudPreviewPanel';
@@ -294,6 +296,8 @@ const DatasetDetail: React.FC = () => {
   >(null);
   const [loading, setLoading] = useState(true);
   const [previewVersionId, setPreviewVersionId] = useState<string>();
+  /** Hugging Face 风格详情 Tabs */
+  const [detailTab, setDetailTab] = useState<string>('readme');
 
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [versionModalMode, setVersionModalMode] = useState<
@@ -508,6 +512,7 @@ const DatasetDetail: React.FC = () => {
   };
 
   const scrollToWorkspace = () => {
+    setDetailTab('files');
     requestAnimationFrame(() => {
       previewSectionRef.current?.scrollIntoView({
         behavior: 'smooth',
@@ -910,6 +915,8 @@ const DatasetDetail: React.FC = () => {
 
     if (!scrollToPreview) return;
 
+    setDetailTab('files');
+
     if (datasetInfo?.type === 'POINT_CLOUD') {
       document
         .getElementById('point-cloud-preview')
@@ -1061,7 +1068,7 @@ const DatasetDetail: React.FC = () => {
         </Space>
       }
     >
-      <Card title="基本信息" style={{ marginBottom: 16 }}>
+      <Card title="资产信息" style={{ marginBottom: 16 }}>
         <Descriptions column={2}>
           <Descriptions.Item label="数据集名称">
             <strong>{datasetInfo.name}</strong>
@@ -1126,6 +1133,7 @@ const DatasetDetail: React.FC = () => {
                 onClick={() => {
                   if (importDraftVersionId) {
                     setPreviewVersionId(importDraftVersionId);
+                    setDetailTab('files');
                     previewSectionRef.current?.scrollIntoView({
                       behavior: 'smooth',
                       block: 'start',
@@ -1164,395 +1172,458 @@ const DatasetDetail: React.FC = () => {
         />
       )}
 
-      <Card
-        title="版本列表"
-        style={{ marginBottom: 16 }}
-        extra={
-          !isMultimodal ? (
-            <Button
-              type="dashed"
-              icon={<PlusOutlined />}
-              onClick={openCreateVersion}
-            >
-              新建版本记录
-            </Button>
-          ) : undefined
-        }
-      >
-        <Table
-          dataSource={datasetInfo.versions}
-          rowKey="id"
-          pagination={false}
-          scroll={{ x: 1280 }}
-          locale={{ emptyText: '暂无版本记录' }}
-          onRow={(record) => ({
-            onClick: () => handleSelectPreview(record),
-            style: {
-              cursor: 'pointer',
-              background:
-                (resolveDatasetVersionId(record, datasetInfo.id) ??
-                  record.id) === previewVersionId
-                  ? '#e6f4ff'
-                  : undefined,
-            },
-          })}
-          columns={[
-            {
-              title: '版本号',
-              dataIndex: 'version',
-              key: 'version',
-              width: 120,
-              render: (text: string, record: API.DatasetVersionDetail) => {
-                const vid =
-                  resolveDatasetVersionId(record, datasetInfo.id) ?? record.id;
-                const isCurrent =
-                  !!vid &&
-                  !!activeCurrentVersionId &&
-                  vid === activeCurrentVersionId;
-                return (
-                  <Space size={4}>
-                    <span>{text}</span>
-                    {isCurrent && <Tag color="blue">当前</Tag>}
-                  </Space>
-                );
-              },
-            },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              key: 'status',
-              width: 100,
-              render: (status: string, record: API.DatasetVersionDetail) => {
-                if (isWorkspaceDraftVersion(record, draftContext)) {
-                  return <Tag color="processing">版本工作区</Tag>;
-                }
-                if (isImportDraftVersion(record, draftContext)) {
-                  if (draftContext?.importStatus === 'PARTIAL') {
-                    return <Tag color="warning">部分导入</Tag>;
-                  }
-                  if (draftContext?.importStatus === 'FAILED') {
-                    return <Tag color="error">导入失败</Tag>;
-                  }
-                  return <Tag color="default">导入中</Tag>;
-                }
-                if (status === 'DEPRECATED') {
-                  return <Tag color="warning">已废弃</Tag>;
-                }
-                if (status === 'ARCHIVED') {
-                  return <Tag>已归档</Tag>;
-                }
-                return (
-                  <Tag color={status === 'READY' ? 'success' : 'default'}>
-                    {status || 'READY'}
-                  </Tag>
-                );
-              },
-            },
-            {
-              title: '文件名',
-              dataIndex: 'fileName',
-              key: 'fileName',
-              width: 200,
-              ellipsis: true,
-              render: (text: string) => <TableEllipsisCell text={text} />,
-            },
-            { title: '大小', dataIndex: 'size', key: 'size', width: 100 },
-            {
-              title: '上传时间',
-              dataIndex: 'createdAt',
-              key: 'createdAt',
-              width: 180,
-              render: (value?: string) => formatDisplayDateTime(value),
-            },
-            {
-              title: '版本描述',
-              dataIndex: 'remark',
-              key: 'remark',
-              width: 160,
-              ellipsis: true,
-              render: (text: string) =>
-                text ? (
-                  <Tooltip title={text}>
-                    <span>{text}</span>
-                  </Tooltip>
-                ) : (
-                  <Typography.Text type="secondary">未填写</Typography.Text>
-                ),
-            },
-            {
-              title: '操作',
-              key: 'action',
-              width: 480,
-              fixed: 'right',
-              align: 'left',
-              render: (_, record: API.DatasetVersionDetail) => {
-                const vid =
-                  resolveDatasetVersionId(record, datasetInfo.id) ?? record.id;
-                const isCurrent =
-                  !!vid &&
-                  !!activeCurrentVersionId &&
-                  vid === activeCurrentVersionId;
-                const canSetCurrent =
-                  record.status === 'READY' &&
-                  !isCurrent &&
-                  !isWorkspaceDraftVersion(record, draftContext);
-                const canDeprecate =
-                  record.status === 'READY' &&
-                  !isCurrent &&
-                  !isWorkspaceDraftVersion(record, draftContext) &&
-                  !isImportDraftVersion(record, draftContext);
-                const canArchive = record.status === 'DEPRECATED';
-                const canEditVersionWorkspace =
-                  supportsWorkspaceEdit &&
-                  (isWorkspaceDraftVersion(record, draftContext) ||
-                    (record.status === 'READY' &&
-                      !isImportDraftVersion(record, draftContext) &&
-                      isZipBackedDatasetVersion(record)));
-
-                return (
-                  <Space
-                    size={0}
-                    wrap
-                    split={<span style={{ color: '#f0f0f0' }}>|</span>}
-                    onClick={(e) => e.stopPropagation()}
+      <Card styles={{ body: { paddingTop: 8 } }}>
+        <Tabs
+          activeKey={detailTab}
+          onChange={setDetailTab}
+          tabBarExtraContent={
+            detailTab === 'versions' && !isMultimodal ? (
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={openCreateVersion}
+              >
+                新建版本记录
+              </Button>
+            ) : detailTab === 'files' && previewVersion ? (
+              <Space>
+                <Typography.Text
+                  type="secondary"
+                  ellipsis={{ tooltip: previewVersion.fileName }}
+                  style={{ maxWidth: 360 }}
+                >
+                  当前版本：{previewVersion.version}
+                  {previewVersion.fileName
+                    ? ` · ${previewVersion.fileName}`
+                    : ''}
+                </Typography.Text>
+                {datasetInfo.type === 'LEROBOT' && previewVersionId ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={() =>
+                      history.push(
+                        `/dataset/lerobot-timeline/${encodeURIComponent(previewVersionId)}?assetId=${encodeURIComponent(datasetInfo.id)}`,
+                      )
+                    }
                   >
-                    <Button
-                      type="link"
-                      style={{ paddingLeft: 0 }}
-                      onClick={() => handleSelectPreview(record)}
-                    >
-                      选中预览
-                    </Button>
-                    {canEditVersionWorkspace && (
-                      <Button
-                        type="link"
-                        icon={<EditOutlined />}
-                        onClick={() => handleEditCurrentVersion(record)}
-                      >
-                        创建/继续版本工作区
-                      </Button>
-                    )}
-                    <Button type="link" onClick={() => openEditRemark(record)}>
-                      编辑描述
-                    </Button>
-                    {canSetCurrent && (
-                      <Popconfirm
-                        title="将此版本设为列表和训练的默认当前版本？"
-                        onConfirm={() => handleSetCurrentVersion(record)}
-                      >
-                        <Button type="link">设为当前</Button>
-                      </Popconfirm>
-                    )}
-                    {canDeprecate && (
-                      <Popconfirm
-                        title="标记为废弃后不可用于新训练，仍可预览（多模态除外）。"
-                        onConfirm={() =>
-                          handleVersionStatusChange(record, 'DEPRECATED')
-                        }
-                      >
-                        <Button type="link">废弃</Button>
-                      </Popconfirm>
-                    )}
-                    {canArchive && (
-                      <Popconfirm
-                        title="归档后不可预览或训练，确认归档？"
-                        onConfirm={() =>
-                          handleVersionStatusChange(record, 'ARCHIVED')
-                        }
-                      >
-                        <Button type="link">归档</Button>
-                      </Popconfirm>
-                    )}
-                    <Button
-                      type="link"
-                      onClick={() =>
-                        handleDownload(
-                          resolveDatasetVersionId(record, datasetInfo.id),
-                          record.storagePath,
+                    按时序查看
+                  </Button>
+                ) : null}
+              </Space>
+            ) : undefined
+          }
+          items={[
+            {
+              key: 'readme',
+              label: 'README',
+              children: (
+                <ZipReadmePanel source="dataset" versionId={previewVersionId} />
+              ),
+            },
+            {
+              key: 'files',
+              label: showWorkspacePanel
+                ? '文件预览 · 版本工作区'
+                : isMultimodal
+                  ? '文件预览 · 多模态样本'
+                  : '文件预览',
+              children: (
+                <div ref={previewSectionRef}>
+                  {!isPointCloud && (
+                    <>
+                      {showWorkspacePanel &&
+                      activeWorkspace &&
+                      workspaceDatasetType ? (
+                        <MultimodalWorkspacePanel
+                          key={activeWorkspace.workspaceId}
+                          workspaceId={activeWorkspace.workspaceId}
+                          workspaceRevision={activeWorkspace.workspaceRevision}
+                          onWorkspaceRevisionChange={(revision) => {
+                            setActiveWorkspace((prev) =>
+                              prev
+                                ? { ...prev, workspaceRevision: revision }
+                                : prev,
+                            );
+                          }}
+                          datasetId={datasetInfo.id}
+                          datasetType={workspaceDatasetType}
+                          draftVersionLabel={
+                            activeWorkspace.targetVersionLabel ||
+                            previewVersion?.version
+                          }
+                          parentVersionLabel={
+                            activeWorkspace.baseVersionLabel ||
+                            workspaceParentVersion?.version
+                          }
+                          onImportJobDiscovered={(jobId) => {
+                            saveImportJobId(datasetInfo.id, jobId);
+                            setDatasetInfo((prev) =>
+                              prev ? { ...prev, importJobId: jobId } : prev,
+                            );
+                          }}
+                          onPublished={async (publishedVersionId) => {
+                            setWorkspaceEditSourceVersionId(undefined);
+                            setActiveWorkspace(null);
+                            await loadDetail();
+                            if (publishedVersionId) {
+                              setPreviewVersionId(publishedVersionId);
+                            }
+                          }}
+                          onRefresh={loadDetail}
+                          onCancelEdit={handleCancelWorkspaceEdit}
+                        />
+                      ) : isMultimodal ? (
+                        previewVersionReady ? (
+                          <MultimodalPreviewPanel
+                            key={previewVersionId}
+                            versionId={previewVersionId}
+                            compact
+                          />
+                        ) : (
+                          <Empty description="该版本正在后台导入样本，导入完成并变为 READY 后可浏览；导入期间无法编辑删除。" />
                         )
-                      }
-                    >
-                      下载
-                    </Button>
-                    <Popconfirm
-                      title="确认删除该版本？"
-                      onConfirm={() => handleDeleteVersion(record.id)}
-                    >
-                      <Button type="link" danger>
-                        删除
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                );
-              },
+                      ) : supportsInlinePreview ? (
+                        <>
+                          {previewVersion?.parentVersionId ? (
+                            <Alert
+                              type="info"
+                              showIcon
+                              style={{ marginBottom: 12 }}
+                              message="本版本来自工作区发布"
+                              description="预览只展示本版本样本清单（含 APPEND 追加）。样本接口不可用时不会回退到主包 ZIP，避免把未合并追加包的主包当成当前版本内容。"
+                            />
+                          ) : null}
+                          <DatasetPreviewPanel
+                            key={previewVersionId}
+                            versionId={previewVersionId}
+                            compact
+                            hierarchical={datasetInfo.type === 'LEROBOT'}
+                            samplesOnly={!!previewVersion?.parentVersionId}
+                          />
+                        </>
+                      ) : (
+                        <Empty description="当前类型不支持在线预览" />
+                      )}
+                    </>
+                  )}
+
+                  {isPointCloud &&
+                    (showWorkspacePanel &&
+                    activeWorkspace &&
+                    workspaceDatasetType ? (
+                      <MultimodalWorkspacePanel
+                        key={activeWorkspace.workspaceId}
+                        workspaceId={activeWorkspace.workspaceId}
+                        workspaceRevision={activeWorkspace.workspaceRevision}
+                        onWorkspaceRevisionChange={(revision) => {
+                          setActiveWorkspace((prev) =>
+                            prev
+                              ? { ...prev, workspaceRevision: revision }
+                              : prev,
+                          );
+                        }}
+                        datasetId={datasetInfo.id}
+                        datasetType={workspaceDatasetType}
+                        draftVersionLabel={
+                          activeWorkspace.targetVersionLabel ||
+                          previewVersion?.version
+                        }
+                        parentVersionLabel={
+                          activeWorkspace.baseVersionLabel ||
+                          workspaceParentVersion?.version
+                        }
+                        onImportJobDiscovered={(jobId) => {
+                          saveImportJobId(datasetInfo.id, jobId);
+                          setDatasetInfo((prev) =>
+                            prev ? { ...prev, importJobId: jobId } : prev,
+                          );
+                        }}
+                        onPublished={async (publishedVersionId) => {
+                          setWorkspaceEditSourceVersionId(undefined);
+                          setActiveWorkspace(null);
+                          await loadDetail();
+                          if (publishedVersionId) {
+                            setPreviewVersionId(publishedVersionId);
+                          }
+                        }}
+                        onRefresh={loadDetail}
+                        onCancelEdit={handleCancelWorkspaceEdit}
+                      />
+                    ) : (
+                      <PointCloudPreviewPanel
+                        ref={previewPanelRef}
+                        onSelectionChange={setPreviewVersionId}
+                      />
+                    ))}
+                </div>
+              ),
+            },
+            {
+              key: 'versions',
+              label: '版本',
+              children: (
+                <>
+                  <Table
+                    dataSource={datasetInfo.versions}
+                    rowKey="id"
+                    pagination={false}
+                    scroll={{ x: 1280 }}
+                    locale={{ emptyText: '暂无版本记录' }}
+                    onRow={(record) => ({
+                      onClick: () => handleSelectPreview(record),
+                      style: {
+                        cursor: 'pointer',
+                        background:
+                          (resolveDatasetVersionId(record, datasetInfo.id) ??
+                            record.id) === previewVersionId
+                            ? '#e6f4ff'
+                            : undefined,
+                      },
+                    })}
+                    columns={[
+                      {
+                        title: '版本号',
+                        dataIndex: 'version',
+                        key: 'version',
+                        width: 120,
+                        render: (
+                          text: string,
+                          record: API.DatasetVersionDetail,
+                        ) => {
+                          const vid =
+                            resolveDatasetVersionId(record, datasetInfo.id) ??
+                            record.id;
+                          const isCurrent =
+                            !!vid &&
+                            !!activeCurrentVersionId &&
+                            vid === activeCurrentVersionId;
+                          return (
+                            <Space size={4}>
+                              <span>{text}</span>
+                              {isCurrent && <Tag color="blue">当前</Tag>}
+                            </Space>
+                          );
+                        },
+                      },
+                      {
+                        title: '状态',
+                        dataIndex: 'status',
+                        key: 'status',
+                        width: 100,
+                        render: (
+                          status: string,
+                          record: API.DatasetVersionDetail,
+                        ) => {
+                          if (isWorkspaceDraftVersion(record, draftContext)) {
+                            return <Tag color="processing">版本工作区</Tag>;
+                          }
+                          if (isImportDraftVersion(record, draftContext)) {
+                            if (draftContext?.importStatus === 'PARTIAL') {
+                              return <Tag color="warning">部分导入</Tag>;
+                            }
+                            if (draftContext?.importStatus === 'FAILED') {
+                              return <Tag color="error">导入失败</Tag>;
+                            }
+                            return <Tag color="default">导入中</Tag>;
+                          }
+                          if (status === 'DEPRECATED') {
+                            return <Tag color="warning">已废弃</Tag>;
+                          }
+                          if (status === 'ARCHIVED') {
+                            return <Tag>已归档</Tag>;
+                          }
+                          return (
+                            <Tag
+                              color={status === 'READY' ? 'success' : 'default'}
+                            >
+                              {status || 'READY'}
+                            </Tag>
+                          );
+                        },
+                      },
+                      {
+                        title: '文件名',
+                        dataIndex: 'fileName',
+                        key: 'fileName',
+                        width: 200,
+                        ellipsis: true,
+                        render: (text: string) => (
+                          <TableEllipsisCell text={text} />
+                        ),
+                      },
+                      {
+                        title: '大小',
+                        dataIndex: 'size',
+                        key: 'size',
+                        width: 100,
+                      },
+                      {
+                        title: '上传时间',
+                        dataIndex: 'createdAt',
+                        key: 'createdAt',
+                        width: 180,
+                        render: (value?: string) =>
+                          formatDisplayDateTime(value),
+                      },
+                      {
+                        title: '版本描述',
+                        dataIndex: 'remark',
+                        key: 'remark',
+                        width: 160,
+                        ellipsis: true,
+                        render: (text: string) =>
+                          text ? (
+                            <Tooltip title={text}>
+                              <span>{text}</span>
+                            </Tooltip>
+                          ) : (
+                            <Typography.Text type="secondary">
+                              未填写
+                            </Typography.Text>
+                          ),
+                      },
+                      {
+                        title: '操作',
+                        key: 'action',
+                        width: 480,
+                        fixed: 'right',
+                        align: 'left',
+                        render: (_, record: API.DatasetVersionDetail) => {
+                          const vid =
+                            resolveDatasetVersionId(record, datasetInfo.id) ??
+                            record.id;
+                          const isCurrent =
+                            !!vid &&
+                            !!activeCurrentVersionId &&
+                            vid === activeCurrentVersionId;
+                          const canSetCurrent =
+                            record.status === 'READY' &&
+                            !isCurrent &&
+                            !isWorkspaceDraftVersion(record, draftContext);
+                          const canDeprecate =
+                            record.status === 'READY' &&
+                            !isCurrent &&
+                            !isWorkspaceDraftVersion(record, draftContext) &&
+                            !isImportDraftVersion(record, draftContext);
+                          const canArchive = record.status === 'DEPRECATED';
+                          const canEditVersionWorkspace =
+                            supportsWorkspaceEdit &&
+                            (isWorkspaceDraftVersion(record, draftContext) ||
+                              (record.status === 'READY' &&
+                                !isImportDraftVersion(record, draftContext) &&
+                                isZipBackedDatasetVersion(record)));
+
+                          return (
+                            <Space
+                              size={0}
+                              wrap
+                              split={
+                                <span style={{ color: '#f0f0f0' }}>|</span>
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Button
+                                type="link"
+                                style={{ paddingLeft: 0 }}
+                                onClick={() => handleSelectPreview(record)}
+                              >
+                                选中预览
+                              </Button>
+                              {canEditVersionWorkspace && (
+                                <Button
+                                  type="link"
+                                  icon={<EditOutlined />}
+                                  onClick={() =>
+                                    handleEditCurrentVersion(record)
+                                  }
+                                >
+                                  创建/继续版本工作区
+                                </Button>
+                              )}
+                              <Button
+                                type="link"
+                                onClick={() => openEditRemark(record)}
+                              >
+                                编辑描述
+                              </Button>
+                              {canSetCurrent && (
+                                <Popconfirm
+                                  title="将此版本设为列表和训练的默认当前版本？"
+                                  onConfirm={() =>
+                                    handleSetCurrentVersion(record)
+                                  }
+                                >
+                                  <Button type="link">设为当前</Button>
+                                </Popconfirm>
+                              )}
+                              {canDeprecate && (
+                                <Popconfirm
+                                  title="标记为废弃后不可用于新训练，仍可预览（多模态除外）。"
+                                  onConfirm={() =>
+                                    handleVersionStatusChange(
+                                      record,
+                                      'DEPRECATED',
+                                    )
+                                  }
+                                >
+                                  <Button type="link">废弃</Button>
+                                </Popconfirm>
+                              )}
+                              {canArchive && (
+                                <Popconfirm
+                                  title="归档后不可预览或训练，确认归档？"
+                                  onConfirm={() =>
+                                    handleVersionStatusChange(
+                                      record,
+                                      'ARCHIVED',
+                                    )
+                                  }
+                                >
+                                  <Button type="link">归档</Button>
+                                </Popconfirm>
+                              )}
+                              <Button
+                                type="link"
+                                onClick={() =>
+                                  handleDownload(
+                                    resolveDatasetVersionId(
+                                      record,
+                                      datasetInfo.id,
+                                    ),
+                                    record.storagePath,
+                                  )
+                                }
+                              >
+                                下载
+                              </Button>
+                              <Popconfirm
+                                title="确认删除该版本？"
+                                onConfirm={() => handleDeleteVersion(record.id)}
+                              >
+                                <Button type="link" danger>
+                                  删除
+                                </Button>
+                              </Popconfirm>
+                            </Space>
+                          );
+                        },
+                      },
+                    ]}
+                  />
+                  <Typography.Text
+                    type="secondary"
+                    style={{ display: 'block', marginTop: 8 }}
+                  >
+                    版本号可用 vN 或 vX.Y.Z（如
+                    v2、v1.0.0），资产内须唯一；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可选中版本，并在「README」「文件预览」中查看。
+                  </Typography.Text>
+                </>
+              ),
             },
           ]}
         />
-        <Typography.Text
-          type="secondary"
-          style={{ display: 'block', marginTop: 8 }}
-        >
-          版本号可用 vN 或 vX.Y.Z（如
-          v2、v1.0.0），资产内须唯一；版本描述记录更新原因与内容。新建版本记录后请「上传新版本」绑定文件；点击行可切换下方预览。
-        </Typography.Text>
       </Card>
-
-      {!isPointCloud && (
-        <div ref={previewSectionRef}>
-          <Card
-            title={
-              showWorkspacePanel
-                ? '版本工作区'
-                : isMultimodal
-                  ? '多模态样本'
-                  : '内容预览'
-            }
-            extra={
-              previewVersion ? (
-                <Space>
-                  <Typography.Text
-                    type="secondary"
-                    ellipsis={{ tooltip: previewVersion.fileName }}
-                    style={{ maxWidth: 480 }}
-                  >
-                    当前版本：{previewVersion.version}
-                    {previewVersion.fileName
-                      ? ` · ${previewVersion.fileName}`
-                      : ''}
-                  </Typography.Text>
-                  {datasetInfo.type === 'LEROBOT' && previewVersionId ? (
-                    <Button
-                      type="primary"
-                      onClick={() =>
-                        history.push(
-                          `/dataset/lerobot-timeline/${encodeURIComponent(previewVersionId)}?assetId=${encodeURIComponent(datasetInfo.id)}`,
-                        )
-                      }
-                    >
-                      按时序查看
-                    </Button>
-                  ) : null}
-                </Space>
-              ) : null
-            }
-          >
-            {showWorkspacePanel && activeWorkspace && workspaceDatasetType ? (
-              <MultimodalWorkspacePanel
-                key={activeWorkspace.workspaceId}
-                workspaceId={activeWorkspace.workspaceId}
-                workspaceRevision={activeWorkspace.workspaceRevision}
-                onWorkspaceRevisionChange={(revision) => {
-                  setActiveWorkspace((prev) =>
-                    prev ? { ...prev, workspaceRevision: revision } : prev,
-                  );
-                }}
-                datasetId={datasetInfo.id}
-                datasetType={workspaceDatasetType}
-                draftVersionLabel={
-                  activeWorkspace.targetVersionLabel || previewVersion?.version
-                }
-                parentVersionLabel={
-                  activeWorkspace.baseVersionLabel ||
-                  workspaceParentVersion?.version
-                }
-                onImportJobDiscovered={(jobId) => {
-                  saveImportJobId(datasetInfo.id, jobId);
-                  setDatasetInfo((prev) =>
-                    prev ? { ...prev, importJobId: jobId } : prev,
-                  );
-                }}
-                onPublished={async (publishedVersionId) => {
-                  setWorkspaceEditSourceVersionId(undefined);
-                  setActiveWorkspace(null);
-                  await loadDetail();
-                  if (publishedVersionId) {
-                    setPreviewVersionId(publishedVersionId);
-                  }
-                }}
-                onRefresh={loadDetail}
-                onCancelEdit={handleCancelWorkspaceEdit}
-              />
-            ) : isMultimodal ? (
-              previewVersionReady ? (
-                <MultimodalPreviewPanel
-                  key={previewVersionId}
-                  versionId={previewVersionId}
-                  compact
-                />
-              ) : (
-                <Empty description="该版本正在后台导入样本，导入完成并变为 READY 后可浏览；导入期间无法编辑删除。" />
-              )
-            ) : supportsInlinePreview ? (
-              <>
-                {previewVersion?.parentVersionId ? (
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="本版本来自工作区发布"
-                    description="预览只展示本版本样本清单（含 APPEND 追加）。样本接口不可用时不会回退到主包 ZIP，避免把未合并追加包的主包当成当前版本内容。"
-                  />
-                ) : null}
-                <DatasetPreviewPanel
-                  key={previewVersionId}
-                  versionId={previewVersionId}
-                  compact
-                  hierarchical={datasetInfo.type === 'LEROBOT'}
-                  samplesOnly={!!previewVersion?.parentVersionId}
-                />
-              </>
-            ) : (
-              <Empty description="当前类型不支持在线预览" />
-            )}
-          </Card>
-        </div>
-      )}
-
-      {isPointCloud &&
-        (showWorkspacePanel && activeWorkspace && workspaceDatasetType ? (
-          <Card title="版本工作区" style={{ marginBottom: 16 }}>
-            <MultimodalWorkspacePanel
-              key={activeWorkspace.workspaceId}
-              workspaceId={activeWorkspace.workspaceId}
-              workspaceRevision={activeWorkspace.workspaceRevision}
-              onWorkspaceRevisionChange={(revision) => {
-                setActiveWorkspace((prev) =>
-                  prev ? { ...prev, workspaceRevision: revision } : prev,
-                );
-              }}
-              datasetId={datasetInfo.id}
-              datasetType={workspaceDatasetType}
-              draftVersionLabel={
-                activeWorkspace.targetVersionLabel || previewVersion?.version
-              }
-              parentVersionLabel={
-                activeWorkspace.baseVersionLabel ||
-                workspaceParentVersion?.version
-              }
-              onImportJobDiscovered={(jobId) => {
-                saveImportJobId(datasetInfo.id, jobId);
-                setDatasetInfo((prev) =>
-                  prev ? { ...prev, importJobId: jobId } : prev,
-                );
-              }}
-              onPublished={async (publishedVersionId) => {
-                setWorkspaceEditSourceVersionId(undefined);
-                setActiveWorkspace(null);
-                await loadDetail();
-                if (publishedVersionId) {
-                  setPreviewVersionId(publishedVersionId);
-                }
-              }}
-              onRefresh={loadDetail}
-              onCancelEdit={handleCancelWorkspaceEdit}
-            />
-          </Card>
-        ) : (
-          <PointCloudPreviewPanel
-            ref={previewPanelRef}
-            onSelectionChange={setPreviewVersionId}
-          />
-        ))}
 
       <Modal
         title={

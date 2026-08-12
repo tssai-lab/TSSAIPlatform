@@ -18,6 +18,22 @@ const WORKSPACE_ERROR_HINTS: Record<string, string> = {
     '工作区已被他人或其它标签页更新（修订冲突）。请刷新页面后重试。',
   DATASET_NOT_FOUND: '数据集或基线版本不存在、已删除，或无权访问。',
   INVALID_VERSION_LABEL: '版本标签不合法（需 1～64 个非空白字符）。',
+  MODEL_ARTIFACT_INVALID:
+    '模型制品校验失败（长度、SHA-256 或 ZIP 结构异常）。该版本可能已降为 DRAFT，请重新上传或联系管理员。',
+  MODEL_STORAGE_UNAVAILABLE:
+    '模型存储暂不可用，请稍后重试；当前版本状态不会被修改。',
+  CODE_APPROVAL_FORBIDDEN: '缺少代码审批或管理员权限。',
+  CODE_ASSET_NOT_FOUND: '代码版本不存在、已删除，或无权访问。',
+  CODE_ASSET_CONFLICT: '代码资产状态冲突，请刷新后重试。',
+  CODE_VALIDATION_FAILED: '代码校验或审批证据校验失败。',
+  CODE_STORAGE_UNAVAILABLE: '代码制品存储暂不可用，请稍后重试。',
+  APPROVAL_EXPECTATION_REQUIRED:
+    '审批请求缺少风险/校验证据（expected* 字段）。请等待风险扫描 COMPLETED 后再审核。',
+  APPROVAL_EXPECTATION_INVALID: '审批证据格式无效，请刷新页面后重试。',
+  APPROVAL_EVIDENCE_STALE:
+    '审批证据已变化（可能刚完成重扫或制品升级）。请刷新待审列表后重新操作。',
+  APPROVAL_EVIDENCE_MISSING: '缺少审批证据，无法完成审核。',
+  RISK_EVIDENCE_STALE: '风险证据已过期，请刷新后重试或触发重扫。',
 };
 
 function pickErrorCode(err: any, data: any): string | undefined {

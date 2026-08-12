@@ -157,21 +157,145 @@ function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
   };
 }
 
-export async function modelUploadInit(params: API.ModelUploadInitParams, options?: { [key: string]: any }) {
+/** 解析 V2 model-uploads 响应为统一进度结构 */
+function normalizeV2ModelUploadDto(raw: unknown): API.ModelUploadInitResult | null {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const data = (
+    obj.data && typeof obj.data === 'object' ? obj.data : obj
+  ) as Record<string, unknown>;
+  if (!data.uploadId) return null;
+  return {
+    uploadId: String(data.uploadId),
+    status: data.status ? String(data.status) : undefined,
+    fileName: data.fileName ? String(data.fileName) : undefined,
+    fileSize:
+      data.fileSize != null ? Number(data.fileSize) : undefined,
+    chunkSize: data.chunkSize != null ? Number(data.chunkSize) : undefined,
+    totalChunks:
+      data.totalChunks != null ? Number(data.totalChunks) : undefined,
+    uploadedChunks:
+      data.uploadedChunks != null ? Number(data.uploadedChunks) : undefined,
+    uploadedBytes:
+      data.uploadedBytes != null ? Number(data.uploadedBytes) : undefined,
+    uploadedPartIndexes: Array.isArray(data.uploadedPartIndexes)
+      ? (data.uploadedPartIndexes as number[])
+      : [],
+  };
+}
+
+/** 解析 V2 complete 响应为 BackendModelItem */
+function normalizeV2ModelUploadComplete(raw: unknown): BackendModelItem | null {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const data = (
+    obj.data && typeof obj.data === 'object' ? obj.data : obj
+  ) as Record<string, unknown>;
+  const modelVersionId = data.modelId || data.modelVersionId || data.id;
+  if (!modelVersionId) return null;
+  return {
+    id: String(modelVersionId),
+    assetId: data.assetId ? String(data.assetId) : undefined,
+    name: String(data.modelName || data.name || ''),
+    version: String(data.modelVersion || data.version || ''),
+    type: (data.taskType || data.type || 'CV') as ModelTaskType,
+    remark: data.remark ? String(data.remark) : undefined,
+    fileName: data.fileName ? String(data.fileName) : undefined,
+    sizeBytes: data.fileSize != null ? Number(data.fileSize) : undefined,
+    artifactSha256: data.artifactSha256
+      ? String(data.artifactSha256)
+      : undefined,
+    commitInfo: data.commitInfo ? String(data.commitInfo) : undefined,
+    hyperParams: data.hyperParams as Record<string, unknown> | undefined,
+    isCurrent:
+      data.isCurrent === true || data.isCurrent === 'true' ? true : undefined,
+    status: data.status ? String(data.status) : undefined,
+  };
+}
+
+/**
+ * 初始化或恢复模型分片上传。
+ * 优先 V2 `/v2/model-uploads/init`（业务字段在 init 写入会话），失败回退 Legacy。
+ */
+export async function modelUploadInit(
+  params: API.ModelUploadInitParams,
+  options?: { [key: string]: any },
+) {
+  const v2Body: Record<string, unknown> = {
+    fileName: params.fileName,
+    fileSize: params.fileSize,
+    fileFingerprint: params.fileFingerprint,
+    commitInfo: params.commitInfo,
+    hyperParams: params.hyperParams ?? {},
+  };
+  if (params.modelName) v2Body.modelName = params.modelName;
+  if (params.modelVersion) v2Body.modelVersion = params.modelVersion;
+  if (params.taskType) v2Body.taskType = params.taskType;
+  if (params.remark) v2Body.remark = params.remark;
+  if (params.targetAssetId) v2Body.targetAssetId = params.targetAssetId;
+
+  try {
+    const raw = await request<unknown>('/v2/model-uploads/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      data: v2Body,
+      skipErrorHandler: true,
+      ...(options || {}),
+    });
+    const normalized = normalizeV2ModelUploadDto(raw);
+    if (normalized) {
+      return { data: normalized };
+    }
+  } catch {
+    // fall through
+  }
+
   return request<{ data: API.ModelUploadInitResult }>('/model/upload/init', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    data: params,
+    data: {
+      fileName: params.fileName,
+      fileSize: params.fileSize,
+      fileFingerprint: params.fileFingerprint,
+      commitInfo: params.commitInfo,
+      ...(params.hyperParams ? { hyperParams: params.hyperParams } : {}),
+    },
     ...(options || {}),
   });
 }
 
+/** 上传模型分片；优先 V2 chunks，失败回退 Legacy */
 export async function modelUploadChunk(
   uploadId: string,
   partIndex: number,
   chunk: Blob,
   options?: { [key: string]: any },
 ) {
+  try {
+    const formData = new FormData();
+    formData.append('partIndex', String(partIndex));
+    formData.append('file', chunk);
+    const raw = await request<unknown>(
+      `/v2/model-uploads/${encodeURIComponent(uploadId)}/chunks`,
+      {
+        method: 'POST',
+        data: formData,
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const normalized = normalizeV2ModelUploadDto(raw);
+    if (normalized) {
+      return { data: normalized };
+    }
+  } catch {
+    // fall through
+  }
+
   const formData = new FormData();
   formData.append('uploadId', uploadId);
   formData.append('partIndex', String(partIndex));
@@ -183,7 +307,28 @@ export async function modelUploadChunk(
   });
 }
 
-export async function modelUploadProgress(uploadId: string, options?: { [key: string]: any }) {
+/** 查询模型上传进度；优先 V2 GET，失败回退 Legacy */
+export async function modelUploadProgress(
+  uploadId: string,
+  options?: { [key: string]: any },
+) {
+  try {
+    const raw = await request<unknown>(
+      `/v2/model-uploads/${encodeURIComponent(uploadId)}`,
+      {
+        method: 'GET',
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const normalized = normalizeV2ModelUploadDto(raw);
+    if (normalized) {
+      return { data: normalized };
+    }
+  } catch {
+    // fall through
+  }
+
   return request<{ data: API.ModelUploadInitResult }>('/model/upload/progress', {
     method: 'GET',
     params: { uploadId },
@@ -191,16 +336,97 @@ export async function modelUploadProgress(uploadId: string, options?: { [key: st
   });
 }
 
+/**
+ * 完成模型上传。
+ * 优先 V2 complete（仅 uploadId）；失败回退 Legacy complete（带业务字段）。
+ */
 export async function modelUploadComplete(
   params: API.ModelUploadCompleteParams,
   options?: { [key: string]: any },
 ) {
+  try {
+    const raw = await request<unknown>(
+      `/v2/model-uploads/${encodeURIComponent(params.uploadId)}/complete`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        data: {},
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const completed = normalizeV2ModelUploadComplete(raw);
+    if (completed?.id) {
+      return { data: completed };
+    }
+  } catch {
+    // fall through
+  }
+
   return request<{ data: BackendModelItem }>('/model/upload/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: params,
     ...(options || {}),
   });
+}
+
+export type ModelConsumerManifest = {
+  modelAssetId: string;
+  modelVersionId: string;
+  version: string;
+  status: string;
+  type: string;
+  fileName: string;
+  sizeBytes: number;
+  artifactSha256?: string;
+  commitInfo?: string;
+  hyperParams?: Record<string, unknown>;
+  isCurrent?: boolean;
+  downloadUrl?: string;
+  filesUrl?: string;
+};
+
+/** GET /api/v2/model-versions/{versionId}/consumer-manifest */
+export async function fetchModelConsumerManifest(
+  versionId: string,
+  options?: { [key: string]: unknown },
+): Promise<ModelConsumerManifest | null> {
+  try {
+    const raw = await request<unknown>(
+      `/v2/model-versions/${encodeURIComponent(versionId)}/consumer-manifest`,
+      {
+        method: 'GET',
+        skipErrorHandler: true,
+        ...(options || {}),
+      },
+    );
+    const data = (
+      raw && typeof raw === 'object' && 'data' in (raw as object)
+        ? (raw as { data: unknown }).data
+        : raw
+    ) as Record<string, unknown> | null;
+    if (!data?.modelVersionId) return null;
+    return {
+      modelAssetId: String(data.modelAssetId || ''),
+      modelVersionId: String(data.modelVersionId),
+      version: String(data.version || ''),
+      status: String(data.status || ''),
+      type: String(data.type || ''),
+      fileName: String(data.fileName || ''),
+      sizeBytes: Number(data.sizeBytes ?? 0),
+      artifactSha256: data.artifactSha256
+        ? String(data.artifactSha256)
+        : undefined,
+      commitInfo: data.commitInfo ? String(data.commitInfo) : undefined,
+      hyperParams: data.hyperParams as Record<string, unknown> | undefined,
+      isCurrent: data.isCurrent === true,
+      downloadUrl: data.downloadUrl ? String(data.downloadUrl) : undefined,
+      filesUrl: data.filesUrl ? String(data.filesUrl) : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** GET /api/model/list 查询参数（module2-api-doc 3.1） */
