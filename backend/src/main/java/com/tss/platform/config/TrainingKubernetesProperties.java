@@ -84,6 +84,18 @@ public class TrainingKubernetesProperties {
     /** Job 状态轮询间隔（毫秒） */
     private long monitorIntervalMs = 30000;
 
+    /** 是否在 K8s Job/Pod 被 TTL 清理前归档脱敏失败现场。 */
+    private boolean failureDiagnosticsEnabled = true;
+
+    /** Worker 先回调 failed、Pod 后退出时允许补采失败现场的时间窗口。 */
+    private int failureDiagnosticsRetryWindowSeconds = 900;
+
+    /** 失败诊断对象保留天数；简要 errorMessage 不受此配置影响。 */
+    private int failureDiagnosticsRetentionDays = 30;
+
+    /** 单份失败诊断最大字节数。 */
+    private int failureDiagnosticsMaxBytes = 1_048_576;
+
     /** 环境初始化超时（秒） */
     private int bootstrapTimeoutSeconds = 600;
 

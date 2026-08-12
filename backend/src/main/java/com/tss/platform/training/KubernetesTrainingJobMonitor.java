@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -32,6 +33,7 @@ public class KubernetesTrainingJobMonitor {
     private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
     private final JobScheduler jobScheduler;
+    private final TrainingFailureDiagnosticService failureDiagnosticService;
 
     public KubernetesTrainingJobMonitor(
             TrainingKubernetesProperties properties,
@@ -40,7 +42,8 @@ public class KubernetesTrainingJobMonitor {
             ShellCommandRunner shellCommandRunner,
             TrainingRunSpecCodec runSpecCodec,
             TransactionTemplate transactionTemplate,
-            @Lazy JobScheduler jobScheduler
+            @Lazy JobScheduler jobScheduler,
+            TrainingFailureDiagnosticService failureDiagnosticService
     ) {
         this.properties = properties;
         this.environmentService = environmentService;
@@ -49,6 +52,7 @@ public class KubernetesTrainingJobMonitor {
         this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = transactionTemplate;
         this.jobScheduler = jobScheduler;
+        this.failureDiagnosticService = failureDiagnosticService;
     }
 
     @Scheduled(fixedDelayString = "${training.kubernetes.monitor-interval-ms:30000}")
@@ -66,6 +70,7 @@ public class KubernetesTrainingJobMonitor {
         for (TrainingExperimentVersion task : activeTasks) {
             syncSingleTask(task);
         }
+        archiveRecentFailures();
     }
 
     private void syncSingleTask(TrainingExperimentVersion task) {
@@ -100,6 +105,7 @@ public class KubernetesTrainingJobMonitor {
         if (failed > 0) {
             String podError = fetchPodFailureReason(jobName);
             markFailed(task.getId(), podError != null ? podError : "K8s Job 执行失败");
+            archiveFailure(task.getId(), jobName);
             return;
         }
         if (active > 0 && !"running".equals(task.getStatus())) {
@@ -135,6 +141,68 @@ public class KubernetesTrainingJobMonitor {
             return Integer.parseInt(parts[index].trim());
         } catch (NumberFormatException e) {
             return 0;
+        }
+    }
+
+    private void archiveRecentFailures() {
+        if (!properties.isFailureDiagnosticsEnabled()) {
+            return;
+        }
+        int retryWindowSeconds = Math.max(60, properties.getFailureDiagnosticsRetryWindowSeconds());
+        Instant cutoff = Instant.now().minus(Duration.ofSeconds(retryWindowSeconds));
+        List<TrainingExperimentVersion> candidates = repository
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                        "failed",
+                        cutoff
+                );
+        for (TrainingExperimentVersion candidate : candidates) {
+            archiveFailure(candidate.getId(), KubernetesJobNaming.jobNameForTraining(candidate.getId()));
+        }
+    }
+
+    private void archiveFailure(String trainingId, String jobName) {
+        TrainingExperimentVersion task = null;
+        TrainingFailureDiagnosticService.CaptureResult capture = null;
+        try {
+            task = repository.findById(trainingId).orElse(null);
+            if (task == null || !"failed".equals(task.getStatus())
+                    || (task.getLogPath() != null && !task.getLogPath().isBlank())) {
+                return;
+            }
+            capture = failureDiagnosticService.archive(task, jobName);
+            if (!capture.archived() || capture.logPath() == null) {
+                return;
+            }
+            TrainingFailureDiagnosticService.CaptureResult archivedCapture = capture;
+            Boolean attached = transactionTemplate.execute(tx -> repository.findById(trainingId)
+                    .map(current -> {
+                        if (archivedCapture.logPath().equals(current.getLogPath())) {
+                            return true;
+                        }
+                        if (!"failed".equals(current.getStatus())
+                                || (current.getLogPath() != null && !current.getLogPath().isBlank())) {
+                            return false;
+                        }
+                        current.setLogPath(archivedCapture.logPath());
+                        current.setUpdatedAt(Instant.now());
+                        repository.save(current);
+                        return true;
+                    })
+                    .orElse(false));
+            if (!Boolean.TRUE.equals(attached)) {
+                failureDiagnosticService.enqueueDeletion(task, capture.logPath());
+            }
+        } catch (Exception exception) {
+            if (task != null && capture != null && capture.archived() && capture.logPath() != null) {
+                try {
+                    failureDiagnosticService.enqueueDeletion(task, capture.logPath());
+                } catch (Exception cleanupException) {
+                    LOG.warn("Failed to enqueue unattached K8s diagnostics: id={}, error={}",
+                            trainingId, cleanupException.getMessage());
+                }
+            }
+            LOG.warn("Failed to archive K8s training diagnostics: id={}, error={}",
+                    trainingId, exception.getMessage());
         }
     }
 

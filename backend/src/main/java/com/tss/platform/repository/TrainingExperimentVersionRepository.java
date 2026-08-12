@@ -82,6 +82,24 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
 
     List<TrainingExperimentVersion> findByStatus(String status);
 
+    List<TrainingExperimentVersion> findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+            String status,
+            Instant finishedAfter
+    );
+
+    @Query("""
+            select v from TrainingExperimentVersion v
+             where v.status = 'failed'
+               and v.finishedAt < :finishedBefore
+               and v.logPath like :diagnosticPathPattern
+             order by v.finishedAt asc
+            """)
+    List<TrainingExperimentVersion> findExpiredFailureDiagnostics(
+            @Param("finishedBefore") Instant finishedBefore,
+            @Param("diagnosticPathPattern") String diagnosticPathPattern,
+            org.springframework.data.domain.Pageable pageable
+    );
+
     List<TrainingExperimentVersion> findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc(String status);
 
     /**
