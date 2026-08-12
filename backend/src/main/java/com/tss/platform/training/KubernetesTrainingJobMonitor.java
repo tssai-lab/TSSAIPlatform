@@ -58,8 +58,9 @@ public class KubernetesTrainingJobMonitor {
         }
         List<TrainingExperimentVersion> activeTasks = repository.findAllByOrderByCreatedAtDesc()
                 .stream()
-                .filter(task -> !TERMINAL_STATUSES.contains(task.getStatus()))
-                .filter(task -> "queued".equals(task.getStatus()) || "scheduled".equals(task.getStatus()) || "running".equals(task.getStatus()))
+                // 只监控已提交 Job 的任务（scheduled=已分配节点待提交、running=运行中）。
+                // queued（排队等节点）还没有 Job，由 JobScheduler.dispatchQueuedTasks 处理，不在这里监控。
+                .filter(task -> "scheduled".equals(task.getStatus()) || "running".equals(task.getStatus()))
                 .toList();
 
         for (TrainingExperimentVersion task : activeTasks) {
@@ -82,12 +83,8 @@ public class KubernetesTrainingJobMonitor {
                 30
         );
         if (!result.success()) {
-            if (result.output() != null && result.output().contains("NotFound")) {
-                // scheduled 任务的 Job 可能还没提交，不标记失败
-                if ("queued".equals(task.getStatus())) {
-                    markFailed(task.getId(), "K8s Job 不存在或尚未创建: " + jobName);
-                }
-            }
+            // Job 不存在或查询失败：scheduled 任务的 Job 可能还没提交（submitJob 在异步线程执行），
+            // 不标记失败，等下一轮轮询再查。
             return;
         }
 

@@ -146,7 +146,10 @@ public class JobScheduler {
                             bound.add(task.getId());
                         }
                     } else {
-                        break; // 资源不足，后面也分配不了
+                        // 当前任务本轮分配不到节点（通常是所需资源池不足）。
+                        // 不 break：不同 nodeSelector（CPU/GPU 等不同池）的任务互不竞争，
+                        // 前面的任务占不到，不代表后面的任务也占不到，否则会造成队首跨池任务阻塞整轮。
+                        LOG.debug("任务本轮未分配到节点，跳过尝试后续任务: taskId={}", task.getId());
                     }
                 } catch (Exception e) {
                     LOG.warn("调度排队任务失败: taskId={}, error={}", task.getId(), e.getMessage());

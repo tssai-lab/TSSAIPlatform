@@ -67,7 +67,7 @@ public class ServerMetricsCollector {
     public void collectMetrics() {
         if (!isK8sReady()) return;
 
-        // 获取各节点容量（CPU/内存/GPU）和 OS 信息
+        // 获取各节点容量（CPU/内存/GPU）、OS 信息和节点标签
         Map<String, double[]> capacities = fetchNodeCapacities();
         Map<String, String> osInfo = fetchNodeOsInfo();
         Map<String, String> nodeLabels = fetchNodeLabelsJson();
@@ -120,7 +120,8 @@ public class ServerMetricsCollector {
             if (!ipMap.containsKey(name)) {
                 double[] cap = capacities.get(name);
                 String osImage = osInfo.get(name);
-                autoRegisterK8sNode(name, cap, osImage);
+                String labelsJson = nodeLabels.get(name);
+                autoRegisterK8sNode(name, cap, osImage, labelsJson);
             }
         }
 
@@ -204,7 +205,7 @@ public class ServerMetricsCollector {
         historyRepo.save(hist);
     }
 
-    private void autoRegisterK8sNode(String name, double[] capacity, String osImage) {
+    private void autoRegisterK8sNode(String name, double[] capacity, String osImage, String labelsJson) {
         ComputeServer s = new ComputeServer();
         s.setServerIp(name);
         s.setHostname(name);
@@ -222,10 +223,15 @@ public class ServerMetricsCollector {
         if (osImage != null && !osImage.isEmpty()) {
             s.setSpecOs(osImage.length() > 64 ? osImage.substring(0, 64) : osImage);
         }
+        // 节点标签（tss.ai/node-pool 等），供调度器按 nodeSelector 过滤节点
+        if (labelsJson != null && !labelsJson.isBlank()) {
+            s.setK8sLabelsJson(labelsJson);
+        }
         s.setCreatedAt(Instant.now());
         s.setUpdatedAt(Instant.now());
         serverRepo.save(s);
-        LOG.info("自动注册K8s节点: {} (GPU={}, OS={})", name, s.getGpuCount(), s.getSpecOs());
+        LOG.info("自动注册K8s节点: {} (GPU={}, OS={}, labels={})",
+                name, s.getGpuCount(), s.getSpecOs(), labelsJson != null ? "yes" : "no");
     }
 
     /** 从 kubectl get nodes -o json 获取每个节点的 CPU 总核数、内存总量(GiB)、GPU 数量和 OS 信息 */
@@ -243,7 +249,9 @@ public class ServerMetricsCollector {
             for (JsonNode item : root.path("items")) {
                 String name = item.path("metadata").path("name").asText();
                 JsonNode labels = item.path("metadata").path("labels");
-                if (!name.isBlank() && labels.isObject()) {
+                // 空标签节点不写入：保持 k8s_labels_json 为 null，matchesNodeSelector 对空标签视为匹配全部，
+                // 避免把无标签节点写成 "{}" 后对所有 nodeSelector 都不匹配、导致该节点一个任务都分不到
+                if (!name.isBlank() && labels.isObject() && !labels.isEmpty()) {
                     labelsByNode.put(name, objectMapper.writeValueAsString(labels));
                 }
             }

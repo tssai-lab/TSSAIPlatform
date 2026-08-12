@@ -129,8 +129,6 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                 if (jobAlreadyExists(kubeconfig, trainingId)) {
                     LOG.info("K8s Job already exists for trainingId={}; treating concurrent apply failure as submitted: {}",
                             trainingId, out);
-                    // 更新DB状态为queued排队，进度0
-                    updateStatus(trainingId, "queued", 0, null);
                     LOG.info("K8s training Job already submitted: trainingId={}, plan={}, job={}",
                             trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
                     return;
@@ -138,9 +136,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
                 throw new IllegalStateException("K8s Job submission failed: " + result.errorMessage() + "\n" + out);
             }
 
-            // kubectl apply成功：更新数据库状态为 queued(排队)，进度0
-            // queue只代表k8s收下Job，不代表Pod已经启动
-            updateStatus(trainingId, "queued", 0, null);
+            // kubectl apply成功：保持 scheduled 状态，由 KubernetesTrainingJobMonitor 根据 Job 状态接管（running/success/failed）
             LOG.info("K8s training Job submitted: trainingId={}, plan={}, job={}",
                     trainingId, task.getTrainingPlanId(), KubernetesJobNaming.jobNameForTraining(trainingId));
         } catch (Exception e) {

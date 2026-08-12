@@ -85,6 +85,22 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
     List<TrainingExperimentVersion> findByStatusAndServerIpIsNullOrderByPriorityAscCreatedAtAsc(String status);
 
     /**
+     * 全局排队查询：所有未分配节点（serverIp 为 null）且处于 queued/pending 的训练任务。
+     * 排序与 findAllPendingWithLock 一致（人工序号在前，其余按优先级+提交时间），但不加锁，供只读查询使用。
+     */
+    @Query("""
+            select v from TrainingExperimentVersion v
+             where v.serverIp is null
+               and v.status in ('queued', 'pending')
+             order by
+               case when v.queueSortIndex is not null and v.queueSortIndex > 0 then 0 else 1 end asc,
+               coalesce(v.queueSortIndex, 0) asc,
+               case v.priority when '高' then 3 when '中' then 2 else 1 end desc,
+               v.createdAt asc
+            """)
+    List<TrainingExperimentVersion> findUnassignedQueuedOrdered();
+
+    /**
      * 原子绑定任务到节点：只有尚未分配节点（server_ip IS NULL）且仍处于 pending/queued 的任务才会被更新。
      * 返回更新行数：1=本次调用绑定成功；0=已被其他线程抢先绑定/任务已不在可绑定状态。
      * 用于防止 afterCommit 路径与调度循环并发绑定同一任务导致 serverIp 丢失。

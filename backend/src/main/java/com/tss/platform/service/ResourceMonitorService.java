@@ -31,18 +31,21 @@ public class ResourceMonitorService {
     private final ServerMetricHistoryRepository historyRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
     private final InferenceTaskRepository inferenceRepo;
+    private final JobScheduler jobScheduler;
 
     public ResourceMonitorService(
             ComputeServerRepository serverRepo,
             ServerMetricSnapshotRepository snapshotRepo,
             ServerMetricHistoryRepository historyRepo,
             TrainingExperimentVersionRepository trainingRepo,
-            InferenceTaskRepository inferenceRepo) {
+            InferenceTaskRepository inferenceRepo,
+            JobScheduler jobScheduler) {
         this.serverRepo = serverRepo;
         this.snapshotRepo = snapshotRepo;
         this.historyRepo = historyRepo;
         this.trainingRepo = trainingRepo;
         this.inferenceRepo = inferenceRepo;
+        this.jobScheduler = jobScheduler;
     }
 
     // ────────── 5.1 SUMMARY ──────────
@@ -71,15 +74,15 @@ public class ResourceMonitorService {
             }
         }
 
-        // 汇总所有服务器上的任务数
+        // 汇总所有服务器上的任务数（服务器维度：排队数=已调度待启动 scheduled，不含全局 queued）
         List<TrainingExperimentVersion> trainingTasks = trainingRepo
-                .findByServerIpNotNullAndStatusIn(List.of("running", "queued", "scheduled"));
+                .findByServerIpNotNullAndStatusIn(List.of("running", "scheduled"));
         List<InferenceTask> inferenceTasks = inferenceRepo
-                .findByServerIpNotNullAndStatusIn(List.of("running", "queued", "scheduled"));
+                .findByServerIpNotNullAndStatusIn(List.of("running", "scheduled"));
 
         for (TrainingExperimentVersion t : trainingTasks) {
             if ("running".equals(t.getStatus())) runningTasks++;
-            else queuedTasks++;  // queued / scheduled 都算排队
+            else queuedTasks++;  // scheduled 待启动
         }
         for (InferenceTask t : inferenceTasks) {
             if ("running".equals(t.getStatus())) runningTasks++;
@@ -344,6 +347,95 @@ public class ResourceMonitorService {
         return getServerDetail(serverIp);
     }
 
+    // ────────── 5.10 GLOBAL QUEUE（跨服务器全局排队）──────────
+
+    /**
+     * 全局排队列表：所有未分配节点（serverIp 为 null）的 queued/pending 训练任务，
+     * 按所需资源池（nodePool）分组展示。组内顺序决定谁先获得该池的空闲资源，
+     * 跨池任务互不竞争，池间顺序无调度意义。
+     */
+    public List<GlobalQueuedTask> listGlobalQueued() {
+        List<TrainingExperimentVersion> tasks = trainingRepo.findUnassignedQueuedOrdered();
+        Map<String, List<TrainingExperimentVersion>> byPool = new LinkedHashMap<>();
+        for (TrainingExperimentVersion t : tasks) {
+            byPool.computeIfAbsent(resolvePoolKey(t), k -> new ArrayList<>()).add(t);
+        }
+        List<GlobalQueuedTask> result = new ArrayList<>();
+        for (Map.Entry<String, List<TrainingExperimentVersion>> e : byPool.entrySet()) {
+            List<TrainingExperimentVersion> pool = e.getValue();
+            for (int i = 0; i < pool.size(); i++) {
+                result.add(toGlobalQueuedTask(pool.get(i), e.getKey(), i + 1));
+            }
+        }
+        return result;
+    }
+
+    /** 全局排队同池内上移/下移：只调整目标任务所在资源池内的顺序，跨池位置不变 */
+    @Transactional
+    public List<GlobalQueuedTask> reorderGlobalQueue(ReorderRequest req) {
+        if (req == null || req.getTaskId() == null || req.getTaskId().isBlank()) {
+            throw new IllegalArgumentException("taskId 不能为空");
+        }
+        String direction = req.getDirection();
+        if (!"up".equals(direction) && !"down".equals(direction)) {
+            throw new IllegalArgumentException("direction 必须为 up / down");
+        }
+
+        List<GlobalQueuedTask> all = listGlobalQueued();
+        String targetPool = null;
+        boolean found = false;
+        for (GlobalQueuedTask t : all) {
+            if (t.getId().equals(req.getTaskId())) {
+                targetPool = t.getNodePool();
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            throw new IllegalArgumentException("排队任务不存在");
+        }
+
+        // 只调整目标任务所在资源池内的顺序
+        Map<String, List<GlobalQueuedTask>> byPool = new LinkedHashMap<>();
+        for (GlobalQueuedTask t : all) {
+            byPool.computeIfAbsent(t.getNodePool(), k -> new ArrayList<>()).add(t);
+        }
+        List<GlobalQueuedTask> pool = byPool.get(targetPool);
+        int idx = -1;
+        for (int i = 0; i < pool.size(); i++) {
+            if (pool.get(i).getId().equals(req.getTaskId())) {
+                idx = i;
+                break;
+            }
+        }
+        int targetIdx = "up".equals(direction) ? idx - 1 : idx + 1;
+        if (targetIdx < 0) {
+            throw new IllegalArgumentException("已在队首，无法上移");
+        }
+        if (targetIdx >= pool.size()) {
+            throw new IllegalArgumentException("已在队尾，无法下移");
+        }
+        Collections.swap(pool, idx, targetIdx);
+
+        // 重排全部全局任务的 queueSortIndex（按池分组、组内顺序写回 1..N），
+        // 使调度器 findAllPendingWithLock 的排序与展示顺序一致
+        int seq = 0;
+        for (Map.Entry<String, List<GlobalQueuedTask>> e : byPool.entrySet()) {
+            for (GlobalQueuedTask t : e.getValue()) {
+                seq++;
+                updateQueueSortIndex(t.getId(), seq);
+            }
+        }
+        return listGlobalQueued();
+    }
+
+    /** 取消全局排队任务 */
+    @Transactional
+    public List<GlobalQueuedTask> cancelGlobalQueueTask(String taskId) {
+        updateTaskStatus(taskId, "cancelled", null);
+        return listGlobalQueued();
+    }
+
     // ────────── helpers ──────────
 
     private ServerItem toServerItem(ComputeServer server, ServerMetricSnapshot snap, boolean includeTasks) {
@@ -385,10 +477,12 @@ public class ResourceMonitorService {
         item.setSpecs(specs);
 
         if (includeTasks) {
+            // 服务器详情只展示已分配到本节点的任务（running=运行中，scheduled=已调度待启动）。
+            // queued 状态的任务尚未分配节点（serverIp 为 null），不属于任何服务器，由全局排队页展示。
             List<TrainingExperimentVersion> trainingTasks = trainingRepo
-                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued", "scheduled"));
+                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "scheduled"));
             List<InferenceTask> inferenceTasks = inferenceRepo
-                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "queued", "scheduled"));
+                    .findByServerIpAndStatusIn(server.getServerIp(), List.of("running", "scheduled"));
 
             List<RunningTask> running = new ArrayList<>();
             List<QueuedTask> queued = new ArrayList<>();
@@ -397,7 +491,7 @@ public class ResourceMonitorService {
                 if ("running".equals(t.getStatus())) {
                     running.add(toRunningTask(t));
                 } else {
-                    queued.add(toQueuedTask(t));  // queued / scheduled 都显示在排队列表
+                    queued.add(toQueuedTask(t));  // 仅 scheduled 显示在"已调度待启动"列表
                 }
             }
             for (InferenceTask t : inferenceTasks) {
@@ -464,6 +558,41 @@ public class ResourceMonitorService {
         q.setPriority(t.getPriority() != null ? t.getPriority() : "中");
         q.setQueueSortIndex(t.getQueueSortIndex() != null ? t.getQueueSortIndex() : 0);
         return q;
+    }
+
+    private GlobalQueuedTask toGlobalQueuedTask(TrainingExperimentVersion t, String pool, int position) {
+        GlobalQueuedTask q = new GlobalQueuedTask();
+        q.setId(t.getId());
+        q.setName(t.getName() != null ? t.getName() : t.getId());
+        q.setModel(t.getModelVersionId());
+        q.setDataset(t.getDatasetVersionId());
+        q.setSubmitTime(t.getCreatedAt() != null ? FMT.format(t.getCreatedAt()) : "");
+        q.setPriority(t.getPriority() != null ? t.getPriority() : "中");
+        q.setQueueSortIndex(t.getQueueSortIndex() != null ? t.getQueueSortIndex() : 0);
+        q.setStatus(t.getStatus() != null ? t.getStatus() : "queued");
+        q.setNodePool(pool);
+        q.setPositionInPool(position);
+        return q;
+    }
+
+    /**
+     * 全局排队分组键：优先取任务 nodeSelector 中 tss.ai/node-pool 标签的值（cpu/gpu/h100…）。
+     * 该值来自任务自身的 selector，新增节点池（新标签值）无需改代码即可自动出现新分组。
+     */
+    private String resolvePoolKey(TrainingExperimentVersion task) {
+        Map<String, String> selector = jobScheduler.resolveNodeSelector(task);
+        if (selector == null || selector.isEmpty()) {
+            return "custom";
+        }
+        String pool = selector.get("tss.ai/node-pool");
+        if (pool != null && !pool.isBlank()) {
+            return pool;
+        }
+        // 无 node-pool 标签的多标签 selector：用标准化后的完整选择器作为分组键
+        return selector.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> e.getKey() + "=" + e.getValue())
+                .collect(Collectors.joining(","));
     }
 
     private static final Comparator<QueuedTask> compareQueued = (a, b) -> {
