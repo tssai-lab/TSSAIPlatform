@@ -384,6 +384,28 @@ async function errorMessageFromDownloadError(error: any) {
   );
 }
 
+/**
+ * 将任务详情加载错误转换为用户可读文案。
+ * 从「服务器详情」等入口可能点到他人创建的任务，后端会返回
+ * "experiment not found or no permission" 这类英文原文；这里将其
+ * 映射为友好的中文提示（不向当前用户暴露该任务是否真实存在）。
+ */
+function resolveDetailLoadError(error: any): string {
+  const status = error?.response?.status;
+  const bizMessage =
+    error?.info?.errorMessage || error?.info?.message || error?.message || '';
+  const isPermissionDenied =
+    status === 401 ||
+    status === 403 ||
+    /no permission|permission denied|无权|没有权限|无权限/i.test(
+      String(bizMessage),
+    );
+  if (isPermissionDenied) {
+    return '该训练任务由其他用户创建或已不存在，您没有权限查看详情。如需访问，请联系任务创建者或管理员。';
+  }
+  return bizMessage || '训练任务详情加载失败，请检查后端服务';
+}
+
 const TaskDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -498,7 +520,7 @@ const TaskDetail: React.FC = () => {
         setTaskLastUpdatedAt(new Date().toLocaleTimeString());
       } catch (error: any) {
         setTaskInfo(null);
-        setLoadError(error?.message || '训练任务详情加载失败，请检查后端服务');
+        setLoadError(resolveDetailLoadError(error));
         setTaskLastUpdatedAt(new Date().toLocaleTimeString());
       } finally {
         if (showLoading) {
@@ -815,9 +837,14 @@ const TaskDetail: React.FC = () => {
           showIcon
           message={loadError || '训练任务不存在或加载失败'}
           action={
-            <Button size="small" onClick={() => loadTaskDetail(true)}>
-              重试
-            </Button>
+            <Space>
+              <Button size="small" onClick={() => loadTaskDetail(true)}>
+                重试
+              </Button>
+              <Button size="small" onClick={() => history.push(listBackPath)}>
+                返回列表
+              </Button>
+            </Space>
           }
         />
       </PageContainer>

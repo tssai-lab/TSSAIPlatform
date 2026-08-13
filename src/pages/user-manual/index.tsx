@@ -281,7 +281,7 @@ const UserManual: React.FC = () => {
       extra={
         <Space>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            版本 v2.0 · 最后更新 2026-07
+            版本 v2.0 · 最后更新 2026-08
           </Typography.Text>
         </Space>
       }
@@ -612,6 +612,93 @@ const UserManual: React.FC = () => {
               训练调度
             </Title>
 
+            <Card style={cardStyle} title="创建训练任务">
+              <Paragraph>
+                任务列表页用于查看和管理你发起的全部训练任务。在训练代码列表中选择已审核通过的代码版本，点击「发起训练」进入任务创建页，配置训练参数（包括超参、资源需求等）后提交，任务进入调度队列。任务列表会展示任务的名称、模型、数据集、状态、进度等，点击任务名称可进入详情页查看实时进度条与训练指标曲线（loss、accuracy
+                等）。
+              </Paragraph>
+              <Alert
+                type="info"
+                showIcon
+                message="提示"
+                description="创建训练任务前，请确保所需的模型和数据集已上传并就绪。"
+              />
+
+              <Title level={5} style={{ marginTop: 16 }}>
+                动态训练进度与指标记录
+              </Title>
+              <Paragraph>
+                平台会逐行读取训练脚本的标准输出，识别以{' '}
+                <Text code>TSS_EVENT </Text>
+                开头、其后跟随合法 JSON
+                的事件行，据此实时刷新任务进度条并绘制训练指标曲线。想让平台展示任务的过程进度与训练指标，需要在
+                <Text strong>你自己的训练代码</Text>中按以下约定打印事件：
+              </Paragraph>
+              <ul style={{ lineHeight: 2 }}>
+                <li>
+                  <Text strong>进度事件</Text>：{' '}
+                  <Text code>{'{"type":"progress","progress":0~100}'}</Text>
+                  —— progress 是 0~100 的完成度百分比（不是 epoch
+                  序号），平台会将其映射到训练阶段的进度区间并显示在进度条上。
+                </li>
+                <li>
+                  <Text strong>指标事件</Text>：{' '}
+                  <Text code>
+                    {'{"type":"metric","step":步数,"metrics":{...}}'}
+                  </Text>
+                  —— 每次记录一个或多个<Text strong>数值型</Text>指标（如{' '}
+                  <Text code>train_loss</Text>、<Text code>val_accuracy</Text>
+                  ），step 用于绘制过程曲线；不传 step 时平台会自动递增。
+                </li>
+                <li>
+                  每条事件必须<Text strong>独占一行</Text>、以{' '}
+                  <Text code>TSS_EVENT </Text>
+                  开头，且打印后立即刷新（flush），例如{' '}
+                  <Text code>
+                    print("TSS_EVENT " + json.dumps(payload), flush=True)
+                  </Text>
+                  。
+                </li>
+              </ul>
+
+              <Title level={5} style={{ marginTop: 8 }}>
+                示例代码
+              </Title>
+              <pre
+                style={{
+                  background: '#1e1e1e',
+                  color: '#d4d4d4',
+                  padding: '16px 20px',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  lineHeight: 1.8,
+                  fontFamily: 'Consolas, Monaco, monospace',
+                }}
+              >
+                {`import json
+
+def event(payload: dict) -> None:
+    """向平台上报一条 TSS_EVENT 进度/指标事件，打印后立即 flush。"""
+    print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+
+total_epochs = 10
+for epoch in range(1, total_epochs + 1):
+    loss = train_one_epoch(epoch)          # 替换为你的训练逻辑
+    # 动态进度：progress 为 0~100 的完成度百分比（不是 epoch 序号）
+    event({"type": "progress", "progress": round(epoch * 100 / total_epochs)})
+    # 指标记录：带 step 的指标事件，平台据此绘制训练过程曲线
+    event({"type": "metric", "step": epoch, "metrics": {"train_loss": loss}})
+event({"type": "progress", "progress": 100})
+`}
+              </pre>
+              <Paragraph style={{ marginTop: 12 }}>
+                训练结束后，建议把最终指标写入 <Text code>metrics.json</Text>
+                （如 <Text code>train_loss</Text>、
+                <Text code>val_accuracy</Text>
+                等），便于任务详情页展示完整结果。
+              </Paragraph>
+            </Card>
+
             <Card style={cardStyle} title="训练代码管理">
               <Paragraph>
                 训练代码管理模块用于上传和管理训练脚本。上传后需经过审核（自动或人工），审核通过后方可在创建训练任务时选用。
@@ -693,23 +780,45 @@ const UserManual: React.FC = () => {
               />
             </Card>
 
-            <Card style={cardStyle} title="创建训练任务">
-              <Paragraph>
-                在训练代码列表中选择已审核通过的代码版本，点击「发起训练」进入任务创建页。配置训练参数（包括超参、资源需求等）后提交，任务进入调度队列。
-              </Paragraph>
-              <Alert
-                type="info"
-                showIcon
-                message="提示"
-                description="创建训练任务前，请确保所需的模型和数据集已上传并就绪。训练过程中可在任务详情页实时查看指标曲线（loss、accuracy 等）。"
-              />
-            </Card>
-
             <Card style={cardStyle} title="算力状态监控">
               <Paragraph>
-                算力状态页面展示各 GPU 服务器的实时资源使用情况，包括 GPU
-                利用率、显存占用、任务队列等。所有登录用户均可查看。超级管理员可管理任务队列优先级和节点资源。
+                算力状态页面展示各 GPU 服务器的实时资源使用情况，包括 CPU / 内存
+                / GPU
+                利用率、显存占用、磁盘使用率，以及运行中任务与待启动任务等。点击服务器卡片可进入详情页查看资源使用趋势曲线。
               </Paragraph>
+              <Descriptions bordered size="small" column={1}>
+                <Descriptions.Item label="普通用户">
+                  仅可<Text strong>查看</Text>
+                  各服务器的资源使用情况与运行中的任务列表，不提供任何变更操作。
+                </Descriptions.Item>
+                <Descriptions.Item label="超级管理员">
+                  除查看外，可对服务器进行<Text strong>启用 / 禁用</Text>
+                  操作（禁用后该服务器不再分配新的训练任务，已在运行的任务不受影响），并可纳管、删除服务器以及调整待启动任务的排队顺序。
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            <Card style={cardStyle} title="全局排队">
+              <Paragraph>
+                全局排队页面用于跨服务器查看所有等待资源的训练任务，按所需
+                <Text strong>资源池类型</Text>分组展示（如 CPU 池、GPU
+                池、自定义池）。该页面<Text strong>仅超级管理员可见</Text>。
+              </Paragraph>
+              <ul style={{ lineHeight: 2 }}>
+                <li>
+                  不同资源池（CPU / GPU / 其他）的任务
+                  <Text strong>互不竞争</Text>
+                  ，各自独立排队；组内顺序决定谁先获得该池空闲资源。
+                </li>
+                <li>
+                  超级管理员可按资源池类型，在对应池内对待分配任务进行
+                  <Text strong>上移 / 下移</Text>
+                  以调整调度顺序，也可取消任务的排队。
+                </li>
+                <li>
+                  调整只在同一资源池内生效；任务获得资源后由调度器自动分配节点启动。
+                </li>
+              </ul>
             </Card>
           </div>
 
