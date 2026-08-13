@@ -30,6 +30,7 @@ sed_bin="${TSS_SED_BIN:-sed}"
 backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
 backend_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
 inference_repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+fallback_inference_repository="${TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu}"
 cv_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker}"
 nlp_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
 health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
@@ -47,6 +48,19 @@ require_immutable_image() {
     echo "$label must use the configured repository and an immutable 40-character Git SHA tag." >&2
     return 1
   fi
+}
+
+require_immutable_image_from_either_repository() {
+  local label="$1"
+  local image="$2"
+  local first_repository="$3"
+  local second_repository="$4"
+  if require_immutable_image "$label" "$image" "$first_repository" 2>/dev/null \
+    || require_immutable_image "$label" "$image" "$second_repository" 2>/dev/null; then
+    return 0
+  fi
+  echo "$label must use an approved repository and an immutable 40-character Git SHA tag." >&2
+  return 1
 }
 
 require_image_id() {
@@ -155,7 +169,11 @@ kubeconfig="$(read_container_env TRAINING_K8S_KUBECONFIG)"
 inference_image="$(read_container_env INFERENCE_KUBERNETES_WORKER_IMAGE)"
 require_safe_path "kubectl path" "$kubectl_bin"
 require_safe_path "kubeconfig path" "$kubeconfig"
-require_immutable_image "Inference image" "$inference_image" "$inference_repository"
+require_immutable_image_from_either_repository \
+  "Inference image" \
+  "$inference_image" \
+  "$inference_repository" \
+  "$fallback_inference_repository"
 if [[ ! -x $kubectl_bin || ! -r $kubeconfig ]]; then
   echo "Kubernetes deployment tools are unavailable." >&2
   exit 1
@@ -169,12 +187,6 @@ kubectl=("$kubectl_bin" --kubeconfig "$kubeconfig")
 "${kubectl[@]}" wait --for=condition=Ready node --all --timeout=30s >/dev/null
 "${kubectl[@]}" get namespace "$namespace" >/dev/null
 "${kubectl[@]}" get node "$smoke_node" >/dev/null
-
-ready_image="$($ctr_bin --namespace k8s.io images check --quiet "name==${inference_image}" | grep -F -x "$inference_image" || true)"
-if [[ $ready_image != "$inference_image" ]]; then
-  echo "Configured inference image is not ready in Kubernetes containerd." >&2
-  exit 1
-fi
 
 active_smoke_pods=()
 cleanup() {
@@ -310,7 +322,13 @@ for url, expected in checks.items():
         raise SystemExit(f"{url}: expected {expected}, got {actual}")
 assert infer_worker.parse_endpoint("http://tss-minio:9000") == ("tss-minio:9000", False)
 print("TSS_DEPLOYMENT_SMOKE_OK:inference")'
-run_smoke_pod "inference" "$inference_image" "Never" 120 "$inference_script"
+run_smoke_pod "inference" "$inference_image" "IfNotPresent" 300 "$inference_script"
+
+ready_image="$($ctr_bin --namespace k8s.io images check --quiet "name==${inference_image}" | grep -F -x "$inference_image" || true)"
+if [[ $ready_image != "$inference_image" ]]; then
+  echo "Inference image did not remain ready in Kubernetes containerd after the smoke Pod." >&2
+  exit 1
+fi
 
 if [[ -n $cv_image ]]; then
   cv_script='import cv2

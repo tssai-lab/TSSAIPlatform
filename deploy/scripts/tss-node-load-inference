@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-source /etc/tss-platform/node-runtime.env
+runtime_file="${TSS_NODE_RUNTIME_ENV:-/etc/tss-platform/node-runtime.env}"
+if [[ ! -r $runtime_file ]]; then
+  echo "Node runtime configuration is not readable." >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$runtime_file"
 
 if [[ $# -ne 2 && $# -ne 4 ]]; then
   echo "Usage: $0 <repository>:<commit-sha> sha256:<image-id> [cv-image nlp-image]" >&2
@@ -13,19 +19,22 @@ expected_image_id="$2"
 cv_image="${3:-}"
 nlp_image="${4:-}"
 repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+fallback_repository="${TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu}"
 cv_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker}"
 nlp_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
-prefix="${repository}:"
 runtime_env="${TSS_PLATFORM_DIR}/backend/.env.runtime"
 runtime_images_env="${TSS_PLATFORM_DIR}/runtime-images.env"
 
-if [[ $image != "${prefix}"* ]]; then
+matched_repository=""
+for candidate_repository in "$repository" "$fallback_repository"; do
+  if [[ $image == "${candidate_repository}:"* \
+    && ${image#${candidate_repository}:} =~ ^[0-9a-f]{40}$ ]]; then
+    matched_repository="$candidate_repository"
+    break
+  fi
+done
+if [[ -z $matched_repository ]]; then
   echo "Refusing an image outside the configured inference repository." >&2
-  exit 1
-fi
-tag="${image#${prefix}}"
-if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
-  echo "Refusing an inference image without an immutable Git SHA tag." >&2
   exit 1
 fi
 if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
