@@ -57,6 +57,8 @@ export const API_CONFIG = {
     RESOURCE_MONITOR_GLOBAL_QUEUE_REORDER: '/resource-monitor/queue/reorder',
     RESOURCE_MONITOR_GLOBAL_QUEUE_TASK: (taskId: string) =>
       `/resource-monitor/queue/${encodeURIComponent(taskId)}`,
+    RESOURCE_MONITOR_KUBERNETES_DIAGNOSTICS:
+      '/resource-monitor/kubernetes/diagnostics',
 
     /** 实验版本管理 */
     EXPERIMENT_VERSIONS: (experimentId: string) =>
