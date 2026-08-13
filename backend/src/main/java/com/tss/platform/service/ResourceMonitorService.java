@@ -4,9 +4,12 @@ import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.dto.resource.*;
 import com.tss.platform.dto.resource.KubernetesDiagnosticsDto.KubernetesNodeHealth;
 import com.tss.platform.entity.*;
+import com.tss.platform.inference.InferenceExecutorRouter;
 import com.tss.platform.repository.*;
+import com.tss.platform.training.TrainingExecutorRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +39,8 @@ public class ResourceMonitorService {
     private final JobScheduler jobScheduler;
     private final KubernetesResourceDiagnosticsService kubernetesDiagnosticsService;
     private final ComputeProperties computeProperties;
+    private final TrainingExecutorRouter trainingExecutorRouter;
+    private final InferenceExecutorRouter inferenceExecutorRouter;
 
     public ResourceMonitorService(
             ComputeServerRepository serverRepo,
@@ -45,7 +50,9 @@ public class ResourceMonitorService {
             InferenceTaskRepository inferenceRepo,
             JobScheduler jobScheduler,
             KubernetesResourceDiagnosticsService kubernetesDiagnosticsService,
-            ComputeProperties computeProperties) {
+            ComputeProperties computeProperties,
+            @Lazy TrainingExecutorRouter trainingExecutorRouter,
+            @Lazy InferenceExecutorRouter inferenceExecutorRouter) {
         this.serverRepo = serverRepo;
         this.snapshotRepo = snapshotRepo;
         this.historyRepo = historyRepo;
@@ -54,6 +61,8 @@ public class ResourceMonitorService {
         this.jobScheduler = jobScheduler;
         this.kubernetesDiagnosticsService = kubernetesDiagnosticsService;
         this.computeProperties = computeProperties;
+        this.trainingExecutorRouter = trainingExecutorRouter;
+        this.inferenceExecutorRouter = inferenceExecutorRouter;
     }
 
     // ────────── 5.1 SUMMARY ──────────
@@ -367,6 +376,18 @@ public class ResourceMonitorService {
 
     @Transactional
     public ServerItem cancelQueueTask(String serverIp, String taskId) {
+        // 已调度待启动（scheduled）的任务可能已提交 K8s Job：只改数据库状态会导致 Job 成孤儿继续占用底层资源，
+        // 取消前先删除对应 Job，避免资源泄漏。
+        trainingRepo.findById(taskId).ifPresent(t -> {
+            if ("scheduled".equals(t.getStatus())) {
+                trainingExecutorRouter.stop(taskId);
+            }
+        });
+        inferenceRepo.findById(taskId).ifPresent(t -> {
+            if ("scheduled".equals(t.getStatus())) {
+                inferenceExecutorRouter.stop(taskId);
+            }
+        });
         updateTaskStatus(taskId, "cancelled", null);
         autoReorderQueued(serverIp);
         return getServerDetail(serverIp);
