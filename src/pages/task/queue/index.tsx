@@ -118,7 +118,13 @@ const QueuePage = () => {
           <Text strong>{record.positionInPool}</Text>
         ),
       },
-      { title: '任务名称', dataIndex: 'name', key: 'name', ellipsis: true },
+      {
+        title: '任务名称',
+        dataIndex: 'name',
+        key: 'name',
+        width: 240,
+        ellipsis: true,
+      },
       { title: '模型', dataIndex: 'model', key: 'model', width: 120 },
       { title: '数据集', dataIndex: 'dataset', key: 'dataset', width: 120 },
       {
