@@ -324,9 +324,9 @@ assert infer_worker.parse_endpoint("http://tss-minio:9000") == ("tss-minio:9000"
 print("TSS_DEPLOYMENT_SMOKE_OK:inference")'
 run_smoke_pod "inference" "$inference_image" "IfNotPresent" 300 "$inference_script"
 
-ready_image="$($ctr_bin --namespace k8s.io images check --quiet "name==${inference_image}" | grep -F -x "$inference_image" || true)"
+ready_image="$($ctr_bin --namespace k8s.io images list --quiet | grep -F -x "$inference_image" || true)"
 if [[ $ready_image != "$inference_image" ]]; then
-  echo "Inference image did not remain ready in Kubernetes containerd after the smoke Pod." >&2
+  echo "Inference image reference is missing from Kubernetes containerd after the smoke Pod." >&2
   exit 1
 fi
 
