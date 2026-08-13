@@ -76,6 +76,7 @@ public class ResourceMonitorService {
         for (ComputeServer s : servers) {
             ServerMetricSnapshot snap = snapMap.get(s.getServerIp());
             KubernetesNodeHealth node = nodeFor(s, nodeHealth);
+            // 告警(warning)只代表资源使用率高，节点仍在线，应计入在线数
             if (isServerHealthy(snap, nodeHealth, node)) {
                 online++;
             }
@@ -756,7 +757,8 @@ public class ResourceMonitorService {
     ) {
         return snapshot != null
                 && "fresh".equals(metricsState(snapshot).status())
-                && "online".equals(snapshot.getStatus())
+                // 告警(warning)只代表资源使用率高，节点仍在线，应计入在线数
+                && ("online".equals(snapshot.getStatus()) || "warning".equals(snapshot.getStatus()))
                 && nvl(snapshot.getDiskRate()) < 85.0
                 && nodeHealth != null
                 && nodeHealth.available()
