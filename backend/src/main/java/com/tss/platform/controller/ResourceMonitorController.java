@@ -6,7 +6,9 @@ import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.ResourceMonitorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -138,7 +140,10 @@ public class ResourceMonitorController {
 
     private void requireSuperAdmin() {
         if (!authContext.isSuperAdmin()) {
-            throw new IllegalArgumentException("仅超级管理员可查看 Kubernetes 诊断详情");
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "仅超级管理员可查看 Kubernetes 诊断详情"
+            );
         }
     }
 }
