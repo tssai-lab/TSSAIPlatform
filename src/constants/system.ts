@@ -22,5 +22,7 @@ export const SYSTEM_API_CONFIG = {
     /** 系统配置 */
     CONFIG_GET: '/system/config/get',
     CONFIG_UPDATE: '/system/config/update',
+    RESOURCE_POLICY_GET: '/system/config/resource-policy/get',
+    RESOURCE_POLICY_UPDATE: '/system/config/resource-policy/update',
   },
 } as const;
