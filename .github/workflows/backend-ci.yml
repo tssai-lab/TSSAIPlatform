@@ -37,6 +37,11 @@ jobs:
           find backend/scripts deploy/scripts k8s \
             -type f -name '*.sh' -print0 \
             | xargs -0 -r -n1 bash -n
+          find deploy/scripts -maxdepth 1 -type f -name 'tss-node-*' -print0 \
+            | xargs -0 -r -n1 bash -n
+
+      - name: Run deployment validation contract tests
+        run: bash deploy/scripts/tests/test-tss-node-validation.sh
 
       - name: Run inference worker unit tests
         run: |
