@@ -65,7 +65,9 @@ public class ResourceMonitorService {
 
         for (ComputeServer s : servers) {
             ServerMetricSnapshot snap = snapMap.get(s.getServerIp());
-            if (snap != null && "online".equals(snap.getStatus())) {
+            // 告警(warning)只代表资源使用率高，节点仍在线，应计入在线数
+            if (snap != null
+                    && ("online".equals(snap.getStatus()) || "warning".equals(snap.getStatus()))) {
                 online++;
             }
             if (snap != null && snap.getGpuRate() != null) {
