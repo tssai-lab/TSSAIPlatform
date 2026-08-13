@@ -12,6 +12,7 @@ import com.tss.platform.training.ShellCommandRunner;
 import com.tss.platform.training.TrainingEnvironmentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Path;
@@ -63,6 +64,13 @@ class ModelCacheAdministrationServiceTest {
     }
 
     @Test
+    void cacheDefaultsAreSafeForTheKubeadmPhysicalNode() {
+        assertEquals("/opt/tss-platform/model-cache", cacheProperties.getNodePath());
+        assertEquals(8L * 1024 * 1024 * 1024, cacheProperties.getMaxBytes());
+        assertEquals(5L * 1024 * 1024 * 1024, cacheProperties.getMinFreeBytes());
+    }
+
+    @Test
     void normalAdministratorCanInspectButCannotClear() {
         when(authContext.isAdmin()).thenReturn(true);
         when(authContext.isSuperAdmin()).thenReturn(false);
@@ -110,6 +118,10 @@ class ModelCacheAdministrationServiceTest {
 
         assertEquals(List.of(digest), response.nodes().get(0).cleared());
         assertTrue(response.nodes().get(0).inUse().isEmpty());
+        ArgumentCaptor<String> yaml = ArgumentCaptor.forClass(String.class);
+        verify(commandRunner).runWithInput(anyList(), eq(root), yaml.capture(), eq(30));
+        assertTrue(yaml.getValue().contains("cpu: \"100m\""));
+        assertTrue(yaml.getValue().contains("memory: \"128Mi\""));
         verify(auditRecordService).recordSuccess(
                 any(), any(), eq("model-cache"), any());
     }

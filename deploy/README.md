@@ -26,12 +26,32 @@ See `BRANCH_GOVERNANCE.md` for branch and promotion rules.
 | `nodes/node.env.example` | Generic non-secret node configuration template |
 | `nodes/main.env.example` | Current Main integration-node configuration template |
 | `scripts/preflight-node.sh` | Read-only operating system, tool and capacity checks |
-| `scripts/bootstrap-node-training-runtime.sh` | One-time MLflow, worker image and kind bootstrap |
+| `scripts/bootstrap-node-training-runtime.sh` | Legacy isolated-POC MLflow, worker image and kind bootstrap; not for Main kubeadm expansion |
 | `scripts/bootstrap-node-backend.sh` | One-time backend runtime and restricted deploy-command bootstrap |
 | `scripts/smoke-test-node.sh` | Repeatable non-destructive node smoke checks |
 | `scripts/bootstrap-main-*.sh` | Compatibility entry points for the current Main node |
 
 ## New node procedure
+
+Main expansion nodes join the existing kubeadm cluster. Do not run
+`bootstrap-node-training-runtime.sh` for them: that script intentionally creates
+an independent kind cluster and is retained only for an isolated POC.
+
+For a Main kubeadm compute node:
+
+1. Run `preflight-node.sh`, then use the infrastructure-owned kubeadm join
+   command. Join tokens and certificate material are short-lived secrets and
+   must never be committed to this repository.
+2. Wait until the control-plane reports the exact node `Ready`. Prepare the
+   namespace registry pull secret and verify the immutable CV, NLP and inference
+   images on that node with a real Pod.
+3. Install and run `tss-node-prepare-model-cache` on the physical node. From a
+   cluster-admin host, run `tss-node-validate-model-cache --label-ready`.
+4. Verify that resource monitoring has synchronized the live node labels and
+   capacity. Run a minimal task before enabling the compute-server record for
+   normal scheduling.
+
+The procedure below is only for an intentionally independent app/worker POC:
 
 1. Copy `nodes/node.env.example` outside the repository and set non-secret
    values for the target node. Protect the installed file with mode `600`.
@@ -108,10 +128,11 @@ remains the source of truth, so clearing a cache entry never deletes the model.
 Defaults:
 
 - physical host path: `/opt/tss-platform/model-cache`
-- kind node path: `/var/lib/tss-platform/model-cache`
+- kubeadm physical node/hostPath: `/opt/tss-platform/model-cache`
 - trusted init-container path: `/var/cache/tss/models`
-- maximum materialized cache data: 20 GiB
+- maximum materialized cache data: 8 GiB on the disk-constrained Main node
 - reserved free filesystem space: 5 GiB
+- additional runtime image rollout reserve: 13 GiB during node validation
 - backend switch: disabled
 
 Capacity and memory behavior:
@@ -138,49 +159,53 @@ Administration:
   `POST /api/system/model-cache/clear`.
 
 
-The runtime bootstrap creates the directory and sentinel file with UID/GID
-`10001`, renders the kind `extraMount`, and verifies an existing kind node.
-When an existing cluster lacks the mount, it exits with instructions and never
-deletes or recreates the cluster automatically.
+Main uses kubeadm, so the physical directory is the Pod `hostPath`; no kind
+container mount or cluster recreation is involved. The old kind runtime
+bootstrap remains available only for an intentionally isolated POC.
 
 ### Main maintenance migration
 
-Main's current kind cluster must be recreated once to add the physical-host
-mount. This interrupts active Kubernetes training and inference Jobs. PostgreSQL,
-MinIO and MLflow data live outside kind, but their health and backups must still
-be checked before the maintenance window.
+The cache must be introduced in a maintenance window, but Main's kubeadm cluster
+must not be recreated. PostgreSQL, MinIO and MLflow remain the source systems;
+check their health and backups before changing the cache switch.
 
 1. Keep `TSS_MODEL_CACHE_ENABLED=false` and wait for active Jobs to finish:
 
    ```bash
-   kubectl --kubeconfig /opt/tss-platform/k8s/.kube/config \
+   kubectl --kubeconfig /opt/tss-platform/k8s/.kube/admin.conf \
      get jobs -n tss-training
    ```
 
-2. Run `bootstrap-node-training-runtime.sh` with Main's reviewed node config.
-   It stages the physical directory and stops safely if the old cluster has no
-   mount.
-3. After explicit maintenance approval, recreate only the named kind cluster:
+2. On the target physical node, prepare the directory and enforce UID/GID,
+   local-filesystem and disk-reserve checks:
 
    ```bash
-   /opt/tss-platform/.tools/bin/kind delete cluster --name tss-training
-   TSS_NODE_CONFIG=/etc/tss-platform/node.env \
-     bash deploy/scripts/bootstrap-node-training-runtime.sh /path/to/repository
+   sudo TSS_MODEL_CACHE_HOST_PATH=/opt/tss-platform/model-cache \
+     deploy/scripts/tss-node-prepare-model-cache
    ```
 
-4. Verify the sentinel and the Docker mount source/destination before enabling
-   the backend switch:
+3. Ensure the immutable inference worker image and registry pull secret are
+   ready on that node. From a cluster-admin host, run the real worker probe; it
+   adds the ready label only after the hostPath, permissions and capacity pass:
 
    ```bash
-   test -f /opt/tss-platform/model-cache/.tss-model-cache-root
-   docker inspect tss-training-control-plane \
-     --format '{{range .Mounts}}{{println .Source .Destination}}{{end}}'
+   sudo TSS_KUBECONFIG=/opt/tss-platform/k8s/.kube/admin.conf \
+     deploy/scripts/tss-node-validate-model-cache \
+       k8s-master registry.example/tss-inference-worker-cpu:<40-char-sha> \
+       --label-ready
    ```
 
-5. Set `TSS_MODEL_CACHE_ENABLED=true`, rerun
-   `bootstrap-node-backend.sh`, and redeploy the current immutable backend image.
+4. Wait for the resource monitor to copy the live ready label into the compute
+   node record. Only then set `TSS_MODEL_CACHE_ENABLED=true`, keep the node path
+   equal to `/opt/tss-platform/model-cache`, and redeploy the immutable backend.
    Run the same model twice: the first initializer log must report `populated`;
    the second must report `hit`.
+
+For every additional kubeadm worker, repeat the same order: system/disk
+preflight, join the existing cluster, create the registry secret, load or pull
+the immutable worker image, prepare the local directory, run the real worker
+probe, verify monitoring, run a minimal task, and only then enable scheduling.
+Never copy the ready label from another node.
 
 Rollback is non-destructive: set the switch back to `false`, regenerate the
 backend runtime environment, and redeploy. Keep the mounted cache directory for
