@@ -46,7 +46,9 @@ For a Main kubeadm compute node:
    namespace registry pull secret and verify the immutable CV, NLP and inference
    images on that node with a real Pod.
 3. Install and run `tss-node-prepare-model-cache` on the physical node. From a
-   cluster-admin host, run `tss-node-validate-model-cache --label-ready`.
+   cluster-admin host, run `tss-node-validate-model-cache --label-ready`. The
+   validator creates one static Local PV/PVC pair bound to that exact node, so
+   restricted workload Pods use a PVC and never request `hostPath` directly.
 4. Verify that resource monitoring has synchronized the live node labels and
    capacity. Run a minimal task before enabling the compute-server record for
    normal scheduling.
@@ -129,6 +131,8 @@ Defaults:
 
 - physical host path: `/opt/tss-platform/model-cache`
 - kubeadm physical node/hostPath: `/opt/tss-platform/model-cache`
+- workload volume: node-bound static Local PV/PVC named
+  `tss-model-cache-<sanitized-node-name>`
 - trusted init-container path: `/var/cache/tss/models`
 - maximum materialized cache data: 8 GiB on the disk-constrained Main node
 - reserved free filesystem space: 5 GiB
@@ -160,7 +164,11 @@ Administration:
 
 
 Main uses kubeadm, so the physical directory is the Pod `hostPath`; no kind
-container mount or cluster recreation is involved. The old kind runtime
+container mount or cluster recreation is involved. Because Main enforces the
+Kubernetes restricted Pod Security Standard, application Pods do not declare
+`hostPath` themselves: a static Local PV exposes that directory and an exactly
+pre-bound PVC is mounted by the restricted training, inference, probe and
+administration Pods. The old kind runtime
 bootstrap remains available only for an intentionally isolated POC.
 
 ### Main maintenance migration
@@ -186,7 +194,8 @@ check their health and backups before changing the cache switch.
 
 3. Ensure the immutable inference worker image and registry pull secret are
    ready on that node. From a cluster-admin host, run the real worker probe; it
-   adds the ready label only after the hostPath, permissions and capacity pass:
+   creates/verifies the node-bound Local PV/PVC and adds the ready label only
+   after the restricted worker Pod, permissions and capacity pass:
 
    ```bash
    sudo TSS_KUBECONFIG=/opt/tss-platform/k8s/.kube/admin.conf \
@@ -209,7 +218,10 @@ Never copy the ready label from another node.
 
 Rollback is non-destructive: set the switch back to `false`, regenerate the
 backend runtime environment, and redeploy. Keep the mounted cache directory for
-inspection; deleting cached weights is a separate, explicit maintenance action.
+inspection; keep the Local PV/PVC with reclaim policy `Retain`. Removing a
+node's PV/PVC or deleting cached weights is a separate, explicit maintenance
+action and must happen only after the node is disabled and its ready label is
+removed.
 
 ## Rollback
 

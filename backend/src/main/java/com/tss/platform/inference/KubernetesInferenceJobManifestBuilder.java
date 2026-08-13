@@ -6,6 +6,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
@@ -99,7 +100,8 @@ public class KubernetesInferenceJobManifestBuilder {
                 modelVersion,
                 minioAccessKey,
                 minioSecretKey,
-                minioBucket
+                minioBucket,
+                targetNodeName
         );
 
         return """
@@ -250,13 +252,14 @@ public class KubernetesInferenceJobManifestBuilder {
             ModelVersion modelVersion,
             String minioAccessKey,
             String minioSecretKey,
-            String minioBucket
+            String minioBucket,
+            String targetNodeName
     ) {
         if (!modelCacheProperties.isEnabled()) {
             return ModelCacheSpec.disabled();
         }
 
-        String nodePath = requireCachePath(
+        requireCachePath(
                 "inference.kubernetes.model-cache.node-path",
                 modelCacheProperties.getNodePath()
         );
@@ -291,15 +294,15 @@ public class KubernetesInferenceJobManifestBuilder {
             );
             return ModelCacheSpec.disabled();
         }
+        String claimName = ModelCacheVolumeNaming.claimNameForNode(targetNodeName);
 
         String entrySubPath = "entries/" + digest + "/data";
         String lockSubPath = "locks/" + digest + ".lock";
         String volumeYaml = String.join(
                 "\n",
                 "        - name: model-cache",
-                "          hostPath:",
-                "            path: \"" + escapeYaml(nodePath) + "\"",
-                "            type: Directory"
+                "          persistentVolumeClaim:",
+                "            claimName: \"" + escapeYaml(claimName) + "\""
         ) + "\n";
         String initContainerYaml = String.join(
                 "\n",

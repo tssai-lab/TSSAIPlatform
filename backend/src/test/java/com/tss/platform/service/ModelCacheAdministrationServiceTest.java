@@ -122,6 +122,9 @@ class ModelCacheAdministrationServiceTest {
         verify(commandRunner).runWithInput(anyList(), eq(root), yaml.capture(), eq(30));
         assertTrue(yaml.getValue().contains("cpu: \"100m\""));
         assertTrue(yaml.getValue().contains("memory: \"128Mi\""));
+        assertTrue(yaml.getValue().contains("persistentVolumeClaim:"));
+        assertTrue(yaml.getValue().contains("claimName: \"tss-model-cache-kind-worker\""));
+        assertTrue(!yaml.getValue().contains("hostPath:"));
         verify(auditRecordService).recordSuccess(
                 any(), any(), eq("model-cache"), any());
     }

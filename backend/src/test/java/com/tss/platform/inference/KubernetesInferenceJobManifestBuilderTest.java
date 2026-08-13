@@ -108,11 +108,14 @@ class KubernetesInferenceJobManifestBuilderTest {
                 null,
                 "access",
                 "secret",
-                "models"
+                "models",
+                "worker-2"
         );
 
         assertTrue(yaml.contains("name: model-cache-initializer"));
-        assertTrue(yaml.contains("path: \"/var/lib/tss-platform/model-cache\""));
+        assertTrue(yaml.contains("persistentVolumeClaim:"));
+        assertTrue(yaml.contains("claimName: \"tss-model-cache-worker-2\""));
+        assertFalse(yaml.contains("hostPath:"));
         assertTrue(yaml.contains("value: \"prepare-model-cache\""));
         assertTrue(yaml.contains("value: \"" + digest + "\""));
         assertTrue(yaml.contains("subPath: \"entries/" + digest + "/data\""));
@@ -121,7 +124,7 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertTrue(yaml.contains("mountPath: /var/run/tss-model-cache/model.lock"));
         assertTrue(yaml.contains("readOnly: true"));
         assertTrue(yaml.contains("name: MODEL_CACHE_ENABLED"));
-        assertTrue(yaml.contains("tss.ai/model-cache-ready: \"true\""));
+        assertTrue(yaml.contains("nodeName: \"worker-2\""));
 
         JsonNode podSpec = YAMLMapper.builder().build().readTree(yaml)
                 .path("spec").path("template").path("spec");
@@ -129,8 +132,9 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertEquals(1, podSpec.path("containers").size());
         assertEquals(2, podSpec.path("volumes").size());
         assertEquals(
-                "Directory",
-                podSpec.path("volumes").path(1).path("hostPath").path("type").asText());
+                "tss-model-cache-worker-2",
+                podSpec.path("volumes").path(1).path("persistentVolumeClaim")
+                        .path("claimName").asText());
 
         String pinnedYaml = builder.buildJobYaml(
                 task,

@@ -122,6 +122,9 @@ class KubernetesJobManifestBuilderTest {
                 task, "access", "secret", "models", "kind-worker");
 
         assertTrue(yaml.contains("name: model-cache-initializer"));
+        assertTrue(yaml.contains("persistentVolumeClaim:"));
+        assertTrue(yaml.contains("claimName: \"tss-model-cache-kind-worker\""));
+        assertFalse(yaml.contains("hostPath:"));
         assertTrue(yaml.contains("value: \"prepare-model-cache\""));
         assertTrue(yaml.contains("subPath: \"entries/" + digest + "/data\""));
         assertTrue(yaml.contains("subPath: \"locks/" + digest + ".lock\""));
