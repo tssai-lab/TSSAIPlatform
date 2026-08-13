@@ -456,8 +456,9 @@ public class TrainingExperimentService {
         TrainingExperimentVersion byId = repo.findById(idOrExperimentId).orElse(null);
         if (byId != null) {
             requireExperimentAccess(byId);
-            repo.findByExperimentIdOrderByVersionNoAsc(byId.getExperimentId())
-                    .forEach(failureDiagnosticService::enqueueDeletion);
+            List<TrainingExperimentVersion> versions = repo.findByExperimentIdOrderByVersionNoAsc(byId.getExperimentId());
+            stopActiveTrainingJobs(versions);
+            versions.forEach(failureDiagnosticService::enqueueDeletion);
             repo.deleteByExperimentId(byId.getExperimentId());
             return;
         }
@@ -466,8 +467,18 @@ public class TrainingExperimentService {
             throw new IllegalArgumentException("训练任务不存在");
         }
         requireExperimentAccess(versions.get(0));
+        stopActiveTrainingJobs(versions);
         versions.forEach(failureDiagnosticService::enqueueDeletion);
         repo.deleteByExperimentId(idOrExperimentId);
+    }
+
+    /** 删除实验前，先停掉仍在运行/已调度的版本对应的 K8s Job，避免删记录后 Job 成孤儿继续占用底层资源 */
+    private void stopActiveTrainingJobs(List<TrainingExperimentVersion> versions) {
+        versions.forEach(v -> {
+            if ("running".equals(v.getStatus()) || "scheduled".equals(v.getStatus())) {
+                trainingExecutorRouter.stop(v.getId());
+            }
+        });
     }
 
     public TrainingExperimentVersionDto toDto(TrainingExperimentVersion version) {

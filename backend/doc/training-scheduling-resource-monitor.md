@@ -28,7 +28,7 @@
 
 ### 2.1 训练任务状态机与流转
 
-任务状态：`pending`（创建）→ `scheduled`（已分配节点）或 `queued`（排队等资源）→ `running`（训练中）→ `success` / `failed` / `stopped`（终态）。
+任务状态：`pending`（创建）→ `scheduled`（已分配节点）或 `queued`（排队等资源）→ `running`（训练中）→ `success` / `failed` / `stopped` / `cancelled`（终态）。
 
 ```
 用户创建任务（status=pending, progress=0）
@@ -54,9 +54,11 @@
 | scheduled | 5 |
 | running | 50（回调上报实时进度，只增不减） |
 | success | 100 |
-| failed / stopped | 0 |
+| failed / stopped / cancelled | 0 |
 
 **停止训练**：仅 `queued` / `scheduled` / `running` 状态可停止，调用 `TrainingExecutorRouter.stop()`，任务置为 `stopped`。
+
+**取消排队**：排队中的任务（`pending` / `queued`，未分配节点）可通过资源监控接口取消（`DELETE /servers/{serverIp}/queue/{taskId}` 或 `DELETE /queue/{taskId}`），任务置为 `cancelled` 并退出全局/服务器排队。`cancelled` 自 V55 起被数据库状态约束 `ck_training_experiment_status` 允许。
 
 ### 2.2 调度决策算法（`JobScheduler.assignNode`）
 
@@ -176,6 +178,7 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 | V40 | `compute_server` + `cpu_cores`、`memory_gib` | 节点容量字段 |
 | V42 | `compute_server` + `enabled`、`k8s_labels_json` | 启用开关、节点标签快照 |
 | V47 | `compute_server` + `gpu_count` | GPU 数量 |
+| V55 | `training_experiment_version` | 状态约束 `ck_training_experiment_status` 增加 `cancelled`（取消排队） |
 
 `compute_server` 表结构（V36 建表 + V40/42/47 加列后）：
 
@@ -283,3 +286,4 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 | `db/migration/V38__task_queue_fields.sql` | 任务排队字段 |
 | `db/migration/V39__server_metric_history.sql` | 指标历史 |
 | `db/migration/V40__compute_server_capacity.sql` / `V42` / `V47` | 容量 / 标签 / GPU 字段 |
+| `db/migration/V55__training_status_cancelled.sql` | 允许 `cancelled` 状态 |

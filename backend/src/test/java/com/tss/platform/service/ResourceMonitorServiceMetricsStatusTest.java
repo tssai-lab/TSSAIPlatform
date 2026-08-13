@@ -3,6 +3,8 @@ package com.tss.platform.service;
 import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.dto.resource.KubernetesDiagnosticsDto.KubernetesNodeHealth;
 import com.tss.platform.dto.resource.ServerItem;
+import com.tss.platform.inference.InferenceExecutorRouter;
+import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.ServerMetricSnapshot;
 import com.tss.platform.repository.ComputeServerRepository;
@@ -93,6 +95,8 @@ class ResourceMonitorServiceMetricsStatusTest {
         KubernetesResourceDiagnosticsService diagnostics = mock(KubernetesResourceDiagnosticsService.class);
         ComputeProperties properties = new ComputeProperties();
         properties.setCollectIntervalMs(30_000);
+        TrainingExecutorRouter trainingExecutorRouter = mock(TrainingExecutorRouter.class);
+        InferenceExecutorRouter inferenceExecutorRouter = mock(InferenceExecutorRouter.class);
         ResourceMonitorService service = new ResourceMonitorService(
                 serverRepo,
                 snapshotRepo,
@@ -101,7 +105,9 @@ class ResourceMonitorServiceMetricsStatusTest {
                 inferenceRepo,
                 scheduler,
                 diagnostics,
-                properties
+                properties,
+                trainingExecutorRouter,
+                inferenceExecutorRouter
         );
         return new Fixture(service, serverRepo, snapshotRepo, diagnostics);
     }
