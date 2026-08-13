@@ -10,8 +10,11 @@ RUN useradd -r -u 10001 -m worker \
     && chown -R worker:worker /workspace
 
 COPY requirements-cv.txt .
-RUN pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless || true \
-    && pip install --no-cache-dir -r requirements-cv.txt \
+RUN pip install --no-cache-dir -r requirements-cv.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    && pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless \
+    && pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless==4.10.0.84 \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn
 
