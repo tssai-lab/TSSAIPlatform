@@ -207,7 +207,7 @@ const ModelCachePage: React.FC = () => {
           showIcon
           type="warning"
           message="模型缓存当前关闭"
-          description="代码能力已安装，但必须先在维护窗口为 kind 节点挂载物理缓存目录并完成节点验证，才能安全启用。"
+          description="代码能力已安装，但必须先在维护窗口为 kubeadm 物理节点准备本地目录，通过真实 worker 探针并完成节点验证，才能安全启用。"
           style={{ marginBottom: 16 }}
         />
       ) : null}
