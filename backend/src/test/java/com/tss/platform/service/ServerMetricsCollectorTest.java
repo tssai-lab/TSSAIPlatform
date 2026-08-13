@@ -92,6 +92,53 @@ class ServerMetricsCollectorTest {
         assertThat(ServerMetricsCollector.networkRate(10_000, 10_000, 30)).isZero();
     }
 
+    @Test
+    void successfulZeroDiskAndNetworkSampleReplacesOldValues() {
+        Fixture fixture = fixture();
+        ComputeServer server = server("zero-node");
+        ServerMetricSnapshot snapshot = new ServerMetricSnapshot();
+        snapshot.setServerIp(server.getServerIp());
+        snapshot.setDiskRate(50.0);
+        snapshot.setNetworkIn(9.0);
+        snapshot.setNetworkOut(8.0);
+        when(fixture.snapshotRepo.findByServerIp(server.getServerIp())).thenReturn(Optional.of(snapshot));
+        when(fixture.shellRunner.run(any(), any(), anyInt()))
+                .thenReturn(ShellCommandRunner.CommandResult.success("""
+                        {"node":{"fs":{"capacityBytes":1000,"availableBytes":1000}},
+                         "network":{"interfaces":[{"rxBytes":0,"txBytes":0}]}}
+                        """));
+
+        fixture.collector.collectOne(
+                server,
+                new ServerMetricsCollector.TopData(0.1, 1024, 1.0, 2.0, 0),
+                new double[]{4, 16}
+        );
+
+        assertThat(snapshot.getDiskRate()).isZero();
+        assertThat(snapshot.getNetworkIn()).isZero();
+        assertThat(snapshot.getNetworkOut()).isZero();
+    }
+
+    @Test
+    void diskUsageAtThresholdMarksSnapshotAsWarning() {
+        Fixture fixture = fixture();
+        ComputeServer server = server("disk-node");
+        ServerMetricSnapshot snapshot = new ServerMetricSnapshot();
+        snapshot.setServerIp(server.getServerIp());
+        snapshot.setDiskRate(85.0);
+        when(fixture.snapshotRepo.findByServerIp(server.getServerIp())).thenReturn(Optional.of(snapshot));
+        when(fixture.shellRunner.run(any(), any(), anyInt()))
+                .thenReturn(ShellCommandRunner.CommandResult.failed(1, "", "stats unavailable"));
+
+        fixture.collector.collectOne(
+                server,
+                new ServerMetricsCollector.TopData(0.1, 1024, 1.0, 2.0, 0),
+                new double[]{4, 16}
+        );
+
+        assertThat(snapshot.getStatus()).isEqualTo("warning");
+    }
+
     private static ComputeServer server(String name) {
         ComputeServer server = new ComputeServer();
         server.setServerIp(name);

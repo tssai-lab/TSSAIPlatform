@@ -189,7 +189,10 @@ public class ServerMetricsCollector {
         // lastHeartbeat means the last successful core Metrics API sample. updatedAt is the latest attempt.
         // Their difference lets the API distinguish stale/unavailable data without a schema change.
         if (top != null) {
-            double maxRate = Math.max(Math.max(snap.getCpuRate(), snap.getMemRate()), snap.getGpuRate());
+            double maxRate = Math.max(
+                    Math.max(Math.max(snap.getCpuRate(), snap.getMemRate()), snap.getGpuRate()),
+                    snap.getDiskRate()
+            );
             snap.setStatus(maxRate >= 85.0 ? "warning" : "online");
             snap.setLastHeartbeat(now);
         } else {

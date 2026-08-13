@@ -1,6 +1,8 @@
 package com.tss.platform.service;
 
+import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.dto.resource.*;
+import com.tss.platform.dto.resource.KubernetesDiagnosticsDto.KubernetesNodeHealth;
 import com.tss.platform.entity.*;
 import com.tss.platform.repository.*;
 import org.slf4j.Logger;
@@ -32,6 +34,8 @@ public class ResourceMonitorService {
     private final TrainingExperimentVersionRepository trainingRepo;
     private final InferenceTaskRepository inferenceRepo;
     private final JobScheduler jobScheduler;
+    private final KubernetesResourceDiagnosticsService kubernetesDiagnosticsService;
+    private final ComputeProperties computeProperties;
 
     public ResourceMonitorService(
             ComputeServerRepository serverRepo,
@@ -39,13 +43,17 @@ public class ResourceMonitorService {
             ServerMetricHistoryRepository historyRepo,
             TrainingExperimentVersionRepository trainingRepo,
             InferenceTaskRepository inferenceRepo,
-            JobScheduler jobScheduler) {
+            JobScheduler jobScheduler,
+            KubernetesResourceDiagnosticsService kubernetesDiagnosticsService,
+            ComputeProperties computeProperties) {
         this.serverRepo = serverRepo;
         this.snapshotRepo = snapshotRepo;
         this.historyRepo = historyRepo;
         this.trainingRepo = trainingRepo;
         this.inferenceRepo = inferenceRepo;
         this.jobScheduler = jobScheduler;
+        this.kubernetesDiagnosticsService = kubernetesDiagnosticsService;
+        this.computeProperties = computeProperties;
     }
 
     // ────────── 5.1 SUMMARY ──────────
@@ -53,6 +61,8 @@ public class ResourceMonitorService {
     public SummaryDto getSummary() {
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
         List<ServerMetricSnapshot> snapshots = snapshotRepo.findAll();
+        KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth =
+                kubernetesDiagnosticsService.collectNodeHealth();
 
         Map<String, ServerMetricSnapshot> snapMap = snapshots.stream()
                 .collect(Collectors.toMap(ServerMetricSnapshot::getServerIp, s -> s));
@@ -65,10 +75,12 @@ public class ResourceMonitorService {
 
         for (ComputeServer s : servers) {
             ServerMetricSnapshot snap = snapMap.get(s.getServerIp());
-            if (snap != null && "online".equals(snap.getStatus())) {
+            KubernetesNodeHealth node = nodeFor(s, nodeHealth);
+            if (isServerHealthy(snap, nodeHealth, node)) {
                 online++;
             }
-            if (snap != null && snap.getGpuRate() != null) {
+            if ("fresh".equals(metricsState(snap).status())
+                    && snap != null && snap.getGpuRate() != null) {
                 totalGpuRate += snap.getGpuRate();
                 gpuCount++;
             }
@@ -103,15 +115,21 @@ public class ResourceMonitorService {
     public List<ServerItem> listServers(String keyword, String status) {
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
         List<ServerMetricSnapshot> snapshots = snapshotRepo.findAll();
+        KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth =
+                kubernetesDiagnosticsService.collectNodeHealth();
         Map<String, ServerMetricSnapshot> snapMap = snapshots.stream()
                 .collect(Collectors.toMap(ServerMetricSnapshot::getServerIp, s -> s));
 
         return servers.stream()
                 .filter(s -> keyword == null || keyword.isEmpty()
                         || s.getHostname().contains(keyword) || s.getServerIp().contains(keyword))
-                .map(s -> toServerItem(s, snapMap.get(s.getServerIp()), true))
+                .map(s -> toServerItem(s, snapMap.get(s.getServerIp()), true, nodeHealth))
                 .filter(item -> status == null || "all".equals(status) || item.getStatus().equals(status))
                 .collect(Collectors.toList());
+    }
+
+    public KubernetesDiagnosticsDto getKubernetesDiagnostics() {
+        return kubernetesDiagnosticsService.collectDiagnostics();
     }
 
     // ────────── 5.3 ADD SERVER ──────────
@@ -146,7 +164,7 @@ public class ResourceMonitorService {
 
         serverRepo.save(server);
         LOG.info("服务器已添加: {} ({})", ip, server.getHostname());
-        return toServerItem(server, null, false);
+        return toServerItem(server, null, false, null);
     }
 
     // ────────── 5.4 SERVER DETAIL ──────────
@@ -155,7 +173,9 @@ public class ResourceMonitorService {
         ComputeServer server = serverRepo.findByServerIpAndDeletedFalse(serverIp)
                 .orElseThrow(() -> new IllegalArgumentException("服务器不存在: " + serverIp));
         ServerMetricSnapshot snapshot = snapshotRepo.findByServerIp(serverIp).orElse(null);
-        return toServerItem(server, snapshot, true);
+        KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth =
+                kubernetesDiagnosticsService.collectNodeHealth();
+        return toServerItem(server, snapshot, true, nodeHealth);
     }
 
     // ────────── 5.5 DELETE SERVER ──────────
@@ -287,6 +307,7 @@ public class ResourceMonitorService {
         resp.setInterval(interval);
         resp.setSpanLabel(spanLabel);
         resp.setPoints(points);
+        applyMetricsState(resp, metricsState(snapshotRepo.findByServerIp(serverIp).orElse(null)));
         return resp;
     }
 
@@ -441,14 +462,18 @@ public class ResourceMonitorService {
 
     // ────────── helpers ──────────
 
-    private ServerItem toServerItem(ComputeServer server, ServerMetricSnapshot snap, boolean includeTasks) {
+    private ServerItem toServerItem(
+            ComputeServer server,
+            ServerMetricSnapshot snap,
+            boolean includeTasks,
+            KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth
+    ) {
         ServerItem item = new ServerItem();
         item.setServerIp(server.getServerIp());
         item.setHostname(server.getHostname());
         item.setEnabled(server.getEnabled());
 
         if (snap != null) {
-            item.setStatus(snap.getStatus());
             item.setCpuRate(nvl(snap.getCpuRate()));
             item.setMemRate(nvl(snap.getMemRate()));
             item.setGpuRate(nvl(snap.getGpuRate()));
@@ -457,9 +482,21 @@ public class ResourceMonitorService {
             item.setNetworkIn(nvl(snap.getNetworkIn()));
             item.setNetworkOut(nvl(snap.getNetworkOut()));
             item.setGpuTemp(nvl(snap.getGpuTemp()));
-        } else {
-            item.setStatus("online");
         }
+
+        MetricsState metricsState = metricsState(snap);
+        applyMetricsState(item, metricsState);
+        KubernetesNodeHealth node = nodeFor(server, nodeHealth);
+        applyNodeHealth(item, nodeHealth, node);
+        boolean healthy = "fresh".equals(metricsState.status())
+                && snap != null
+                && "online".equals(snap.getStatus())
+                && nvl(snap.getDiskRate()) < 85.0
+                && nodeHealth != null
+                && nodeHealth.available()
+                && node != null
+                && "healthy".equals(node.getHealthStatus());
+        item.setStatus(healthy ? "online" : "warning");
 
         ServerSpecs specs = new ServerSpecs();
         // spec_* 字段优先（手动添加的服务器），为空时从 K8s 自动采集的容量字段兜底
@@ -711,6 +748,100 @@ public class ResourceMonitorService {
     }
 
     record QueuedTaskEntry(String taskId, int sortIndex, String priority, Instant createdAt) {}
+
+    private boolean isServerHealthy(
+            ServerMetricSnapshot snapshot,
+            KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth,
+            KubernetesNodeHealth node
+    ) {
+        return snapshot != null
+                && "fresh".equals(metricsState(snapshot).status())
+                && "online".equals(snapshot.getStatus())
+                && nvl(snapshot.getDiskRate()) < 85.0
+                && nodeHealth != null
+                && nodeHealth.available()
+                && node != null
+                && "healthy".equals(node.getHealthStatus());
+    }
+
+    private KubernetesNodeHealth nodeFor(
+            ComputeServer server,
+            KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth
+    ) {
+        if (nodeHealth == null || !nodeHealth.available()) {
+            return null;
+        }
+        String nodeName = server.getK8sNodeName() != null && !server.getK8sNodeName().isBlank()
+                ? server.getK8sNodeName()
+                : server.getServerIp();
+        return nodeHealth.nodesByName().get(nodeName);
+    }
+
+    private void applyNodeHealth(
+            ServerItem item,
+            KubernetesResourceDiagnosticsService.NodeHealthCollection nodeHealth,
+            KubernetesNodeHealth node
+    ) {
+        if (nodeHealth == null || !nodeHealth.available() || node == null) {
+            item.setNodeHealthStatus("unavailable");
+            return;
+        }
+        item.setNodeReady(node.getReady());
+        item.setNodeUnschedulable(node.getUnschedulable());
+        item.setNodeMemoryPressure(node.getMemoryPressure());
+        item.setNodeDiskPressure(node.getDiskPressure());
+        item.setNodePidPressure(node.getPidPressure());
+        item.setNodeHealthStatus(node.getHealthStatus());
+    }
+
+    private MetricsState metricsState(ServerMetricSnapshot snapshot) {
+        if (snapshot == null || snapshot.getLastHeartbeat() == null) {
+            return new MetricsState(
+                    "unavailable",
+                    snapshot == null ? null : snapshot.getLastHeartbeat(),
+                    snapshot == null ? null : snapshot.getUpdatedAt(),
+                    "尚无成功的指标采样"
+            );
+        }
+
+        Instant lastSuccess = snapshot.getLastHeartbeat();
+        Instant lastAttempt = snapshot.getUpdatedAt();
+        long staleAfterMs = Math.max(60_000L, computeProperties.getCollectIntervalMs() * 2L);
+        if (lastSuccess.isBefore(Instant.now().minusMillis(staleAfterMs))) {
+            return new MetricsState("stale", lastSuccess, lastAttempt, "指标已过期，当前显示最近一次成功值");
+        }
+        if (lastAttempt != null && lastAttempt.isAfter(lastSuccess)) {
+            return new MetricsState(
+                    "temporarily_unavailable",
+                    lastSuccess,
+                    lastAttempt,
+                    "最近一次采集失败，当前显示最近一次成功值"
+            );
+        }
+        return new MetricsState("fresh", lastSuccess, lastAttempt, "指标采集正常");
+    }
+
+    private void applyMetricsState(ServerItem item, MetricsState state) {
+        item.setMetricsStatus(state.status());
+        item.setMetricsLastSuccessAt(state.lastSuccessAt());
+        item.setMetricsLastAttemptAt(state.lastAttemptAt());
+        item.setMetricsMessage(state.message());
+    }
+
+    private void applyMetricsState(MetricsResponse response, MetricsState state) {
+        response.setMetricsStatus(state.status());
+        response.setMetricsLastSuccessAt(state.lastSuccessAt());
+        response.setMetricsLastAttemptAt(state.lastAttemptAt());
+        response.setMetricsMessage(state.message());
+    }
+
+    record MetricsState(
+            String status,
+            Instant lastSuccessAt,
+            Instant lastAttemptAt,
+            String message
+    ) {
+    }
 
     private MetricPoint makePoint(int tickIndex, Instant time, String type, double value) {
         MetricPoint p = new MetricPoint();
