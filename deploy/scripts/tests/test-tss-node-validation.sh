@@ -108,6 +108,23 @@ if sudo -n true >/dev/null 2>&1; then
     exit 1
   fi
   grep -F 'must not traverse symbolic links' "${workdir}/cache-link-output" >/dev/null
+
+  nested_cache_root="${workdir}/nested-model-cache"
+  mkdir -p "$nested_cache_root"
+  ln -s /tmp "${nested_cache_root}/entries"
+  if sudo -n env \
+    TSS_MODEL_CACHE_HOST_PATH="$nested_cache_root" \
+    TSS_MODEL_CACHE_MAX_BYTES=1048576 \
+    TSS_MODEL_CACHE_MIN_FREE_BYTES=0 \
+    TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=0 \
+    TSS_MODEL_CACHE_UID="$(id -u)" \
+    TSS_MODEL_CACHE_GID="$(id -g)" \
+    bash "$cache_preparer" >"${workdir}/cache-nested-link-output" 2>&1; then
+    echo "Expected model cache preparation to reject a nested symbolic link." >&2
+    exit 1
+  fi
+  grep -F 'components must not be symbolic links' \
+    "${workdir}/cache-nested-link-output" >/dev/null
 fi
 grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}' "$runtime_workflow" >/dev/null
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null

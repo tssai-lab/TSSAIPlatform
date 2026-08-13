@@ -77,6 +77,18 @@ if [[ $(readlink -m "$cache_path") != "$cache_path" ]]; then
   echo "Model cache path must not traverse symbolic links." >&2
   exit 1
 fi
+for cache_component in \
+  "$cache_path" \
+  "$cache_path/entries" \
+  "$cache_path/locks" \
+  "$cache_path/tmp" \
+  "$cache_path/.tss-model-cache-root" \
+  "$cache_path/capacity.lock"; do
+  if [[ -L $cache_component ]]; then
+    echo "Model cache components must not be symbolic links: $cache_component" >&2
+    exit 1
+  fi
+done
 
 filesystem_type="$(findmnt --noheadings --output FSTYPE --target "$parent" | head -1 | tr -d '[:space:]')"
 case "$filesystem_type" in
