@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
@@ -123,7 +124,7 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 10, "emptyDir:");
         line(yaml, 12, "sizeLimit: " + quote(runSpec.resources().ephemeralStorageLimit()));
         if (modelCache.enabled()) {
-            appendCacheVolume(yaml, modelCache);
+            appendCacheVolume(yaml, targetNodeName);
             appendCacheInitializer(yaml, modelCache, minioAccessKey, minioSecretKey, minioBucket);
         }
         line(yaml, 6, "containers:");
@@ -193,7 +194,7 @@ public class KubernetesJobManifestBuilder {
         if (!modelCacheProperties.isEnabled()) {
             return ModelCacheSpec.disabled();
         }
-        String nodePath = requireCachePath(
+        requireCachePath(
                 "inference.kubernetes.model-cache.node-path",
                 modelCacheProperties.getNodePath()
         );
@@ -239,7 +240,6 @@ public class KubernetesJobManifestBuilder {
 
         return new ModelCacheSpec(
                 true,
-                nodePath,
                 mountPath,
                 digest,
                 sizeBytes,
@@ -249,11 +249,11 @@ public class KubernetesJobManifestBuilder {
         );
     }
 
-    private void appendCacheVolume(StringBuilder yaml, ModelCacheSpec cache) {
+    private void appendCacheVolume(StringBuilder yaml, String targetNodeName) {
         line(yaml, 8, "- name: model-cache");
-        line(yaml, 10, "hostPath:");
-        line(yaml, 12, "path: " + quote(cache.nodePath()));
-        line(yaml, 12, "type: Directory");
+        line(yaml, 10, "persistentVolumeClaim:");
+        line(yaml, 12, "claimName: "
+                + quote(ModelCacheVolumeNaming.claimNameForNode(targetNodeName)));
     }
 
     private void appendCacheInitializer(
@@ -324,7 +324,6 @@ public class KubernetesJobManifestBuilder {
 
     private record ModelCacheSpec(
             boolean enabled,
-            String nodePath,
             String mountPath,
             String digest,
             long sizeBytes,
@@ -333,7 +332,7 @@ public class KubernetesJobManifestBuilder {
             String lockSubPath
     ) {
         private static ModelCacheSpec disabled() {
-            return new ModelCacheSpec(false, "", "", "", 0, "", "", "");
+            return new ModelCacheSpec(false, "", "", 0, "", "", "");
         }
     }
 

@@ -6,6 +6,7 @@ import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.modelcache.ModelCacheDtos;
 import com.tss.platform.entity.ComputeServer;
+import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.module1.common.AuditActionType;
 import com.tss.platform.module1.common.AuditObjectType;
 import com.tss.platform.module1.service.AuditRecordService;
@@ -241,8 +242,9 @@ public class ModelCacheAdministrationService {
     }
 
     private String managerPodYaml(String podName, String nodeName, String commandJson) {
-        String nodePath = requireSafeAbsolutePath(cacheProperties.getNodePath(), "model cache node path");
+        requireSafeAbsolutePath(cacheProperties.getNodePath(), "model cache node path");
         String mountPath = requireSafeAbsolutePath(cacheProperties.getMountPath(), "model cache mount path");
+        String claimName = ModelCacheVolumeNaming.claimNameForNode(nodeName);
         if (workerImage == null || workerImage.isBlank()) {
             throw new IllegalStateException("inference worker image is not configured");
         }
@@ -268,9 +270,8 @@ public class ModelCacheAdministrationService {
                       type: RuntimeDefault
                   volumes:
                     - name: model-cache
-                      hostPath:
-                        path: %s
-                        type: Directory
+                      persistentVolumeClaim:
+                        claimName: %s
                   containers:
                     - name: manager
                       image: %s
@@ -303,7 +304,7 @@ public class ModelCacheAdministrationService {
                 quote(kubernetesProperties.getNamespace()),
                 quote(nodeName),
                 quote(kubernetesProperties.getServiceAccount()),
-                quote(nodePath),
+                quote(claimName),
                 quote(workerImage),
                 workerImagePullPolicy,
                 quote(mountPath),

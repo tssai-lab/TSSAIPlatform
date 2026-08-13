@@ -3,6 +3,7 @@
 /backend/Dockerfile text eol=lf
 /backend/**/*.sh text eol=lf
 /deploy/**/*.sh text eol=lf
+/deploy/scripts/tss-* text eol=lf
 /deploy/**/*.yml text eol=lf
 /deploy/**/*.yaml text eol=lf
 /deploy/**/*.example text eol=lf

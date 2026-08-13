@@ -55,7 +55,11 @@ if TSS_NODE_RUNTIME_ENV="$runtime_file" bash "$runtime_loader" \
   echo "Expected loader to stop at the intentionally absent platform directory." >&2
   exit 1
 fi
-grep -F "Backend runtime environment does not exist." "${workdir}/loader-output" >/dev/null
+if ! grep -F "Backend runtime environment does not exist." \
+  "${workdir}/loader-output" >/dev/null; then
+  cat "${workdir}/loader-output" >&2
+  exit 1
+fi
 
 grep -F 'tss.ai/deployment-smoke: "true"' "$validator" >/dev/null
 grep -F 'imagePullPolicy: ${pull_policy}' "$validator" >/dev/null
@@ -73,6 +77,18 @@ grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
 grep -F 'setpriv --reuid="$cache_uid"' "$cache_preparer" >/dev/null
 grep -F 'tss.ai/model-cache-ready=true --overwrite' "$cache_validator" >/dev/null
+grep -F 'kind: PersistentVolume' "$cache_validator" >/dev/null
+grep -F 'kind: PersistentVolumeClaim' "$cache_validator" >/dev/null
+grep -F 'persistentVolumeReclaimPolicy: Retain' "$cache_validator" >/dev/null
+grep -F 'persistentVolumeClaim:' "$cache_validator" >/dev/null
+if grep -F 'hostPath:' "$cache_validator" >/dev/null; then
+  echo "Restricted cache probe must mount the node-local cache through a bound PVC." >&2
+  exit 1
+fi
+if grep -F '.tss-model-cache-root' "$cache_validator" >/dev/null; then
+  echo "Cluster-admin validation must not inspect a remote node through its own filesystem." >&2
+  exit 1
+fi
 grep -F -- '--probe-only' "$validator" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED' "$validator" >/dev/null
 
