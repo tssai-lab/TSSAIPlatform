@@ -26,6 +26,7 @@ import com.tss.platform.repository.ModelVersionRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
+import com.tss.platform.training.TrainingFailureDiagnosticService;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSnapshot;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
@@ -80,6 +81,7 @@ public class TrainingExperimentService {
     private final ObjectMapper objectMapper;
     private final AuthContext authContext;
     private final MlflowTrackingService mlflowTrackingService;
+    private final TrainingFailureDiagnosticService failureDiagnosticService;
 
     private static final Logger LOG = LoggerFactory.getLogger(TrainingExperimentService.class);
 
@@ -100,7 +102,8 @@ public class TrainingExperimentService {
             TransactionTemplate transactionTemplate,
             ObjectMapper objectMapper,
             AuthContext authContext,
-            MlflowTrackingService mlflowTrackingService
+            MlflowTrackingService mlflowTrackingService,
+            TrainingFailureDiagnosticService failureDiagnosticService
     ) {
         this.repo = repo;
         this.modelVersionRepo = modelVersionRepo;
@@ -119,6 +122,7 @@ public class TrainingExperimentService {
         this.objectMapper = objectMapper;
         this.authContext = authContext;
         this.mlflowTrackingService = mlflowTrackingService;
+        this.failureDiagnosticService = failureDiagnosticService;
     }
 
     @Transactional
@@ -452,6 +456,8 @@ public class TrainingExperimentService {
         TrainingExperimentVersion byId = repo.findById(idOrExperimentId).orElse(null);
         if (byId != null) {
             requireExperimentAccess(byId);
+            repo.findByExperimentIdOrderByVersionNoAsc(byId.getExperimentId())
+                    .forEach(failureDiagnosticService::enqueueDeletion);
             repo.deleteByExperimentId(byId.getExperimentId());
             return;
         }
@@ -460,6 +466,7 @@ public class TrainingExperimentService {
             throw new IllegalArgumentException("训练任务不存在");
         }
         requireExperimentAccess(versions.get(0));
+        versions.forEach(failureDiagnosticService::enqueueDeletion);
         repo.deleteByExperimentId(idOrExperimentId);
     }
 

@@ -33,6 +33,8 @@ postgres_container="${TSS_POSTGRES_CONTAINER:-tss-postgres}"
 minio_container="${TSS_MINIO_CONTAINER:-tss-minio}"
 backend_image_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
 inference_image_repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+cv_image_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker}"
+nlp_image_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
 backend_health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
 cluster_name="${TSS_CLUSTER_NAME:-tss-training-${node_id}}"
 server_address="${TSS_SERVER_ADDRESS:-127.0.0.1}"
@@ -190,115 +192,23 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_BACKEND_CONTAINER=%q\n' "$backend_container"
   printf 'TSS_BACKEND_IMAGE_REPOSITORY=%q\n' "$backend_image_repository"
   printf 'TSS_INFERENCE_IMAGE_REPOSITORY=%q\n' "$inference_image_repository"
+  printf 'TSS_CV_IMAGE_REPOSITORY=%q\n' "$cv_image_repository"
+  printf 'TSS_NLP_IMAGE_REPOSITORY=%q\n' "$nlp_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
 
-cat > /usr/local/sbin/tss-node-activate-backend <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-source /etc/tss-platform/node-runtime.env
-
-install -d -m 755 /run/lock
-exec 9>/run/lock/tss-node-deploy.lock
-flock 9
-
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <repository>:<40-character-commit-sha>" >&2
-  exit 1
-fi
-
-image="$1"
-prefix="${TSS_BACKEND_IMAGE_REPOSITORY}:"
-if [[ $image != "${prefix}"* ]]; then
-  echo "Refusing an image outside the configured repository." >&2
-  exit 1
-fi
-tag="${image#${prefix}}"
-if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
-  echo "Refusing a backend image without an immutable Git SHA tag." >&2
-  exit 1
-fi
-
-previous_image="$(docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)"
-export TSS_BACKEND_IMAGE="$image"
-export TSS_MLFLOW_IMAGE
-
-rollback_backend() {
-  if [[ -n $previous_image ]]; then
-    export TSS_BACKEND_IMAGE="$previous_image"
-    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend
-  else
-    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" rm -sf backend || true
-  fi
-}
-
-docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps mlflow
-if ! docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend; then
-  echo "New backend failed to start; restoring the previous image." >&2
-  docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
-  rollback_backend
-  exit 1
-fi
-
-for _ in $(seq 1 60); do
-  if curl --fail --silent --show-error --max-time 5 "$TSS_BACKEND_HEALTH_URL" >/dev/null; then
-    echo "Backend deployment is healthy: node=$TSS_NODE_ID image=$image"
-    exit 0
-  fi
-  sleep 2
-done
-
-echo "New backend did not become ready; restoring the previous image." >&2
-echo "[backend logs before rollback]" >&2
-docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
-rollback_backend
-exit 1
-EOF
-chmod 700 /usr/local/sbin/tss-node-activate-backend
-
-cat > /usr/local/sbin/tss-node-load-backend <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-source /etc/tss-platform/node-runtime.env
-
-if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 <repository>:<commit-sha> sha256:<image-id>" >&2
-  exit 1
-fi
-
-image="$1"
-expected_image_id="$2"
-prefix="${TSS_BACKEND_IMAGE_REPOSITORY}:"
-if [[ $image != "${prefix}"* ]]; then
-  echo "Refusing an invalid backend image reference." >&2
-  exit 1
-fi
-tag="${image#${prefix}}"
-if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
-  echo "Refusing an invalid backend image reference." >&2
-  exit 1
-fi
-if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "Refusing an invalid image identifier." >&2
-  exit 1
-fi
-
-gzip -dc | docker load >/dev/null
-actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
-if [[ $actual_image_id != "$expected_image_id" ]]; then
-  echo "Loaded image identifier does not match the runner image." >&2
-  exit 1
-fi
-
-exec /usr/local/sbin/tss-node-activate-backend "$image"
-EOF
-chmod 700 /usr/local/sbin/tss-node-load-backend
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install -m 700 \
+  "${script_dir}/tss-node-activate-backend" \
+  /usr/local/sbin/tss-node-activate-backend
+install -m 700 \
+  "${script_dir}/tss-node-load-backend" \
+  /usr/local/sbin/tss-node-load-backend
+install -m 700 \
+  "${script_dir}/tss-node-validate-deployment" \
+  /usr/local/sbin/tss-node-validate-deployment
 install -m 700 \
   "${script_dir}/tss-node-load-inference" \
   /usr/local/sbin/tss-node-load-inference

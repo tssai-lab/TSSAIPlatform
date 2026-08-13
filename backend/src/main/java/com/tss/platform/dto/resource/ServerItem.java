@@ -2,6 +2,7 @@ package com.tss.platform.dto.resource;
 
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.List;
 
 @Data
@@ -18,6 +19,16 @@ public class ServerItem {
     private double networkIn;
     private double networkOut;
     private double gpuTemp;
+    private String metricsStatus;  // fresh / temporarily_unavailable / stale / unavailable
+    private Instant metricsLastSuccessAt;
+    private Instant metricsLastAttemptAt;
+    private String metricsMessage;
+    private Boolean nodeReady;
+    private Boolean nodeUnschedulable;
+    private Boolean nodeMemoryPressure;
+    private Boolean nodeDiskPressure;
+    private Boolean nodePidPressure;
+    private String nodeHealthStatus; // healthy / warning / unavailable
     private int runTask;
     private int waitTask;
     private List<RunningTask> runningTasks;

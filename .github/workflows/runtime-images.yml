@@ -106,6 +106,7 @@ jobs:
         with:
           context: ./k8s/training-worker
           file: ./k8s/training-worker/Dockerfile.cv
+          provenance: false
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/tss-cv-worker:${{ github.sha }}
@@ -134,6 +135,7 @@ jobs:
         with:
           context: ./k8s/training-worker
           file: ./k8s/training-worker/Dockerfile.nlp
+          provenance: false
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/tss-nlp-worker:${{ github.sha }}
@@ -144,9 +146,12 @@ jobs:
           cache-to: type=gha,mode=max,scope=nlp-worker
 
   deploy-main-inference:
-    name: Deploy inference worker to Main containerd
-    needs: inference-worker
-    if: github.event_name == 'push' && github.ref == 'refs/heads/backend-ops'
+    name: Deploy and validate Main runtime images
+    needs:
+      - inference-worker
+      - cv-worker
+      - nlp-worker
+    if: github.ref == 'refs/heads/backend-ops' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: main
     concurrency:
@@ -185,10 +190,12 @@ jobs:
       - name: Transfer image to Main Docker and Kubernetes containerd
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-inference-worker-cpu:${GITHUB_SHA}"
+          cv_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
+          nlp_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
           docker pull "$image"
           image_id="$(docker image inspect "$image" --format '{{.Id}}')"
           set -o pipefail
           docker save "$image" \
             | gzip -1 \
             | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                "sudo -n /usr/local/sbin/tss-node-load-inference '$image' '$image_id'"
+                "sudo -n /usr/local/sbin/tss-node-load-inference '$image' '$image_id' '$cv_image' '$nlp_image'"

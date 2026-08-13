@@ -6,7 +6,9 @@ import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.ResourceMonitorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -109,6 +111,13 @@ public class ResourceMonitorController {
         return ApiResponse.ok(monitorService.listGlobalQueued());
     }
 
+    /** 集群、故障 Pod 和实际镜像明细只对超级管理员开放。 */
+    @GetMapping("/kubernetes/diagnostics")
+    public ApiResponse<KubernetesDiagnosticsDto> kubernetesDiagnostics() {
+        requireSuperAdmin();
+        return ApiResponse.ok(monitorService.getKubernetesDiagnostics());
+    }
+
     // ── 5.11 PUT /queue/reorder（全局排队同池内调整）──
     @PutMapping("/queue/reorder")
     public ApiResponse<List<GlobalQueuedTask>> reorderGlobalQueue(@RequestBody ReorderRequest req) {
@@ -126,6 +135,15 @@ public class ResourceMonitorController {
     private void requireAdmin() {
         if (!authContext.isAdmin()) {
             throw new IllegalArgumentException("仅管理员可执行此操作");
+        }
+    }
+
+    private void requireSuperAdmin() {
+        if (!authContext.isSuperAdmin()) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "仅超级管理员可查看 Kubernetes 诊断详情"
+            );
         }
     }
 }

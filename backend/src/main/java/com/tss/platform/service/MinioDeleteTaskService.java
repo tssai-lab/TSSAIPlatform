@@ -38,6 +38,7 @@ public class MinioDeleteTaskService {
     public static final String SOURCE_DATASET_UPLOAD_ROLLBACK = "DATASET_UPLOAD_ROLLBACK";
     public static final String SOURCE_CODE_ARTIFACT_ROLLBACK = "CODE_ARTIFACT_ROLLBACK";
     public static final String SOURCE_CODE_ARTIFACT_UPGRADE = "CODE_ARTIFACT_UPGRADE";
+    public static final String SOURCE_TRAINING_FAILURE_DIAGNOSTIC = "TRAINING_FAILURE_DIAGNOSTIC";
 
     private static final Logger log = LoggerFactory.getLogger(MinioDeleteTaskService.class);
     private static final int DEFAULT_MAX_RETRY_COUNT = 5;
