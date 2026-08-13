@@ -4,9 +4,11 @@ import com.tss.platform.dto.resource.KubernetesDiagnosticsDto;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.ResourceMonitorService;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,9 +39,10 @@ class ResourceMonitorControllerSecurityTest {
         when(authContext.isSuperAdmin()).thenReturn(false);
         ResourceMonitorController controller = new ResourceMonitorController(service, authContext);
 
-        assertThatIllegalArgumentException()
-                .isThrownBy(controller::kubernetesDiagnostics)
-                .withMessageContaining("超级管理员");
+        assertThatThrownBy(controller::kubernetesDiagnostics)
+                .isInstanceOfSatisfying(ResponseStatusException.class, exception ->
+                        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("超级管理员");
         verify(service, never()).getKubernetesDiagnostics();
     }
 }
