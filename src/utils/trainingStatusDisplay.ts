@@ -8,6 +8,7 @@ const STATUS_TEXT: Record<string, string> = {
   success: '已完成',
   failed: '失败',
   stopped: '已停止',
+  cancelled: '已取消',
 };
 
 export function getTrainingStatusText(status?: string): string {
@@ -22,6 +23,7 @@ export function getTrainingStatusTagColor(status?: string): string {
   if (status === 'queued') return 'warning';
   if (status === 'failed') return 'error';
   if (status === 'stopped') return 'default';
+  if (status === 'cancelled') return 'default';
   return 'default';
 }
 
@@ -41,7 +43,12 @@ export function normalizeTrainingProgress(progress?: number): number {
 }
 
 export function isTrainingTerminal(status?: string): boolean {
-  return status === 'success' || status === 'failed' || status === 'stopped';
+  return (
+    status === 'success' ||
+    status === 'failed' ||
+    status === 'stopped' ||
+    status === 'cancelled'
+  );
 }
 
 /** 从 metrics 中提取一行成功摘要，便于横幅展示 */
