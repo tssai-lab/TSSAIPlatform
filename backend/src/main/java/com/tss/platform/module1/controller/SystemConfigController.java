@@ -1,9 +1,12 @@
 package com.tss.platform.module1.controller;
 
+import com.tss.platform.dto.KubernetesResourcePolicyDto;
+import com.tss.platform.dto.KubernetesResourcePolicyUpdateRequest;
 import com.tss.platform.dto.SystemConfigDto;
 import com.tss.platform.dto.SystemConfigUpdateRequest;
 import com.tss.platform.module1.common.Result;
 import com.tss.platform.service.CodeApprovalForbiddenException;
+import com.tss.platform.service.KubernetesResourcePolicyService;
 import com.tss.platform.service.SystemConfigService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,9 +22,14 @@ import java.util.Map;
 public class SystemConfigController {
 
     private final SystemConfigService service;
+    private final KubernetesResourcePolicyService resourcePolicyService;
 
-    public SystemConfigController(SystemConfigService service) {
+    public SystemConfigController(
+            SystemConfigService service,
+            KubernetesResourcePolicyService resourcePolicyService
+    ) {
         this.service = service;
+        this.resourcePolicyService = resourcePolicyService;
     }
 
     @GetMapping("/get")
@@ -43,6 +51,38 @@ public class SystemConfigController {
             return Result.noAuth("无权限访问，仅管理员可操作");
         } catch (IllegalArgumentException exception) {
             return Result.fail(exception.getMessage());
+        }
+    }
+
+    @GetMapping("/resource-policy/get")
+    public Result<KubernetesResourcePolicyDto> getResourcePolicy() {
+        try {
+            return Result.success(
+                    resourcePolicyService.getForSuperAdministration(),
+                    "查询成功"
+            );
+        } catch (CodeApprovalForbiddenException exception) {
+            return Result.noAuth("无权限访问，仅超级管理员可操作");
+        } catch (IllegalStateException exception) {
+            return Result.serverError(exception.getMessage());
+        }
+    }
+
+    @PostMapping("/resource-policy/update")
+    public Result<KubernetesResourcePolicyDto> updateResourcePolicy(
+            @RequestBody(required = false) KubernetesResourcePolicyUpdateRequest request
+    ) {
+        try {
+            return Result.success(
+                    resourcePolicyService.updateForSuperAdministration(request),
+                    "保存成功"
+            );
+        } catch (CodeApprovalForbiddenException exception) {
+            return Result.noAuth("无权限访问，仅超级管理员可操作");
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
+        } catch (IllegalStateException exception) {
+            return Result.serverError(exception.getMessage());
         }
     }
 

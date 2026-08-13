@@ -5,12 +5,13 @@ metadata:
   namespace: tss-training
 spec:
   hard:
-    requests.cpu: "3"
-    requests.memory: 8Gi
-    limits.cpu: "4"
-    limits.memory: 12Gi
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
     pods: "10"
-    count/jobs.batch: "50"
+    count/pods: "10"
+    count/jobs.batch: "20"
     count/secrets: "20"
     count/configmaps: "20"
 ---

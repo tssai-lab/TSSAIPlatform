@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
@@ -51,11 +52,17 @@ class KubernetesJobManifestBuilderTest {
         TrainingRuntimeImageService runtimeImageService = mock(TrainingRuntimeImageService.class);
         when(runtimeImageService.resolveImage(runSpec)).thenReturn("registry.example/training-worker:test");
 
-        String yaml = new KubernetesJobManifestBuilder(properties, codec, runtimeImageService)
-                .buildJobYaml(task, "access", "secret", "models", null);
+        JobTtlPolicyService ttlPolicyService = mock(JobTtlPolicyService.class);
+        when(ttlPolicyService.currentJobTtlSecondsAfterFinished()).thenReturn(180);
+        KubernetesJobManifestBuilder builder =
+                new KubernetesJobManifestBuilder(properties, codec, runtimeImageService);
+        builder.setJobTtlPolicyService(ttlPolicyService);
+
+        String yaml = builder.buildJobYaml(task, "access", "secret", "models", null);
 
         assertTrue(yaml.contains("workingDir: /workspace/job\n"));
         assertFalse(yaml.contains("workingDir: /workspace/job/code\n"));
+        assertTrue(yaml.contains("ttlSecondsAfterFinished: 180\n"));
     }
 
     @Test

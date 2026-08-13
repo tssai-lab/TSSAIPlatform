@@ -10,6 +10,15 @@ public class AuthContext {
         return StpUtil.getLoginIdAsInt();
     }
 
+    public String currentUsername() {
+        Object value = StpUtil.getTokenSession().get("username");
+        if (value == null) {
+            return null;
+        }
+        String username = String.valueOf(value).trim();
+        return username.isEmpty() ? null : username;
+    }
+
     public boolean isAdmin() {
         Object roleValue = StpUtil.getTokenSession().get("roleId");
         if (roleValue instanceof Integer roleId) {
