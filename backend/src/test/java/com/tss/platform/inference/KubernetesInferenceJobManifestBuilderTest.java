@@ -7,12 +7,15 @@ import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.service.JobTtlPolicyService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class KubernetesInferenceJobManifestBuilderTest {
 
@@ -23,6 +26,9 @@ class KubernetesInferenceJobManifestBuilderTest {
         KubernetesInferenceJobManifestBuilder builder =
                 new KubernetesInferenceJobManifestBuilder(
                         properties, new InferenceModelCacheProperties());
+        JobTtlPolicyService ttlPolicyService = mock(JobTtlPolicyService.class);
+        when(ttlPolicyService.currentJobTtlSecondsAfterFinished()).thenReturn(180);
+        builder.setJobTtlPolicyService(ttlPolicyService);
 
         InferenceTask task = new InferenceTask();
         task.setId("infer-task-abc");
@@ -56,6 +62,7 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertTrue(yaml.contains("name: INFERENCE_ATTEMPT"));
         assertTrue(yaml.contains("value: \"2\""));
         assertTrue(yaml.contains("users/7/inference-results/infer-task-abc/attempt-2"));
+        assertTrue(yaml.contains("ttlSecondsAfterFinished: 180"));
         assertFalse(yaml.contains("model-cache-initializer"));
         assertFalse(yaml.contains("tss.ai/model-cache-ready"));
     }
