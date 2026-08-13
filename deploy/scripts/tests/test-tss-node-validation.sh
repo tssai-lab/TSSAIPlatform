@@ -7,6 +7,8 @@ bootstrap="${root_dir}/deploy/scripts/bootstrap-node-backend.sh"
 backend_activator="${root_dir}/deploy/scripts/tss-node-activate-backend"
 backend_loader="${root_dir}/deploy/scripts/tss-node-load-backend"
 runtime_loader="${root_dir}/deploy/scripts/tss-node-load-inference"
+cache_preparer="${root_dir}/deploy/scripts/tss-node-prepare-model-cache"
+cache_validator="${root_dir}/deploy/scripts/tss-node-validate-model-cache"
 runtime_workflow="${root_dir}/.github/workflows/runtime-images.yml"
 cv_dockerfile="${root_dir}/k8s/training-worker/Dockerfile.cv"
 
@@ -66,6 +68,47 @@ grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_load
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
 grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/dev/null
+grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
+grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
+grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
+grep -F 'setpriv --reuid="$cache_uid"' "$cache_preparer" >/dev/null
+grep -F 'tss.ai/model-cache-ready=true --overwrite' "$cache_validator" >/dev/null
+grep -F -- '--probe-only' "$validator" >/dev/null
+grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED' "$validator" >/dev/null
+
+# GitHub-hosted Ubuntu runners provide passwordless sudo. Exercise the real
+# physical-directory preparation without weakening its root-only production
+# guard; local environments without passwordless sudo still run every static
+# contract check above.
+if sudo -n true >/dev/null 2>&1; then
+  chmod 0755 "$workdir"
+  cache_root="${workdir}/model-cache"
+  sudo -n env \
+    TSS_MODEL_CACHE_HOST_PATH="$cache_root" \
+    TSS_MODEL_CACHE_MAX_BYTES=1048576 \
+    TSS_MODEL_CACHE_MIN_FREE_BYTES=0 \
+    TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=0 \
+    TSS_MODEL_CACHE_UID="$(id -u)" \
+    TSS_MODEL_CACHE_GID="$(id -g)" \
+    bash "$cache_preparer" >"${workdir}/cache-prepare-output"
+  grep -F 'Model cache directory prepared' "${workdir}/cache-prepare-output" >/dev/null
+  [[ $(<"${cache_root}/.tss-model-cache-root") == tss-model-cache-v1 ]]
+  [[ -d ${cache_root}/entries && -d ${cache_root}/locks && -d ${cache_root}/tmp ]]
+
+  ln -s "$cache_root" "${workdir}/model-cache-link"
+  if sudo -n env \
+    TSS_MODEL_CACHE_HOST_PATH="${workdir}/model-cache-link" \
+    TSS_MODEL_CACHE_MAX_BYTES=1048576 \
+    TSS_MODEL_CACHE_MIN_FREE_BYTES=0 \
+    TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=0 \
+    TSS_MODEL_CACHE_UID="$(id -u)" \
+    TSS_MODEL_CACHE_GID="$(id -g)" \
+    bash "$cache_preparer" >"${workdir}/cache-link-output" 2>&1; then
+    echo "Expected model cache preparation to reject a symbolic-link path." >&2
+    exit 1
+  fi
+  grep -F 'must not traverse symbolic links' "${workdir}/cache-link-output" >/dev/null
+fi
 grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}' "$runtime_workflow" >/dev/null
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null
 grep -F 'run_smoke_pod "inference" "$inference_image" "IfNotPresent"' "$validator" >/dev/null

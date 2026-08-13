@@ -42,7 +42,7 @@ image_registry="${TSS_IMAGE_REGISTRY:-ghcr.io/tssai-lab}"
 python_base_image="${TSS_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.11-slim}"
 model_cache_host_path="${TSS_MODEL_CACHE_HOST_PATH:-${platform_dir}/model-cache}"
 model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/var/lib/tss-platform/model-cache}"
-model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-21474836480}"
+model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
 model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
 
 if [[ ! $node_id =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then

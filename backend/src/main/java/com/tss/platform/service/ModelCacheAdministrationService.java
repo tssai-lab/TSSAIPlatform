@@ -287,8 +287,8 @@ public class ModelCacheAdministrationService {
                           value: %s
                       resources:
                         requests:
-                          cpu: "25m"
-                          memory: "32Mi"
+                          cpu: "100m"
+                          memory: "128Mi"
                         limits:
                           cpu: "250m"
                           memory: "256Mi"

@@ -330,6 +330,40 @@ if [[ $ready_image != "$inference_image" ]]; then
   exit 1
 fi
 
+cache_enabled="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED)"
+if [[ -z $cache_enabled ]]; then
+  cache_enabled=false
+fi
+if [[ $cache_enabled == true ]]; then
+  cache_node_path="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH)"
+  cache_mount_path="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH)"
+  cache_max_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES)"
+  cache_min_free_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES)"
+  require_safe_path "model cache node path" "$cache_node_path"
+  require_safe_path "model cache mount path" "$cache_mount_path"
+  if [[ ! $cache_max_bytes =~ ^[1-9][0-9]*$ || ! $cache_min_free_bytes =~ ^[0-9]+$ ]]; then
+    echo "Enabled model cache has invalid capacity settings." >&2
+    exit 1
+  fi
+  if [[ ! -x /usr/local/sbin/tss-node-validate-model-cache ]]; then
+    echo "Enabled model cache validation helper is not installed." >&2
+    exit 1
+  fi
+  TSS_KUBECTL_BIN="$kubectl_bin" \
+  TSS_KUBECONFIG="$kubeconfig" \
+  TSS_TRAINING_NAMESPACE="$namespace" \
+  TSS_TRAINING_SERVICE_ACCOUNT="$service_account" \
+  TSS_MODEL_CACHE_HOST_PATH="$cache_node_path" \
+  TSS_MODEL_CACHE_MOUNT_PATH="$cache_mount_path" \
+  TSS_MODEL_CACHE_MAX_BYTES="$cache_max_bytes" \
+  TSS_MODEL_CACHE_MIN_FREE_BYTES="$cache_min_free_bytes" \
+    /usr/local/sbin/tss-node-validate-model-cache \
+      "$smoke_node" "$inference_image" --probe-only
+elif [[ $cache_enabled != false ]]; then
+  echo "Model cache enabled flag must be true or false." >&2
+  exit 1
+fi
+
 if [[ -n $cv_image ]]; then
   cv_script='import cv2
 import minio

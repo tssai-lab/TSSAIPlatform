@@ -64,10 +64,11 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
 fi
 
 model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
-model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/var/lib/tss-platform/model-cache}"
+model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/opt/tss-platform/model-cache}"
 model_cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
-model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-21474836480}"
+model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
 model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
+model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-13958643712}"
 
 if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
   echo "TSS_MODEL_CACHE_ENABLED must be true or false." >&2
@@ -84,8 +85,10 @@ for cache_path in "$model_cache_node_path" "$model_cache_mount_path"; do
     exit 1
   fi
 done
-if [[ ! $model_cache_max_bytes =~ ^[1-9][0-9]*$ || ! $model_cache_min_free_bytes =~ ^[0-9]+$ ]]; then
-  echo "TSS_MODEL_CACHE_MAX_BYTES must be positive and TSS_MODEL_CACHE_MIN_FREE_BYTES non-negative." >&2
+if [[ ! $model_cache_max_bytes =~ ^[1-9][0-9]*$ \
+  || ! $model_cache_min_free_bytes =~ ^[0-9]+$ \
+  || ! $model_cache_runtime_reserve_bytes =~ ^[0-9]+$ ]]; then
+  echo "Model cache maximum must be positive and reserve values non-negative." >&2
   exit 1
 fi
 
@@ -198,6 +201,7 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_NLP_IMAGE_REPOSITORY=%q\n' "$nlp_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
+  printf 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=%q\n' "$model_cache_runtime_reserve_bytes"
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
 
@@ -214,6 +218,12 @@ install -m 700 \
 install -m 700 \
   "${script_dir}/tss-node-load-inference" \
   /usr/local/sbin/tss-node-load-inference
+install -m 700 \
+  "${script_dir}/tss-node-prepare-model-cache" \
+  /usr/local/sbin/tss-node-prepare-model-cache
+install -m 700 \
+  "${script_dir}/tss-node-validate-model-cache" \
+  /usr/local/sbin/tss-node-validate-model-cache
 
 if [[ ${TSS_REMOVE_LEGACY_HELPERS:-false} == true ]]; then
   rm -f \

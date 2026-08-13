@@ -13,13 +13,13 @@ public class InferenceModelCacheProperties {
     private boolean enabled = false;
 
     /** Path visible inside the Kubernetes node. */
-    private String nodePath = "/var/lib/tss-platform/model-cache";
+    private String nodePath = "/opt/tss-platform/model-cache";
 
     /** Root path mounted into the trusted cache initializer. */
     private String mountPath = "/var/cache/tss/models";
 
-    /** Cooperative cache size limit (20 GiB by default). */
-    private long maxBytes = 20L * 1024 * 1024 * 1024;
+    /** Conservative cooperative cache size limit for disk-constrained nodes (8 GiB by default). */
+    private long maxBytes = 8L * 1024 * 1024 * 1024;
 
     /** Minimum free space retained on the cache filesystem (5 GiB by default). */
     private long minFreeBytes = 5L * 1024 * 1024 * 1024;
