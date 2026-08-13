@@ -53,6 +53,10 @@ grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_load
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
 grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/dev/null
-grep -F 'pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless' "$cv_dockerfile" >/dev/null
+requirements_install_line="$(grep -nF 'pip install --no-cache-dir -r requirements-cv.txt' "$cv_dockerfile" | cut -d: -f1)"
+opencv_uninstall_line="$(grep -nF 'pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless' "$cv_dockerfile" | cut -d: -f1)"
+headless_reinstall_line="$(grep -nF 'pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless==4.10.0.84' "$cv_dockerfile" | cut -d: -f1)"
+[[ "$requirements_install_line" -lt "$opencv_uninstall_line" ]]
+[[ "$opencv_uninstall_line" -lt "$headless_reinstall_line" ]]
 
 echo "Deployment validation contract tests passed."
