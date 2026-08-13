@@ -6,6 +6,8 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.service.JobTtlPolicyService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,7 @@ public class KubernetesInferenceJobManifestBuilder {
 
     private final TrainingKubernetesProperties properties;
     private final InferenceModelCacheProperties modelCacheProperties;
+    private JobTtlPolicyService jobTtlPolicyService;
 
     @Value("${inference.kubernetes.worker-image:tss-inference-worker:local}")
     private String workerImage;
@@ -55,6 +58,11 @@ public class KubernetesInferenceJobManifestBuilder {
     ) {
         this.properties = properties;
         this.modelCacheProperties = modelCacheProperties;
+    }
+
+    @Autowired
+    void setJobTtlPolicyService(JobTtlPolicyService jobTtlPolicyService) {
+        this.jobTtlPolicyService = jobTtlPolicyService;
     }
     public String buildJobYaml(
             InferenceTask task,
@@ -194,7 +202,7 @@ public class KubernetesInferenceJobManifestBuilder {
                 properties.getNamespace(),
                 inferenceLabel,
                 properties.getJobActiveDeadlineSeconds(),
-                properties.getJobTtlSecondsAfterFinished(),
+                effectiveJobTtlSecondsAfterFinished(),
                 inferenceLabel,
                 properties.getServiceAccount(),
                 placementYaml(targetNodeName, modelCache),
@@ -230,6 +238,12 @@ public class KubernetesInferenceJobManifestBuilder {
                 memoryLimit,
                 ephemeralStorageLimit
         );
+    }
+
+    private int effectiveJobTtlSecondsAfterFinished() {
+        return jobTtlPolicyService == null
+                ? properties.getJobTtlSecondsAfterFinished()
+                : jobTtlPolicyService.currentJobTtlSecondsAfterFinished();
     }
 
     private ModelCacheSpec modelCacheSpec(

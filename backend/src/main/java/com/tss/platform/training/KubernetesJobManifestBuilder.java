@@ -3,6 +3,7 @@ package com.tss.platform.training;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,7 @@ public class KubernetesJobManifestBuilder {
     private static final Pattern LINUX_ABSOLUTE_PATH = Pattern.compile("/[A-Za-z0-9._/-]+");
 
     private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
+    private JobTtlPolicyService jobTtlPolicyService;
 
     @Value("${inference.kubernetes.worker-image:tss-inference-worker:local}")
     private String cacheWorkerImage = "tss-inference-worker:local";
@@ -47,6 +49,11 @@ public class KubernetesJobManifestBuilder {
     @Autowired
     void setModelCacheProperties(InferenceModelCacheProperties modelCacheProperties) {
         this.modelCacheProperties = modelCacheProperties;
+    }
+
+    @Autowired
+    void setJobTtlPolicyService(JobTtlPolicyService jobTtlPolicyService) {
+        this.jobTtlPolicyService = jobTtlPolicyService;
     }
 
 
@@ -89,7 +96,7 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 0, "spec:");
         line(yaml, 2, "backoffLimit: 0");
         line(yaml, 2, "activeDeadlineSeconds: " + deadlineSeconds);
-        line(yaml, 2, "ttlSecondsAfterFinished: " + properties.getJobTtlSecondsAfterFinished());
+        line(yaml, 2, "ttlSecondsAfterFinished: " + effectiveJobTtlSecondsAfterFinished());
         line(yaml, 2, "template:");
         line(yaml, 4, "metadata:");
         line(yaml, 6, "labels:");
@@ -169,6 +176,12 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 14, "drop:");
         line(yaml, 16, "- ALL");
         return yaml.toString();
+    }
+
+    private int effectiveJobTtlSecondsAfterFinished() {
+        return jobTtlPolicyService == null
+                ? properties.getJobTtlSecondsAfterFinished()
+                : jobTtlPolicyService.currentJobTtlSecondsAfterFinished();
     }
 
     private ModelCacheSpec modelCacheSpec(
