@@ -272,6 +272,7 @@ export {
   fetchResourceMonitorServers,
   fetchResourceMonitorServerDetail,
   fetchResourceMonitorMetrics,
+  fetchKubernetesDiagnostics,
   createResourceMonitorServer,
   deleteResourceMonitorServer,
   updateResourceMonitorServerEnabled,

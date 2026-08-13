@@ -26,6 +26,8 @@ export default function access(
     canManageResourceNodes: isSuperAdmin,
     /** 算力状态-调整排队顺序、取消排队：仅超管 */
     canManageResourceQueue: isSuperAdmin,
+    /** 算力状态-Kubernetes Pod 与镜像诊断：仅超管 */
+    canViewKubernetesDiagnostics: isSuperAdmin,
 
     /** 系统管理-用户管理：超管+普管可见 */
     canAccessSystemUser: isAdmin,

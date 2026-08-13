@@ -22,6 +22,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
+import dayjs from 'dayjs';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   cancelResourceQueueTask,
@@ -35,6 +36,7 @@ import {
   getUsageColor,
   TIME_INTERVAL_OPTIONS,
 } from '../constants';
+import { getMetricsStatusMeta, getNodeWarnings } from '../monitorStatus.mjs';
 import ResourceTrendChart from '../ResourceTrendChart';
 
 const { Text } = Typography;
@@ -46,28 +48,37 @@ const ServerDetail = () => {
   const [server, setServer] = useState(null);
   const [queuedTasks, setQueuedTasks] = useState([]);
   const [historyData, setHistoryData] = useState([]);
+  const [historyMetricsState, setHistoryMetricsState] = useState(null);
   const [timeInterval, setTimeInterval] = useState('1hour');
   const [loading, setLoading] = useState(true);
+  const [detailError, setDetailError] = useState('');
 
   const loadMetrics = useCallback(
     async (interval) => {
       const metricsRes = await fetchResourceMonitorMetrics(serverIp, interval);
       if (!metricsRes?.success) {
+        setHistoryMetricsState({
+          metricsStatus: 'unavailable',
+          metricsMessage: metricsRes?.errorMessage || '趋势指标读取失败',
+        });
         message.error(metricsRes?.errorMessage || '加载趋势数据失败');
         return;
       }
       setHistoryData(metricsRes.data?.points ?? []);
+      setHistoryMetricsState(metricsRes.data ?? null);
     },
     [serverIp],
   );
 
   const loadServerDetail = useCallback(async () => {
     setLoading(true);
+    setDetailError('');
     try {
       const detailRes = await fetchResourceMonitorServerDetail(serverIp);
       if (!detailRes?.success) {
         setServer(null);
         setQueuedTasks([]);
+        setDetailError(detailRes?.errorMessage || '服务器详情读取失败');
         return;
       }
       setServer(detailRes.data);
@@ -252,7 +263,16 @@ const ServerDetail = () => {
         title="服务器详情"
         onBack={() => history.push('/task/resourceMonitor')}
       >
-        <Empty description="未找到该服务器" />
+        {detailError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="真实监控数据读取失败"
+            description={detailError}
+          />
+        ) : (
+          <Empty description="未找到该服务器" />
+        )}
       </PageContainer>
     );
   }
@@ -264,6 +284,11 @@ const ServerDetail = () => {
     { label: 'GPU 显存', value: server.gpuMemRate },
     { label: '磁盘使用率', value: server.diskRate },
   ];
+  const metricsMeta = getMetricsStatusMeta(server.metricsStatus);
+  const nodeWarnings = getNodeWarnings(server);
+  const historyMetricsMeta = historyMetricsState
+    ? getMetricsStatusMeta(historyMetricsState.metricsStatus)
+    : null;
 
   return (
     <PageContainer
@@ -321,6 +346,28 @@ const ServerDetail = () => {
           description="已在其上运行的任务不受影响；如需恢复，请点击右上角开关启用。"
         />
       )}
+      {server.metricsStatus !== 'fresh' && (
+        <Alert
+          type={metricsMeta.alertType}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`指标状态：${metricsMeta.label}`}
+          description={`${server.metricsMessage || '当前不是实时指标'}；最近成功：${
+            server.metricsLastSuccessAt
+              ? dayjs(server.metricsLastSuccessAt).format('YYYY-MM-DD HH:mm:ss')
+              : '从未成功'
+          }`}
+        />
+      )}
+      {nodeWarnings.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Kubernetes 节点状态异常"
+          description={nodeWarnings.join('；')}
+        />
+      )}
       <Card title="硬件信息" style={{ marginBottom: 16 }}>
         <Descriptions column={4}>
           <Descriptions.Item label="主机名">
@@ -346,6 +393,20 @@ const ServerDetail = () => {
           </Descriptions.Item>
           <Descriptions.Item label="网络出站">
             {server.networkOut > 0 ? `${server.networkOut} MB/s` : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="节点 Ready">
+            {server.nodeReady === true
+              ? '是'
+              : server.nodeReady === false
+                ? '否'
+                : '未知'}
+          </Descriptions.Item>
+          <Descriptions.Item label="调度状态">
+            {server.nodeUnschedulable === true
+              ? '禁止调度'
+              : server.nodeUnschedulable === false
+                ? '可调度'
+                : '未知'}
           </Descriptions.Item>
         </Descriptions>
       </Card>
@@ -410,6 +471,17 @@ const ServerDetail = () => {
         }
         style={{ marginBottom: 16 }}
       >
+        {historyMetricsState &&
+          historyMetricsState.metricsStatus !== 'fresh' && (
+            <Alert
+              type={historyMetricsMeta?.alertType || 'warning'}
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={
+                historyMetricsState.metricsMessage || '趋势数据当前不是实时值'
+              }
+            />
+          )}
         <ResourceTrendChart
           data={historyData}
           height={400}

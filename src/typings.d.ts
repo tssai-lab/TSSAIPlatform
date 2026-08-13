@@ -375,6 +375,20 @@ declare namespace API {
     networkOut?: number;
     gpuMemRate?: number;
     gpuTemp?: number;
+    metricsStatus:
+      | 'fresh'
+      | 'temporarily_unavailable'
+      | 'stale'
+      | 'unavailable';
+    metricsLastSuccessAt?: string | null;
+    metricsLastAttemptAt?: string | null;
+    metricsMessage?: string | null;
+    nodeReady?: boolean | null;
+    nodeUnschedulable?: boolean | null;
+    nodeMemoryPressure?: boolean | null;
+    nodeDiskPressure?: boolean | null;
+    nodePidPressure?: boolean | null;
+    nodeHealthStatus?: 'healthy' | 'warning' | 'unavailable';
     runTask: number;
     waitTask: number;
     runningTasks: API.ResourceMonitorRunningTask[];
@@ -402,6 +416,59 @@ declare namespace API {
     interval: string;
     spanLabel: string;
     points: API.ResourceMonitorMetricPoint[];
+    metricsStatus:
+      | 'fresh'
+      | 'temporarily_unavailable'
+      | 'stale'
+      | 'unavailable';
+    metricsLastSuccessAt?: string | null;
+    metricsLastAttemptAt?: string | null;
+    metricsMessage?: string | null;
+  };
+
+  type KubernetesNodeHealth = {
+    name: string;
+    ready?: boolean | null;
+    unschedulable?: boolean | null;
+    memoryPressure?: boolean | null;
+    diskPressure?: boolean | null;
+    pidPressure?: boolean | null;
+    healthStatus: 'healthy' | 'warning' | 'unavailable';
+    message?: string | null;
+  };
+
+  type KubernetesPodIssue = {
+    namespace: string;
+    podName: string;
+    nodeName?: string | null;
+    phase: string;
+    containerType: 'pod' | 'init' | 'main';
+    containerName?: string | null;
+    reason: string;
+    message?: string | null;
+    exitCode?: number | null;
+  };
+
+  type KubernetesWorkloadImage = {
+    namespace: string;
+    podName: string;
+    nodeName?: string | null;
+    workloadType: 'training' | 'inference';
+    containerType: 'init' | 'main';
+    containerName: string;
+    declaredImage: string;
+    imageId?: string | null;
+    configuredInferenceImageMatch?: boolean | null;
+  };
+
+  type KubernetesDiagnostics = {
+    collectionStatus: 'healthy' | 'degraded' | 'unavailable';
+    message?: string | null;
+    collectedAt: string;
+    configuredInferenceImage: string;
+    nodes: API.KubernetesNodeHealth[];
+    podIssues: API.KubernetesPodIssue[];
+    workloadImages: API.KubernetesWorkloadImage[];
   };
 
   /** 全局排队任务（跨服务器，按资源池分组） */

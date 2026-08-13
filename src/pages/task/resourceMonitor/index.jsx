@@ -7,6 +7,7 @@ import {
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -31,6 +32,8 @@ import {
   fetchResourceMonitorSummary,
 } from '@/services/platform';
 import { getUsageColor } from './constants';
+import KubernetesDiagnosticsPanel from './KubernetesDiagnosticsPanel';
+import { getMetricsStatusMeta, getNodeWarnings } from './monitorStatus.mjs';
 
 const { Search } = Input;
 const { Text } = Typography;
@@ -43,6 +46,8 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
   ];
 
   const hasRunningTasks = server.runTask > 0 || server.runningTasks?.length > 0;
+  const metricsMeta = getMetricsStatusMeta(server.metricsStatus);
+  const nodeWarnings = getNodeWarnings(server);
 
   return (
     <Card
@@ -84,6 +89,14 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
           ) : (
             <Tag color={server.status === 'online' ? 'success' : 'warning'}>
               {server.status === 'online' ? '在线' : '告警'}
+            </Tag>
+          )}
+          {server.metricsStatus !== 'fresh' && (
+            <Tag color={metricsMeta.color}>{metricsMeta.label}</Tag>
+          )}
+          {nodeWarnings.length > 0 && (
+            <Tag color="warning" title={nodeWarnings.join('；')}>
+              节点异常
             </Tag>
           )}
           {canManageNodes && (
@@ -150,6 +163,15 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
         </Text>
       </div>
 
+      {server.metricsStatus !== 'fresh' && (
+        <Text
+          type="warning"
+          style={{ display: 'block', marginTop: 8, fontSize: 12 }}
+        >
+          {server.metricsMessage || '当前显示最近一次成功采集值'}
+        </Text>
+      )}
+
       {server.runningTasks?.length > 0 && (
         <div
           style={{
@@ -181,7 +203,7 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
 };
 
 const ResourceMonitor = () => {
-  const { canManageResourceNodes } = useAccess();
+  const { canManageResourceNodes, canViewKubernetesDiagnostics } = useAccess();
   const [servers, setServers] = useState([]);
   const [summary, setSummary] = useState({
     total: 0,
@@ -195,10 +217,12 @@ const ResourceMonitor = () => {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [form] = Form.useForm();
 
   const loadPageData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [summaryRes, serversRes] = await Promise.all([
         fetchResourceMonitorSummary(),
@@ -206,11 +230,15 @@ const ResourceMonitor = () => {
       ]);
 
       if (!summaryRes?.success) {
-        message.error(summaryRes?.errorMessage || '加载汇总失败');
+        const error = summaryRes?.errorMessage || '加载汇总失败';
+        setLoadError(error);
+        message.error(error);
         return;
       }
       if (!serversRes?.success) {
-        message.error(serversRes?.errorMessage || '加载服务器列表失败');
+        const error = serversRes?.errorMessage || '加载服务器列表失败';
+        setLoadError(error);
+        message.error(error);
         return;
       }
 
@@ -240,6 +268,15 @@ const ResourceMonitor = () => {
       return matchSearch && matchStatus;
     });
   }, [servers, searchText, statusFilter]);
+
+  const unreliableMetricsCount = useMemo(
+    () => servers.filter((server) => server.metricsStatus !== 'fresh').length,
+    [servers],
+  );
+  const unhealthyNodeCount = useMemo(
+    () => servers.filter((server) => getNodeWarnings(server).length > 0).length,
+    [servers],
+  );
 
   const handleServerClick = (serverIp) => {
     history.push(
@@ -294,6 +331,24 @@ const ResourceMonitor = () => {
       title="算力状态"
       subTitle="实时查看集群服务器资源占用与任务调度情况"
     >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="真实监控数据读取失败"
+          description={loadError}
+        />
+      )}
+      {(unreliableMetricsCount > 0 || unhealthyNodeCount > 0) && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="部分服务器状态需要关注"
+          description={`非实时指标 ${unreliableMetricsCount} 台，节点异常或状态不可用 ${unhealthyNodeCount} 台。旧值会明确标记，不会伪装成实时数据。`}
+        />
+      )}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={12} sm={6}>
           <Card size="small">
@@ -384,6 +439,8 @@ const ResourceMonitor = () => {
           </div>
         )}
       </Card>
+
+      {canViewKubernetesDiagnostics && <KubernetesDiagnosticsPanel />}
 
       <Modal
         title="添加服务器"

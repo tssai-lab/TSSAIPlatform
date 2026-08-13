@@ -4,27 +4,12 @@
  */
 import { request } from '@umijs/max';
 import { API_CONFIG } from '@/constants/platform';
-import {
-  mockCancelGlobalQueueTask,
-  mockCancelResourceQueueTask,
-  mockCreateResourceServer,
-  mockDeleteResourceServer,
-  mockFetchGlobalQueue,
-  mockFetchResourceMetrics,
-  mockFetchResourceServerDetail,
-  mockFetchResourceServers,
-  mockFetchResourceSummary,
-  mockReorderGlobalQueueTask,
-  mockReorderResourceQueueTask,
-  mockUpdateResourceQueuePriority,
-  mockUpdateResourceServerEnabled,
-} from '@/pages/task/resourceMonitor/mockData';
 
 export type MetricInterval = '1min' | '10min' | '1hour' | '1day';
 
 export type ResourceMonitorResponse<T> = {
   success: boolean;
-  data: T;
+  data?: T;
   errorMessage?: string | null;
 };
 
@@ -41,6 +26,10 @@ export type AddServerPayload = {
 
 const { ENDPOINTS } = API_CONFIG;
 
+function requestFailure<T>(message: string): ResourceMonitorResponse<T> {
+  return { success: false, errorMessage: message };
+}
+
 /** GET /resource-monitor/summary */
 export async function fetchResourceMonitorSummary(options?: { skipErrorHandler?: boolean }) {
   try {
@@ -49,7 +38,7 @@ export async function fetchResourceMonitorSummary(options?: { skipErrorHandler?:
       { method: 'GET', ...(options || {}) },
     );
   } catch {
-    return mockFetchResourceSummary();
+    return requestFailure<API.ResourceMonitorSummary>('无法读取真实资源汇总');
   }
 }
 
@@ -64,7 +53,7 @@ export async function fetchResourceMonitorServers(
       { method: 'GET', params, ...(options || {}) },
     );
   } catch {
-    return mockFetchResourceServers(params);
+    return requestFailure<API.ResourceMonitorServerItem[]>('无法读取真实服务器状态');
   }
 }
 
@@ -79,7 +68,7 @@ export async function fetchResourceMonitorServerDetail(
       { method: 'GET', ...(options || {}) },
     );
   } catch {
-    return mockFetchResourceServerDetail(serverIp);
+    return requestFailure<API.ResourceMonitorServerItem>('无法读取真实服务器详情');
   }
 }
 
@@ -95,7 +84,21 @@ export async function fetchResourceMonitorMetrics(
       { method: 'GET', params: { interval }, ...(options || {}) },
     );
   } catch {
-    return mockFetchResourceMetrics(serverIp, interval);
+    return requestFailure<API.ResourceMonitorMetrics>('无法读取真实资源趋势');
+  }
+}
+
+/** GET /resource-monitor/kubernetes/diagnostics（仅超级管理员） */
+export async function fetchKubernetesDiagnostics(
+  options?: { skipErrorHandler?: boolean },
+) {
+  try {
+    return await request<ResourceMonitorResponse<API.KubernetesDiagnostics>>(
+      ENDPOINTS.RESOURCE_MONITOR_KUBERNETES_DIAGNOSTICS,
+      { method: 'GET', ...(options || {}) },
+    );
+  } catch {
+    return requestFailure<API.KubernetesDiagnostics>('无法读取 Kubernetes 诊断详情');
   }
 }
 
@@ -115,7 +118,7 @@ export async function createResourceMonitorServer(
       },
     );
   } catch {
-    return mockCreateResourceServer(payload);
+    return requestFailure<API.ResourceMonitorServerItem>('添加服务器失败，未写入真实环境');
   }
 }
 
@@ -130,7 +133,7 @@ export async function deleteResourceMonitorServer(
       { method: 'DELETE', ...(options || {}) },
     );
   } catch {
-    return mockDeleteResourceServer(serverIp);
+    return requestFailure<null>('删除服务器失败，真实环境未变更');
   }
 }
 
@@ -146,7 +149,7 @@ export async function updateResourceMonitorServerEnabled(
       { method: 'PUT', data: { enabled }, ...(options || {}) },
     );
   } catch {
-    return mockUpdateResourceServerEnabled(serverIp, enabled);
+    return requestFailure<API.ResourceMonitorServerItem>('更新服务器状态失败，真实环境未变更');
   }
 }
 
@@ -167,7 +170,9 @@ export async function reorderResourceQueueTask(
       },
     );
   } catch {
-    return mockReorderResourceQueueTask(serverIp, body);
+    return requestFailure<{ queuedTasks: API.ResourceMonitorQueuedTask[] }>(
+      '调整排队顺序失败，真实环境未变更',
+    );
   }
 }
 
@@ -188,7 +193,9 @@ export async function updateResourceQueuePriority(
       },
     );
   } catch {
-    return mockUpdateResourceQueuePriority(serverIp, body);
+    return requestFailure<{ queuedTasks: API.ResourceMonitorQueuedTask[] }>(
+      '更新优先级失败，真实环境未变更',
+    );
   }
 }
 
@@ -204,7 +211,9 @@ export async function cancelResourceQueueTask(
       { method: 'DELETE', ...(options || {}) },
     );
   } catch {
-    return mockCancelResourceQueueTask(serverIp, taskId);
+    return requestFailure<{ queuedTasks: API.ResourceMonitorQueuedTask[] }>(
+      '取消排队失败，真实环境未变更',
+    );
   }
 }
 
@@ -218,7 +227,7 @@ export async function fetchResourceMonitorGlobalQueue(
       { method: 'GET', ...(options || {}) },
     );
   } catch {
-    return mockFetchGlobalQueue();
+    return requestFailure<API.ResourceMonitorGlobalQueuedTask[]>('无法读取真实全局队列');
   }
 }
 
@@ -238,7 +247,9 @@ export async function reorderResourceMonitorGlobalQueue(
       },
     );
   } catch {
-    return mockReorderGlobalQueueTask(body);
+    return requestFailure<API.ResourceMonitorGlobalQueuedTask[]>(
+      '调整全局队列失败，真实环境未变更',
+    );
   }
 }
 
@@ -253,6 +264,8 @@ export async function cancelResourceMonitorGlobalQueueTask(
       { method: 'DELETE', ...(options || {}) },
     );
   } catch {
-    return mockCancelGlobalQueueTask(taskId);
+    return requestFailure<API.ResourceMonitorGlobalQueuedTask[]>(
+      '取消全局排队失败，真实环境未变更',
+    );
   }
 }
