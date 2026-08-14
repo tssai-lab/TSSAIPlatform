@@ -133,7 +133,14 @@ declare namespace API {
     id: string;
     assetId?: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
+    type:
+      | 'CV'
+      | 'NLP'
+      | 'POINT_CLOUD'
+      | 'MULTIMODAL'
+      | 'ROBOT'
+      | 'LEROBOT'
+      | 'OTHER';
     uploadTime?: string;
     size?: string;
     fileCount?: number | null;
@@ -284,13 +291,22 @@ declare namespace API {
     remark?: string;
     status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
     parentVersionId?: string | null;
+    artifactSha256?: string;
+    artifactSpecId?: string;
     createdAt?: string;
   };
 
   type DatasetDetail = {
     id: string;
     name: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
+    type:
+      | 'CV'
+      | 'NLP'
+      | 'POINT_CLOUD'
+      | 'MULTIMODAL'
+      | 'ROBOT'
+      | 'LEROBOT'
+      | 'OTHER';
     remark?: string;
     createdAt?: string;
     updatedAt?: string;

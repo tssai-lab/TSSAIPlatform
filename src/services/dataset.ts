@@ -92,7 +92,7 @@ function mapDatasetVersion(
 export type TaskType = 'CV' | 'NLP' | 'POINT_CLOUD';
 
 /** 数据集模块类型（含多模态、机器人预留） */
-export type DatasetType = TaskType | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT';
+export type DatasetType = TaskType | 'MULTIMODAL' | 'ROBOT' | 'LEROBOT' | 'OTHER';
 
 /** CV 子任务（module2-api-doc 1.3） */
 export type CvTaskType =
@@ -136,6 +136,8 @@ export type DatasetVersion = {
   remark?: string;
   status?: 'DRAFT' | 'READY' | 'DEPRECATED' | 'ARCHIVED' | string;
   parentVersionId?: string | null;
+  artifactSha256?: string;
+  artifactSpecId?: string;
   createdAt?: string;
 };
 
@@ -222,6 +224,7 @@ export type DatasetUploadProgress = {
   storagePath?: string;
   assetId?: string;
   versionId?: string;
+  artifactSpecId?: string;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -239,6 +242,7 @@ export type DatasetUploadCompleteResult = {
   fileName: string;
   storagePath?: string;
   sizeBytes?: number;
+  artifactSpecId?: string;
   status: string;
   uploadStatus?: string;
   versionStatus?: 'DRAFT' | 'READY' | string;
@@ -473,6 +477,9 @@ export async function datasetUploadInit(
               ? String(data.assetId)
               : undefined,
           versionId: data.versionId ? String(data.versionId) : undefined,
+          artifactSpecId: data.artifactSpecId
+            ? String(data.artifactSpecId)
+            : undefined,
         } as DatasetUploadProgress,
       };
     }
@@ -562,6 +569,9 @@ export async function datasetUploadProgress(uploadId: string, options?: { [key: 
             : data.assetId
               ? String(data.assetId)
               : undefined,
+          artifactSpecId: data.artifactSpecId
+            ? String(data.artifactSpecId)
+            : undefined,
         } as DatasetUploadProgress & { importJobId?: string },
       };
     }
@@ -618,6 +628,9 @@ export async function datasetUploadComplete(uploadId: string, options?: { [key: 
           (data.importJobId as string | null | undefined) ?? null,
         importStatus:
           (data.importStatus as string | null | undefined) ?? null,
+        artifactSpecId: data.artifactSpecId
+          ? String(data.artifactSpecId)
+          : undefined,
       } as DatasetUploadCompleteResult,
     };
   } catch {
