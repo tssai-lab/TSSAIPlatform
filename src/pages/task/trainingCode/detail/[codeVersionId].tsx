@@ -9,7 +9,7 @@ import {
   UndoOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { history, useLocation, useParams } from '@umijs/max';
+import { history, useAccess, useLocation, useParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -50,21 +50,29 @@ import {
   deleteCodeAsset,
   deleteCodeWorkspaceFile,
   deprecateCodeVersion,
+  downloadCodeVersionSingleFile,
   downloadCodeVersionZip,
+  downloadCodeWorkspaceFile,
   fetchCodeEditablePreview,
+  getAdminCodeReviewDetail,
   getCodeVersionDetail,
+  listAdminCodeReviewFiles,
   listCodeAssetVersions,
   moveCodeWorkspaceFile,
+  previewAdminCodeReviewFile,
   previewCodeEditableFile,
   publishCodeWorkspaceDraft,
   saveCodeVersionFileAndPublish,
   updateCodeAssetMeta,
+  validateCodeVersionExplicit,
+  validateCodeWorkspaceDraft,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
   buildCodeFileTreeData,
   collectCodeFileTreeExpandedKeys,
 } from '@/utils/codeFileTree';
+import { showValidationResultModal } from '@/utils/codeValidationUi';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import {
   removePendingCodeVersion,
@@ -112,6 +120,7 @@ type RenameFileFormValues = {
 };
 
 const TrainingCodeDetail: React.FC = () => {
+  const access = useAccess();
   const { codeVersionId = '' } = useParams<{ codeVersionId: string }>();
   const location = useLocation();
   const locationState = location.state as
@@ -119,6 +128,7 @@ const TrainingCodeDetail: React.FC = () => {
     | undefined;
   const listRecord = locationState?.record;
   const fromPending = locationState?.from === 'pending';
+  const adminReviewMode = fromPending && access.isAdmin;
   const backPath = fromPending ? '/task/code/pending' : '/task/code/list';
 
   const [meta, setMeta] = useState<CodeVersionDetail | null>(
@@ -156,31 +166,41 @@ const TrainingCodeDetail: React.FC = () => {
   const preferVersionSnapshotRef = useRef(false);
   /** 同资产发布新版本后刷新版本列表（codeAssetId 不变时也要重拉） */
   const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
+  const [openWorkspaceId, setOpenWorkspaceId] = useState<string>();
+  const [validating, setValidating] = useState(false);
+  const [downloadingFile, setDownloadingFile] = useState(false);
 
   const [editNameForm] = Form.useForm<EditNameFormValues>();
   const [newFileForm] = Form.useForm<NewFileFormValues>();
   const [renameFileForm] = Form.useForm<RenameFileFormValues>();
 
   const codeAssetId = meta?.codeAssetId?.trim();
+  const canEditAsset = Boolean(codeAssetId && !adminReviewMode);
 
   const loadMeta = useCallback(async () => {
     if (!codeVersionId) return;
     setMetaLoading(true);
     setMetaLoadFailed(false);
     try {
-      const res = await getCodeVersionDetail(codeVersionId, {
-        skipErrorHandler: true,
-      });
+      const res = adminReviewMode
+        ? await getAdminCodeReviewDetail(codeVersionId, {
+            skipErrorHandler: true,
+          })
+        : await getCodeVersionDetail(codeVersionId, {
+            skipErrorHandler: true,
+          });
       if (res?.success === false) {
         if (!listRecord) {
-          throw new Error(res?.errorMessage || '训练代码详情加载失败');
+          throw new Error(
+            (res as { errorMessage?: string })?.errorMessage ||
+              '训练代码详情加载失败',
+          );
         }
         return;
       }
       if (res?.data) {
         setMetaLoadFailed(false);
         setMeta((prev) => {
-          // 切换版本时整页替换，避免残留旧 version / 审核状态
           if (prev?.codeVersionId && prev.codeVersionId !== codeVersionId) {
             return { ...res.data };
           }
@@ -191,7 +211,6 @@ const TrainingCodeDetail: React.FC = () => {
       if (!listRecord) {
         setMeta(null);
         setMetaLoadFailed(true);
-        // 越权/不存在统一文案，避免把完整 API 路径与资源 ID 打在 toast 里
         const status = error?.response?.status;
         if (status === 404 || status === 403) {
           message.error('未找到训练代码版本或无权访问');
@@ -202,7 +221,7 @@ const TrainingCodeDetail: React.FC = () => {
     } finally {
       setMetaLoading(false);
     }
-  }, [codeVersionId, listRecord]);
+  }, [adminReviewMode, codeVersionId, listRecord]);
 
   const loadAssetVersions = useCallback(async () => {
     if (!codeAssetId) {
@@ -231,15 +250,19 @@ const TrainingCodeDetail: React.FC = () => {
       setPreviewContent('');
       setPreviewFileName(path);
       try {
-        const res = await previewCodeEditableFile(
-          {
-            codeVersionId,
-            codeAssetId: meta?.codeAssetId,
-            path,
-            preferVersionSnapshot,
-          },
-          { skipErrorHandler: true },
-        );
+        const res = adminReviewMode
+          ? await previewAdminCodeReviewFile(codeVersionId, path, {
+              skipErrorHandler: true,
+            })
+          : await previewCodeEditableFile(
+              {
+                codeVersionId,
+                codeAssetId: meta?.codeAssetId,
+                path,
+                preferVersionSnapshot,
+              },
+              { skipErrorHandler: true },
+            );
         const data = res?.data;
         const content = data?.content || '';
         setPreviewContent(content);
@@ -251,7 +274,7 @@ const TrainingCodeDetail: React.FC = () => {
         setPreviewLoading(false);
       }
     },
-    [codeVersionId, meta?.codeAssetId],
+    [adminReviewMode, codeVersionId, meta?.codeAssetId],
   );
 
   const loadFiles = useCallback(async () => {
@@ -261,31 +284,51 @@ const TrainingCodeDetail: React.FC = () => {
     const preferVersionSnapshot = preferVersionSnapshotRef.current;
     preferVersionSnapshotRef.current = false;
     try {
-      const res = await fetchCodeEditablePreview(
-        {
-          codeVersionId,
-          codeAssetId: meta?.codeAssetId,
-          preferVersionSnapshot,
-        },
-        { skipErrorHandler: true },
-      );
-      const files = res?.data?.codeFiles ?? [];
-      setCodeFiles(files);
-      setFilesLoadError(res?.data?.loadError);
-      setWorkspaceDraftOpen(
-        Boolean((res?.data as { fromWorkspace?: boolean })?.fromWorkspace),
-      );
-      if (res?.data?.codeFilePath && res?.data?.codeContent) {
-        setSelectedPath(res.data.codeFilePath);
-        setPreviewFileName(res.data.codeFileName || res.data.codeFilePath);
-        setPreviewContent(res.data.codeContent);
-        setOriginalPreviewContent(res.data.codeContent);
-      } else if (files[0]?.path) {
-        await loadPreview(files[0].path, preferVersionSnapshot);
+      if (adminReviewMode) {
+        const res = await listAdminCodeReviewFiles(codeVersionId, {
+          skipErrorHandler: true,
+        });
+        const files = res.data ?? [];
+        setCodeFiles(files as API.ModelCodeFile[]);
+        setWorkspaceDraftOpen(false);
+        setOpenWorkspaceId(undefined);
+        if (files[0]?.path) {
+          await loadPreview(files[0].path, true);
+        } else {
+          setSelectedPath(undefined);
+          setPreviewContent('');
+          setPreviewFileName('');
+        }
       } else {
-        setSelectedPath(undefined);
-        setPreviewContent('');
-        setPreviewFileName('');
+        const res = await fetchCodeEditablePreview(
+          {
+            codeVersionId,
+            codeAssetId: meta?.codeAssetId,
+            preferVersionSnapshot,
+          },
+          { skipErrorHandler: true },
+        );
+        const files = res?.data?.codeFiles ?? [];
+        setCodeFiles(files);
+        setFilesLoadError(res?.data?.loadError);
+        setWorkspaceDraftOpen(
+          Boolean((res?.data as { fromWorkspace?: boolean })?.fromWorkspace),
+        );
+        setOpenWorkspaceId(
+          (res?.data as { workspaceId?: string })?.workspaceId,
+        );
+        if (res?.data?.codeFilePath && res?.data?.codeContent) {
+          setSelectedPath(res.data.codeFilePath);
+          setPreviewFileName(res.data.codeFileName || res.data.codeFilePath);
+          setPreviewContent(res.data.codeContent);
+          setOriginalPreviewContent(res.data.codeContent);
+        } else if (files[0]?.path) {
+          await loadPreview(files[0].path, preferVersionSnapshot);
+        } else {
+          setSelectedPath(undefined);
+          setPreviewContent('');
+          setPreviewFileName('');
+        }
       }
     } catch (error: any) {
       setCodeFiles([]);
@@ -296,7 +339,13 @@ const TrainingCodeDetail: React.FC = () => {
     } finally {
       setFilesLoading(false);
     }
-  }, [codeVersionId, loadPreview, meta?.codeAssetId, metaLoadFailed]);
+  }, [
+    adminReviewMode,
+    codeVersionId,
+    loadPreview,
+    meta?.codeAssetId,
+    metaLoadFailed,
+  ]);
 
   useEffect(() => {
     void loadMeta();
@@ -374,12 +423,13 @@ const TrainingCodeDetail: React.FC = () => {
         onOk: async () => {
           setSaving(true);
           try {
+            const publishPath = selectedPath?.trim();
             const res = publishFile
               ? await saveCodeVersionFileAndPublish(
                   {
                     codeAssetId: assetId,
                     baseVersionId: codeVersionId,
-                    path: selectedPath!,
+                    path: publishPath || '',
                     content,
                     currentVersionLabel: meta?.version,
                   },
@@ -472,6 +522,88 @@ const TrainingCodeDetail: React.FC = () => {
       setDownloading(false);
     }
   }, [codeVersionId, meta?.fileName]);
+
+  const handleValidateVersion = useCallback(async () => {
+    if (!codeVersionId) return;
+    const approved =
+      String(meta?.approvalStatus || '').toUpperCase() === 'APPROVED';
+    const run = async () => {
+      setValidating(true);
+      try {
+        const res = await validateCodeVersionExplicit(codeVersionId, {
+          trainingProfile: meta?.trainingProfile,
+          skipErrorHandler: true,
+        });
+        showValidationResultModal(res.data);
+        await loadMeta();
+      } catch (error: any) {
+        message.error(getApiErrorMessage(error, '版本校验失败'));
+      } finally {
+        setValidating(false);
+      }
+    };
+    if (approved) {
+      Modal.confirm({
+        title: '再次校验已批准版本？',
+        content: '后端会幂等复用等价证据；制品或策略变化时可能回到待审。',
+        okText: '继续校验',
+        onOk: run,
+      });
+      return;
+    }
+    await run();
+  }, [codeVersionId, loadMeta, meta?.approvalStatus, meta?.trainingProfile]);
+
+  const handleValidateWorkspace = useCallback(async () => {
+    if (!openWorkspaceId) {
+      message.warning('当前无打开的工作区');
+      return;
+    }
+    setValidating(true);
+    try {
+      const res = await validateCodeWorkspaceDraft(openWorkspaceId, {
+        skipErrorHandler: true,
+      });
+      showValidationResultModal(res.data);
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '工作区校验失败'));
+    } finally {
+      setValidating(false);
+    }
+  }, [openWorkspaceId]);
+
+  const handleDownloadCurrentFile = useCallback(async () => {
+    if (!selectedPath) return;
+    setDownloadingFile(true);
+    try {
+      if (workspaceDraftOpen && openWorkspaceId) {
+        await downloadCodeWorkspaceFile(
+          openWorkspaceId,
+          selectedPath,
+          previewFileName,
+          { skipErrorHandler: true },
+        );
+      } else {
+        await downloadCodeVersionSingleFile(
+          codeVersionId,
+          selectedPath,
+          previewFileName,
+          { skipErrorHandler: true },
+        );
+      }
+      message.success('已开始下载');
+    } catch (error: any) {
+      message.error(getApiErrorMessage(error, '下载失败'));
+    } finally {
+      setDownloadingFile(false);
+    }
+  }, [
+    codeVersionId,
+    openWorkspaceId,
+    previewFileName,
+    selectedPath,
+    workspaceDraftOpen,
+  ]);
 
   const handleOpenEditName = useCallback(() => {
     editNameForm.setFieldsValue({
@@ -865,13 +997,32 @@ const TrainingCodeDetail: React.FC = () => {
   return (
     <PageContainer
       title={title}
-      subTitle="查看训练代码版本详情、风险/审批证据与 zip 内源码预览"
+      subTitle={
+        adminReviewMode
+          ? '管理员审核预览（跨 owner，只读）'
+          : '查看训练代码版本详情、风险/审批证据与 zip 内源码预览'
+      }
       onBack={() => history.push(backPath)}
       breadcrumb={{ items: breadcrumbItems }}
       extra={
-        codeAssetId ? (
+        codeAssetId || adminReviewMode ? (
           <div style={{ maxWidth: 640 }}>
             <Space wrap style={{ justifyContent: 'flex-end', width: '100%' }}>
+              <Button
+                loading={validating}
+                onClick={() => void handleValidateVersion()}
+              >
+                版本校验
+              </Button>
+              {selectedPath ? (
+                <Button
+                  icon={<DownloadOutlined />}
+                  loading={downloadingFile}
+                  onClick={() => void handleDownloadCurrentFile()}
+                >
+                  下载当前文件
+                </Button>
+              ) : null}
               <Button
                 icon={<DownloadOutlined />}
                 loading={downloading}
@@ -879,43 +1030,47 @@ const TrainingCodeDetail: React.FC = () => {
               >
                 下载 ZIP
               </Button>
-              <Button icon={<EditOutlined />} onClick={handleOpenEditName}>
-                编辑名称
-              </Button>
-              <Popconfirm
-                title="弃用该代码版本？"
-                description="弃用后该版本不可再用于新训练，但历史记录仍保留。"
-                okText="弃用"
-                cancelText="取消"
-                okButtonProps={{ danger: true, loading: deprecating }}
-                onConfirm={handleDeprecate}
-              >
-                <Button danger loading={deprecating}>
-                  弃用
-                </Button>
-              </Popconfirm>
-              <Popconfirm
-                title="归档该代码版本？"
-                description="归档后版本将从常规列表隐藏，仍可查看历史。"
-                okText="归档"
-                cancelText="取消"
-                okButtonProps={{ loading: archiving }}
-                onConfirm={handleArchive}
-              >
-                <Button loading={archiving}>归档</Button>
-              </Popconfirm>
-              <Popconfirm
-                title="删除训练代码资产？"
-                description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
-                okText="删除"
-                cancelText="取消"
-                okButtonProps={{ danger: true, loading: deleting }}
-                onConfirm={handleDeleteAsset}
-              >
-                <Button danger loading={deleting}>
-                  删除资产
-                </Button>
-              </Popconfirm>
+              {canEditAsset ? (
+                <>
+                  <Button icon={<EditOutlined />} onClick={handleOpenEditName}>
+                    编辑名称
+                  </Button>
+                  <Popconfirm
+                    title="弃用该代码版本？"
+                    description="弃用后该版本不可再用于新训练，但历史记录仍保留。"
+                    okText="弃用"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true, loading: deprecating }}
+                    onConfirm={handleDeprecate}
+                  >
+                    <Button danger loading={deprecating}>
+                      弃用
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="归档该代码版本？"
+                    description="归档后版本将从常规列表隐藏，仍可查看历史。"
+                    okText="归档"
+                    cancelText="取消"
+                    okButtonProps={{ loading: archiving }}
+                    onConfirm={handleArchive}
+                  >
+                    <Button loading={archiving}>归档</Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="删除训练代码资产？"
+                    description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true, loading: deleting }}
+                    onConfirm={handleDeleteAsset}
+                  >
+                    <Button danger loading={deleting}>
+                      删除资产
+                    </Button>
+                  </Popconfirm>
+                </>
+              ) : null}
             </Space>
             <div
               style={{
@@ -1099,7 +1254,7 @@ const TrainingCodeDetail: React.FC = () => {
             </Descriptions>
           </Card>
 
-          {codeAssetId ? (
+          {canEditAsset ? (
             <Card title="资产版本" style={{ marginBottom: 16 }}>
               <Table<CodeVersionListItem>
                 rowKey="codeVersionId"
@@ -1117,7 +1272,7 @@ const TrainingCodeDetail: React.FC = () => {
             </Card>
           ) : null}
 
-          {codeAssetId ? (
+          {canEditAsset ? (
             <div style={{ marginBottom: 12 }}>
               <Space wrap>
                 <Button
@@ -1134,6 +1289,14 @@ const TrainingCodeDetail: React.FC = () => {
                 >
                   保存并发布
                 </Button>
+                {workspaceDraftOpen ? (
+                  <Button
+                    loading={validating}
+                    onClick={() => void handleValidateWorkspace()}
+                  >
+                    校验工作区
+                  </Button>
+                ) : null}
                 <Popconfirm
                   title="放弃工作区草稿？"
                   description="将丢弃未发布的文件增删改与内容修改，恢复为当前版本基线。"
@@ -1187,7 +1350,7 @@ const TrainingCodeDetail: React.FC = () => {
                 title="代码目录"
                 style={{ marginBottom: 16 }}
                 extra={
-                  codeAssetId ? (
+                  canEditAsset ? (
                     <Space wrap size={4}>
                       <Button
                         size="small"
@@ -1293,47 +1456,65 @@ const TrainingCodeDetail: React.FC = () => {
                     <Spin tip="加载代码内容…" />
                   </div>
                 )}
-                {selectedPath && !previewLoading && previewContent && (
-                  <>
-                    <Alert
-                      type="info"
-                      showIcon
-                      message="可在此编辑源码。修改后使用上方「保存并发布」生成新版本；不想保留草稿时用「放弃工作区」。"
-                      style={{ marginBottom: 12 }}
-                    />
-                    <CodeEditor
-                      value={previewContent}
-                      fileName={previewFileName}
-                      onChange={setPreviewContent}
-                      minHeight="360px"
-                      maxHeight="520px"
-                    />
-                    <Space wrap style={{ marginTop: 12 }}>
-                      <Button
-                        size="small"
-                        icon={<CopyOutlined />}
-                        onClick={handleCopyPreviewContent}
-                      >
-                        复制
-                      </Button>
-                      <Button
-                        size="small"
-                        icon={<UndoOutlined />}
-                        disabled={!previewDirty}
-                        onClick={handleResetPreviewContent}
-                      >
-                        恢复原始
-                      </Button>
-                      <Button
-                        size="small"
-                        icon={<CodeOutlined />}
-                        onClick={() => setCodePreviewVisible(true)}
-                      >
-                        弹窗查看
-                      </Button>
-                    </Space>
-                  </>
-                )}
+                {selectedPath &&
+                  !previewLoading &&
+                  previewContent &&
+                  (adminReviewMode ? (
+                    <pre
+                      style={{
+                        padding: 12,
+                        background: '#fafafa',
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 6,
+                        maxHeight: 520,
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {previewContent}
+                    </pre>
+                  ) : (
+                    <>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="可在此编辑源码。修改后使用上方「保存并发布」生成新版本；不想保留草稿时用「放弃工作区」。"
+                        style={{ marginBottom: 12 }}
+                      />
+                      <CodeEditor
+                        value={previewContent}
+                        fileName={previewFileName}
+                        onChange={setPreviewContent}
+                        minHeight="360px"
+                        maxHeight="520px"
+                      />
+                      <Space wrap style={{ marginTop: 12 }}>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          onClick={handleCopyPreviewContent}
+                        >
+                          复制
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<UndoOutlined />}
+                          disabled={!previewDirty}
+                          onClick={handleResetPreviewContent}
+                        >
+                          恢复原始
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<CodeOutlined />}
+                          onClick={() => setCodePreviewVisible(true)}
+                        >
+                          弹窗查看
+                        </Button>
+                      </Space>
+                    </>
+                  ))}
                 {selectedPath && !previewLoading && !previewContent && (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}

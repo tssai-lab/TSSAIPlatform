@@ -549,6 +549,49 @@ export function mapAdminReviewTaskToListItem(
   };
 }
 
+/** 管理员审核详情 → 详情页 DTO */
+export function mapAdminReviewTaskDetailToCodeVersionDetail(
+  detail: V2AdminCodeReviewTaskDetail,
+): import('./code').CodeVersionDetail {
+  return {
+    codeVersionId: detail.versionId,
+    codeAssetId: detail.assetId || '',
+    codeName: detail.assetName,
+    codeAssetName: detail.assetName || '',
+    version: detail.version || '',
+    fileName: detail.fileName || '',
+    trainingProfile: detail.trainingProfile || '',
+    approvalStatus: detail.approvalStatus || 'PENDING',
+    status: detail.lifecycleStatus || 'READY',
+    validationStatus: detail.validationStatus,
+    validationPolicyVersion: detail.validationPolicyVersion,
+    artifactSha256: detail.artifactSha256,
+    riskAssessmentId: detail.riskAssessmentId,
+    riskStatus: detail.riskStatus,
+    riskLevel: detail.riskLevel,
+    reviewDisposition: detail.reviewDisposition,
+    riskPolicyVersion: detail.riskPolicyVersion,
+    submittedAt: detail.submittedAt,
+    sizeBytes: detail.sizeBytes,
+    entryScript: detail.entryScript,
+    runtime: detail.runtime,
+    purpose: detail.purpose,
+    trainingType: detail.trainingType,
+    riskAssessment: detail.riskAssessment
+      ? {
+          id: detail.riskAssessment.id,
+          validationRunId: detail.riskAssessment.validationRunId,
+          artifactSha256: detail.riskAssessment.artifactSha256,
+          riskPolicyVersion: detail.riskAssessment.riskPolicyVersion,
+          status: detail.riskAssessment.status,
+          riskLevel: detail.riskAssessment.riskLevel,
+          disposition: detail.riskAssessment.disposition,
+          findingCount: detail.riskAssessment.findingCount,
+        }
+      : undefined,
+  };
+}
+
 /** 从管理员审核详情构建 V2 审批请求体（文档 §18.7） */
 export function buildV2ApprovalRequest(
   detail: V2AdminCodeReviewTaskDetail,
@@ -577,6 +620,64 @@ export function hasV2ApprovalEvidence(detail: V2AdminCodeReviewTaskDetail) {
       risk?.id &&
       (detail.artifactSha256 || risk.artifactSha256) &&
       (risk.riskPolicyVersion || detail.riskPolicyVersion),
+  );
+}
+
+/** GET /api/v2/code-assets */
+export async function listV2CodeAssets(options?: { [key: string]: unknown }) {
+  return request<V2CodeAsset[]>('/v2/code-assets', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+/** POST /api/v2/code-assets */
+export async function createV2CodeAsset(
+  body: {
+    name: string;
+    trainingProfile?: string;
+    purpose?: string;
+    runtime?: string;
+    entryScript?: string;
+    remark?: string;
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeAsset>('/v2/code-assets', {
+    method: 'POST',
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** POST /api/v2/code-assets/import — multipart metadata + file */
+export async function importV2CodeAssetZip(
+  params: {
+    file: File;
+    metadata: {
+      name: string;
+      version?: string;
+      trainingProfile?: string;
+      remark?: string;
+    };
+  },
+  options?: { [key: string]: unknown },
+) {
+  const formData = new FormData();
+  formData.append('file', params.file);
+  formData.append(
+    'metadata',
+    new Blob([JSON.stringify(params.metadata)], { type: 'application/json' }),
+  );
+  return request<V2CodeVersion>(
+    '/v2/code-assets/import',
+    {
+      method: 'POST',
+      data: formData,
+      headers: { 'Content-Type': undefined as unknown as string },
+      timeout: 5 * 60 * 1000,
+      ...(options || {}),
+    },
   );
 }
 
@@ -704,6 +805,40 @@ export async function upsertV2CodeWorkspaceFile(
   );
 }
 
+/** POST /api/v2/code-workspaces/{workspaceId}/validate */
+export async function validateV2CodeWorkspace(
+  workspaceId: string,
+  body: { expectedWorkspaceRevision: number },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeValidationResult>(
+    `/v2/code-workspaces/${encodeURIComponent(workspaceId)}/validate`,
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/code-workspaces/{workspaceId}/files/download */
+export async function downloadV2CodeWorkspaceFileBlob(
+  workspaceId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(
+    `/v2/code-workspaces/${encodeURIComponent(workspaceId)}/files/download`,
+    {
+      method: 'GET',
+      params: { path },
+      responseType: 'blob',
+      skipErrorHandler: true,
+      ...(options || {}),
+    },
+  );
+}
+
 /** POST /api/v2/code-workspaces/{workspaceId}/publish */
 export async function publishV2CodeWorkspace(
   workspaceId: string,
@@ -761,6 +896,24 @@ export async function getV2CodeVersionFileContent(
     {
       method: 'GET',
       params: { path },
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/code-versions/{versionId}/files/download */
+export async function downloadV2CodeVersionFileBlob(
+  versionId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(
+    `/v2/code-versions/${encodeURIComponent(versionId)}/files/download`,
+    {
+      method: 'GET',
+      params: { path },
+      responseType: 'blob',
+      skipErrorHandler: true,
       ...(options || {}),
     },
   );
@@ -863,6 +1016,38 @@ export async function getAdminCodeReviewTaskDetail(
     `/v2/admin/code-review-tasks/${encodeURIComponent(versionId)}`,
     {
       method: 'GET',
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-review-tasks/{versionId}/tree */
+export async function getAdminCodeReviewTaskTree(
+  versionId: string,
+  prefix?: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<unknown>(
+    `/v2/admin/code-review-tasks/${encodeURIComponent(versionId)}/tree`,
+    {
+      method: 'GET',
+      params: prefix ? { prefix } : undefined,
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-review-tasks/{versionId}/files/content */
+export async function getAdminCodeReviewTaskFileContent(
+  versionId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeFileContent | string>(
+    `/v2/admin/code-review-tasks/${encodeURIComponent(versionId)}/files/content`,
+    {
+      method: 'GET',
+      params: { path },
       ...(options || {}),
     },
   );
@@ -1171,24 +1356,26 @@ export async function listAdminCodeAssetVersions(
   );
 }
 
-/** GET/POST /api/v2/admin/code-assets/{assetId}/workspaces */
-export async function getAdminCodeAssetWorkspace(
+/** GET /api/v2/admin/code-assets/{assetId}/workspaces */
+export async function listAdminCodeAssetWorkspaces(
   assetId: string,
   options?: { [key: string]: unknown },
 ) {
-  return request<V2CodeWorkspace>(
+  return request<V2CodeWorkspace[]>(
     `/v2/admin/code-assets/${encodeURIComponent(assetId)}/workspaces`,
     { method: 'GET', ...(options || {}) },
   );
 }
 
+/** POST /api/v2/admin/code-assets/{assetId}/workspaces */
 export async function openAdminCodeAssetWorkspace(
   assetId: string,
+  body?: { baseVersionId?: string },
   options?: { [key: string]: unknown },
 ) {
   return request<V2CodeWorkspace>(
     `/v2/admin/code-assets/${encodeURIComponent(assetId)}/workspaces`,
-    { method: 'POST', data: {}, ...(options || {}) },
+    { method: 'POST', data: body || {}, ...(options || {}) },
   );
 }
 
@@ -1225,6 +1412,159 @@ export async function getAdminCodeWorkspaceFileContent(
     params: { path },
     ...(options || {}),
   });
+}
+
+/** GET /api/v2/admin/code-workspaces/{workspaceId} */
+export async function getAdminCodeWorkspace(
+  workspaceId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeWorkspace>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+/** GET /api/v2/admin/code-workspaces/{workspaceId}/files/metadata */
+export async function getAdminCodeWorkspaceFileMetadata(
+  workspaceId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeFileMetadata>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files/metadata`,
+    {
+      method: 'GET',
+      params: { path },
+      ...(options || {}),
+    },
+  );
+}
+
+/** PUT /api/v2/admin/code-workspaces/{workspaceId}/files */
+export async function upsertAdminCodeWorkspaceFile(
+  workspaceId: string,
+  path: string,
+  body: V2CodeFileUpsertRequest,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeFileContent>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files`,
+    {
+      method: 'PUT',
+      params: { path },
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** DELETE /api/v2/admin/code-workspaces/{workspaceId}/files */
+export async function deleteAdminCodeWorkspaceFile(
+  workspaceId: string,
+  path: string,
+  body: {
+    expectedWorkspaceRevision: number;
+    expectedContentHash?: string;
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<{ workspaceId?: string; workspaceRevision?: number }>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files`,
+    {
+      method: 'DELETE',
+      params: { path },
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-workspaces/{workspaceId}/publish */
+export async function publishAdminCodeWorkspace(
+  workspaceId: string,
+  body: V2CodeWorkspacePublishRequest,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeVersion>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/publish`,
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-workspaces/{workspaceId}/abandon */
+export async function abandonAdminCodeWorkspace(
+  workspaceId: string,
+  body: { expectedWorkspaceRevision: number },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeWorkspace>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/abandon`,
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-workspaces/{workspaceId}/files/move */
+export async function moveAdminCodeWorkspaceFile(
+  workspaceId: string,
+  body: {
+    sourcePath: string;
+    targetPath: string;
+    expectedWorkspaceRevision: number;
+    expectedContentHash?: string;
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeFileContent>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files/move`,
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-workspaces/{workspaceId}/validate */
+export async function validateAdminCodeWorkspace(
+  workspaceId: string,
+  body: { expectedWorkspaceRevision: number },
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeValidationResult>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/validate`,
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-workspaces/{workspaceId}/files/download */
+export async function downloadAdminCodeWorkspaceFileBlob(
+  workspaceId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files/download`,
+    {
+      method: 'GET',
+      params: { path },
+      responseType: 'blob',
+      skipErrorHandler: true,
+      ...(options || {}),
+    },
+  );
 }
 
 /** GET /api/v2/admin/code-versions/{versionId} */
@@ -1271,6 +1611,85 @@ export async function getAdminCodeVersionFileContent(
     params: { path },
     ...(options || {}),
   });
+}
+
+/** GET /api/v2/admin/code-versions/{versionId}/files/download */
+export async function downloadAdminCodeVersionFileBlob(
+  versionId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/files/download`,
+    {
+      method: 'GET',
+      params: { path },
+      responseType: 'blob',
+      skipErrorHandler: true,
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-versions/{versionId}/validate */
+export async function validateAdminCodeVersion(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeValidationResult>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/validate`,
+    {
+      method: 'POST',
+      data: {},
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-versions/{versionId}/deprecate */
+export async function deprecateAdminCodeVersion(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeVersion>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/deprecate`,
+    {
+      method: 'POST',
+      data: {},
+      ...(options || {}),
+    },
+  );
+}
+
+/** POST /api/v2/admin/code-versions/{versionId}/archive */
+export async function archiveAdminCodeVersion(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeVersion>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/archive`,
+    {
+      method: 'POST',
+      data: {},
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-versions/{versionId}/download — 完整 ZIP */
+export async function downloadAdminCodeVersionZip(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<Blob>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/download`,
+    {
+      method: 'GET',
+      responseType: 'blob',
+      skipErrorHandler: true,
+      ...(options || {}),
+    },
+  );
 }
 
 /** GET /api/v2/admin/code-review-tasks/{versionId}/findings */

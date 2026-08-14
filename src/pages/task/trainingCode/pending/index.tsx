@@ -1,34 +1,52 @@
+import { DownloadOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess, useModel } from '@umijs/max';
 import {
   Alert,
   Button,
+  Col,
+  Descriptions,
   Drawer,
   Dropdown,
+  Empty,
   Form,
   Input,
   Modal,
   message,
+  Row,
   Space,
+  Spin,
   Table,
   Tag,
+  Tree,
   Typography,
 } from 'antd';
-import React, { useEffect, useRef, useState } from 'react';
+import type { DataNode } from 'antd/es/tree';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
-import type { CodeVersionListItem } from '@/services/code';
+import type { CodeVersionDetail, CodeVersionListItem } from '@/services/code';
+import type { V2AdminCodeReviewTaskDetail } from '@/services/platform';
 import {
   approveCodeVersion,
   CONSISTENCY_TRAINING_PROFILE,
   checkCodeVersionForTraining,
+  downloadAdminCodeVersionFile,
   fetchAdminCodeFindings,
   fetchPendingCodeReviewTasks,
+  getAdminCodeReviewDetail,
+  listAdminCodeReviewFiles,
+  previewAdminCodeReviewFile,
   rejectCodeVersion,
   rescanCodeReviewTask,
+  revokeCodeVersion,
   upgradeCodeArtifact,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import {
+  buildCodeFileTreeData,
+  collectCodeFileTreeExpandedKeys,
+} from '@/utils/codeFileTree';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import type { PendingCodeVersionRecord } from '@/utils/pendingCodeVersions';
 import {
@@ -47,6 +65,9 @@ function approvalTag(status?: string) {
   }
   if (status === 'REJECTED') {
     return <Tag color="error">REJECTED</Tag>;
+  }
+  if (status === 'REVOKED') {
+    return <Tag color="default">REVOKED</Tag>;
   }
   return <Tag>{status || 'PENDING'}</Tag>;
 }
@@ -104,6 +125,28 @@ const TrainingCodePending: React.FC = () => {
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [findingsTitle, setFindingsTitle] = useState('');
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<CodeVersionListItem | null>(
+    null,
+  );
+  const [revokeForm] = Form.useForm();
+  const [revoking, setRevoking] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewDetail, setReviewDetail] = useState<CodeVersionDetail | null>(
+    null,
+  );
+  const [reviewRaw, setReviewRaw] =
+    useState<V2AdminCodeReviewTaskDetail | null>(null);
+  const [reviewFiles, setReviewFiles] = useState<
+    Array<{ path: string; fileName?: string }>
+  >([]);
+  const [reviewSelectedPath, setReviewSelectedPath] = useState<string>();
+  const [reviewPreviewLoading, setReviewPreviewLoading] = useState(false);
+  const [reviewPreviewContent, setReviewPreviewContent] = useState('');
+  const [reviewExpandedKeys, setReviewExpandedKeys] = useState<React.Key[]>([]);
+  const [reviewDownloading, setReviewDownloading] = useState(false);
+  const [approvalStatusFilter, setApprovalStatusFilter] = useState('PENDING');
 
   useEffect(() => {
     if (!access.isAdmin) {
@@ -116,19 +159,42 @@ const TrainingCodePending: React.FC = () => {
     pageSize?: number;
     riskLevel?: string;
     keyword?: string;
+    approvalStatus?: string;
+    ownerUserId?: string;
+    submittedFrom?: string;
+    submittedTo?: string;
+    sortBy?: string;
+    sortDirection?: string;
   }) => {
     const current = params.current ?? 1;
     const pageSize = params.pageSize ?? 10;
+    const approvalStatus =
+      params.approvalStatus?.trim() || approvalStatusFilter || 'PENDING';
 
     let remote: CodeVersionListItem[] = [];
     let total = 0;
     try {
+      const ownerUserIdNum = params.ownerUserId?.trim()
+        ? Number(params.ownerUserId.trim())
+        : undefined;
       const res = await fetchPendingCodeReviewTasks(
         {
           current,
           pageSize,
+          approvalStatus,
           riskLevel: params.riskLevel?.trim() || undefined,
           keyword: params.keyword?.trim() || undefined,
+          ownerUserId:
+            ownerUserIdNum != null && !Number.isNaN(ownerUserIdNum)
+              ? ownerUserIdNum
+              : undefined,
+          submittedFrom: params.submittedFrom?.trim() || undefined,
+          submittedTo: params.submittedTo?.trim() || undefined,
+          sortBy: params.sortBy?.trim() || undefined,
+          sortDirection:
+            params.sortDirection === 'ASC' || params.sortDirection === 'DESC'
+              ? params.sortDirection
+              : undefined,
         },
         { skipErrorHandler: true },
       );
@@ -138,10 +204,9 @@ const TrainingCodePending: React.FC = () => {
       message.error(getApiErrorMessage(error, '加载待审核队列失败'));
     }
 
-    // 仅合并手工登记、且不在远端队列中的条目（第一页展示）
     const remoteIds = new Set(remote.map((item) => item.codeVersionId));
     const manualOnly =
-      current === 1
+      current === 1 && approvalStatus === 'PENDING'
         ? listPendingCodeVersions()
             .filter((item) => item.source === 'manual')
             .filter((item) => {
@@ -219,6 +284,113 @@ const TrainingCodePending: React.FC = () => {
     }
   };
 
+  const openRevoke = (record: CodeVersionListItem) => {
+    setRevokeTarget(record);
+    revokeForm.resetFields();
+    setRevokeOpen(true);
+  };
+
+  const handleRevoke = async () => {
+    if (!revokeTarget) return;
+    const values = await revokeForm.validateFields();
+    setRevoking(true);
+    try {
+      const res = await revokeCodeVersion(
+        revokeTarget.codeVersionId,
+        String(values.reason || '').trim(),
+        { skipErrorHandler: true },
+      );
+      if (res?.success === false) {
+        message.error(res?.errorMessage || '撤销失败');
+        return;
+      }
+      removePendingCodeVersion(revokeTarget.codeVersionId);
+      message.success('已撤销该版本的批准');
+      setRevokeOpen(false);
+      setRevokeTarget(null);
+      actionRef.current?.reload();
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '撤销失败'));
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const loadReviewPreview = async (versionId: string, path: string) => {
+    setReviewSelectedPath(path);
+    setReviewPreviewLoading(true);
+    try {
+      const res = await previewAdminCodeReviewFile(versionId, path, {
+        skipErrorHandler: true,
+      });
+      setReviewPreviewContent(res.data?.content || '');
+    } catch (error: unknown) {
+      setReviewPreviewContent('');
+      message.error(getApiErrorMessage(error, '读取文件失败'));
+    } finally {
+      setReviewPreviewLoading(false);
+    }
+  };
+
+  const openReviewDrawer = async (record: CodeVersionListItem) => {
+    setReviewOpen(true);
+    setReviewLoading(true);
+    setReviewDetail(null);
+    setReviewRaw(null);
+    setReviewFiles([]);
+    setReviewPreviewContent('');
+    setReviewSelectedPath(undefined);
+    try {
+      const res = await getAdminCodeReviewDetail(record.codeVersionId, {
+        skipErrorHandler: true,
+      });
+      setReviewDetail(res.data);
+      setReviewRaw(res.raw || null);
+      const filesRes = await listAdminCodeReviewFiles(record.codeVersionId, {
+        skipErrorHandler: true,
+      });
+      const files = filesRes.data || [];
+      setReviewFiles(files);
+      const treeData = buildCodeFileTreeData(files);
+      setReviewExpandedKeys(collectCodeFileTreeExpandedKeys(treeData));
+      if (files[0]?.path) {
+        await loadReviewPreview(record.codeVersionId, files[0].path);
+      }
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '加载审核详情失败'));
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const reviewTreeData = useMemo(
+    () => buildCodeFileTreeData(reviewFiles),
+    [reviewFiles],
+  );
+
+  const handleReviewDownloadFile = async () => {
+    const versionId = reviewDetail?.codeVersionId;
+    const path = reviewSelectedPath;
+    if (!versionId || !path) {
+      message.warning('请先选择要下载的文件');
+      return;
+    }
+    setReviewDownloading(true);
+    try {
+      await downloadAdminCodeVersionFile(
+        versionId,
+        path,
+        path.split('/').pop(),
+        { skipErrorHandler: true },
+      );
+      message.success('已开始下载');
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '下载失败'));
+    } finally {
+      setReviewDownloading(false);
+    }
+  };
+
   const handleRescan = async (record: CodeVersionListItem) => {
     try {
       await rescanCodeReviewTask(record.codeVersionId, {
@@ -290,9 +462,73 @@ const TrainingCodePending: React.FC = () => {
 
   const columns: ProColumns<CodeVersionListItem>[] = [
     {
+      title: '关键词',
+      dataIndex: 'keyword',
+      hideInTable: true,
+      fieldProps: { placeholder: '代码名称 / 文件名' },
+    },
+    {
+      title: '审核状态',
+      dataIndex: 'approvalStatus',
+      hideInTable: true,
+      valueType: 'select',
+      initialValue: 'PENDING',
+      valueEnum: {
+        PENDING: { text: 'PENDING' },
+        APPROVED: { text: 'APPROVED' },
+        REJECTED: { text: 'REJECTED' },
+        REVOKED: { text: 'REVOKED' },
+      },
+      fieldProps: {
+        onChange: (v: string) => setApprovalStatusFilter(v || 'PENDING'),
+      },
+    },
+    {
+      title: 'ownerUserId',
+      dataIndex: 'ownerUserId',
+      hideInTable: true,
+      fieldProps: { placeholder: '按 owner 过滤' },
+    },
+    {
+      title: '提交起',
+      dataIndex: 'submittedFrom',
+      hideInTable: true,
+      valueType: 'dateTime',
+    },
+    {
+      title: '提交止',
+      dataIndex: 'submittedTo',
+      hideInTable: true,
+      valueType: 'dateTime',
+    },
+    {
+      title: '排序',
+      dataIndex: 'sortBy',
+      hideInTable: true,
+      valueType: 'select',
+      valueEnum: {
+        SUBMITTED_AT: { text: '提交时间' },
+        VERSION: { text: '版本' },
+        RISK_LEVEL: { text: '风险等级' },
+        OWNER_USER_ID: { text: 'owner' },
+      },
+    },
+    {
+      title: '排序方向',
+      dataIndex: 'sortDirection',
+      hideInTable: true,
+      valueType: 'select',
+      initialValue: 'DESC',
+      valueEnum: {
+        DESC: { text: '降序（新→旧）' },
+        ASC: { text: '升序（旧→新）' },
+      },
+    },
+    {
       title: '代码名称',
       dataIndex: 'codeAssetName',
       ellipsis: true,
+      hideInSearch: true,
       render: (_, r) => r.codeAssetName || '-',
     },
     {
@@ -368,68 +604,75 @@ const TrainingCodePending: React.FC = () => {
       width: 220,
       fixed: 'right',
       hideInSearch: true,
-      render: (_, record) => (
-        <Space size={0} style={{ whiteSpace: 'nowrap' }}>
-          <Button
-            type="link"
-            style={{ paddingLeft: 0 }}
-            onClick={() => handleApprove(record)}
-          >
-            通过
-          </Button>
-          <Button type="link" danger onClick={() => openReject(record)}>
-            拒绝
-          </Button>
-          <Button
-            type="link"
-            onClick={() =>
-              history.push(
-                `/task/code/detail/${encodeURIComponent(record.codeVersionId)}`,
-                { record, from: 'pending' },
-              )
-            }
-          >
-            查看
-          </Button>
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: 'findings',
-                  label: 'Findings',
-                  onClick: () => handleOpenFindings(record),
-                },
-                {
-                  key: 'rescan',
-                  label: '重扫',
-                  onClick: () => {
-                    Modal.confirm({
-                      title: '触发风险重扫？',
-                      content: '会生成新风险证据，已批准版本可能回到 PENDING。',
-                      okText: '重扫',
-                      onOk: () => handleRescan(record),
-                    });
+      render: (_, record) => {
+        const status = String(record.approvalStatus || '').toUpperCase();
+        const isPending = status === 'PENDING' || !status;
+        const isApproved = status === 'APPROVED';
+        return (
+          <Space size={0} style={{ whiteSpace: 'nowrap' }}>
+            {isPending ? (
+              <>
+                <Button
+                  type="link"
+                  style={{ paddingLeft: 0 }}
+                  onClick={() => void handleApprove(record)}
+                >
+                  通过
+                </Button>
+                <Button type="link" danger onClick={() => openReject(record)}>
+                  拒绝
+                </Button>
+              </>
+            ) : null}
+            {isApproved ? (
+              <Button type="link" danger onClick={() => openRevoke(record)}>
+                撤销
+              </Button>
+            ) : null}
+            <Button type="link" onClick={() => void openReviewDrawer(record)}>
+              审核预览
+            </Button>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'findings',
+                    label: 'Findings',
+                    onClick: () => void handleOpenFindings(record),
                   },
-                },
-                {
-                  key: 'upgrade',
-                  label: '制品升级',
-                  onClick: () => {
-                    Modal.confirm({
-                      title: '执行制品升级？',
-                      content: '仅用于历史路径迁移，成功后需重新校验/审核。',
-                      okText: '升级',
-                      onOk: () => handleUpgrade(record),
-                    });
+                  {
+                    key: 'rescan',
+                    label: '重扫',
+                    onClick: () => {
+                      Modal.confirm({
+                        title: '触发风险重扫？',
+                        content:
+                          '会生成新风险证据，已批准版本可能回到 PENDING。',
+                        okText: '重扫',
+                        onOk: () => handleRescan(record),
+                      });
+                    },
                   },
-                },
-              ],
-            }}
-          >
-            <Button type="link">更多</Button>
-          </Dropdown>
-        </Space>
-      ),
+                  {
+                    key: 'upgrade',
+                    label: '制品升级',
+                    onClick: () => {
+                      Modal.confirm({
+                        title: '执行制品升级？',
+                        content: '仅用于历史路径迁移，成功后需重新校验/审核。',
+                        okText: '升级',
+                        onOk: () => handleUpgrade(record),
+                      });
+                    },
+                  },
+                ],
+              }}
+            >
+              <Button type="link">更多</Button>
+            </Dropdown>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -568,6 +811,171 @@ const TrainingCodePending: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Modal
+        title="撤销已批准版本"
+        open={revokeOpen}
+        onCancel={() => setRevokeOpen(false)}
+        onOk={() => void handleRevoke()}
+        confirmLoading={revoking}
+        okText="确认撤销"
+        okButtonProps={{ danger: true }}
+        destroyOnClose
+      >
+        <Form form={revokeForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label="撤销原因"
+            rules={[{ required: true, message: '请填写撤销原因' }]}
+          >
+            <Input.TextArea rows={4} placeholder="说明撤销理由（必填）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Drawer
+        title={`审核预览 · ${reviewDetail?.codeAssetName || reviewDetail?.codeVersionId || ''}`}
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        width={1080}
+        destroyOnClose
+      >
+        <Spin spinning={reviewLoading}>
+          {reviewDetail ? (
+            <>
+              <Descriptions
+                size="small"
+                column={2}
+                style={{ marginBottom: 16 }}
+              >
+                <Descriptions.Item label="codeVersionId" span={2}>
+                  <Typography.Text copyable code style={{ fontSize: 12 }}>
+                    {reviewDetail.codeVersionId}
+                  </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="审核">
+                  {approvalTag(reviewDetail.approvalStatus)}
+                </Descriptions.Item>
+                <Descriptions.Item label="校验">
+                  {reviewDetail.validationStatus || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="风险">
+                  {riskLevelTag(reviewDetail.riskLevel)}
+                </Descriptions.Item>
+                <Descriptions.Item label="扫描">
+                  {reviewDetail.riskStatus || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="artifactSha256" span={2}>
+                  <Typography.Text code style={{ fontSize: 11 }}>
+                    {reviewDetail.artifactSha256 || '-'}
+                  </Typography.Text>
+                </Descriptions.Item>
+                {reviewRaw?.riskAssessment ? (
+                  <>
+                    <Descriptions.Item label="validationRunId">
+                      <Typography.Text code style={{ fontSize: 11 }}>
+                        {reviewRaw.riskAssessment.validationRunId || '-'}
+                      </Typography.Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="riskAssessmentId">
+                      <Typography.Text code style={{ fontSize: 11 }}>
+                        {reviewRaw.riskAssessment.id || '-'}
+                      </Typography.Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="policyVersion" span={2}>
+                      <Typography.Text code style={{ fontSize: 11 }}>
+                        {reviewRaw.riskAssessment.riskPolicyVersion ||
+                          reviewDetail.riskPolicyVersion ||
+                          '-'}
+                      </Typography.Text>
+                    </Descriptions.Item>
+                  </>
+                ) : null}
+              </Descriptions>
+              {reviewFiles.length === 0 ? (
+                <Empty description="暂无文件" />
+              ) : (
+                <Row gutter={16}>
+                  <Col span={8}>
+                    <Typography.Text strong>审核目录树</Typography.Text>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        maxHeight: '65vh',
+                        overflow: 'auto',
+                      }}
+                    >
+                      <Tree
+                        treeData={reviewTreeData as DataNode[]}
+                        selectedKeys={
+                          reviewSelectedPath ? [reviewSelectedPath] : []
+                        }
+                        expandedKeys={reviewExpandedKeys}
+                        onExpand={(keys) => setReviewExpandedKeys(keys)}
+                        onSelect={(keys, info) => {
+                          if (!reviewDetail?.codeVersionId || !info.node.isLeaf)
+                            return;
+                          const path = String(keys[0] || '');
+                          if (path) {
+                            void loadReviewPreview(
+                              reviewDetail.codeVersionId,
+                              path,
+                            );
+                          }
+                        }}
+                      />
+                    </div>
+                  </Col>
+                  <Col span={16}>
+                    <Space
+                      style={{
+                        width: '100%',
+                        justifyContent: 'space-between',
+                        marginBottom: 8,
+                      }}
+                    >
+                      <Typography.Text strong>
+                        预览
+                        {reviewSelectedPath ? ` · ${reviewSelectedPath}` : ''}
+                      </Typography.Text>
+                      {reviewSelectedPath ? (
+                        <Button
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          loading={reviewDownloading}
+                          onClick={() => void handleReviewDownloadFile()}
+                        >
+                          下载
+                        </Button>
+                      ) : null}
+                    </Space>
+                    <Spin spinning={reviewPreviewLoading}>
+                      <pre
+                        style={{
+                          marginTop: 0,
+                          padding: 12,
+                          background: '#fafafa',
+                          border: '1px solid #f0f0f0',
+                          borderRadius: 6,
+                          maxHeight: '65vh',
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          minHeight: 200,
+                        }}
+                      >
+                        {reviewPreviewContent || '选择左侧文件查看内容'}
+                      </pre>
+                    </Spin>
+                  </Col>
+                </Row>
+              )}
+            </>
+          ) : (
+            !reviewLoading && <Empty description="无审核详情" />
+          )}
+        </Spin>
+      </Drawer>
 
       <Drawer
         title={`风险 Findings · ${findingsTitle}`}

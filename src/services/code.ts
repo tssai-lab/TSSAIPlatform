@@ -31,6 +31,11 @@ import {
   abandonV2CodeWorkspace,
   getV2CodeWorkspaceTree,
   publishV2CodeWorkspace,
+  validateV2CodeWorkspace,
+  downloadV2CodeWorkspaceFileBlob,
+  downloadV2CodeVersionFileBlob,
+  importV2CodeAssetZip,
+  listV2CodeAssets,
   downloadV2CodeVersionZip,
   deprecateV2CodeVersion,
   archiveV2CodeVersion,
@@ -41,10 +46,32 @@ import {
   isInternalGeneratedCodeAssetName,
   listAdminCodeReviewTasks,
   mapAdminReviewTaskToListItem,
+  mapAdminReviewTaskDetailToCodeVersionDetail,
   mapV2CodeVersionToLegacy,
   validateV2CodeVersion,
   errorMessageFromV2,
   errorMessageFromV2Blob,
+  getAdminCodeWorkspace,
+  getAdminCodeWorkspaceFileMetadata,
+  upsertAdminCodeWorkspaceFile,
+  deleteAdminCodeWorkspaceFile,
+  publishAdminCodeWorkspace,
+  abandonAdminCodeWorkspace,
+  moveAdminCodeWorkspaceFile,
+  validateAdminCodeWorkspace,
+  downloadAdminCodeWorkspaceFileBlob,
+  listAdminCodeAssetWorkspaces,
+  openAdminCodeAssetWorkspace,
+  validateAdminCodeVersion,
+  deprecateAdminCodeVersion,
+  archiveAdminCodeVersion,
+  downloadAdminCodeVersionFileBlob,
+  downloadAdminCodeVersionZip,
+  getAdminCodeReviewTaskTree,
+  getAdminCodeReviewTaskFileContent,
+  type V2CodeWorkspace,
+  type V2CodeValidationResult,
+  type V2AdminCodeReviewTaskDetail,
 } from './codeV2';
 
 export const CONSISTENCY_TRAINING_PROFILE = 'image_text_consistency_fusion_logreg';
@@ -87,19 +114,69 @@ export async function uploadCodeZip(
     query.remark = params.remark.trim();
   }
 
-  return request<{
-    success: boolean;
-    data: CodeUploadResult;
-    errorMessage?: string;
-  }>('/code/upload', {
-    method: 'POST',
-    params: query,
-    data: formData,
-    // 避免全局 application/json 破坏 multipart boundary
-    headers: { 'Content-Type': undefined as unknown as string },
-    timeout: 5 * 60 * 1000,
-    ...(options || {}),
-  });
+  const legacyUpload = () =>
+    request<{
+      success: boolean;
+      data: CodeUploadResult;
+      errorMessage?: string;
+    }>('/code/upload', {
+      method: 'POST',
+      params: query,
+      data: formData,
+      headers: { 'Content-Type': undefined as unknown as string },
+      timeout: 5 * 60 * 1000,
+      ...(options || {}),
+    });
+
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const imported = await importV2CodeAssetZip(
+      {
+        file: params.file,
+        metadata: {
+          name: params.codeName,
+          version: params.version || 'v1',
+          trainingProfile:
+            params.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+          remark: params.remark?.trim(),
+        },
+      },
+      opts,
+    );
+    const mapped = mapV2CodeVersionToLegacy(imported);
+    const codeVersionId =
+      imported.versionId ||
+      imported.id ||
+      imported.codeVersionId ||
+      mapped.codeVersionId ||
+      '';
+    if (!codeVersionId) {
+      throw new Error('V2 导入成功但未返回 codeVersionId');
+    }
+    return {
+      success: true,
+      data: {
+        codeAssetId:
+          imported.assetId ||
+          imported.codeAssetId ||
+          mapped.codeAssetId ||
+          '',
+        codeVersionId,
+        version: mapped.version || params.version || 'v1',
+        fileName: mapped.fileName || params.file.name,
+        storagePath: mapped.storagePath || '',
+        sizeBytes: mapped.sizeBytes ?? params.file.size,
+        trainingProfile:
+          mapped.trainingProfile ||
+          params.trainingProfile ||
+          CONSISTENCY_TRAINING_PROFILE,
+        status: mapped.status || 'READY',
+        approvalStatus: mapped.approvalStatus || 'PENDING',
+      },
+    };
+  } catch {
+    return legacyUpload();
+  }
 }
 
 export type CodeVersionApprovalResult = {
@@ -200,8 +277,14 @@ export async function fetchApprovedCodeVersions(options?: { [key: string]: any }
 /** 管理员待审核队列：走 V2 `/api/v2/admin/code-review-tasks` */
 export async function fetchPendingCodeReviewTasks(
   params?: {
+    approvalStatus?: string;
     riskLevel?: string;
+    ownerUserId?: number;
     keyword?: string;
+    submittedFrom?: string;
+    submittedTo?: string;
+    sortBy?: string;
+    sortDirection?: 'ASC' | 'DESC';
     current?: number;
     pageSize?: number;
   },
@@ -209,9 +292,14 @@ export async function fetchPendingCodeReviewTasks(
 ) {
   const payload = await listAdminCodeReviewTasks(
     {
-      approvalStatus: 'PENDING',
+      approvalStatus: params?.approvalStatus ?? 'PENDING',
       riskLevel: params?.riskLevel,
+      ownerUserId: params?.ownerUserId,
       keyword: params?.keyword?.trim() || undefined,
+      submittedFrom: params?.submittedFrom?.trim() || undefined,
+      submittedTo: params?.submittedTo?.trim() || undefined,
+      sortBy: params?.sortBy,
+      sortDirection: params?.sortDirection,
       page: Math.max(0, (params?.current ?? 1) - 1),
       pageSize: params?.pageSize ?? 20,
     },
@@ -219,18 +307,17 @@ export async function fetchPendingCodeReviewTasks(
   );
   const items = Array.isArray(payload?.items) ? payload.items : [];
   const mapped = items.map(mapAdminReviewTaskToListItem);
-  // 审核列表 DTO 常不含 fileName / trainingProfile，用版本详情补全
   const enriched = await Promise.all(
     mapped.map(async (item) => {
       if (item.fileName?.trim() && item.trainingProfile?.trim()) {
         return item;
       }
       try {
-        const detail = await getV2CodeVersion(item.codeVersionId, {
+        const detail = await getAdminCodeReviewTaskDetail(item.codeVersionId, {
           skipErrorHandler: true,
           ...(options || {}),
         });
-        const legacy = mapV2CodeVersionToLegacy(detail);
+        const legacy = mapAdminReviewTaskDetailToCodeVersionDetail(detail);
         return {
           ...item,
           fileName: item.fileName?.trim() || legacy.fileName || '',
@@ -425,6 +512,18 @@ export async function rejectCodeVersion(
   options?: { [key: string]: any },
 ) {
   return decideCodeVersion(codeVersionId, 'REJECT', {
+    ...(options || {}),
+    reason,
+  });
+}
+
+/** 管理员撤销已批准的训练代码版本（reason 必填） */
+export async function revokeCodeVersion(
+  codeVersionId: string,
+  reason: string,
+  options?: { [key: string]: any },
+) {
+  return decideCodeVersion(codeVersionId, 'REVOKE', {
     ...(options || {}),
     reason,
   });
@@ -1788,5 +1887,730 @@ export async function abandonCodeWorkspace(
     return { success: true, data: { abandoned: true, count: openList.length } };
   } catch (error: any) {
     throw new Error((await errorMessageFromV2(error)) || '放弃工作区失败');
+  }
+}
+
+export type AdminCodeWorkspaceSaveResult = {
+  workspaceId: string;
+  workspaceRevision: number;
+  path: string;
+};
+
+export type AdminCodeWorkspacePublishResult = {
+  workspaceId: string;
+  publishedVersionId: string;
+  publishedVersion?: string;
+  path: string;
+};
+
+/** 管理员写入工作区文件（不发布） */
+export async function saveAdminCodeWorkspaceFile(
+  params: { workspaceId: string; path: string; content: string },
+  options?: { [key: string]: any },
+): Promise<{ success: true; data: AdminCodeWorkspaceSaveResult }> {
+  const workspaceId = params.workspaceId?.trim();
+  const path = params.path?.trim();
+  if (!workspaceId || !path) {
+    throw new Error('缺少 workspaceId / path，无法保存');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const metadata = await getAdminCodeWorkspaceFileMetadata(
+      workspaceId,
+      path,
+      opts,
+    );
+    if (metadata?.editable === false || metadata?.readOnly === true) {
+      throw new Error(
+        metadata.reasonCode
+          ? `该文件不可编辑（${metadata.reasonCode}）`
+          : '该文件不可在线编辑（可能超过 1MB 限制）',
+      );
+    }
+    const expectedWorkspaceRevision =
+      metadata?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision;
+    if (expectedWorkspaceRevision == null) {
+      throw new Error('缺少 workspaceRevision，无法保存');
+    }
+    const body: {
+      content: string;
+      expectedWorkspaceRevision: number;
+      expectedContentHash?: string;
+    } = {
+      content: params.content,
+      expectedWorkspaceRevision,
+    };
+    if (metadata?.contentHash) {
+      body.expectedContentHash = metadata.contentHash;
+    }
+    const upserted = await upsertAdminCodeWorkspaceFile(
+      workspaceId,
+      path,
+      body,
+      opts,
+    );
+    let workspaceRevision = upserted?.workspaceRevision;
+    if (workspaceRevision == null) {
+      workspaceRevision =
+        (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+          ?.revision ?? expectedWorkspaceRevision + 1;
+    }
+    return {
+      success: true,
+      data: { workspaceId, workspaceRevision, path },
+    };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '保存工作区文件失败';
+    throw new Error(tip);
+  }
+}
+
+/** 管理员发布工作区草稿为新版本（可选先写入当前文件） */
+export async function publishAdminCodeWorkspaceDraft(
+  params: {
+    workspaceId: string;
+    path?: string;
+    content?: string;
+    currentVersionLabel?: string;
+    nextVersionLabel?: string;
+    pendingMeta?: {
+      codeAssetName?: string;
+      fileName?: string;
+      trainingProfile?: string;
+    };
+  },
+  options?: { [key: string]: any },
+): Promise<{ success: true; data: AdminCodeWorkspacePublishResult }> {
+  const workspaceId = params.workspaceId?.trim();
+  if (!workspaceId) {
+    throw new Error('缺少 workspaceId，无法发布');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const path = params.path?.trim();
+    if (path && params.content != null) {
+      await saveAdminCodeWorkspaceFile(
+        { workspaceId, path, content: params.content },
+        opts,
+      );
+    }
+    const refreshed = await getAdminCodeWorkspace(workspaceId, opts);
+    const publishRevision = refreshed?.revision;
+    if (publishRevision == null) {
+      throw new Error('缺少 workspaceRevision，无法发布');
+    }
+    const nextVersion =
+      params.nextVersionLabel?.trim() ||
+      suggestNextCodeVersionLabel(params.currentVersionLabel);
+    const published = await publishAdminCodeWorkspace(
+      workspaceId,
+      {
+        expectedWorkspaceRevision: publishRevision,
+        version: nextVersion,
+      },
+      opts,
+    );
+    const publishedVersionId =
+      published?.versionId ||
+      published?.codeVersionId ||
+      published?.id ||
+      '';
+    if (!publishedVersionId) {
+      throw new Error('发布成功但未返回新版本 ID');
+    }
+    await reconcileAdminPublishedVersion(publishedVersionId, {
+      trainingProfile: params.pendingMeta?.trainingProfile,
+      codeAssetName: params.pendingMeta?.codeAssetName,
+      fileName: params.pendingMeta?.fileName,
+      ...(options || {}),
+    });
+    return {
+      success: true,
+      data: {
+        workspaceId,
+        publishedVersionId,
+        publishedVersion:
+          published?.versionLabel || published?.version || nextVersion,
+        path: path || '',
+      },
+    };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '发布工作区草稿失败';
+    throw new Error(tip);
+  }
+}
+
+/** 管理员放弃工作区草稿 */
+export async function abandonAdminCodeWorkspaceDraft(
+  workspaceId: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const id = workspaceId?.trim();
+  if (!id) throw new Error('缺少 workspaceId');
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const ws = await getAdminCodeWorkspace(id, opts);
+    if (ws?.revision == null) {
+      throw new Error('缺少 workspaceRevision，无法放弃');
+    }
+    await abandonAdminCodeWorkspace(
+      id,
+      { expectedWorkspaceRevision: ws.revision },
+      opts,
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '放弃工作区失败';
+    throw new Error(tip);
+  }
+}
+
+/** 管理员从工作区删除文件 */
+export async function removeAdminCodeWorkspaceFile(
+  params: {
+    workspaceId: string;
+    path: string;
+    expectedContentHash?: string;
+  },
+  options?: { [key: string]: any },
+): Promise<{ success: true; workspaceRevision: number }> {
+  const workspaceId = params.workspaceId?.trim();
+  const path = params.path?.trim();
+  if (!workspaceId || !path) {
+    throw new Error('缺少 workspaceId / path');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const metadata = await getAdminCodeWorkspaceFileMetadata(
+      workspaceId,
+      path,
+      opts,
+    );
+    const expectedWorkspaceRevision =
+      metadata?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision;
+    if (expectedWorkspaceRevision == null) {
+      throw new Error('缺少 workspaceRevision，无法删除');
+    }
+    const body: {
+      expectedWorkspaceRevision: number;
+      expectedContentHash?: string;
+    } = { expectedWorkspaceRevision };
+    const hash = params.expectedContentHash || metadata?.contentHash;
+    if (hash) body.expectedContentHash = hash;
+    const res = await deleteAdminCodeWorkspaceFile(
+      workspaceId,
+      path,
+      body,
+      opts,
+    );
+    const workspaceRevision =
+      res?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision ??
+      expectedWorkspaceRevision + 1;
+    return { success: true, workspaceRevision };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    const tip =
+      mapCodeWorkspaceConflictMessage(msg) || msg || '删除工作区文件失败';
+    throw new Error(tip);
+  }
+}
+
+async function reconcileAdminPublishedVersion(
+  publishedVersionId: string,
+  options?: { [key: string]: any } & {
+    codeAssetName?: string;
+    fileName?: string;
+    trainingProfile?: string;
+  },
+) {
+  const id = publishedVersionId?.trim();
+  if (!id) return;
+  const { codeAssetName, fileName, trainingProfile, ...rest } = options || {};
+  const opts = { skipErrorHandler: true, ...rest, trainingProfile };
+  try {
+    await autoApproveCodeVersionIfEnabled(id, opts);
+  } catch {
+    // 发布已成功；自动审核失败时保留 PENDING
+  }
+  if (!isTrainingCodeAutoApproveEnabled()) {
+    upsertPendingCodeVersion({
+      codeVersionId: id,
+      codeAssetName,
+      fileName,
+      trainingProfile,
+      approvalStatus: 'PENDING',
+      source: 'publish',
+    });
+  }
+}
+
+function isAdminOpenWorkspace(ws?: V2CodeWorkspace): boolean {
+  if (!ws?.id) return false;
+  if (ws.readOnly) return false;
+  if (ws.closedAt || ws.closedVersionId) return false;
+  const status = String(ws.status || '').toUpperCase();
+  if (
+    status === 'CLOSED' ||
+    status === 'ABANDONED' ||
+    status === 'PUBLISHED' ||
+    status === 'COMMITTED'
+  ) {
+    return false;
+  }
+  if (!status) return true;
+  return status === 'OPEN' || status === 'ACTIVE';
+}
+
+/** 优先复用 OPEN 工作区，否则 POST 打开 */
+export async function ensureAdminCodeAssetWorkspace(
+  assetId: string,
+  options?: { [key: string]: any } & { baseVersionId?: string },
+): Promise<V2CodeWorkspace> {
+  const id = assetId?.trim();
+  if (!id) throw new Error('缺少 assetId');
+  const { baseVersionId, ...rest } = options || {};
+  const opts = { skipErrorHandler: true, ...rest };
+  const matchBase = (ws: V2CodeWorkspace) =>
+    !baseVersionId?.trim() || ws.baseVersionId === baseVersionId.trim();
+  try {
+    const listed = await listAdminCodeAssetWorkspaces(id, opts);
+    const open = (Array.isArray(listed) ? listed : []).find(
+      (ws) => isAdminOpenWorkspace(ws) && matchBase(ws),
+    );
+    if (open?.id) return open;
+  } catch {
+    // 列表失败时继续尝试打开
+  }
+  return openAdminCodeAssetWorkspace(
+    id,
+    baseVersionId?.trim() ? { baseVersionId: baseVersionId.trim() } : undefined,
+    opts,
+  );
+}
+
+/** 管理员在工作区新建包内文件（新 path 不传 contentHash） */
+export async function createAdminCodeWorkspaceFile(
+  params: { workspaceId: string; path: string; content?: string },
+  options?: { [key: string]: any },
+): Promise<{ success: true; workspaceRevision: number }> {
+  const workspaceId = params.workspaceId?.trim();
+  const path = params.path?.trim();
+  if (!workspaceId || !path) {
+    throw new Error('缺少 workspaceId / path');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const existing = await getAdminCodeWorkspaceFileMetadata(
+      workspaceId,
+      path,
+      opts,
+    ).catch(() => undefined);
+    if (existing?.contentHash) {
+      throw new Error('该路径已存在，请直接编辑或使用「移动文件」');
+    }
+    const ws = await getAdminCodeWorkspace(workspaceId, opts);
+    if (ws?.revision == null) throw new Error('缺少 workspaceRevision');
+    const upserted = await upsertAdminCodeWorkspaceFile(
+      workspaceId,
+      path,
+      {
+        content: params.content ?? '',
+        expectedWorkspaceRevision: ws.revision,
+      },
+      opts,
+    );
+    const workspaceRevision =
+      upserted?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision ??
+      ws.revision + 1;
+    return { success: true, workspaceRevision };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    throw new Error(
+      mapCodeWorkspaceConflictMessage(msg) || msg || '新建文件失败',
+    );
+  }
+}
+
+/** 管理员移动/重命名工作区文件 */
+export async function moveAdminCodeWorkspaceFileByPath(
+  params: {
+    workspaceId: string;
+    sourcePath: string;
+    targetPath: string;
+  },
+  options?: { [key: string]: any },
+): Promise<{ success: true; workspaceRevision: number }> {
+  const workspaceId = params.workspaceId?.trim();
+  const sourcePath = params.sourcePath?.trim();
+  const targetPath = params.targetPath?.trim();
+  if (!workspaceId || !sourcePath || !targetPath) {
+    throw new Error('缺少 workspaceId / sourcePath / targetPath');
+  }
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const metadata = await getAdminCodeWorkspaceFileMetadata(
+      workspaceId,
+      sourcePath,
+      opts,
+    );
+    const revision =
+      metadata?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision;
+    if (revision == null) throw new Error('缺少 workspaceRevision');
+    const moved = await moveAdminCodeWorkspaceFile(
+      workspaceId,
+      {
+        sourcePath,
+        targetPath,
+        expectedWorkspaceRevision: revision,
+        ...(metadata?.contentHash
+          ? { expectedContentHash: metadata.contentHash }
+          : {}),
+      },
+      opts,
+    );
+    const workspaceRevision =
+      moved?.workspaceRevision ??
+      (await getAdminCodeWorkspace(workspaceId, opts).catch(() => undefined))
+        ?.revision ??
+      revision + 1;
+    return { success: true, workspaceRevision };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    throw new Error(
+      mapCodeWorkspaceConflictMessage(msg) || msg || '移动文件失败',
+    );
+  }
+}
+
+/** 管理员校验当前工作区 */
+export async function validateAdminCodeWorkspaceDraft(
+  workspaceId: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true; data: V2CodeValidationResult }> {
+  const id = workspaceId?.trim();
+  if (!id) throw new Error('缺少 workspaceId');
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const ws = await getAdminCodeWorkspace(id, opts);
+    if (ws?.revision == null) throw new Error('缺少 workspaceRevision');
+    const data = await validateAdminCodeWorkspace(
+      id,
+      { expectedWorkspaceRevision: ws.revision },
+      opts,
+    );
+    return { success: true, data };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    throw new Error(
+      mapCodeWorkspaceConflictMessage(msg) || msg || '工作区校验失败',
+    );
+  }
+}
+
+/** 管理员下载工作区单文件 */
+export async function downloadAdminCodeWorkspaceFile(
+  workspaceId: string,
+  path: string,
+  fileName?: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const blob = await downloadAdminCodeWorkspaceFileBlob(
+      workspaceId,
+      path,
+      opts,
+    );
+    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
+    triggerBrowserDownload(
+      blob,
+      fileName?.trim() || path.split('/').pop() || 'file',
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg =
+      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
+      (await errorMessageFromV2(error).catch(() => undefined)) ||
+      error?.message ||
+      '下载失败';
+    throw new Error(msg);
+  }
+}
+
+/** 管理员下载版本快照单文件 */
+export async function downloadAdminCodeVersionFile(
+  versionId: string,
+  path: string,
+  fileName?: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const blob = await downloadAdminCodeVersionFileBlob(versionId, path, opts);
+    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
+    triggerBrowserDownload(
+      blob,
+      fileName?.trim() || path.split('/').pop() || 'file',
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg =
+      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
+      (await errorMessageFromV2(error).catch(() => undefined)) ||
+      error?.message ||
+      '下载失败';
+    throw new Error(msg);
+  }
+}
+
+/** 管理员校验代码版本 */
+export async function validateAdminCodeVersionById(
+  versionId: string,
+  options?: { [key: string]: any },
+) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const data = await validateAdminCodeVersion(versionId, opts);
+    return { success: true, data };
+  } catch (error: any) {
+    throw new Error((await errorMessageFromV2(error)) || '版本校验失败');
+  }
+}
+
+/** 管理员弃用代码版本 */
+export async function deprecateAdminCodeVersionById(
+  versionId: string,
+  options?: { [key: string]: any },
+) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const data = await deprecateAdminCodeVersion(versionId, opts);
+    return { success: true, data: mapV2CodeVersionToLegacy(data) };
+  } catch (error: any) {
+    throw new Error((await errorMessageFromV2(error)) || '弃用失败');
+  }
+}
+
+/** 管理员归档代码版本 */
+export async function archiveAdminCodeVersionById(
+  versionId: string,
+  options?: { [key: string]: any },
+) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const data = await archiveAdminCodeVersion(versionId, opts);
+    return { success: true, data: mapV2CodeVersionToLegacy(data) };
+  } catch (error: any) {
+    throw new Error((await errorMessageFromV2(error)) || '归档失败');
+  }
+}
+
+/** 列出当前用户的 V2 代码资产 */
+export async function listCodeAssets(options?: { [key: string]: any }) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const list = await listV2CodeAssets(opts);
+    return { success: true, data: Array.isArray(list) ? list : [] };
+  } catch (error: any) {
+    throw new Error((await errorMessageFromV2(error)) || '资产列表加载失败');
+  }
+}
+
+/** 管理员审核详情（跨 owner） */
+export async function getAdminCodeReviewDetail(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  const detail = await getAdminCodeReviewTaskDetail(codeVersionId, options);
+  return {
+    success: true,
+    data: mapAdminReviewTaskDetailToCodeVersionDetail(detail),
+    raw: detail as V2AdminCodeReviewTaskDetail,
+  };
+}
+
+/** 管理员审核用只读目录树 */
+export async function listAdminCodeReviewFiles(
+  codeVersionId: string,
+  options?: { [key: string]: any },
+) {
+  const data = await fetchAllV2CodeTreeFiles(
+    (prefix) =>
+      getAdminCodeReviewTaskTree(codeVersionId, prefix, {
+        skipErrorHandler: true,
+        ...(options || {}),
+      }),
+    options,
+  );
+  return { success: true, data };
+}
+
+/** 管理员审核用只读文件预览 */
+export async function previewAdminCodeReviewFile(
+  codeVersionId: string,
+  path: string,
+  options?: { [key: string]: any },
+) {
+  const payload = await getAdminCodeReviewTaskFileContent(
+    codeVersionId,
+    path,
+    { skipErrorHandler: true, ...(options || {}) },
+  );
+  const content = extractV2FileText(payload);
+  return {
+    success: true,
+    data: {
+      content,
+      path,
+      fileName: path.split('/').pop() || path,
+    },
+  };
+}
+
+/** 用户校验当前工作区草稿 */
+export async function validateCodeWorkspaceDraft(
+  workspaceId: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true; data: V2CodeValidationResult }> {
+  const id = workspaceId?.trim();
+  if (!id) throw new Error('缺少 workspaceId');
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const ws = await getV2CodeWorkspace(id, opts);
+    if (ws?.revision == null) throw new Error('缺少 workspaceRevision');
+    const data = await validateV2CodeWorkspace(
+      id,
+      { expectedWorkspaceRevision: ws.revision },
+      opts,
+    );
+    return { success: true, data };
+  } catch (error: any) {
+    const msg = await errorMessageFromV2(error);
+    throw new Error(
+      mapCodeWorkspaceConflictMessage(msg) || msg || '工作区校验失败',
+    );
+  }
+}
+
+/** 用户下载工作区单文件 */
+export async function downloadCodeWorkspaceFile(
+  workspaceId: string,
+  path: string,
+  fileName?: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const blob = await downloadV2CodeWorkspaceFileBlob(workspaceId, path, opts);
+    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
+    triggerBrowserDownload(
+      blob,
+      fileName?.trim() || path.split('/').pop() || 'file',
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg =
+      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
+      (await errorMessageFromV2(error).catch(() => undefined)) ||
+      error?.message ||
+      '下载失败';
+    throw new Error(msg);
+  }
+}
+
+/** 用户下载版本快照单文件 */
+export async function downloadCodeVersionSingleFile(
+  versionId: string,
+  path: string,
+  fileName?: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const blob = await downloadV2CodeVersionFileBlob(versionId, path, opts);
+    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
+    triggerBrowserDownload(
+      blob,
+      fileName?.trim() || path.split('/').pop() || 'file',
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg =
+      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
+      (await errorMessageFromV2(error).catch(() => undefined)) ||
+      error?.message ||
+      '下载失败';
+    throw new Error(msg);
+  }
+}
+
+/** 显式校验代码版本（POST validate，非 training-check） */
+export async function validateCodeVersionExplicit(
+  codeVersionId: string,
+  options?: { [key: string]: any } & { trainingProfile?: string },
+) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const data = await validateV2CodeVersion(
+      codeVersionId,
+      options?.trainingProfile
+        ? { trainingProfile: options.trainingProfile }
+        : undefined,
+      opts,
+    );
+    return { success: true, data };
+  } catch (error: any) {
+    throw new Error((await errorMessageFromV2(error)) || '版本校验失败');
+  }
+}
+
+/** 管理员下载版本完整 ZIP */
+export async function downloadAdminCodeVersionZipById(
+  versionId: string,
+  fileName?: string,
+  options?: { [key: string]: any },
+): Promise<{ success: true }> {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const blob = await downloadAdminCodeVersionZip(versionId, opts);
+    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
+    if (blob.type && blob.type.includes('application/json')) {
+      const text = await blob.text();
+      try {
+        const json = JSON.parse(text) as { errorMessage?: string };
+        throw new Error(json.errorMessage || '下载失败');
+      } catch (e: any) {
+        if (e?.message && e.message !== '下载失败') throw e;
+        throw new Error(text || '下载失败');
+      }
+    }
+    triggerBrowserDownload(
+      blob,
+      fileName?.trim() || `${versionId}.zip`,
+    );
+    return { success: true };
+  } catch (error: any) {
+    const msg =
+      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
+      (await errorMessageFromV2(error).catch(() => undefined)) ||
+      error?.message ||
+      '下载失败';
+    throw new Error(msg);
   }
 }
