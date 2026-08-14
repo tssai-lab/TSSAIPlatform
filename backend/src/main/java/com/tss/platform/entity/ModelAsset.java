@@ -34,6 +34,10 @@ public class ModelAsset {
     @Column(name = "owner_user_id")
     private Integer ownerUserId;
 
+    /** 演示资产：对所有用户可见、只读 */
+    @Column(name = "is_demo", nullable = false)
+    private Boolean isDemo = false;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

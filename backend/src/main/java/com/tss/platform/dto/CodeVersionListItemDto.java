@@ -14,4 +14,6 @@ public class CodeVersionListItemDto {
     private String trainingProfile;
     private String approvalStatus;
     private String status;
+    /** 演示资产：全局共享、只读 */
+    private Boolean isDemo;
 }

@@ -16,8 +16,10 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class CodeVersionService {
@@ -67,16 +69,23 @@ public class CodeVersionService {
             throw new CodeAssetAccessException();
         }
         List<CodeVersionListItemDto> items = new ArrayList<>();
-        List<CodeAsset> ownerAssets = codeAssetRepository
-                .findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(currentUserId);
-        for (CodeAsset asset : ownerAssets) {
-            if (!Objects.equals(currentUserId, asset.getOwnerUserId())) {
+        // 本人代码资产 + 演示代码资产（ownerUserId=0，全局共享、只读）
+        List<CodeAsset> assets = new ArrayList<>(codeAssetRepository
+                .findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(currentUserId));
+        assets.addAll(codeAssetRepository.findByIsDemoTrueAndDeletedFalseOrderByCreatedAtDesc());
+        Set<String> visitedAssetIds = new HashSet<>();
+        for (CodeAsset asset : assets) {
+            boolean isDemo = Boolean.TRUE.equals(asset.getIsDemo());
+            if (!isDemo && !Objects.equals(currentUserId, asset.getOwnerUserId())) {
+                continue;
+            }
+            if (!visitedAssetIds.add(asset.getId())) {
                 continue;
             }
             for (CodeVersion version : codeVersionRepository
                     .findByAssetIdAndDeletedFalseOrderByCreatedAtDesc(asset.getId())) {
                 if (!Objects.equals(asset.getId(), version.getAssetId())
-                        || !Objects.equals(currentUserId, version.getOwnerUserId())
+                        || (!isDemo && !Objects.equals(currentUserId, version.getOwnerUserId()))
                         || !"READY".equals(version.getStatus())
                         || !CodeApprovalStatus.APPROVED.equals(
                                 version.getApprovalStatus())) {
@@ -96,6 +105,7 @@ public class CodeVersionService {
                         .trainingProfile(version.getTrainingProfile())
                         .approvalStatus(version.getApprovalStatus())
                         .status(version.getStatus())
+                        .isDemo(isDemo)
                         .build());
             }
         }

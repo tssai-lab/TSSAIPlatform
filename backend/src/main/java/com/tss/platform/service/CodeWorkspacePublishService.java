@@ -161,6 +161,7 @@ public class CodeWorkspacePublishService {
         CodeAsset asset = assetRepository.findByIdAndDeletedFalseForUpdate(assetId)
                 .orElseThrow(CodeAssetAccessException::new);
         authorizeOwner(asset.getOwnerUserId());
+        authContext.rejectDemoWrite(asset.getIsDemo());
         CodeWorkspace workspace = workspaceRepository.findByIdAndDeletedFalseForUpdate(workspaceId)
                 .orElseThrow(CodeAssetAccessException::new);
         requireWorkspaceIdentity(asset, workspace);
@@ -193,6 +194,7 @@ public class CodeWorkspacePublishService {
         CodeAsset asset = assetRepository.findByIdAndDeletedFalseForUpdate(snapshot.assetId())
                 .orElseThrow(CodeAssetAccessException::new);
         authorizeOwner(asset.getOwnerUserId());
+        authContext.rejectDemoWrite(asset.getIsDemo());
         CodeWorkspace workspace = workspaceRepository
                 .findByIdAndDeletedFalseForUpdate(snapshot.workspaceId())
                 .orElseThrow(CodeAssetAccessException::new);

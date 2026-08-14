@@ -53,6 +53,7 @@ public class ModelVersionLifecycleService {
     public ModelAsset switchCurrent(String assetId, String versionId) {
         ModelAsset snapshot = requireAsset(assetId);
         authContext.requireOwnerAccess(snapshot.getOwnerUserId(), "model asset not found or no permission");
+        authContext.rejectDemoWrite(snapshot.getIsDemo());
         ModelVersion version = versionRepo.findByIdAndDeletedFalse(versionId)
                 .orElseThrow(() -> new IllegalArgumentException("model version not found: " + versionId));
         if (!assetId.equals(version.getAssetId())) {
@@ -95,6 +96,7 @@ public class ModelVersionLifecycleService {
         ModelVersion snapshot = requireVersion(versionId);
         ModelAsset asset = requireAsset(snapshot.getAssetId());
         authContext.requireOwnerAccess(effectiveOwner(snapshot, asset), "model version not found or no permission");
+        authContext.rejectDemoWrite(asset.getIsDemo());
         ModelVersion updated = transactionTemplate.execute(status -> {
             ModelAsset lockedAsset = assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId())
                     .orElseThrow(() -> new IllegalArgumentException("model asset not found"));
@@ -118,6 +120,7 @@ public class ModelVersionLifecycleService {
         ModelAsset snapshotAsset = requireAsset(snapshot.getAssetId());
         Integer owner = effectiveOwner(snapshot, snapshotAsset);
         authContext.requireOwnerAccess(owner, "model version not found or no permission");
+        authContext.rejectDemoWrite(snapshotAsset.getIsDemo());
         DeleteVersionResult deleted = transactionTemplate.execute(status -> {
             ModelAsset lockedAsset = assetRepo.findByIdAndDeletedFalseForUpdate(
                             snapshotAsset.getId()
@@ -159,6 +162,7 @@ public class ModelVersionLifecycleService {
                 snapshot.getOwnerUserId(),
                 "model asset not found or no permission"
         );
+        authContext.rejectDemoWrite(snapshot.getIsDemo());
         DeleteAssetResult deleted = transactionTemplate.execute(status -> {
             ModelAsset locked = assetRepo.findByIdAndDeletedFalseForUpdate(assetId)
                     .orElseThrow(() -> new IllegalArgumentException("model asset not found"));

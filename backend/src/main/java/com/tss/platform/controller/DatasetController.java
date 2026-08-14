@@ -95,6 +95,7 @@ public class DatasetController {
                 : asset.getAnnotationFormat());
         item.put("remark", asset.getRemark());
         item.put("ownerUserId", asset.getOwnerUserId());
+        item.put("isDemo", Boolean.TRUE.equals(asset.getIsDemo()));
         item.put("versionId", version != null ? version.getId() : null);
         item.put("version", version != null ? displayVersionLabel(version) : null);
         item.put("currentVersionId", version != null ? version.getId() : null);

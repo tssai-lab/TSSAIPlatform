@@ -19,5 +19,7 @@ public class InferenceScriptVersionDto {
     private JsonNode paramsSchema;
     private String status;
     private Integer ownerUserId;
+    /** 演示资产：全局共享、只读 */
+    private Boolean isDemo;
     private Instant createdAt;
 }
