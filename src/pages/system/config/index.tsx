@@ -1,11 +1,15 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
+  Descriptions,
   Form,
   InputNumber,
+  Modal,
   message,
+  Space,
   Spin,
   Switch,
   Typography,
@@ -17,10 +21,19 @@ import {
 } from '@/constants/trainingCode';
 import {
   DEFAULT_USER_LOG_LIMIT_MB,
+  fetchKubernetesResourcePolicy,
   fetchSystemConfig,
+  type KubernetesResourcePolicy,
+  MAX_JOB_QUOTA,
+  MAX_JOB_TTL_SECONDS,
+  MAX_POD_QUOTA,
   MAX_USER_LOG_LIMIT_MB,
+  MIN_JOB_QUOTA,
+  MIN_JOB_TTL_SECONDS,
+  MIN_POD_QUOTA,
   MIN_USER_LOG_LIMIT_MB,
   type SystemConfig,
+  updateKubernetesResourcePolicy,
   updateSystemConfig,
 } from '@/services/system/config';
 import { storage } from '@/utils/storage';
@@ -89,6 +102,12 @@ const SystemConfigPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [usingLocalFallback, setUsingLocalFallback] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string>();
+  const [resourceForm] = Form.useForm<KubernetesResourcePolicy>();
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceSaving, setResourceSaving] = useState(false);
+  const [resourcePolicy, setResourcePolicy] =
+    useState<KubernetesResourcePolicy>();
+  const [resourceError, setResourceError] = useState<string>();
 
   useEffect(() => {
     if (!access.canAccessSystemConfig) {
@@ -132,6 +151,34 @@ const SystemConfigPage: React.FC = () => {
       void loadConfig();
     }
   }, [access.canAccessSystemConfig, loadConfig]);
+
+  const loadResourcePolicy = useCallback(async () => {
+    setResourceLoading(true);
+    setResourceError(undefined);
+    try {
+      const res = await fetchKubernetesResourcePolicy({
+        skipErrorHandler: true,
+      });
+      if (res.code !== 200 || !res.data) {
+        throw new Error(res.message || '无法读取 Kubernetes 资源策略');
+      }
+      setResourcePolicy(res.data);
+      resourceForm.setFieldsValue(res.data);
+    } catch (error: unknown) {
+      setResourcePolicy(undefined);
+      setResourceError(
+        error instanceof Error ? error.message : '无法读取 Kubernetes 资源策略',
+      );
+    } finally {
+      setResourceLoading(false);
+    }
+  }, [resourceForm]);
+
+  useEffect(() => {
+    if (access.canAccessSystemConfig) {
+      void loadResourcePolicy();
+    }
+  }, [access.canAccessSystemConfig, loadResourcePolicy]);
 
   const buildPayload = (values: SystemConfig): SystemConfig => {
     const limitMb =
@@ -177,6 +224,52 @@ const SystemConfigPage: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveResourcePolicy = async (values: KubernetesResourcePolicy) => {
+    setResourceSaving(true);
+    try {
+      const res = await updateKubernetesResourcePolicy(
+        {
+          podQuota: values.podQuota,
+          jobQuota: values.jobQuota,
+          jobTtlSecondsAfterFinished: values.jobTtlSecondsAfterFinished,
+        },
+        { skipErrorHandler: true },
+      );
+      if (res.code !== 200 || !res.data) {
+        throw new Error(res.message || '资源策略保存失败');
+      }
+      setResourcePolicy(res.data);
+      resourceForm.setFieldsValue(res.data);
+      setResourceError(undefined);
+      message.success(res.message || '资源策略保存成功');
+    } catch (error: unknown) {
+      const detail =
+        error instanceof Error ? error.message : '资源策略保存失败';
+      setResourceError(detail);
+      message.error(`${detail}；未使用本地值替代集群配置`);
+      await loadResourcePolicy();
+    } finally {
+      setResourceSaving(false);
+    }
+  };
+
+  const handleResourceSubmit = async () => {
+    let values: KubernetesResourcePolicy;
+    try {
+      values = await resourceForm.validateFields();
+    } catch {
+      return;
+    }
+    Modal.confirm({
+      title: '确认更新 Kubernetes 资源策略？',
+      content:
+        '降低配额不会删除现有 Pod/Job；TTL 只写入之后新建的 Job，不追溯修改已有任务。',
+      okText: '确认更新',
+      cancelText: '取消',
+      onOk: () => saveResourcePolicy(values),
+    });
   };
 
   if (!access.canAccessSystemConfig) return null;
@@ -247,6 +340,132 @@ const SystemConfigPage: React.FC = () => {
               >
                 重新加载
               </Button>
+            </Form.Item>
+          </Form>
+        </Spin>
+      </Card>
+      <Card
+        title="Kubernetes Pod / Job 配额与清理时间"
+        style={{ marginTop: 16 }}
+      >
+        <Spin spinning={resourceLoading}>
+          {resourceError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="当前无法确认集群真实配置"
+              description={resourceError}
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
+          {resourcePolicy ? (
+            <Descriptions size="small" column={2} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="目标集群">
+                {resourcePolicy.clusterName}
+              </Descriptions.Item>
+              <Descriptions.Item label="命名空间">
+                {resourcePolicy.namespace}
+              </Descriptions.Item>
+              <Descriptions.Item label="当前 Pod 占用">
+                {resourcePolicy.usedPods} / {resourcePolicy.podQuota}
+              </Descriptions.Item>
+              <Descriptions.Item label="当前 Job 占用">
+                {resourcePolicy.usedJobs} / {resourcePolicy.jobQuota}
+              </Descriptions.Item>
+            </Descriptions>
+          ) : null}
+          <Alert
+            type="info"
+            showIcon
+            message="修改规则"
+            description="低于当前占用的配额会被拒绝，不会删除任务。TTL 从 Job 完成后开始计时，只影响保存后新建的训练或推理 Job；推荐先使用 180 秒。"
+            style={{ marginBottom: 16 }}
+          />
+          <Form
+            form={resourceForm}
+            layout="vertical"
+            style={{ maxWidth: 640 }}
+            disabled={resourceLoading || resourceSaving}
+          >
+            <Form.Item
+              name="podQuota"
+              label="Pod 总数上限"
+              rules={[
+                { required: true, message: '请输入 Pod 配额' },
+                {
+                  type: 'number',
+                  min: MIN_POD_QUOTA,
+                  max: MAX_POD_QUOTA,
+                  message: `请输入 ${MIN_POD_QUOTA}～${MAX_POD_QUOTA} 之间的整数`,
+                },
+              ]}
+            >
+              <InputNumber
+                min={MIN_POD_QUOTA}
+                max={MAX_POD_QUOTA}
+                precision={0}
+                style={{ width: 240 }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="jobQuota"
+              label="Job 总数上限"
+              extra="已完成但尚未被 TTL 清理的 Job 也会占用此配额。"
+              rules={[
+                { required: true, message: '请输入 Job 配额' },
+                {
+                  type: 'number',
+                  min: MIN_JOB_QUOTA,
+                  max: MAX_JOB_QUOTA,
+                  message: `请输入 ${MIN_JOB_QUOTA}～${MAX_JOB_QUOTA} 之间的整数`,
+                },
+              ]}
+            >
+              <InputNumber
+                min={MIN_JOB_QUOTA}
+                max={MAX_JOB_QUOTA}
+                precision={0}
+                style={{ width: 240 }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="jobTtlSecondsAfterFinished"
+              label="Job 完成后保留时间"
+              rules={[
+                { required: true, message: '请输入 Job TTL' },
+                {
+                  type: 'number',
+                  min: MIN_JOB_TTL_SECONDS,
+                  max: MAX_JOB_TTL_SECONDS,
+                  message: `请输入 ${MIN_JOB_TTL_SECONDS}～${MAX_JOB_TTL_SECONDS} 秒`,
+                },
+              ]}
+            >
+              <InputNumber
+                min={MIN_JOB_TTL_SECONDS}
+                max={MAX_JOB_TTL_SECONDS}
+                precision={0}
+                addonAfter="秒"
+                style={{ width: 240 }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Space>
+                <Button
+                  type="primary"
+                  onClick={() => void handleResourceSubmit()}
+                  loading={resourceSaving}
+                  disabled={!resourcePolicy}
+                >
+                  保存资源策略
+                </Button>
+                <Button
+                  onClick={() => void loadResourcePolicy()}
+                  disabled={resourceLoading || resourceSaving}
+                >
+                  重新读取集群
+                </Button>
+              </Space>
             </Form.Item>
           </Form>
         </Spin>
