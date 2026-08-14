@@ -69,4 +69,11 @@ public final class TrainingPlanAdminDtos {
             String yamlContent
     ) {
     }
+
+    public record TemplateFile(
+            String templateId,
+            String fileName,
+            String yamlContent
+    ) {
+    }
 }

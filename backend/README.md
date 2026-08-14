@@ -16,6 +16,7 @@ TSS AI Platform 后端服务，基于 **Java 17 + Spring Boot 3.5.14** 构建，
 
 ```text
 doc/module2-external-contract.md
+doc/training-plan-yaml-guide.md
 ../doc1/
 ```
 

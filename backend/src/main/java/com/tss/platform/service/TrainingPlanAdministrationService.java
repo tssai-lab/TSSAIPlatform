@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -27,11 +28,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
@@ -44,6 +47,9 @@ public class TrainingPlanAdministrationService implements ApplicationRunner {
     private static final String SOURCE_BUILT_IN = "BUILT_IN";
     private static final String SOURCE_ONLINE = "ONLINE";
     private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
+    private static final Map<String, String> TEMPLATE_RESOURCES = Map.of(
+            "cv-cpu-v2", "training-plan-templates/cv-cpu-v2.yaml"
+    );
 
     private final TrainingPlanDefinitionRepository repository;
     private final TrainingPlanRegistry registry;
@@ -202,6 +208,34 @@ public class TrainingPlanAdministrationService implements ApplicationRunner {
                 .thenComparingInt(item -> versionNumber(item.planVersion()))
                 .thenComparing(TrainingPlanAdminDtos.Summary::source));
         return List.copyOf(result);
+    }
+
+    public TrainingPlanAdminDtos.TemplateFile template(String templateId) {
+        requireSuperAdministrator();
+        String normalizedId = normalizeRequired(templateId, "templateId");
+        String resourcePath = TEMPLATE_RESOURCES.get(normalizedId);
+        if (resourcePath == null) {
+            throw business(
+                    HttpStatus.NOT_FOUND,
+                    "TRAINING_PLAN_TEMPLATE_NOT_FOUND",
+                    "训练方案模板不存在"
+            );
+        }
+        try (InputStream input = new ClassPathResource(resourcePath).getInputStream()) {
+            byte[] content = input.readAllBytes();
+            TrainingPlanDefinition definition = yamlParser.parse(content, resourcePath);
+            validator.validate(definition, resourcePath);
+            if (!TrainingPlanValidator.SCHEMA_VERSION_V2.equals(definition.schemaVersion())) {
+                throw new IllegalStateException("内置训练方案模板必须使用 v2 Schema");
+            }
+            return new TrainingPlanAdminDtos.TemplateFile(
+                    normalizedId,
+                    "training-plan-" + normalizedId + ".yaml",
+                    new String(content, java.nio.charset.StandardCharsets.UTF_8)
+            );
+        } catch (IOException | RuntimeException exception) {
+            throw new IllegalStateException("内置训练方案模板无效: " + normalizedId, exception);
+        }
     }
 
     public TrainingPlanAdminDtos.Detail get(String planId, String version) {
