@@ -1,7 +1,10 @@
 import { request } from '@umijs/max';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
 import qs from 'qs';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
+
+dayjs.extend(utc);
 
 /** 模块一统一响应 */
 type Module1Result<T> = {
@@ -82,15 +85,33 @@ function getResultMessage(res?: Module1Result<unknown>): string {
   return res?.message ?? res?.msg ?? '';
 }
 
+/** 是否已带时区（Z 或 ±HH:mm / ±HHmm） */
+function hasExplicitTimezone(value: string): boolean {
+  return /([zZ]|[+-]\d{2}:?\d{2})$/.test(value.trim());
+}
+
 /**
- * 后端返回 UTC ISO（如 2026-08-04T04:09:27Z）→ 转浏览器本地时区展示。
- * dayjs 会按带 Z / 偏移的 ISO 解析为 Instant，再 format 为本地墙钟时间。
+ * 解析后端操作时间。
+ * - 带 Z / 偏移：按 Instant 解析
+ * - 无时区（如 2026-08-14 02:00:00）：按 **UTC** 解析
+ *   （若当成本地解析，在东八区会少显示 8 小时）
+ */
+function parseBackendOperateTime(value: string) {
+  const raw = value.trim();
+  if (hasExplicitTimezone(raw)) {
+    return dayjs(raw);
+  }
+  return dayjs.utc(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+}
+
+/**
+ * 后端 UTC 时间 → 浏览器本地时区展示（YYYY-MM-DD HH:mm:ss）。
  */
 function formatOperateTime(value?: string): string {
   if (!value?.trim()) return '';
-  const parsed = dayjs(value.trim());
+  const parsed = parseBackendOperateTime(value);
   if (!parsed.isValid()) return value.trim();
-  return parsed.format('YYYY-MM-DD HH:mm:ss');
+  return parsed.local().format('YYYY-MM-DD HH:mm:ss');
 }
 
 function normalizeResult(result?: string): 'success' | 'failed' {
@@ -112,10 +133,16 @@ function mapLogItem(raw: Partial<LogItem>): LogItem {
   };
 }
 
-/** 后端 SystemLogController 解析为 yyyy-MM-dd HH:mm:ss */
+/**
+ * 筛选框本地墙钟时间 → 后端查询用 UTC（yyyy-MM-dd HH:mm:ss）。
+ * 与 formatOperateTime 对称，避免列表已是本地时间、筛选却按本地字面量对 UTC 库。
+ */
 function toQueryDateTime(value?: string): string | undefined {
   if (!value?.trim()) return undefined;
-  return value.trim().replace('T', ' ').slice(0, 19);
+  const raw = value.trim().replace('T', ' ').slice(0, 19);
+  const local = dayjs(raw);
+  if (!local.isValid()) return raw;
+  return local.utc().format('YYYY-MM-DD HH:mm:ss');
 }
 
 function toSystemLogListQuery(
