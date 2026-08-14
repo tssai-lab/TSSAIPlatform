@@ -1219,7 +1219,11 @@ const DatasetDetail: React.FC = () => {
               key: 'readme',
               label: 'README',
               children: (
-                <ZipReadmePanel source="dataset" versionId={previewVersionId} />
+                <ZipReadmePanel
+                  source="dataset"
+                  versionId={previewVersionId}
+                  datasetType={datasetInfo?.type}
+                />
               ),
             },
             {

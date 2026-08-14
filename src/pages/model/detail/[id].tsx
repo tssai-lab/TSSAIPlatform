@@ -53,6 +53,14 @@ import {
 } from '@/utils/codeFileTree';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
+const EMPTY_CODE_FILES: API.ModelCodeFile[] = [];
+
+function sameKeyList(left: Key[], right: Key[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((key, index) => key === right[index]);
+}
+
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -146,7 +154,7 @@ const ModelDetail: React.FC = () => {
       .finally(() => setCodeLoading(false));
   }, [selectedVersionId]);
 
-  const codeFiles = versionCode?.codeFiles ?? [];
+  const codeFiles = versionCode?.codeFiles ?? EMPTY_CODE_FILES;
   const readmeFilePaths = useMemo(
     () =>
       codeFiles
@@ -162,9 +170,15 @@ const ModelDetail: React.FC = () => {
     () => collectCodeFileTreeExpandedKeys(fileTreeData),
     [fileTreeData],
   );
+  const selectedFileKeys = useMemo(
+    () => (selectedCodePath ? [selectedCodePath] : []),
+    [selectedCodePath],
+  );
 
   useEffect(() => {
-    setExpandedFileKeys(defaultExpandedKeys);
+    setExpandedFileKeys((prev) =>
+      sameKeyList(prev, defaultExpandedKeys) ? prev : defaultExpandedKeys,
+    );
   }, [defaultExpandedKeys]);
 
   useEffect(() => {
@@ -189,7 +203,6 @@ const ModelDetail: React.FC = () => {
   const handleSelectCodeFile = async (path: string) => {
     if (!selectedVersionId || !path) return;
     if (path === selectedCodePath && versionCode?.codeContent) {
-      setSelectedCodePath(path);
       return;
     }
     setSelectedCodePath(path);
@@ -500,11 +513,13 @@ const ModelDetail: React.FC = () => {
                           >
                             <Tree.DirectoryTree
                               treeData={fileTreeData}
-                              selectedKeys={
-                                selectedCodePath ? [selectedCodePath] : []
-                              }
+                              selectedKeys={selectedFileKeys}
                               expandedKeys={expandedFileKeys}
-                              onExpand={(keys) => setExpandedFileKeys(keys)}
+                              onExpand={(keys) => {
+                                setExpandedFileKeys((prev) =>
+                                  sameKeyList(prev, keys) ? prev : keys,
+                                );
+                              }}
                               expandAction="click"
                               onSelect={(keys, info) => {
                                 if (!info.node.isLeaf) return;
