@@ -40,6 +40,13 @@ import {
 } from '../guardSelfAccount';
 import { notifyRequestError } from '../notifyRequestError';
 
+/**
+ * 管理员列表页
+ * 权限：需 canAccessSystemAdmin，否则跳转 403
+ * 能力：管理员账号的新增 / 编辑 / 启用禁用 / 删除；列表走 fetchAdminList（基于用户接口筛管理员）
+ * 约束：不可禁用或删除当前登录账号；表单角色选项不含「新建超管」时仅回显已有超管
+ */
+
 // 前端不提供“超管”选项；若数据中存在超管，仅用于回显（禁用）
 const ADMIN_ROLE_OPTIONS = SYSTEM_ADMIN_ROLE_OPTIONS;
 
