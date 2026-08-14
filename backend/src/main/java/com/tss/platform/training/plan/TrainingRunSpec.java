@@ -56,8 +56,22 @@ public record TrainingRunSpec(
             String format,
             String fileName,
             Boolean archive,
-            List<String> requiredEntries
+            List<String> requiredEntries,
+            String artifactSpecId
     ) {
+        public InputArtifact(
+                String versionId,
+                String objectName,
+                String sha256,
+                Long sizeBytes,
+                String format,
+                String fileName,
+                Boolean archive,
+                List<String> requiredEntries
+        ) {
+            this(versionId, objectName, sha256, sizeBytes, format, fileName,
+                    archive, requiredEntries, null);
+        }
     }
 
     public record CodeArtifact(
