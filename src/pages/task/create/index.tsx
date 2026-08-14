@@ -46,6 +46,7 @@ import {
   filterModelCandidates,
   isSpecDrivenInput,
 } from './trainingAssetCompatibility.mjs';
+import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
   model: 'logreg',
@@ -511,6 +512,18 @@ const TaskCreate: React.FC = () => {
       Array.isArray(datasetSpecs) ? datasetSpecs : undefined,
     );
   }, [selectedTrainingPlan]);
+
+  useEffect(() => {
+    if (!selectedTrainingPlan || isExperimentContinue) return;
+    form.setFieldsValue({
+      planId: selectedTrainingPlan.id,
+      planVersion: selectedTrainingPlan.version,
+      trainingMode: selectedTrainingPlan.trainingModes?.[0],
+      resourceProfileId:
+        selectedTrainingPlan.runtimes?.[0]?.resourceProfiles?.[0]?.id,
+      hyperParams: buildTrainingPlanHyperParams(selectedTrainingPlan),
+    });
+  }, [form, isExperimentContinue, selectedTrainingPlan]);
 
   useEffect(() => {
     if (!isExperimentContinue) return;
@@ -1342,7 +1355,7 @@ const TaskCreate: React.FC = () => {
                         plan?.runtimes?.[0]?.resourceProfiles?.[0]?.id,
                       modelType:
                         modelTypes.length === 1 ? modelTypes[0] : undefined,
-                      hyperParams: '{}',
+                      hyperParams: buildTrainingPlanHyperParams(plan),
                     });
                   }}
                   options={Object.values(
