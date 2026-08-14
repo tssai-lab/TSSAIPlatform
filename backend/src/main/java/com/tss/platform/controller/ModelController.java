@@ -57,7 +57,8 @@ public class ModelController {
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "current", required = false) Integer current,
-            @RequestParam(value = "pageSize", required = false) Integer pageSize
+            @RequestParam(value = "pageSize", required = false) Integer pageSize,
+            @RequestParam(value = "artifactSpecIds", required = false) List<String> artifactSpecIds
     ) {
         String normalizedType = null;
         if (type != null && !type.isBlank()) {
@@ -74,12 +75,26 @@ public class ModelController {
                 ? PageRequest.of(pageNo - 1, size)
                 : Pageable.unpaged();
         Integer ownerUserId = authContext.isAdmin() ? null : authContext.currentUserId();
-        Page<ModelVersion> versionPage = modelVersionRepo.searchVisibleCatalog(
-                ownerUserId,
-                normalizedType,
-                toLikeKeyword(keyword),
-                pageable
-        );
+        List<String> normalizedSpecIds = normalizeSpecIds(artifactSpecIds);
+        Page<ModelVersion> versionPage;
+        if (normalizedSpecIds == null) {
+            versionPage = modelVersionRepo.searchVisibleCatalog(
+                    ownerUserId,
+                    normalizedType,
+                    toLikeKeyword(keyword),
+                    pageable
+            );
+        } else if (normalizedSpecIds.isEmpty()) {
+            versionPage = Page.empty(pageable);
+        } else {
+            versionPage = modelVersionRepo.searchVisibleTrainingCandidates(
+                    ownerUserId,
+                    normalizedType,
+                    toLikeKeyword(keyword),
+                    normalizedSpecIds,
+                    pageable
+            );
+        }
         List<ModelVersion> versions = versionPage.getContent();
         Set<String> visibleAssetIds = versions.stream()
                 .map(ModelVersion::getAssetId)
@@ -100,6 +115,17 @@ public class ModelController {
         result.put("page", pageNo);
         result.put("pageSize", size > 0 ? size : data.size());
         return ApiResponse.ok(result);
+    }
+
+    /** Keeps direct Java callers source-compatible while the HTTP route gains an optional filter. */
+    public ApiResponse<Map<String, Object>> list(
+            String type,
+            String keyword,
+            Integer page,
+            Integer current,
+            Integer pageSize
+    ) {
+        return list(type, keyword, page, current, pageSize, null);
     }
 
     private Map<String, Object> toListItem(ModelVersion version, ModelAsset asset) {
@@ -228,5 +254,17 @@ public class ModelController {
 
     private int resolvePageSize(Integer pageSize, int total) {
         return pageSize != null && pageSize > 0 ? pageSize : total;
+    }
+
+    private List<String> normalizeSpecIds(List<String> artifactSpecIds) {
+        if (artifactSpecIds == null) {
+            return null;
+        }
+        return artifactSpecIds.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .distinct()
+                .limit(50)
+                .toList();
     }
 }

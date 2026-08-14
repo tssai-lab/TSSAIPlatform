@@ -52,6 +52,29 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
             Pageable pageable
     );
 
+    @Query("""
+            select v from ModelVersion v
+            join ModelAsset a on a.id = v.assetId
+            where v.deleted = false
+              and a.deleted = false
+              and v.status = 'READY'
+              and v.artifactSpecId in :artifactSpecIds
+              and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+              and (:type is null or a.type = :type)
+              and (
+                    :keyword is null
+                    or lower(a.name) like :keyword escape '!'
+              )
+            order by v.createdAt desc, v.id desc
+            """)
+    Page<ModelVersion> searchVisibleTrainingCandidates(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("type") String type,
+            @Param("keyword") String keyword,
+            @Param("artifactSpecIds") Collection<String> artifactSpecIds,
+            Pageable pageable
+    );
+
     Optional<ModelVersion> findByIdAndDeletedFalse(String id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

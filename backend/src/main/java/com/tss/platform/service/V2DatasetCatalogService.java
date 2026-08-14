@@ -43,8 +43,29 @@ public class V2DatasetCatalogService {
             Integer current,
             Integer pageSize
     ) {
+        return list(type, keyword, page, current, pageSize, null);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<V2DatasetListItem> list(
+            String type,
+            String keyword,
+            Integer page,
+            Integer current,
+            Integer pageSize,
+            List<String> artifactSpecIds
+    ) {
         PageResponse<DatasetCatalogQueryService.CatalogItem> catalog =
-                catalogQueryService.list(type, keyword, page, current, pageSize);
+                artifactSpecIds == null
+                        ? catalogQueryService.list(type, keyword, page, current, pageSize)
+                        : catalogQueryService.listTrainingCandidates(
+                                type,
+                                keyword,
+                                page,
+                                current,
+                                pageSize,
+                                artifactSpecIds
+                        );
         PageResponse<V2DatasetListItem> response = new PageResponse<>();
         response.setData(catalog.getData().stream()
                 .map(this::toItem)

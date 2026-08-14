@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -44,5 +45,44 @@ class V2DatasetControllerTest {
                 .andExpect(jsonPath("$.data[0].datasetId").value("asset-1"))
                 .andExpect(jsonPath("$.data[0].currentVersionFileCount").value(9))
                 .andExpect(jsonPath("$.data[0].fileCount").value(9));
+    }
+
+    @Test
+    void listRoutePassesServerSideArtifactSpecificationFilter() throws Exception {
+        V2DatasetCatalogService service = mock(V2DatasetCatalogService.class);
+        PageResponse<V2DatasetListItem> page = new PageResponse<>();
+        page.setData(List.of());
+        page.setPage(2);
+        page.setPageSize(20);
+        page.setTotal(0);
+        page.setTotalPages(0);
+        when(service.list(
+                null,
+                null,
+                2,
+                null,
+                20,
+                List.of("YOLO", "FOLDER_CLASSIFICATION")
+        )).thenReturn(page);
+        MockMvc mvc = MockMvcBuilders
+                .standaloneSetup(new V2DatasetController(service))
+                .setControllerAdvice(new V2ExceptionHandler())
+                .build();
+
+        mvc.perform(get("/api/v2/datasets")
+                        .param("page", "2")
+                        .param("pageSize", "20")
+                        .param("artifactSpecIds", "YOLO,FOLDER_CLASSIFICATION"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(2));
+
+        verify(service).list(
+                null,
+                null,
+                2,
+                null,
+                20,
+                List.of("YOLO", "FOLDER_CLASSIFICATION")
+        );
     }
 }

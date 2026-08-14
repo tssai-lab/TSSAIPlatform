@@ -101,4 +101,45 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
             @Param("keyword") String keyword,
             Pageable pageable
     );
+
+    @Query(
+            value = """
+                    select a
+                    from DatasetAsset a
+                    join DatasetVersion v on v.id = a.currentVersionId
+                    where a.deleted = false
+                      and v.deleted = false
+                      and v.status = 'READY'
+                      and v.artifactSpecId in :artifactSpecIds
+                      and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+                      and (:type is null or a.type = :type)
+                      and (
+                            :keyword is null
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
+                      )
+                    order by coalesce(a.updatedAt, a.createdAt) desc, a.id asc
+                    """,
+            countQuery = """
+                    select count(a)
+                    from DatasetAsset a
+                    join DatasetVersion v on v.id = a.currentVersionId
+                    where a.deleted = false
+                      and v.deleted = false
+                      and v.status = 'READY'
+                      and v.artifactSpecId in :artifactSpecIds
+                      and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+                      and (:type is null or a.type = :type)
+                      and (
+                            :keyword is null
+                            or lower(a.name) like concat('%', cast(:keyword as string), '%') escape '!'
+                      )
+                    """
+    )
+    Page<DatasetAsset> searchTrainingCandidates(
+            @Param("ownerUserId") Integer ownerUserId,
+            @Param("type") String type,
+            @Param("keyword") String keyword,
+            @Param("artifactSpecIds") List<String> artifactSpecIds,
+            Pageable pageable
+    );
 }
