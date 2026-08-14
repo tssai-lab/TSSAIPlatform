@@ -96,6 +96,22 @@ class TrainingExperimentServiceApplyResultTest {
     }
 
     @Test
+    void updateResultInternalDoesNotOverwriteUserRemark() {
+        TrainingExperimentVersion version = runningVersion("train-remark", 80);
+        version.setRemark("用户填写的验收说明");
+        when(repo.findById("train-remark")).thenReturn(Optional.of(version));
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateTrainingResultRequest req = new UpdateTrainingResultRequest();
+        req.setStatus("running");
+        req.setRemark("trainingOutput=minio://internal/path.json");
+
+        service.updateResultInternal("train-remark", req);
+
+        assertEquals("用户填写的验收说明", version.getRemark());
+    }
+
+    @Test
     void stopTrainingPreservesExistingProgress() {
         TrainingExperimentVersion version = runningVersion("train-3", 42);
         when(repo.findById("train-3")).thenReturn(Optional.of(version));
