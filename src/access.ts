@@ -39,6 +39,9 @@ export default function access(
     canAccessModelCache: isAdmin,
     canClearModelCache: isSuperAdmin,
 
+    /** 系统管理-训练方案管理：仅超管可上传、发布和停用 */
+    canAccessTrainingPlans: isSuperAdmin,
+
     /** 系统管理-系统配置：仅超管 */
     canAccessSystemConfig: isSuperAdmin,
 

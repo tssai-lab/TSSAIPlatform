@@ -224,6 +224,12 @@ export default [
         access: 'canAccessModelCache',
       },
       {
+        path: '/system/training-plans',
+        name: '训练方案管理',
+        component: './system/trainingPlans',
+        access: 'canAccessTrainingPlans',
+      },
+      {
         path: '/system/config',
         name: '系统配置',
         component: './system/config',

@@ -62,7 +62,7 @@ const modelConstraints = [
   {
     key: 'modelType',
     constraint: '模型类型',
-    specification: 'CV（计算机视觉）/ NLP（自然语言处理）',
+    specification: 'CV（计算机视觉）/ NLP（自然语言处理）/ OTHER（暂未归类）',
     remark: '上传后不可更改',
   },
   {
@@ -101,7 +101,7 @@ const datasetConstraints = [
   {
     key: 'types',
     constraint: '支持的数据集类型',
-    specification: 'CV、NLP、POINT_CLOUD、MULTIMODAL、ROBOT',
+    specification: 'CV、NLP、POINT_CLOUD、MULTIMODAL、ROBOT、OTHER',
     remark: '不同类型对应不同的文件格式要求',
   },
   {
@@ -857,7 +857,7 @@ event({"type": "progress", "progress": 100})
               <Descriptions bordered size="small" column={1}>
                 <Descriptions.Item label="超级管理员 (super_admin)">
                   全部权限：用户管理、管理员管理、操作日志（含
-                  IP）、系统配置、资源节点管理、数据导出
+                  IP）、系统配置、训练方案管理、资源节点管理、数据导出
                 </Descriptions.Item>
                 <Descriptions.Item label="普通管理员 (normal_admin)">
                   用户管理、操作日志查看（不含 IP）、日志导出
@@ -873,6 +873,116 @@ event({"type": "progress", "progress": 100})
                 系统配置页面（仅超级管理员可访问）可管理训练代码审核开关、平台全局参数等。切换审核模式为「自动审核」后，上传的训练代码将自动通过，无需人工审核。
               </Paragraph>
             </Card>
+
+            <div id="training-plan-yaml">
+              <Card style={cardStyle} title="自定义训练方案 YAML">
+                <Alert
+                  showIcon
+                  type="info"
+                  message="仅超级管理员可以发布和停用训练方案"
+                  description="模型、数据集和训练方案分别上传、分别保存。训练方案不会改变已有资产，只在发起训练时按 acceptedSpecIds 筛选兼容的模型和数据集。"
+                  style={{ marginBottom: 16 }}
+                />
+
+                <Title level={4}>五分钟上手</Title>
+                <Timeline
+                  items={[
+                    {
+                      children: (
+                        <span>
+                          进入
+                          <Link to="/system/training-plans">
+                            系统管理 → 训练方案管理
+                          </Link>
+                          ，下载 CV/CPU 模板。
+                        </span>
+                      ),
+                    },
+                    {
+                      children:
+                        '在本地文本编辑器中复制模板并提高 version；只修改手册允许的字段，不写密码、Token 或任意脚本。',
+                    },
+                    {
+                      children:
+                        '选择 .yaml 或 .yml 文件并点击“预览并校验”。预览只读取文件，不会保存或替换当前方案。',
+                    },
+                    {
+                      children:
+                        '按页面给出的错误路径修改后重新选择文件。只有显示“可以发布”时，按钮才会解锁。',
+                    },
+                    {
+                      children:
+                        '核对方案 ID、版本、镜像、模型/数据集规范、资源上限、差异和 SHA-256，再确认发布。',
+                    },
+                  ]}
+                />
+
+                <Title level={4}>YAML 到底哪些是固定的？</Title>
+                <Paragraph>
+                  YAML
+                  的冒号、缩进、数组等是通用语法；字段名称和含义由本平台固定，不是全世界通用。
+                  未知字段会被拒绝，不能自己随意增加字段来执行代码或管理
+                  Kubernetes。
+                </Paragraph>
+                <Descriptions bordered size="small" column={1}>
+                  <Descriptions.Item label="身份字段">
+                    <Text code>
+                      schemaVersion / id / version / displayName / category
+                    </Text>
+                    ：决定方案身份、版本和 CV/NLP/OTHER 导航类别。
+                  </Descriptions.Item>
+                  <Descriptions.Item label="输入规范">
+                    <Text code>inputs.*.acceptedSpecIds</Text>
+                    ：只引用平台已注册的模型和数据集规范，不引用某个具体资产
+                    ID。
+                  </Descriptions.Item>
+                  <Descriptions.Item label="执行与参数">
+                    <Text code>execution / parameters</Text>
+                    ：入口、允许传入的参数、默认值和上下限，必须符合平台白名单。
+                  </Descriptions.Item>
+                  <Descriptions.Item label="运行环境">
+                    <Text code>runtimes</Text>
+                    ：只允许平台批准的不可变镜像、CPU 资源档位和拉取策略。
+                  </Descriptions.Item>
+                  <Descriptions.Item label="结果与安全">
+                    <Text code>outputs / security</Text>
+                    ：声明结果文件和安全边界；不能申请特权容器、hostPath
+                    或任意网络访问。
+                  </Descriptions.Item>
+                </Descriptions>
+
+                <Title level={4} style={{ marginTop: 16 }}>
+                  发布、停用和恢复规则
+                </Title>
+                <ul style={{ lineHeight: 2 }}>
+                  <li>
+                    同一方案的新版 version 必须高于所有内置和在线历史版本。
+                  </li>
+                  <li>
+                    同一 ID + version
+                    发布后内容不可原地覆盖；需要修改时提高版本号。
+                  </li>
+                  <li>
+                    预览返回的 SHA-256
+                    必须与发布文件一致，文件变化后必须重新预览。
+                  </li>
+                  <li>
+                    停用只阻止新任务选择，不删除历史方案，不影响已创建任务、日志和结果。
+                  </li>
+                  <li>
+                    再次发布完全相同的已停用
+                    YAML，可恢复该版本；不同内容不能借此覆盖。
+                  </li>
+                </ul>
+
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="当前只提供经过验证的 CV/CPU 模板"
+                  description="NLP 资产规范和私有镜像拉取链完成真实验证后再提供 NLP 模板。不要把 CV 模板简单改成 NLP 后强行发布。"
+                />
+              </Card>
+            </div>
           </div>
 
           <Divider />
@@ -1104,6 +1214,11 @@ event({"type": "progress", "progress": 100})
                   { key: 'training', href: '#training', title: '训练调度' },
                   { key: 'inference', href: '#inference', title: '模型推理' },
                   { key: 'system', href: '#system', title: '系统管理' },
+                  {
+                    key: 'training-plan-yaml',
+                    href: '#training-plan-yaml',
+                    title: '自定义训练方案',
+                  },
                   {
                     key: 'versioning',
                     href: '#versioning',
