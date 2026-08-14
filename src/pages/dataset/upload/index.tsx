@@ -6,6 +6,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Descriptions,
   Form,
   Input,
   message,
@@ -16,12 +17,7 @@ import {
 } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
 import { UPLOAD_CONFIG } from '@/constants/platform';
-import type {
-  AnnotationFormat,
-  CvTaskType,
-  DatasetType,
-  MultimodalSampleGrouping,
-} from '@/services/dataset';
+import type { DatasetType, MultimodalSampleGrouping } from '@/services/dataset';
 import {
   calcUploadPercent,
   datasetUploadProgress,
@@ -42,6 +38,21 @@ import {
   LS_DATASET_UPLOAD_FP,
   LS_DATASET_UPLOAD_ID,
 } from '@/utils/uploadResume';
+import type {
+  DatasetDirectory,
+  RobotDataFormat,
+  VisualFileLayout,
+} from './datasetUploadUi.mjs';
+import {
+  DATASET_DIRECTORY_OPTIONS,
+  directoryFromBackendType,
+  inheritedDatasetIdentity,
+  ROBOT_DATA_FORMAT_OPTIONS,
+  resolveDatasetUploadMetadata,
+  VISUAL_FILE_LAYOUT_OPTIONS,
+  visualLayoutFromSpecId,
+  visualUploadViolation,
+} from './datasetUploadUi.mjs';
 
 const POINT_CLOUD_ACCEPT = '.ply,.pcd,.zip';
 
@@ -52,6 +63,10 @@ function isPointCloudFileName(fileName: string) {
 
 const ROBOT_ACCEPT = '.xml,.yaml,.yml,.zip';
 const LEROBOT_ACCEPT = '.zip';
+const VISUAL_ACCEPT = '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.zip';
+const TEXT_ACCEPT = '.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.zip';
+const OTHER_ACCEPT =
+  '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.xml,.yaml,.yml,.ply,.pcd,.parquet,.mp4,.mkv,.md,.zip';
 
 function isRobotFileName(fileName: string) {
   const ext = fileName.split('.').pop()?.toLowerCase();
@@ -64,7 +79,15 @@ function isRobotFileName(fileName: string) {
 const DatasetUpload: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
-  const datasetType = Form.useWatch('type', form) as DatasetType | undefined;
+  const directoryCategory = Form.useWatch('directoryCategory', form) as
+    | DatasetDirectory
+    | undefined;
+  const visualFileLayout = Form.useWatch('visualFileLayout', form) as
+    | VisualFileLayout
+    | undefined;
+  const robotDataFormat = Form.useWatch('robotDataFormat', form) as
+    | RobotDataFormat
+    | undefined;
   const sampleGrouping = Form.useWatch('sampleGrouping', form) as
     | MultimodalSampleGrouping
     | undefined;
@@ -74,9 +97,30 @@ const DatasetUpload: React.FC = () => {
   const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [existingVersions, setExistingVersions] = useState<string[]>([]);
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [inheritedIdentity, setInheritedIdentity] = useState<{
+    id: string;
+    name: string;
+    type: DatasetType;
+    directory: DatasetDirectory;
+    artifactSpecId?: string;
+  }>();
 
   const assetId = searchParams.get('assetId') ?? undefined;
   const isNewVersionUpload = !!assetId;
+  const uploadMetadata = isNewVersionUpload
+    ? inheritedIdentity?.type === 'CV'
+      ? resolveDatasetUploadMetadata('VISUAL', visualFileLayout, undefined)
+      : inheritedIdentity
+        ? { type: inheritedIdentity.type }
+        : undefined
+    : resolveDatasetUploadMetadata(
+        directoryCategory,
+        visualFileLayout,
+        robotDataFormat,
+      );
+  const datasetType = uploadMetadata?.type as DatasetType | undefined;
+  const multipleFilesAllowed =
+    datasetType === 'CV' && visualFileLayout === 'UNLABELED';
 
   useEffect(() => {
     const uploadId = localStorage.getItem(LS_DATASET_UPLOAD_ID);
@@ -143,17 +187,20 @@ const DatasetUpload: React.FC = () => {
     if (datasetName) {
       form.setFieldValue('name', datasetName);
     }
-    if (
-      type &&
-      ['CV', 'NLP', 'POINT_CLOUD', 'MULTIMODAL', 'ROBOT', 'LEROBOT'].includes(
-        type,
-      )
-    ) {
-      form.setFieldValue('type', type);
+    const requestedDirectory = directoryFromBackendType(type);
+    if (!assetId && requestedDirectory) {
+      form.setFieldValue('directoryCategory', requestedDirectory);
+      if (type === 'ROBOT' || type === 'LEROBOT') {
+        form.setFieldValue(
+          'robotDataFormat',
+          type === 'LEROBOT' ? 'LEROBOT' : 'CONFIG',
+        );
+      }
     }
 
     if (!assetId) {
       setExistingVersions([]);
+      setInheritedIdentity(undefined);
       return;
     }
 
@@ -161,17 +208,32 @@ const DatasetUpload: React.FC = () => {
     fetchDatasetDetail(assetId, { skipErrorHandler: true })
       .then((res) => {
         const detail = res?.data;
-        if (!detail) return;
+        const identity = inheritedDatasetIdentity(detail);
+        if (!detail || !identity) {
+          throw new Error('数据集资产信息不完整');
+        }
+        setInheritedIdentity(identity);
         form.setFieldsValue({
-          name: detail.name,
-          type: detail.type,
+          name: identity.name,
+          directoryCategory: identity.directory,
+          robotDataFormat:
+            identity.type === 'LEROBOT'
+              ? 'LEROBOT'
+              : identity.type === 'ROBOT'
+                ? 'CONFIG'
+                : undefined,
+          visualFileLayout:
+            identity.type === 'CV'
+              ? visualLayoutFromSpecId(identity.artifactSpecId)
+              : undefined,
         });
         const versions = detail.versions.map((v) => v.version).filter(Boolean);
         setExistingVersions(versions);
         form.setFieldValue('version', suggestNextDatasetVersion(versions));
       })
       .catch(() => {
-        message.warning('未能加载已有版本信息，请手动填写版本号');
+        setInheritedIdentity(undefined);
+        message.error('未能加载数据集资产信息，请返回详情页后重试');
       })
       .finally(() => setPrefillLoading(false));
   }, [assetId, form, searchParams]);
@@ -190,6 +252,18 @@ const DatasetUpload: React.FC = () => {
   };
 
   const handleSubmit = async (values: any) => {
+    if (isNewVersionUpload && !inheritedIdentity) {
+      message.error('数据集资产信息尚未加载完成，不能上传新版本');
+      return;
+    }
+    if (!uploadMetadata) {
+      message.error(
+        directoryCategory === 'ROBOT'
+          ? '请选择机器人数据格式'
+          : '请选择视觉文件组织方式',
+      );
+      return;
+    }
     const fileList = (values.files ?? []) as UploadFile[];
     const files = fileList
       .map((f) => f.originFileObj)
@@ -204,17 +278,15 @@ const DatasetUpload: React.FC = () => {
       return;
     }
     const version = (values.version || 'v1.0.0').trim();
-    const type = values.type as DatasetType;
+    const type = uploadMetadata.type as DatasetType;
     const remark = values.remark?.trim();
     const multimodalGrouping = values.sampleGrouping as
       | MultimodalSampleGrouping
       | undefined;
     const manifestPath = values.manifestPath?.trim();
     const strictManifest = Boolean(values.strictManifest);
-    const cvTaskType = values.cvTaskType as CvTaskType | undefined;
-    const annotationFormat = values.annotationFormat as
-      | AnnotationFormat
-      | undefined;
+    const cvTaskType = uploadMetadata.cvTaskType;
+    const annotationFormat = uploadMetadata.annotationFormat;
 
     const maxBytes = UPLOAD_CONFIG.DATASET.MAX_SIZE;
     for (const f of files) {
@@ -231,6 +303,17 @@ const DatasetUpload: React.FC = () => {
       }
       if (!isPointCloudFileName(files[0].name)) {
         message.error('点云数据集仅支持 .ply、.pcd 或 .zip 格式');
+        return;
+      }
+    }
+
+    if (type === 'CV') {
+      const visualError = visualUploadViolation(
+        visualFileLayout,
+        files.map((file) => file.name),
+      );
+      if (visualError) {
+        message.error(visualError);
         return;
       }
     }
@@ -264,6 +347,11 @@ const DatasetUpload: React.FC = () => {
       }
     }
 
+    if (type === 'OTHER' && files.length !== 1) {
+      message.error('其他类别请上传单个安全文件，多个文件请先打包为 zip');
+      return;
+    }
+
     setUploading(true);
     setMerging(false);
     setUploadPercent(0);
@@ -271,6 +359,7 @@ const DatasetUpload: React.FC = () => {
 
     try {
       let createdAssetId: string | undefined;
+      let artifactSpecId: string | undefined;
       if (files.length === 1) {
         const file = files[0];
         const fp = buildDatasetFileFingerprint(
@@ -318,6 +407,7 @@ const DatasetUpload: React.FC = () => {
           requestOpts,
         );
         createdAssetId = uploadRes?.data?.assetId;
+        artifactSpecId = uploadRes?.data?.artifactSpecId;
         if (type === 'MULTIMODAL' && uploadRes?.data?.importJobId) {
           const jobDatasetId =
             assetId || createdAssetId || uploadRes?.data?.assetId;
@@ -340,7 +430,7 @@ const DatasetUpload: React.FC = () => {
           setUploading(false);
           return;
         }
-        await uploadDataset(
+        const uploadRes = await uploadDataset(
           {
             name,
             files,
@@ -352,11 +442,16 @@ const DatasetUpload: React.FC = () => {
           },
           requestOpts,
         );
+        artifactSpecId = uploadRes?.data?.artifactSpecId;
         setUploadPercent(100);
       }
       clearResumeStorage();
       message.success(
-        type === 'MULTIMODAL' ? 'zip 上传成功，正在后台导入样本' : '上传成功！',
+        type === 'MULTIMODAL'
+          ? 'zip 上传成功，正在后台导入样本'
+          : artifactSpecId
+            ? `上传成功，已识别训练规格：${artifactSpecId}`
+            : '上传成功；当前版本未识别为可训练规格，可继续存储和下载',
       );
       const detailAssetId = assetId || createdAssetId;
       if (detailAssetId && type === 'MULTIMODAL') {
@@ -389,6 +484,30 @@ const DatasetUpload: React.FC = () => {
       }
       onBack={() => history.push(backPath)}
     >
+      {isNewVersionUpload && inheritedIdentity && (
+        <Descriptions
+          bordered
+          size="small"
+          column={1}
+          style={{ marginBottom: 16 }}
+          title="继承的数据集资产信息"
+        >
+          <Descriptions.Item label="数据集名称">
+            {inheritedIdentity.name}
+          </Descriptions.Item>
+          <Descriptions.Item label="目录类别">
+            {
+              DATASET_DIRECTORY_OPTIONS.find(
+                (item) => item.value === inheritedIdentity.directory,
+              )?.label
+            }
+          </Descriptions.Item>
+          <Descriptions.Item label="最近已识别训练规格">
+            {inheritedIdentity.artifactSpecId ??
+              '暂无（只代表可存储，不代表可训练）'}
+          </Descriptions.Item>
+        </Descriptions>
+      )}
       {resumeHint && (
         <Alert
           type="info"
@@ -418,28 +537,25 @@ const DatasetUpload: React.FC = () => {
         onFinish={handleSubmit}
         layout="vertical"
         initialValues={{
-          type: 'CV',
+          directoryCategory: 'VISUAL',
           version: 'v1.0.0',
           sampleGrouping: 'AUTO_DIRECTORY',
           strictManifest: false,
         }}
       >
-        <Form.Item
-          name="name"
-          label="数据集名称"
-          rules={[{ required: true, message: '请输入数据集名称' }]}
-          extra={
-            isNewVersionUpload
-              ? '上传新版本时须与已有资产名称一致，否则将创建新数据集'
-              : undefined
-          }
-        >
-          <Input
-            placeholder="请输入数据集名称"
-            readOnly={isNewVersionUpload}
-            disabled={prefillLoading}
-          />
-        </Form.Item>
+        {isNewVersionUpload ? (
+          <Form.Item name="name" hidden>
+            <Input />
+          </Form.Item>
+        ) : (
+          <Form.Item
+            name="name"
+            label="数据集名称"
+            rules={[{ required: true, message: '请输入数据集名称' }]}
+          >
+            <Input placeholder="请输入数据集名称" />
+          </Form.Item>
+        )}
         <Form.Item
           name="version"
           label="版本号"
@@ -448,35 +564,76 @@ const DatasetUpload: React.FC = () => {
         >
           <Input placeholder="例如 v1.0.0" disabled={prefillLoading} />
         </Form.Item>
-        <Form.Item
-          name="type"
-          label="任务类型"
-          rules={[{ required: true, message: '请选择类型' }]}
-        >
-          <Select
-            disabled={isNewVersionUpload || prefillLoading}
-            onChange={(value) => {
-              form.setFieldValue('files', []);
-              form.setFieldValue('cvTaskType', undefined);
-              form.setFieldValue('annotationFormat', undefined);
-              if (value === 'MULTIMODAL') {
-                form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
-                form.setFieldValue('manifestPath', undefined);
-              }
-            }}
+        {!isNewVersionUpload && (
+          <Form.Item
+            name="directoryCategory"
+            label="目录类别"
+            rules={[{ required: true, message: '请选择目录类别' }]}
+            extra="类别只用于管理和检索；真正能否训练，由文件内容识别结果和训练方案决定。"
           >
-            <Select.Option value="CV">CV</Select.Option>
-            <Select.Option value="NLP">NLP</Select.Option>
-            <Select.Option value="POINT_CLOUD">
-              点云（POINT_CLOUD）
-            </Select.Option>
-            <Select.Option value="MULTIMODAL">
-              多模态（MULTIMODAL）
-            </Select.Option>
-            <Select.Option value="ROBOT">机器人（ROBOT，预留）</Select.Option>
-            <Select.Option value="LEROBOT">LeRobot（时序数据集）</Select.Option>
-          </Select>
-        </Form.Item>
+            <Select
+              options={DATASET_DIRECTORY_OPTIONS.map((item) => ({
+                value: item.value,
+                label: item.label,
+              }))}
+              onChange={(value) => {
+                form.setFieldValue('files', []);
+                form.setFieldValue('visualFileLayout', undefined);
+                form.setFieldValue('robotDataFormat', undefined);
+                if (value === 'MULTIMODAL') {
+                  form.setFieldValue('sampleGrouping', 'AUTO_DIRECTORY');
+                  form.setFieldValue('manifestPath', undefined);
+                }
+              }}
+            />
+          </Form.Item>
+        )}
+        {directoryCategory === 'VISUAL' && (
+          <Form.Item
+            name="visualFileLayout"
+            label="文件组织方式"
+            rules={[{ required: true, message: '请选择文件组织方式' }]}
+            extra="这里只选文件实际结构，不再分别组合“CV 子任务”和“标注格式”。"
+          >
+            <Select
+              disabled={
+                isNewVersionUpload &&
+                Boolean(
+                  visualLayoutFromSpecId(inheritedIdentity?.artifactSpecId),
+                )
+              }
+              options={VISUAL_FILE_LAYOUT_OPTIONS.map((item) => ({
+                value: item.value,
+                label: item.label,
+              }))}
+              onChange={() => form.setFieldValue('files', [])}
+            />
+          </Form.Item>
+        )}
+        {directoryCategory === 'ROBOT' && !isNewVersionUpload && (
+          <Form.Item
+            name="robotDataFormat"
+            label="机器人数据格式"
+            rules={[{ required: true, message: '请选择机器人数据格式' }]}
+          >
+            <Select
+              options={ROBOT_DATA_FORMAT_OPTIONS.map((item) => ({
+                value: item.value,
+                label: item.label,
+              }))}
+              onChange={() => form.setFieldValue('files', [])}
+            />
+          </Form.Item>
+        )}
+        {directoryCategory === 'OTHER' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="其他类别只表示暂未归类"
+            description="平台仍会检查文件类型、大小和压缩包安全；上传成功后不会自动进入视觉或文本训练候选。"
+          />
+        )}
         {datasetType === 'MULTIMODAL' && (
           <>
             <Form.Item
@@ -530,61 +687,6 @@ const DatasetUpload: React.FC = () => {
             )}
           </>
         )}
-        {datasetType === 'CV' && (
-          <>
-            <Form.Item
-              name="cvTaskType"
-              label="CV 子任务类型"
-              extra="不选时后端默认 UNLABELED；YOLO 目标检测训练须选「目标检测」"
-            >
-              <Select allowClear placeholder="请选择 CV 子任务">
-                <Select.Option value="IMAGE_CLASSIFICATION">
-                  图像分类
-                </Select.Option>
-                <Select.Option value="OBJECT_DETECTION">目标检测</Select.Option>
-                <Select.Option value="SEMANTIC_SEGMENTATION">
-                  语义分割
-                </Select.Option>
-                <Select.Option value="INSTANCE_SEGMENTATION">
-                  实例分割
-                </Select.Option>
-                <Select.Option value="UNLABELED">未标注</Select.Option>
-                <Select.Option value="OTHER">其它</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="annotationFormat"
-              label="标注格式"
-              extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
-            >
-              <Select
-                allowClear
-                placeholder="请选择标注格式"
-                onChange={(value) => {
-                  if (value === 'YOLO') {
-                    form.setFieldValue('cvTaskType', 'OBJECT_DETECTION');
-                  } else if (value === 'FOLDER_CLASSIFICATION') {
-                    form.setFieldValue('cvTaskType', 'IMAGE_CLASSIFICATION');
-                  } else if (value === 'NONE') {
-                    form.setFieldValue('cvTaskType', 'UNLABELED');
-                  }
-                }}
-              >
-                <Select.Option value="NONE">NONE（仅图片）</Select.Option>
-                <Select.Option value="FOLDER_CLASSIFICATION">
-                  FOLDER_CLASSIFICATION
-                </Select.Option>
-                <Select.Option value="YOLO">YOLO</Select.Option>
-                <Select.Option value="COCO">COCO</Select.Option>
-                <Select.Option value="VOC">VOC</Select.Option>
-                <Select.Option value="CSV">CSV</Select.Option>
-                <Select.Option value="MASK">MASK</Select.Option>
-                <Select.Option value="LABELME">LABELME</Select.Option>
-                <Select.Option value="OTHER">OTHER</Select.Option>
-              </Select>
-            </Form.Item>
-          </>
-        )}
         <Form.Item
           name="remark"
           label="版本描述"
@@ -620,13 +722,7 @@ const DatasetUpload: React.FC = () => {
           ]}
         >
           <Upload
-            multiple={
-              datasetType !== 'POINT_CLOUD' &&
-              datasetType !== 'NLP' &&
-              datasetType !== 'MULTIMODAL' &&
-              datasetType !== 'ROBOT' &&
-              datasetType !== 'LEROBOT'
-            }
+            multiple={multipleFilesAllowed}
             accept={
               datasetType === 'POINT_CLOUD'
                 ? POINT_CLOUD_ACCEPT
@@ -636,18 +732,21 @@ const DatasetUpload: React.FC = () => {
                     ? ROBOT_ACCEPT
                     : datasetType === 'LEROBOT'
                       ? LEROBOT_ACCEPT
-                      : undefined
+                      : datasetType === 'OTHER'
+                        ? OTHER_ACCEPT
+                        : datasetType === 'NLP'
+                          ? TEXT_ACCEPT
+                          : datasetType === 'CV'
+                            ? visualFileLayout === 'IMAGE_FOLDER' ||
+                              visualFileLayout === 'YOLO'
+                              ? '.zip'
+                              : VISUAL_ACCEPT
+                            : undefined
             }
             beforeUpload={() => false}
             onChange={(e) => {
               let fileList = e.fileList ?? [];
-              if (
-                (datasetType === 'POINT_CLOUD' ||
-                  datasetType === 'MULTIMODAL' ||
-                  datasetType === 'ROBOT' ||
-                  datasetType === 'LEROBOT') &&
-                fileList.length > 1
-              ) {
+              if (!multipleFilesAllowed && fileList.length > 1) {
                 fileList = fileList.slice(-1);
                 message.info('当前类型仅支持单个文件，已保留最新选择');
               }
@@ -663,7 +762,15 @@ const DatasetUpload: React.FC = () => {
                     ? '选择机器人配置（.xml / .yaml / .yml / .zip）'
                     : datasetType === 'LEROBOT'
                       ? '选择 LeRobot v3 数据集（.zip）'
-                      : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
+                      : datasetType === 'OTHER'
+                        ? '选择安全文件或 zip（单文件）'
+                        : datasetType === 'NLP'
+                          ? '选择文本文件或 zip（单文件）'
+                          : visualFileLayout === 'YOLO'
+                            ? '选择 YOLO zip（单文件）'
+                            : visualFileLayout === 'IMAGE_FOLDER'
+                              ? '选择 ImageFolder zip（单文件）'
+                              : '选择图片或 zip（可多选图片）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
@@ -679,7 +786,15 @@ const DatasetUpload: React.FC = () => {
                   ? ' ROBOT：支持单文件 .xml/.yaml/.yml 或仅含配置类文件的 zip；上传完成后为 READY。'
                   : datasetType === 'LEROBOT'
                     ? ' LeRobot：上传标准 LeRobot v3 zip，包含 meta、data 与 videos 目录；上传完成后可按时序查看。'
-                    : ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'}
+                    : datasetType === 'OTHER'
+                      ? ' OTHER：仅允许平台安全白名单文件；未知格式、可执行文件和不安全 zip 会被后端拒绝。'
+                      : datasetType === 'NLP'
+                        ? ' 文本类支持 txt/json/jsonl/csv/xlsx/xls/pdf/docx 或包含这些文件的 zip。'
+                        : visualFileLayout === 'YOLO'
+                          ? ' YOLO：zip 内须有 data.yaml 和匹配的图片/标签。'
+                          : visualFileLayout === 'IMAGE_FOLDER'
+                            ? ' ImageFolder：按类别子目录组织图片，并整体打包为单个 zip。'
+                            : ' 未标注图片：可多选图片或上传只含图片的 zip。'}
           </div>
         </Form.Item>
         {uploading && (
@@ -710,7 +825,12 @@ const DatasetUpload: React.FC = () => {
             >
               清除本地续传记录
             </Button>
-            <Button type="primary" htmlType="submit" loading={uploading}>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={uploading || prefillLoading}
+              disabled={isNewVersionUpload && !inheritedIdentity}
+            >
               提交
             </Button>
           </Space>

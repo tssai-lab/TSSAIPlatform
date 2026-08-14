@@ -9,7 +9,6 @@ import {
   Input,
   Modal,
   message,
-  Progress,
   Radio,
   Select,
   Space,
@@ -20,9 +19,8 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
-import { UPLOAD_CONFIG } from '@/constants/platform';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
-import type { AnnotationFormat, DatasetType } from '@/services/dataset';
+import type { DatasetType } from '@/services/dataset';
 import {
   autoApproveCodeVersionIfEnabled,
   CONSISTENCY_TRAINING_PROFILE,
@@ -38,28 +36,9 @@ import {
   getModelVersion,
   publishTaskModel,
   uploadCodeZip,
-  uploadDataset,
 } from '@/services/platform';
 import type { TrainingPlan } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
-import {
-  DATASET_VERSION_DESC_PLACEHOLDER,
-  DATASET_VERSION_FORMAT_HINT,
-  datasetVersionDescFormRules,
-  datasetVersionFormRules,
-} from '@/utils/datasetVersion';
-import {
-  buildDatasetFileFingerprint,
-  LS_DATASET_UPLOAD_FP,
-  LS_DATASET_UPLOAD_ID,
-} from '@/utils/uploadResume';
-
-const POINT_CLOUD_ACCEPT = '.ply,.pcd,.zip';
-
-function isPointCloudFileName(fileName: string) {
-  const ext = fileName.split('.').pop()?.toLowerCase();
-  return ext === 'ply' || ext === 'pcd' || ext === 'zip';
-}
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
   model: 'logreg',
@@ -76,9 +55,6 @@ type CheckState = {
 };
 
 const isCodeApproved = (status?: string) => status === 'APPROVED';
-
-const resolveDatasetVersionId = (data: any): string | undefined =>
-  data?.datasetVersionId || data?.id || data?.versionId;
 
 const FORMAT_LABELS: Record<string, string> = {
   FOLDER_CLASSIFICATION: '文件夹分类式（每个子目录一个类别）',
@@ -270,9 +246,6 @@ const TaskCreate: React.FC = () => {
   const [datasetLoading, setDatasetLoading] = useState(false);
   const [codeLoading, setCodeLoading] = useState(false);
 
-  const [datasetInputMode, setDatasetInputMode] = useState<'select' | 'upload'>(
-    'select',
-  );
   const [codeInputMode, setCodeInputMode] = useState<'select' | 'upload'>(
     'select',
   );
@@ -285,8 +258,6 @@ const TaskCreate: React.FC = () => {
   const [selectedCodeApprovalStatus, setSelectedCodeApprovalStatus] =
     useState<string>();
 
-  const [datasetUploading, setDatasetUploading] = useState(false);
-  const [datasetUploadPercent, setDatasetUploadPercent] = useState(0);
   const [codeUploading, setCodeUploading] = useState(false);
 
   const [codeCheck, setCodeCheck] = useState<CheckState>({ loading: false });
@@ -413,22 +384,9 @@ const TaskCreate: React.FC = () => {
       .finally(() => setCodeLoading(false));
   };
 
-  useEffect(() => {
-    reloadModelOptions();
-    reloadCodeOptions();
-    fetchTrainingPlans({ skipErrorHandler: true })
-      .then((res) => {
-        const plans = (res?.data ?? []).filter((plan) => plan.enabled);
-        setTrainingPlans(plans);
-        if (!plans.length) {
-          message.error('没有可用训练方案，请检查后端 training-plans 配置');
-        }
-      })
-      .catch((error: any) =>
-        message.error(error?.message || '训练方案加载失败'),
-      );
+  const reloadDatasetOptions = () => {
     setDatasetLoading(true);
-    fetchDatasetList({ pageSize: 100 })
+    return fetchDatasetList({ pageSize: 100 })
       .then((res) => {
         const list = (res?.data ?? []).filter(
           (item: API.DatasetItem) => item.versionId,
@@ -440,6 +398,23 @@ const TaskCreate: React.FC = () => {
         message.error(error?.message || '数据集版本列表加载失败');
       })
       .finally(() => setDatasetLoading(false));
+  };
+
+  useEffect(() => {
+    reloadModelOptions();
+    reloadCodeOptions();
+    reloadDatasetOptions();
+    fetchTrainingPlans({ skipErrorHandler: true })
+      .then((res) => {
+        const plans = (res?.data ?? []).filter((plan) => plan.enabled);
+        setTrainingPlans(plans);
+        if (!plans.length) {
+          message.error('没有可用训练方案，请检查后端 training-plans 配置');
+        }
+      })
+      .catch((error: any) =>
+        message.error(error?.message || '训练方案加载失败'),
+      );
   }, []);
 
   useEffect(() => {
@@ -819,124 +794,6 @@ const TaskCreate: React.FC = () => {
       codeOptions.find((item) => item.codeVersionId === selectedCodeVersionId),
     [codeOptions, selectedCodeVersionId],
   );
-
-  const uploadDatasetZip = async (values: {
-    datasetName: string;
-    version: string;
-    remark: string;
-    file: UploadFile[];
-    annotationFormat?: AnnotationFormat;
-  }) => {
-    const datasetType = requiredDatasetType;
-    if (!datasetType) {
-      throw new Error('请先在第一步选择或上传基础模型权重，以确定数据集类型');
-    }
-    const fileList = values.file ?? [];
-    const files = fileList
-      .map((item) => item.originFileObj)
-      .filter(Boolean) as File[];
-    if (!files.length) {
-      throw new Error('请选择要上传的文件');
-    }
-
-    const maxBytes = UPLOAD_CONFIG.DATASET.MAX_SIZE;
-    for (const file of files) {
-      if (file.size > maxBytes) {
-        throw new Error(`单个文件不能超过 ${maxBytes / 1024 / 1024 / 1024}GB`);
-      }
-    }
-
-    if (datasetType === 'POINT_CLOUD') {
-      if (files.length !== 1) {
-        throw new Error('点云数据集仅支持上传单个 .ply、.pcd 或 .zip 文件');
-      }
-      if (!isPointCloudFileName(files[0].name)) {
-        throw new Error('点云数据集仅支持 .ply、.pcd 或 .zip 格式');
-      }
-    } else if (datasetType === 'NLP') {
-      if (files.length !== 1) {
-        throw new Error('NLP 数据集请将多个文件打包为 zip 后作为单个文件上传');
-      }
-      if (!files[0].name.toLowerCase().endsWith('.zip')) {
-        throw new Error('NLP 数据集请将多个文件打包为 zip 后作为单个文件上传');
-      }
-    }
-
-    setDatasetUploading(true);
-    setDatasetUploadPercent(0);
-    const requestOpts = { skipErrorHandler: true } as const;
-    const name = values.datasetName.trim();
-    const version = (values.version || 'v1.0.0').trim();
-    const remark = values.remark.trim();
-    const annotationFormat = values.annotationFormat;
-
-    try {
-      let res: Awaited<ReturnType<typeof uploadDataset>> | undefined;
-      if (files.length === 1) {
-        const file = files[0];
-        const fileFingerprint = buildDatasetFileFingerprint(
-          file,
-          name,
-          version,
-          datasetType,
-          datasetType === 'CV' ? annotationFormat : undefined,
-        );
-        res = await uploadDataset(
-          {
-            name,
-            version,
-            type: datasetType,
-            remark,
-            files: [file],
-            annotationFormat:
-              datasetType === 'CV' ? annotationFormat : undefined,
-            fileFingerprint,
-            onProgress: setDatasetUploadPercent,
-            onUploadSession: ({ uploadId, fileFingerprint: fp }) => {
-              localStorage.setItem(LS_DATASET_UPLOAD_ID, uploadId);
-              localStorage.setItem(LS_DATASET_UPLOAD_FP, fp);
-            },
-          },
-          requestOpts,
-        );
-      } else {
-        if (datasetType !== 'CV') {
-          throw new Error('当前类型仅支持单个文件上传');
-        }
-        res = await uploadDataset(
-          {
-            name,
-            files,
-            type: 'CV',
-            version,
-            annotationFormat,
-            remark,
-          },
-          requestOpts,
-        );
-        setDatasetUploadPercent(100);
-      }
-
-      localStorage.removeItem(LS_DATASET_UPLOAD_ID);
-      localStorage.removeItem(LS_DATASET_UPLOAD_FP);
-      const versionId = resolveDatasetVersionId(res?.data);
-      if (!versionId) {
-        throw new Error('数据集上传成功但未返回 datasetVersionId');
-      }
-      setSelectedDatasetVersionId(versionId);
-      form.setFieldValue('datasetVersionId', versionId);
-      const listRes = await fetchDatasetList({ pageSize: 100 });
-      const list = (listRes?.data ?? []).filter(
-        (item: API.DatasetItem) => item.versionId,
-      );
-      setDatasetOptions(list ?? []);
-      message.success(`数据集上传成功：${versionId}`);
-      setDatasetInputMode('select');
-    } finally {
-      setDatasetUploading(false);
-      setDatasetUploadPercent(0);
-    }
-  };
 
   const uploadTrainingCodeZip = async (values: {
     codeName: string;
@@ -1514,213 +1371,62 @@ const TaskCreate: React.FC = () => {
                   description={`已选模型：${selectedModel?.name ?? '-'}（${requiredDatasetType}）。后端创建训练任务时要求模型与数据集类型一致。`}
                 />
               )}
-              <Radio.Group
-                value={datasetInputMode}
-                onChange={(e) => setDatasetInputMode(e.target.value)}
+              <Alert
+                type="info"
+                showIcon
                 style={{ marginBottom: 16 }}
+                message="训练发起页只选择已有数据集"
+                description="数据集上传和版本维护统一在“数据集管理”完成；上传后返回本页刷新列表并选择。"
+              />
+              <Form.Item
+                name="datasetVersionId"
+                label="数据集版本"
+                extra={
+                  requiredDatasetType
+                    ? `当前仍按已有规则展示 ${requiredDatasetType} 类型数据集；下一阶段将改为由训练方案声明兼容范围`
+                    : '请先在第一步选择基础模型权重'
+                }
               >
-                <Radio.Button value="select">选择已有</Radio.Button>
-                <Radio.Button value="upload">上传新包</Radio.Button>
-              </Radio.Group>
-              {datasetInputMode === 'select' ? (
-                <Form.Item
-                  name="datasetVersionId"
-                  label="数据集版本"
-                  extra={
+                <Select
+                  placeholder={
                     requiredDatasetType
-                      ? `仅展示 ${requiredDatasetType} 类型数据集，须与已选基础模型权重类型一致`
-                      : '请先在第一步选择基础模型权重'
+                      ? `请选择 ${requiredDatasetType} 数据集版本`
+                      : '请先选择基础模型权重'
                   }
-                >
-                  <Select
-                    placeholder={
-                      requiredDatasetType
-                        ? `请选择 ${requiredDatasetType} 数据集版本`
-                        : '请先选择基础模型权重'
-                    }
-                    showSearch
-                    loading={datasetLoading}
-                    optionFilterProp="label"
-                    disabled={!requiredDatasetType}
-                    value={selectedDatasetVersionId}
-                    onChange={(value: string) => {
-                      setSelectedDatasetVersionId(value);
-                      form.setFieldValue('datasetVersionId', value);
-                    }}
-                    options={filteredDatasetOptions.flatMap(
-                      (d: API.DatasetItem) => {
-                        const versionId = d.versionId;
-                        if (!versionId) return [];
-                        return [
-                          {
-                            value: versionId,
-                            label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${versionId}`,
-                          },
-                        ];
-                      },
-                    )}
-                  />
-                </Form.Item>
-              ) : (
-                <>
-                  <Form.Item
-                    name="datasetName"
-                    label="数据集名称"
-                    rules={[{ required: true, message: '请输入数据集名称' }]}
-                  >
-                    <Input placeholder="例如：consistency-fusion-data" />
-                  </Form.Item>
-                  <Form.Item
-                    name="datasetVersion"
-                    label="版本号"
-                    rules={datasetVersionFormRules([])}
-                    extra={DATASET_VERSION_FORMAT_HINT}
-                  >
-                    <Input placeholder="例如 v1.0.0" />
-                  </Form.Item>
-                  <Form.Item
-                    name="datasetRemark"
-                    label="版本描述"
-                    rules={datasetVersionDescFormRules()}
-                    extra="记录本版本的更新原因与内容，便于长期维护与训练选型"
-                  >
-                    <Input.TextArea
-                      rows={4}
-                      placeholder={DATASET_VERSION_DESC_PLACEHOLDER}
-                      showCount
-                      maxLength={2000}
-                    />
-                  </Form.Item>
-                  {requiredDatasetType === 'CV' && (
-                    <Form.Item
-                      name="datasetAnnotationFormat"
-                      label="标注格式"
-                      extra="YOLO/COCO 等带标注 zip 请选择对应格式；仅图片可选 NONE"
-                    >
-                      <Select allowClear placeholder="请选择标注格式">
-                        <Select.Option value="NONE">
-                          NONE（仅图片）
-                        </Select.Option>
-                        <Select.Option value="FOLDER_CLASSIFICATION">
-                          FOLDER_CLASSIFICATION
-                        </Select.Option>
-                        <Select.Option value="YOLO">YOLO</Select.Option>
-                        <Select.Option value="COCO">COCO</Select.Option>
-                        <Select.Option value="VOC">VOC</Select.Option>
-                        <Select.Option value="CSV">CSV</Select.Option>
-                        <Select.Option value="MASK">MASK</Select.Option>
-                        <Select.Option value="LABELME">LABELME</Select.Option>
-                        <Select.Option value="OTHER">OTHER</Select.Option>
-                      </Select>
-                    </Form.Item>
-                  )}
-                  <Form.Item
-                    name="datasetFile"
-                    label="文件"
-                    valuePropName="fileList"
-                    getValueFromEvent={(e) => e?.fileList ?? []}
-                    rules={[
-                      {
-                        required: true,
-                        validator: (_, value) => {
-                          const list = Array.isArray(value) ? value : [];
-                          if (
-                            !list.length ||
-                            !list.some((item: UploadFile) => item.originFileObj)
-                          ) {
-                            return Promise.reject(new Error('请上传文件'));
-                          }
-                          return Promise.resolve();
+                  showSearch
+                  loading={datasetLoading}
+                  optionFilterProp="label"
+                  disabled={!requiredDatasetType}
+                  value={selectedDatasetVersionId}
+                  onChange={(value: string) => {
+                    setSelectedDatasetVersionId(value);
+                    form.setFieldValue('datasetVersionId', value);
+                  }}
+                  options={filteredDatasetOptions.flatMap(
+                    (d: API.DatasetItem) => {
+                      const versionId = d.versionId;
+                      if (!versionId) return [];
+                      return [
+                        {
+                          value: versionId,
+                          label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${versionId}`,
                         },
-                      },
-                    ]}
-                  >
-                    <Upload
-                      multiple={requiredDatasetType === 'CV'}
-                      accept={
-                        requiredDatasetType === 'POINT_CLOUD'
-                          ? POINT_CLOUD_ACCEPT
-                          : undefined
-                      }
-                      beforeUpload={() => false}
-                      disabled={!requiredDatasetType || datasetUploading}
-                      onChange={(e) => {
-                        let fileList = e.fileList ?? [];
-                        if (
-                          (requiredDatasetType === 'POINT_CLOUD' ||
-                            requiredDatasetType === 'NLP') &&
-                          fileList.length > 1
-                        ) {
-                          fileList = fileList.slice(-1);
-                          message.info(
-                            '当前类型仅支持单个文件，已保留最新选择',
-                          );
-                        }
-                        form.setFieldValue('datasetFile', fileList);
-                      }}
-                    >
-                      <Button
-                        icon={<UploadOutlined />}
-                        disabled={!requiredDatasetType || datasetUploading}
-                      >
-                        {requiredDatasetType === 'POINT_CLOUD'
-                          ? '选择点云文件（.ply / .pcd / .zip）'
-                          : requiredDatasetType === 'NLP'
-                            ? '选择 NLP zip（单文件分片上传）'
-                            : '选择文件（单文件 zip 支持断点续传；CV 可多选图片目录）'}
-                      </Button>
-                    </Upload>
-                    <div style={{ marginTop: 8, color: '#999' }}>
-                      单文件最大{' '}
-                      {UPLOAD_CONFIG.DATASET.MAX_SIZE / 1024 / 1024 / 1024}
-                      GB。
-                      {requiredDatasetType === 'POINT_CLOUD'
-                        ? ' 点云仅支持单个 .ply、.pcd 或 .zip；zip 内需至少包含一个 .ply 或 .pcd。'
-                        : requiredDatasetType === 'NLP'
-                          ? ' NLP 请将多个文件打包为 zip 后作为单个文件上传。'
-                          : requiredDatasetType === 'CV'
-                            ? ' CV 带 YOLO/COCO 等标注的 zip 请选择对应标注格式；多文件将走文件夹打包；大 zip 请单文件分片上传。'
-                            : ' 请先在第一步选择基础模型权重。'}
-                    </div>
-                  </Form.Item>
-                  {datasetUploading && (
-                    <Progress
-                      percent={datasetUploadPercent}
-                      style={{ marginBottom: 16 }}
-                    />
+                      ];
+                    },
                   )}
-                  <Button
-                    type="primary"
-                    loading={datasetUploading}
-                    disabled={!requiredDatasetType}
-                    onClick={async () => {
-                      try {
-                        const fieldNames = [
-                          'datasetName',
-                          'datasetVersion',
-                          'datasetRemark',
-                          'datasetFile',
-                        ];
-                        if (requiredDatasetType === 'CV') {
-                          fieldNames.push('datasetAnnotationFormat');
-                        }
-                        const values = await form.validateFields(fieldNames);
-                        await uploadDatasetZip({
-                          datasetName: values.datasetName,
-                          version: values.datasetVersion,
-                          remark: values.datasetRemark,
-                          file: values.datasetFile,
-                          annotationFormat: values.datasetAnnotationFormat,
-                        });
-                      } catch (error: any) {
-                        message.error(getApiErrorMessage(error));
-                      }
-                    }}
-                  >
-                    上传并选用
-                  </Button>
-                </>
-              )}
+                />
+              </Form.Item>
+              <Space style={{ marginBottom: 16 }}>
+                <Button
+                  onClick={() => void reloadDatasetOptions()}
+                  loading={datasetLoading}
+                >
+                  刷新数据集列表
+                </Button>
+                <Button href="/dataset/upload" target="_blank">
+                  去数据集管理上传
+                </Button>
+              </Space>
             </>
           )}
 
