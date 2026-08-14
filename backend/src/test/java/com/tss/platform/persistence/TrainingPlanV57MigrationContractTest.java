@@ -22,6 +22,7 @@ class TrainingPlanV57MigrationContractTest {
         assertTrue(sql.contains("WHERE status = 'ACTIVE'"));
         assertTrue(sql.contains("ck_training_plan_definition_disabled_evidence"));
         assertTrue(sql.contains("content_sha256 ~ '^[0-9a-f]{64}$'"));
+        assertTrue(sql.contains("content_sha256 VARCHAR(64) NOT NULL"));
         assertTrue(sql.contains("yaml_content TEXT NOT NULL"));
         assertTrue(sql.contains("schema_version = 'tss.training.plan/v2'"));
         assertTrue(sql.contains("OCTET_LENGTH(yaml_content) BETWEEN 1 AND 262144"));

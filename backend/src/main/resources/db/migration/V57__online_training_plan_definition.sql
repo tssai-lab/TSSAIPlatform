@@ -4,7 +4,7 @@ CREATE TABLE training_plan_definition (
     plan_version VARCHAR(16) NOT NULL,
     schema_version VARCHAR(64) NOT NULL,
     yaml_content TEXT NOT NULL,
-    content_sha256 CHAR(64) NOT NULL,
+    content_sha256 VARCHAR(64) NOT NULL,
     status VARCHAR(16) NOT NULL,
     imported_by_user_id INTEGER NOT NULL,
     imported_at TIMESTAMPTZ NOT NULL,
