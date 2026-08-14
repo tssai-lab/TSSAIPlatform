@@ -62,6 +62,15 @@ function sameKeyList(left: Key[], right: Key[]): boolean {
   return left.every((key, index) => key === right[index]);
 }
 
+const ONE_MIB = 1024 * 1024;
+
+function formatArtifactSize(sizeBytes: number): string {
+  if (sizeBytes < ONE_MIB) {
+    return `${sizeBytes} 字节`;
+  }
+  return `${(sizeBytes / ONE_MIB).toFixed(2)} MB`;
+}
+
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -823,9 +832,10 @@ const ModelDetail: React.FC = () => {
                             if (sizeBytes == null || Number.isNaN(sizeBytes)) {
                               return fileName || '-';
                             }
+                            const sizeLabel = formatArtifactSize(sizeBytes);
                             return fileName
-                              ? `${sizeBytes} 字节 · ${fileName}`
-                              : `${sizeBytes} 字节`;
+                              ? `${sizeLabel} · ${fileName}`
+                              : sizeLabel;
                           })()}
                         </Descriptions.Item>
                         <Descriptions.Item label="超参" span={2}>
