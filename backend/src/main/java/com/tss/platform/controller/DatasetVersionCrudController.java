@@ -355,7 +355,9 @@ public class DatasetVersionCrudController {
     private boolean hasStorageMetadata(DatasetVersion body) {
         return body.getStoragePath() != null
                 || body.getFileName() != null
-                || body.getSizeBytes() != null;
+                || body.getSizeBytes() != null
+                || body.getArtifactSha256() != null
+                || body.getArtifactSpecId() != null;
     }
 
     private boolean hasCompleteStorageMetadata(DatasetVersion body) {
@@ -422,7 +424,11 @@ public class DatasetVersionCrudController {
     private boolean storageMetadataChanged(DatasetVersion existing, DatasetVersion body) {
         return (body.getStoragePath() != null && !body.getStoragePath().equals(existing.getStoragePath()))
                 || (body.getFileName() != null && !body.getFileName().equals(existing.getFileName()))
-                || (body.getSizeBytes() != null && !body.getSizeBytes().equals(existing.getSizeBytes()));
+                || (body.getSizeBytes() != null && !body.getSizeBytes().equals(existing.getSizeBytes()))
+                || (body.getArtifactSha256() != null
+                && !body.getArtifactSha256().equals(existing.getArtifactSha256()))
+                || (body.getArtifactSpecId() != null
+                && !body.getArtifactSpecId().equals(existing.getArtifactSpecId()));
     }
 }
 

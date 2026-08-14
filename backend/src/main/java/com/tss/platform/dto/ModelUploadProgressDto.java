@@ -22,6 +22,7 @@ public class ModelUploadProgressDto {
     private String storagePath;
     private String assetId;
     private String versionId;
+    private String artifactSpecId;
     private String commitInfo;
     private Map<String, Object> hyperParams;
     private Instant createdAt;

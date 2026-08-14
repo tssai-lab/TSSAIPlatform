@@ -15,8 +15,11 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -101,5 +104,33 @@ class ModelVersionCrudLifecycleTest {
         assertEquals("users/7/models/model-asset-1/v1/weights.pt", response.getData().getStoragePath());
         assertEquals(1024L, response.getData().getSizeBytes());
         assertEquals("updated description", response.getData().getDescription());
+    }
+
+    @Test
+    void updateRejectsClientSuppliedArtifactSpecificationEvidence() {
+        ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
+        ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        ModelVersionCrudController controller = new ModelVersionCrudController(
+                versionRepo,
+                assetRepo,
+                authContext,
+                mock(ModelVersionLifecycleService.class)
+        );
+        ModelVersion version = new ModelVersion();
+        version.setId("model-ver-1");
+        version.setAssetId("model-asset-1");
+        version.setOwnerUserId(7);
+        ModelVersionUpdateRequest body = new ModelVersionUpdateRequest();
+        body.setVersion("v1");
+        body.setArtifactSpecId("model.cv.yolo-weight/v1");
+        when(versionRepo.findByIdAndDeletedFalse(version.getId()))
+                .thenReturn(Optional.of(version));
+        when(authContext.canAccessOwner(7)).thenReturn(true);
+
+        ApiResponse<ModelVersion> response = controller.update(version.getId(), body);
+
+        assertFalse(response.isSuccess());
+        verify(versionRepo, never()).save(any());
     }
 }

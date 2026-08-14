@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -49,12 +50,13 @@ final class ModelWeightZipValidator {
     private ModelWeightZipValidator() {
     }
 
-    static void validate(ZipInputStream zip) throws Exception {
+    static Inspection validate(ZipInputStream zip) throws Exception {
         int entries = 0;
         boolean foundFile = false;
         long totalUncompressedBytes = 0;
         Set<String> paths = new HashSet<>();
         Set<String> filePaths = new HashSet<>();
+        Set<String> evidencePaths = new LinkedHashSet<>();
         ZipEntry entry;
         while ((entry = zip.getNextEntry()) != null) {
             entries += 1;
@@ -86,6 +88,7 @@ final class ModelWeightZipValidator {
             if (!entry.isDirectory()) {
                 foundFile = true;
                 validateFileExtension(entryName);
+                evidencePaths.add(ZipPathValidator.normalizeEntryPath(entryName));
                 totalUncompressedBytes = drainZipEntry(zip, totalUncompressedBytes, entry.getSize());
             }
             zip.closeEntry();
@@ -93,6 +96,7 @@ final class ModelWeightZipValidator {
         if (!foundFile) {
             throw new IllegalArgumentException("模型权重 zip 不能为空");
         }
+        return new Inspection(Set.copyOf(evidencePaths));
     }
 
     private static void rejectParentFileConflict(String path, Set<String> filePaths) {
@@ -158,5 +162,8 @@ final class ModelWeightZipValidator {
             return null;
         }
         return fileName.substring(dot).toLowerCase(Locale.ROOT);
+    }
+
+    record Inspection(Set<String> filePaths) {
     }
 }

@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.asset.spec.ArtifactSpecEvidence;
 import com.tss.platform.model.CvAnnotationFormat;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
@@ -14,6 +15,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -23,8 +25,11 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -91,34 +96,81 @@ final class DatasetZipValidator {
             String objectName,
             long objectSize
     ) throws Exception {
+        return validateDatasetObjectWithEvidence(
+                taskType,
+                null,
+                annotationFormat,
+                fileName,
+                objectName,
+                objectSize
+        ).fileCount();
+    }
+
+    ValidationResult validateDatasetObjectWithEvidence(
+            String taskType,
+            String cvTaskType,
+            String annotationFormat,
+            String fileName,
+            String objectName,
+            long objectSize
+    ) throws Exception {
         String lower = normalizedFileName(fileName);
         if (lower.endsWith(".zip")) {
-            long streamedFileCount;
-            try (InputStream is = minioClient.getObject(
+            ZipValidation archive;
+            MessageDigest digest = sha256();
+            try (InputStream source = minioClient.getObject(
                     GetObjectArgs.builder().bucket(bucket).object(objectName).build()
             )) {
-                streamedFileCount = validateDatasetZipEntries(taskType, annotationFormat, is);
+                CountingInputStream counting = new CountingInputStream(source);
+                DigestInputStream digestInput = new DigestInputStream(counting, digest);
+                archive = validateDatasetZipWithEvidence(
+                        taskType,
+                        annotationFormat,
+                        new NonClosingInputStream(digestInput)
+                );
+                drain(digestInput);
+                if (counting.count() != objectSize) {
+                    throw new IllegalArgumentException(
+                            "dataset object size does not match upload metadata"
+                    );
+                }
             }
-            if (zipCentralDirectoryReader == null) {
-                return streamedFileCount;
-            }
-            return zipCentralDirectoryReader.read(objectName, objectSize).stream()
-                    .filter(entry -> !entry.directory())
-                    .count();
+            long fileCount = zipCentralDirectoryReader == null
+                    ? archive.fileCount()
+                    : zipCentralDirectoryReader.read(objectName, objectSize).stream()
+                            .filter(entry -> !entry.directory())
+                            .count();
+            String artifactSpecId = ArtifactSpecEvidence.recognizeDatasetArchive(
+                    taskType,
+                    cvTaskType,
+                    annotationFormat,
+                    archive.filePaths()
+            );
+            return new ValidationResult(
+                    fileCount,
+                    HexFormat.of().formatHex(digest.digest()),
+                    artifactSpecId
+            );
         }
 
+        MessageDigest digest = sha256();
         try (InputStream input = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build()
         )) {
+            DigestInputStream digestInput = new DigestInputStream(input, digest);
             validateSingleFileContent(
                     taskType,
                     annotationFormat,
                     lower,
-                    input,
+                    digestInput,
                     objectSize
             );
         }
-        return 1L;
+        return new ValidationResult(
+                1L,
+                HexFormat.of().formatHex(digest.digest()),
+                ArtifactSpecEvidence.recognizeSingleDataset(taskType, lower)
+        );
     }
 
     static void validateSingleFileContent(
@@ -208,6 +260,18 @@ final class DatasetZipValidator {
     }
 
     static long validateDatasetZipEntries(
+            String taskType,
+            String annotationFormat,
+            InputStream inputStream
+    ) throws Exception {
+        return validateDatasetZipWithEvidence(
+                taskType,
+                annotationFormat,
+                inputStream
+        ).fileCount();
+    }
+
+    private static ZipValidation validateDatasetZipWithEvidence(
             String taskType,
             String annotationFormat,
             InputStream inputStream
@@ -418,7 +482,7 @@ final class DatasetZipValidator {
                 throw new IllegalArgumentException("LEROBOT zip does not contain supported LeRobot dataset files");
             }
         }
-        return files;
+        return new ZipValidation(files, Set.copyOf(paths));
         } finally {
             for (PendingYoloLabel pending : pendingYoloLabels) {
                 Files.deleteIfExists(pending.path());
@@ -859,6 +923,70 @@ final class DatasetZipValidator {
 
     private static String normalizeZipEntryName(String name) {
         return name == null ? "" : name.replace('\\', '/');
+    }
+
+    private static void drain(InputStream input) throws IOException {
+        byte[] buffer = new byte[8192];
+        while (input.read(buffer) != -1) {
+            // Drain so the digest covers the exact immutable object.
+        }
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (Exception exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    record ValidationResult(long fileCount, String sha256, String artifactSpecId) {
+    }
+
+    private record ZipValidation(long fileCount, Set<String> filePaths) {
+    }
+
+    private static final class NonClosingInputStream extends FilterInputStream {
+
+        private NonClosingInputStream(InputStream input) {
+            super(input);
+        }
+
+        @Override
+        public void close() {
+            // The caller drains and closes the digest stream after ZIP validation.
+        }
+    }
+
+    private static final class CountingInputStream extends FilterInputStream {
+
+        private long count;
+
+        private CountingInputStream(InputStream input) {
+            super(input);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) {
+                count += 1;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = super.read(buffer, offset, length);
+            if (read > 0) {
+                count += read;
+            }
+            return read;
+        }
+
+        private long count() {
+            return count;
+        }
     }
 
     private record PendingYoloLabel(String key, String fileName, Path path) {

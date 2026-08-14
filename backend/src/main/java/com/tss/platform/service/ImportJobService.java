@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.asset.spec.ArtifactSpecIds;
 import com.tss.platform.entity.DatasetAnnotation;
 import com.tss.platform.entity.DatasetAsset;
 import com.tss.platform.entity.DatasetPackage;
@@ -476,6 +477,12 @@ public class ImportJobService {
                     "dataset version must remain DRAFT during import: " + version.getId()
             );
         }
+        if (!context.appendPackage()) {
+            requireCompatibleArtifactSpec(
+                    version.getAssetId(),
+                    verifiedMultimodalSpecId(context)
+            );
+        }
 
         boolean incrementalRetry = retryFailures != null && !retryFailures.isEmpty();
         if (context.appendPackage() && !incrementalRetry) {
@@ -737,6 +744,7 @@ public class ImportJobService {
             versionRepo.saveAndFlush(version);
             supersedeOlderFailedAppendImports(context, now);
         } else {
+            applyVerifiedMultimodalSpec(context, version);
             version.setStatus(VERSION_READY);
             version.setPublishedAt(now);
             versionRepo.saveAndFlush(version);
@@ -761,6 +769,46 @@ public class ImportJobService {
                     totalAnnotationCount
             );
         }
+    }
+
+    private void applyVerifiedMultimodalSpec(ImportContext context, DatasetVersion version) {
+        String artifactSpecId = verifiedMultimodalSpecId(context);
+        if (artifactSpecId == null) {
+            return;
+        }
+        version.setArtifactSpecId(artifactSpecId);
+        DatasetUploadSession session = sessionRepo.findByImportJobId(context.importJobId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "upload session not found for import job: " + context.importJobId()
+                ));
+        session.setArtifactSpecId(artifactSpecId);
+        sessionRepo.saveAndFlush(session);
+    }
+
+    private String verifiedMultimodalSpecId(ImportContext context) {
+        if (!"MULTIMODAL".equals(context.taskType())) {
+            return null;
+        }
+        return GROUPING_MANIFEST.equals(context.sampleGrouping())
+                ? ArtifactSpecIds.DATASET_MULTIMODAL_MANIFEST
+                : ArtifactSpecIds.DATASET_MULTIMODAL_DIRECTORY;
+    }
+
+    private void requireCompatibleArtifactSpec(String assetId, String artifactSpecId) {
+        if (artifactSpecId == null) {
+            return;
+        }
+        versionRepo
+                .findTopByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByVersionNoDesc(
+                        assetId
+                )
+                .ifPresent(existing -> {
+                    if (!artifactSpecId.equals(existing.getArtifactSpecId())) {
+                        throw new IllegalArgumentException(
+                                "dataset artifact specification does not match existing asset versions"
+                        );
+                    }
+                });
     }
 
     private void completePartialImport(

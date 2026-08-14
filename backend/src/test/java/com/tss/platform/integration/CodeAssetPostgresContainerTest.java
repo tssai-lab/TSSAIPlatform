@@ -142,6 +142,7 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("55");
         expectedVersions.add("56");
         expectedVersions.add("57");
+        expectedVersions.add("58");
         Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version

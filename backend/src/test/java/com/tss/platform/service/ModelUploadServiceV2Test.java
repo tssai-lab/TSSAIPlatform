@@ -141,6 +141,8 @@ class ModelUploadServiceV2Test {
         assertEquals("detector model", versionCaptor.getValue().getChangeLog());
         assertEquals("git abc123", versionCaptor.getValue().getCommitInfo());
         assertEquals(fixture.sha256(zipBytes()), versionCaptor.getValue().getArtifactSha256());
+        assertEquals("model.cv.yolo-weight/v1", versionCaptor.getValue().getArtifactSpecId());
+        assertEquals(versionCaptor.getValue().getArtifactSpecId(), session.getArtifactSpecId());
         assertEquals(7, versionCaptor.getValue().getCreatedBy());
         assertEquals(
                 versionCaptor.getValue().getCreatedAt(),
@@ -149,7 +151,12 @@ class ModelUploadServiceV2Test {
         assertEquals("COMPLETED", result.getStatus());
         assertTrue(result.getModelId().startsWith("model-ver-"));
         assertEquals(fixture.sha256(zipBytes()), result.getArtifactSha256());
+        assertEquals("model.cv.yolo-weight/v1", result.getArtifactSpecId());
         assertEquals(true, result.getIsCurrent());
+        assertEquals(
+                "model.cv.yolo-weight/v1",
+                fixture.service.getProgressV2(session.getId()).getArtifactSpecId()
+        );
         UploadCompleteRequest legacyRequest = new UploadCompleteRequest();
         legacyRequest.setUploadId(session.getId());
         legacyRequest.setModelName(session.getModelName());
@@ -340,6 +347,52 @@ class ModelUploadServiceV2Test {
     }
 
     @Test
+    void rejectsASecondVersionThatChangesTheVerifiedModelContract() throws Exception {
+        Fixture fixture = new Fixture();
+        ModelUploadSession session = fixture.session();
+        session.setTargetAssetId("asset-1");
+        ModelAsset asset = new ModelAsset();
+        asset.setId("asset-1");
+        asset.setName("Detector");
+        asset.setType("CV");
+        asset.setRemark("detector model");
+        asset.setOwnerUserId(7);
+        asset.setDeleted(false);
+        ModelUploadChunk chunk = new ModelUploadChunk();
+        chunk.setUploadId(session.getId());
+        chunk.setPartIndex(0);
+        chunk.setObjectName("part-0");
+        chunk.setSizeBytes(session.getFileSize());
+        ModelVersion existing = new ModelVersion();
+        existing.setArtifactSpecId("model.cv.hf-image/v1");
+        when(fixture.sessionRepo.findById(session.getId())).thenReturn(Optional.of(session));
+        when(fixture.sessionRepo.updateStatusIfCurrent(any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(fixture.assetRepo.findByIdAndDeletedFalseForUpdate(asset.getId()))
+                .thenReturn(Optional.of(asset));
+        when(fixture.chunkRepo.findByUploadIdOrderByPartIndexAsc(session.getId()))
+                .thenReturn(List.of(chunk));
+        when(fixture.versionRepo
+                .findFirstByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByCreatedAtDesc(
+                        asset.getId()
+                )).thenReturn(Optional.of(existing));
+        fixture.stubCompletedObject();
+
+        com.tss.platform.controller.v2.V2BusinessException error = assertThrows(
+                com.tss.platform.controller.v2.V2BusinessException.class,
+                () -> fixture.service.completeV2(session.getId())
+        );
+
+        assertEquals("MODEL_UPLOAD_FAILED", error.getErrorCode());
+        assertEquals(
+                "model artifact specification does not match existing asset versions",
+                error.getDetails().get("reason")
+        );
+        verify(fixture.versionRepo, org.mockito.Mockito.never()).saveAndFlush(any());
+        assertNull(session.getArtifactSpecId());
+    }
+
+    @Test
     void inaccessibleTargetAssetReturnsSanitizedNotFoundError() {
         Fixture fixture = new Fixture();
         V2ModelUploadInitRequest request = fixture.request();
@@ -391,7 +444,7 @@ class ModelUploadServiceV2Test {
     private static byte[] zipBytes() throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(out)) {
-            ZipEntry entry = new ZipEntry("model.onnx");
+            ZipEntry entry = new ZipEntry("yolo11n.pt");
             entry.setTime(0L);
             zip.putNextEntry(entry);
             zip.write(new byte[]{1, 2, 3});

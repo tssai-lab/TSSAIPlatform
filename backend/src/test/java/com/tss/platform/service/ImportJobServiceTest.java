@@ -70,6 +70,8 @@ class ImportJobServiceTest {
         assertEquals(1, fixture.job.getImportedSamples());
         assertNotNull(fixture.job.getFinishedAt());
         assertEquals("READY", fixture.version.getStatus());
+        assertEquals("dataset.multimodal.manifest/v1", fixture.version.getArtifactSpecId());
+        assertEquals(fixture.version.getArtifactSpecId(), fixture.session.getArtifactSpecId());
         assertNotNull(fixture.version.getPublishedAt());
         assertEquals(fixture.version.getId(), fixture.asset.getCurrentVersionId());
         verify(fixture.auditService).recordImportSucceeded(
@@ -150,6 +152,28 @@ class ImportJobServiceTest {
         verify(fixture.parser, never()).parse(any(), any(), any());
         assertEquals("SUCCESS", fixture.job.getStatus());
         assertEquals("READY", fixture.version.getStatus());
+        assertEquals("dataset.multimodal.directory/v1", fixture.version.getArtifactSpecId());
+        assertEquals(fixture.version.getArtifactSpecId(), fixture.session.getArtifactSpecId());
+    }
+
+    @Test
+    void rejectsASecondVersionThatChangesTheVerifiedMultimodalContract() throws Exception {
+        Fixture fixture = new Fixture();
+        DatasetVersion existing = new DatasetVersion();
+        existing.setArtifactSpecId("dataset.multimodal.directory/v1");
+        when(fixture.versionRepo
+                .findTopByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByVersionNoDesc(
+                        fixture.asset.getId()
+                )).thenReturn(Optional.of(existing));
+        fixture.stubSuccessfulImport();
+
+        fixture.service.execute(fixture.job.getId());
+
+        assertEquals("FAILED", fixture.job.getStatus());
+        assertEquals("DRAFT", fixture.version.getStatus());
+        assertNull(fixture.version.getArtifactSpecId());
+        assertNull(fixture.session.getArtifactSpecId());
+        verify(fixture.sampleRepo, never()).saveAllAndFlush(any());
     }
 
     @Test
