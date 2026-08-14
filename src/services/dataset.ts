@@ -151,6 +151,7 @@ export type DatasetListItem = {
   versionId?: string;
   version?: string;
   versionStatus?: string;
+  artifactSpecId?: string;
   fileName?: string;
   storagePath?: string;
   size?: string;

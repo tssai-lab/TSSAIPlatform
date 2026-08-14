@@ -147,6 +147,7 @@ declare namespace API {
     version?: string;
     versionId?: string;
     versionStatus?: string;
+    artifactSpecId?: string;
     remark?: string;
     storagePath?: string;
     sizeBytes?: number;
