@@ -1192,6 +1192,87 @@ export async function openAdminCodeAssetWorkspace(
   );
 }
 
+/** GET /api/v2/admin/code-workspaces/{workspaceId}/tree */
+export async function getAdminCodeWorkspaceTree(
+  workspaceId: string,
+  prefix?: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<unknown>(
+    `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/tree`,
+    {
+      method: 'GET',
+      params: prefix ? { prefix } : undefined,
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-workspaces/{workspaceId}/files/content */
+export async function getAdminCodeWorkspaceFileContent(
+  workspaceId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{
+    path?: string;
+    content?: string;
+    text?: string;
+    encoding?: string;
+    [key: string]: unknown;
+  }>(`/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files/content`, {
+    method: 'GET',
+    params: { path },
+    ...(options || {}),
+  });
+}
+
+/** GET /api/v2/admin/code-versions/{versionId} */
+export async function getAdminCodeVersion(
+  versionId: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<V2CodeVersion>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}`,
+    { method: 'GET', ...(options || {}) },
+  );
+}
+
+/** GET /api/v2/admin/code-versions/{versionId}/tree */
+export async function getAdminCodeVersionTree(
+  versionId: string,
+  prefix?: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<unknown>(
+    `/v2/admin/code-versions/${encodeURIComponent(versionId)}/tree`,
+    {
+      method: 'GET',
+      params: prefix ? { prefix } : undefined,
+      ...(options || {}),
+    },
+  );
+}
+
+/** GET /api/v2/admin/code-versions/{versionId}/files/content */
+export async function getAdminCodeVersionFileContent(
+  versionId: string,
+  path: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{
+    path?: string;
+    content?: string;
+    text?: string;
+    encoding?: string;
+    [key: string]: unknown;
+  }>(`/v2/admin/code-versions/${encodeURIComponent(versionId)}/files/content`, {
+    method: 'GET',
+    params: { path },
+    ...(options || {}),
+  });
+}
+
 /** GET /api/v2/admin/code-review-tasks/{versionId}/findings */
 export async function listAdminCodeReviewFindings(
   versionId: string,
