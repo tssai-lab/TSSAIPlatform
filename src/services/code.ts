@@ -44,9 +44,14 @@ import {
   rescanAdminCodeReviewTask,
   hasV2ApprovalEvidence,
   isInternalGeneratedCodeAssetName,
+  getAdminCodeAsset,
+  listAdminCodeAssets,
+  listAdminCodeAssetVersions,
   listAdminCodeReviewTasks,
   mapAdminReviewTaskToListItem,
   mapAdminReviewTaskDetailToCodeVersionDetail,
+  normalizeAdminCodeAssetPage,
+  normalizeAdminReviewTaskPage,
   mapV2CodeVersionToLegacy,
   validateV2CodeVersion,
   errorMessageFromV2,
@@ -290,53 +295,221 @@ export async function fetchPendingCodeReviewTasks(
   },
   options?: { [key: string]: any },
 ) {
+  const approvalStatus = params?.approvalStatus ?? 'PENDING';
+  const keyword = params?.keyword?.trim() || undefined;
+  const current = params?.current ?? 1;
+  const pageSize = params?.pageSize ?? 20;
   const payload = await listAdminCodeReviewTasks(
     {
-      approvalStatus: params?.approvalStatus ?? 'PENDING',
+      approvalStatus,
       riskLevel: params?.riskLevel,
       ownerUserId: params?.ownerUserId,
-      keyword: params?.keyword?.trim() || undefined,
+      keyword,
       submittedFrom: params?.submittedFrom?.trim() || undefined,
       submittedTo: params?.submittedTo?.trim() || undefined,
       sortBy: params?.sortBy,
       sortDirection: params?.sortDirection,
-      page: Math.max(0, (params?.current ?? 1) - 1),
-      pageSize: params?.pageSize ?? 20,
+      page: Math.max(0, current - 1),
+      pageSize,
     },
     options,
   );
-  const items = Array.isArray(payload?.items) ? payload.items : [];
-  const mapped = items.map(mapAdminReviewTaskToListItem);
+  const page = normalizeAdminReviewTaskPage(payload);
+  const mapped = page.items
+    .map(mapAdminReviewTaskToListItem)
+    .filter((item) => item.codeVersionId?.trim());
   const enriched = await Promise.all(
-    mapped.map(async (item) => {
-      if (item.fileName?.trim() && item.trainingProfile?.trim()) {
-        return item;
-      }
-      try {
-        const detail = await getAdminCodeReviewTaskDetail(item.codeVersionId, {
-          skipErrorHandler: true,
-          ...(options || {}),
-        });
-        const legacy = mapAdminReviewTaskDetailToCodeVersionDetail(detail);
-        return {
-          ...item,
-          fileName: item.fileName?.trim() || legacy.fileName || '',
-          trainingProfile:
-            item.trainingProfile?.trim() || legacy.trainingProfile || '',
-          codeAssetName:
-            item.codeAssetName?.trim() || legacy.codeAssetName || '',
-          codeName: item.codeName || legacy.codeName,
-        };
-      } catch {
-        return item;
-      }
-    }),
+    mapped.map((item) => enrichAdminReviewListItem(item, options)),
   );
+
+  const remoteIds = new Set(enriched.map((item) => item.codeVersionId));
+  const shouldFallback =
+    current === 1 &&
+    !params?.riskLevel &&
+    !params?.submittedFrom &&
+    !params?.submittedTo &&
+    (enriched.length === 0 || Boolean(keyword));
+  const extra = shouldFallback
+    ? await fallbackPendingFromAdminAssets(
+        {
+          approvalStatus,
+          keyword,
+          ownerUserId: params?.ownerUserId,
+        },
+        remoteIds,
+        options,
+      )
+    : [];
+
   return {
     success: true,
-    data: enriched,
-    total: payload?.totalElements ?? enriched.length,
+    data: [...extra, ...enriched],
+    total: (page.totalElements ?? enriched.length) + extra.length,
   };
+}
+
+/** 审核队列条目补用户可见名称（避免只展示内部 code-asset-xxx） */
+async function enrichAdminReviewListItem(
+  item: CodeVersionListItem,
+  options?: { [key: string]: any },
+): Promise<CodeVersionListItem> {
+  let next = { ...item };
+  const needName = !pickDisplayCodeName(next);
+  const needFile = !next.fileName?.trim();
+  const needProfile = !next.trainingProfile?.trim();
+  if (!needName && !needFile && !needProfile) return next;
+
+  if (next.codeVersionId && (needFile || needProfile || needName)) {
+    try {
+      const detail = await getAdminCodeReviewTaskDetail(next.codeVersionId, {
+        skipErrorHandler: true,
+        ...(options || {}),
+      });
+      const legacy = mapAdminReviewTaskDetailToCodeVersionDetail(detail);
+      next = {
+        ...next,
+        codeAssetId: next.codeAssetId || legacy.codeAssetId,
+        fileName: next.fileName?.trim() || legacy.fileName || '',
+        trainingProfile:
+          next.trainingProfile?.trim() || legacy.trainingProfile || '',
+        codeName: next.codeName || legacy.codeName,
+        codeAssetName:
+          pickDisplayCodeName(next) ||
+          pickDisplayCodeName(legacy) ||
+          next.codeAssetName ||
+          legacy.codeAssetName,
+      };
+    } catch {
+      // 详情失败时再尝试资产接口
+    }
+  }
+
+  if (!pickDisplayCodeName(next) && next.codeAssetId) {
+    try {
+      const asset = await getAdminCodeAsset(next.codeAssetId, {
+        skipErrorHandler: true,
+        ...(options || {}),
+      });
+      const name = asset?.name?.trim();
+      if (name) {
+        next = {
+          ...next,
+          codeName: isInternalGeneratedCodeAssetName(name)
+            ? next.codeName
+            : name,
+          codeAssetName: isInternalGeneratedCodeAssetName(name)
+            ? next.codeAssetName || name
+            : name,
+          trainingProfile: next.trainingProfile || asset.trainingProfile || '',
+        };
+      }
+    } catch {
+      // 跨 owner 资产名拿不到时保持原值
+    }
+  }
+  return next;
+}
+
+function unwrapVersionList(
+  payload: unknown,
+): import('./codeV2').V2CodeVersion[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+    if (Array.isArray(obj.items)) {
+      return obj.items as import('./codeV2').V2CodeVersion[];
+    }
+    if (Array.isArray(obj.data)) {
+      return obj.data as import('./codeV2').V2CodeVersion[];
+    }
+  }
+  return [];
+}
+
+/** 审核任务队列为空或按名称搜不到时，从管理员资产版本兜底 */
+async function fallbackPendingFromAdminAssets(
+  params: {
+    approvalStatus?: string;
+    keyword?: string;
+    ownerUserId?: number;
+  },
+  existingIds: Set<string>,
+  options?: { [key: string]: any },
+): Promise<CodeVersionListItem[]> {
+  const wanted = String(params.approvalStatus || 'PENDING').toUpperCase();
+  try {
+    const res = await listAdminCodeAssets(
+      {
+        page: 0,
+        pageSize: 50,
+        keyword: params.keyword,
+        ownerUserId:
+          params.ownerUserId != null ? String(params.ownerUserId) : undefined,
+        sortBy: 'UPDATED_AT',
+        sortDirection: 'DESC',
+      },
+      { skipErrorHandler: true, ...(options || {}) },
+    );
+    const assets = normalizeAdminCodeAssetPage(res).items;
+    const extras: CodeVersionListItem[] = [];
+    await Promise.all(
+      assets.map(async (asset) => {
+        const assetId = (asset.id || asset.assetId || '').trim();
+        if (!assetId) return;
+        try {
+          const versions = unwrapVersionList(
+            await listAdminCodeAssetVersions(assetId, {
+              skipErrorHandler: true,
+              ...(options || {}),
+            }),
+          );
+          versions.forEach((version) => {
+            const versionId = (
+              version.versionId ||
+              version.codeVersionId ||
+              version.id ||
+              ''
+            ).trim();
+            if (!versionId || existingIds.has(versionId)) return;
+            if (String(version.approvalStatus || '').toUpperCase() !== wanted) {
+              return;
+            }
+            const displayName =
+              (asset.name && !isInternalGeneratedCodeAssetName(asset.name)
+                ? asset.name
+                : undefined) ||
+              version.codeName ||
+              version.codeAssetName ||
+              version.assetName ||
+              asset.name ||
+              '';
+            extras.push({
+              codeVersionId: versionId,
+              codeAssetId: assetId,
+              codeName: displayName || undefined,
+              codeAssetName: displayName,
+              version: version.versionLabel || version.version || '',
+              fileName: version.fileName || '',
+              trainingProfile:
+                version.trainingProfile || asset.trainingProfile || '',
+              approvalStatus: version.approvalStatus || wanted,
+              status: version.status || 'READY',
+              validationStatus: version.validationStatus,
+              riskLevel: version.riskLevel,
+              riskStatus: version.riskStatus,
+              submittedAt: version.publishedAt || version.createdAt,
+            });
+            existingIds.add(versionId);
+          });
+        } catch {
+          // 单个资产版本失败不影响其它兜底
+        }
+      }),
+    );
+    return extras;
+  } catch {
+    return [];
+  }
 }
 
 /** 管理员审批训练代码版本（APPROVE / REJECT / REVOKE） */

@@ -124,9 +124,14 @@ export type V2CodeRiskAssessmentDetail = {
 };
 
 export type V2AdminCodeReviewTask = {
-  versionId: string;
+  versionId?: string;
+  codeVersionId?: string;
+  id?: string;
   assetId?: string;
   assetName?: string;
+  codeAssetName?: string;
+  codeName?: string;
+  name?: string;
   ownerUserId?: number;
   version?: string;
   lifecycleStatus?: string;
@@ -529,13 +534,69 @@ export function mapV2CodeVersionToLegacy(detail: V2CodeVersion) {
   };
 }
 
+function firstNonEmptyName(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    const text = value?.trim();
+    if (text && !isInternalGeneratedCodeAssetName(text)) return text;
+  }
+  for (const value of values) {
+    const text = value?.trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function pickReviewTaskVersionId(task: V2AdminCodeReviewTask): string {
+  return (
+    task.versionId?.trim() ||
+    task.codeVersionId?.trim() ||
+    task.id?.trim() ||
+    ''
+  );
+}
+
+/** 归一化审核队列分页（兼容 {items} / {data:{items}} / 数组） */
+export function normalizeAdminReviewTaskPage(payload?: unknown): {
+  items: V2AdminCodeReviewTask[];
+  totalElements: number;
+} {
+  const visit = (raw: unknown, depth = 0): V2AdminCodeReviewTaskPage | null => {
+    if (Array.isArray(raw)) {
+      return { items: raw as V2AdminCodeReviewTask[], totalElements: raw.length };
+    }
+    if (!raw || typeof raw !== 'object' || depth > 3) return null;
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.items)) {
+      return {
+        items: obj.items as V2AdminCodeReviewTask[],
+        totalElements: Number(obj.totalElements ?? obj.items.length) || obj.items.length,
+      };
+    }
+    if (obj.data != null) return visit(obj.data, depth + 1);
+    return null;
+  };
+  const page = visit(payload);
+  const items = page?.items ?? [];
+  return {
+    items,
+    totalElements: page?.totalElements ?? items.length,
+  };
+}
+
 export function mapAdminReviewTaskToListItem(
   task: V2AdminCodeReviewTask,
 ): import('./code').CodeVersionListItem {
+  const displayName = firstNonEmptyName(
+    task.codeName,
+    task.codeAssetName,
+    task.name,
+    task.assetName,
+  );
   return {
-    codeVersionId: task.versionId,
+    codeVersionId: pickReviewTaskVersionId(task),
     codeAssetId: task.assetId || '',
-    codeAssetName: task.assetName || '',
+    codeName: displayName || undefined,
+    codeAssetName: displayName,
     version: task.version || '',
     fileName: task.fileName || '',
     trainingProfile: task.trainingProfile || '',
@@ -553,11 +614,17 @@ export function mapAdminReviewTaskToListItem(
 export function mapAdminReviewTaskDetailToCodeVersionDetail(
   detail: V2AdminCodeReviewTaskDetail,
 ): import('./code').CodeVersionDetail {
+  const displayName = firstNonEmptyName(
+    detail.codeName,
+    detail.codeAssetName,
+    detail.name,
+    detail.assetName,
+  );
   return {
-    codeVersionId: detail.versionId,
+    codeVersionId: pickReviewTaskVersionId(detail),
     codeAssetId: detail.assetId || '',
-    codeName: detail.assetName,
-    codeAssetName: detail.assetName || '',
+    codeName: displayName || undefined,
+    codeAssetName: displayName,
     version: detail.version || '',
     fileName: detail.fileName || '',
     trainingProfile: detail.trainingProfile || '',
@@ -1258,12 +1325,28 @@ export function normalizeAdminCodeAssetPage(
   page: number;
   pageSize: number;
 } {
-  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const visit = (
+    raw: unknown,
+    depth = 0,
+  ): V2AdminCodeAssetPage | null => {
+    if (Array.isArray(raw)) {
+      return { items: raw as V2AdminCodeAsset[], totalElements: raw.length };
+    }
+    if (!raw || typeof raw !== 'object' || depth > 3) return null;
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.items)) {
+      return obj as V2AdminCodeAssetPage;
+    }
+    if (obj.data != null) return visit(obj.data, depth + 1);
+    return null;
+  };
+  const page = visit(payload);
+  const items = Array.isArray(page?.items) ? page.items : [];
   return {
     items,
-    total: payload?.totalElements ?? items.length,
-    page: payload?.page ?? 0,
-    pageSize: payload?.pageSize ?? items.length,
+    total: page?.totalElements ?? items.length,
+    page: page?.page ?? 0,
+    pageSize: page?.pageSize ?? items.length,
   };
 }
 

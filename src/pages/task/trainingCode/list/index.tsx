@@ -253,10 +253,10 @@ const TrainingCodeList: React.FC = () => {
       subTitle={
         isTrainingCodeAutoApproveEnabled()
           ? '当前为自动审核：上传/发布后默认通过，可直接用于发起训练（READY + APPROVED）'
-          : '训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段'
+          : '当前已开启管理员审核：中高风险需待审通过；低风险可能被策略自动通过。训练仅可使用 READY + APPROVED 版本'
       }
       extra={[
-        access.isAdmin && !isTrainingCodeAutoApproveEnabled() ? (
+        access.isAdmin ? (
           <Button
             key="pending"
             onClick={() => history.push('/task/code/pending')}

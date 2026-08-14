@@ -35,6 +35,7 @@ import {
   fetchAdminCodeFindings,
   fetchPendingCodeReviewTasks,
   getAdminCodeReviewDetail,
+  getCodeUserDisplayName,
   listAdminCodeReviewFiles,
   previewAdminCodeReviewFile,
   rejectCodeVersion,
@@ -205,10 +206,9 @@ const TrainingCodePending: React.FC = () => {
     }
 
     const remoteIds = new Set(remote.map((item) => item.codeVersionId));
-    const manualOnly =
+    const localOnly =
       current === 1 && approvalStatus === 'PENDING'
         ? listPendingCodeVersions()
-            .filter((item) => item.source === 'manual')
             .filter((item) => {
               const status = String(
                 item.approvalStatus || 'PENDING',
@@ -218,11 +218,11 @@ const TrainingCodePending: React.FC = () => {
             .map(manualRecordToRow)
         : [];
 
-    const data = [...manualOnly, ...remote];
+    const data = [...localOnly, ...remote];
     return {
       data,
       success: true,
-      total: total + manualOnly.length,
+      total: total + localOnly.length,
     };
   };
 
@@ -527,23 +527,25 @@ const TrainingCodePending: React.FC = () => {
     {
       title: '代码名称',
       dataIndex: 'codeAssetName',
-      ellipsis: true,
       hideInSearch: true,
-      render: (_, r) => r.codeAssetName || '-',
+      ellipsis: false,
+      onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
+      render: (_, r) => getCodeUserDisplayName(r),
     },
     {
       title: '文件名',
       dataIndex: 'fileName',
-      ellipsis: true,
       hideInSearch: true,
+      ellipsis: false,
+      onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
       render: (_, r) => r.fileName || '-',
     },
     {
       title: '训练方案',
       dataIndex: 'trainingProfile',
-      ellipsis: true,
       hideInSearch: true,
-      width: 200,
+      ellipsis: false,
+      onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
       render: (_, r) => r.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
     },
     {
@@ -736,8 +738,13 @@ const TrainingCodePending: React.FC = () => {
             <Typography.Text code>
               GET /api/v2/admin/code-review-tasks
             </Typography.Text>
-            ；通过/拒绝会携带四个 expected*
-            审批证据。重扫与制品升级为运维操作。当前管理员：
+            ，队列为空时会再按代码资产名称兜底。通过/拒绝会携带四个 expected*
+            审批证据。重扫与制品升级为运维操作。若刚上传却看不到用户填写的名称，请把审核状态改成
+            APPROVED 试一次（低风险可能被自动通过），或到{' '}
+            <a onClick={() => history.push('/task/code/admin-assets')}>
+              代码资产管理
+            </a>{' '}
+            按名称搜索。当前管理员：
             {initialState?.currentUser?.name ||
               initialState?.currentUser?.userid ||
               '-'}
@@ -751,7 +758,8 @@ const TrainingCodePending: React.FC = () => {
         rowKey="codeVersionId"
         search={{ labelWidth: 'auto' }}
         pagination={{ pageSize: 10, showSizeChanger: true }}
-        scroll={{ x: 1400 }}
+        tableLayout="auto"
+        scroll={{ x: 'max-content' }}
         toolBarRender={() => [
           <Button key="reload" onClick={() => actionRef.current?.reload()}>
             刷新
