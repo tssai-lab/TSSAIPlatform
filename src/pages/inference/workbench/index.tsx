@@ -55,6 +55,16 @@ import {
   uploadObject,
 } from '@/services/platform';
 
+/**
+ * 推理工作台
+ *
+ * - 上方：选择模型 / 脚本 / 输入并创建任务
+ * - 中部：任务列表（轮询状态）、脚本列表
+ * - 右侧抽屉「推理结果」：摘要、下载、运行日志（xterm）、结构化结果与可视化
+ *
+ * 日志正文经任务 `logPath` 走文件下载；结果摘要用 `getInferenceTaskResult`。
+ */
+
 const { TextArea } = Input;
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
@@ -93,6 +103,7 @@ function parseJson(text?: string) {
   return value as Record<string, unknown>;
 }
 
+/** 由 outputPath 拼出 result.json 的 objectName，供「下载结果」 */
 function minioPathToResultObject(outputPath?: string | null) {
   const objectName = objectNameFromMinioPath(outputPath);
   if (!objectName) return '';
@@ -127,6 +138,7 @@ const InferenceWorkbench: React.FC = () => {
   const sourceDatasetVersionId = searchParams.get('datasetVersionId') || '';
   const sourceTrainingProfile = searchParams.get('trainingProfile') || '';
 
+  // 模型 / 数据集 / 脚本下拉选项（创建任务用）
   const [modelOptions, setModelOptions] = useState<any[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<any[]>([]);
   const [scriptOptions, setScriptOptions] = useState<InferenceScriptVersion[]>(
@@ -144,6 +156,7 @@ const InferenceWorkbench: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<InferenceTask>();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  /** 打开结果抽屉，并拉取最新 result / logPath / outputPath */
   const openTaskResult = async (task: InferenceTask) => {
     setSelectedTask(task);
     setDrawerOpen(true);
@@ -161,7 +174,7 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
-  // 结果抽屉打开且任务未结束时，刷新状态 / logPath，供日志终端轮询追加
+  // 抽屉打开且任务未终态时，定时刷新结果摘要（供进度与运行日志更新）
   useEffect(() => {
     if (!drawerOpen || !selectedTask?.id) return;
     const running = ['pending', 'queued', 'scheduled', 'running'].includes(
@@ -325,6 +338,7 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
+  /** 创建推理任务；单文件模式会先 uploadObject 再提交 */
   const handleCreateTask = async () => {
     const values = await taskForm.validateFields();
     setCreating(true);
@@ -443,6 +457,7 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
+  /** MinIO objectName → 浏览器下载（结果 JSON、日志、可视化配图共用） */
   const downloadByObjectName = async (objectName: string, filename: string) => {
     if (!objectName) {
       message.warning('暂无可下载文件');
@@ -937,6 +952,7 @@ const InferenceWorkbench: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* 结果抽屉：任务摘要 + 下载 + 运行日志 + 结构化/可视化结果 */}
       <Drawer
         title="推理结果"
         open={drawerOpen}

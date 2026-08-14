@@ -1,6 +1,17 @@
 import { request } from '@umijs/max';
 
+/**
+ * 推理服务。
+ *
+ * 对接后端 `/api/inference/**`：推理脚本版本、推理任务 CRUD / 停止 / 重试、任务结果。
+ * 运行日志与结果文件本体不在本文件下载，经任务上的 `logPath` / `outputPath`
+ * 转为 objectName 后走 `files.ts` 的 `/files/download`。
+ */
+
+/** 推理输入方式：单文件对象 或 数据集版本 */
 export type InferenceInputMode = 'SINGLE_OBJECT' | 'DATASET_VERSION';
+
+/** 推理任务生命周期状态 */
 export type InferenceTaskStatus =
   | 'pending'
   | 'queued'
@@ -10,6 +21,7 @@ export type InferenceTaskStatus =
   | 'failed'
   | 'stopped';
 
+/** 推理脚本某一版本的元数据 */
 export type InferenceScriptVersion = {
   id: string;
   assetId: string;
@@ -19,13 +31,16 @@ export type InferenceScriptVersion = {
   storagePath?: string;
   sizeBytes?: number;
   runtime: 'PYTHON3' | string;
+  /** 包内入口文件，如 main.py */
   entryFile: string;
+  /** 创建任务时参数表单的 JSON Schema */
   paramsSchema?: Record<string, unknown>;
   status?: string;
   ownerUserId?: number;
   createdAt?: string;
 };
 
+/** 上传脚本 ZIP 成功后的返回摘要 */
 export type InferenceScriptUploadResult = {
   scriptAssetId: string;
   scriptVersionId: string;
@@ -40,6 +55,7 @@ export type InferenceScriptUploadResult = {
   status?: string;
 };
 
+/** 推理任务（列表 / 详情完整结构） */
 export type InferenceTask = {
   id: string;
   name: string;
@@ -47,6 +63,7 @@ export type InferenceTask = {
   scriptVersionId: string;
   inputMode: InferenceInputMode | string;
   datasetVersionId?: string | null;
+  /** SINGLE_OBJECT 时的输入对象路径 */
   inputObjectName?: string | null;
   params?: Record<string, unknown>;
   status: InferenceTaskStatus | string;
@@ -56,8 +73,14 @@ export type InferenceTask = {
   maxRetries?: number;
   retryable?: boolean;
   lastRetryAt?: string | null;
+  /** 结构化结果摘要，供结果可视化使用 */
   result?: Record<string, unknown>;
+  /**
+   * 运行日志 MinIO 路径。有值后可下载或在结果抽屉「运行日志」中整文件预览；
+   * 本期无 `/inference/tasks/{id}/logs` 增量接口。
+   */
   logPath?: string | null;
+  /** 输出目录 MinIO 路径；结果 JSON / 可视化媒体多相对此路径 */
   outputPath?: string | null;
   errorMessage?: string | null;
   startedAt?: string | null;
@@ -68,6 +91,7 @@ export type InferenceTask = {
   updatedAt?: string;
 };
 
+/** 任务结果摘要（GET .../result 返回字段子集） */
 export type InferenceTaskResult = Pick<
   InferenceTask,
   | 'id'
@@ -84,6 +108,7 @@ export type InferenceTaskResult = Pick<
   | 'errorMessage'
 >;
 
+/** 创建推理任务请求体 */
 export type CreateInferenceTaskBody = {
   name: string;
   modelVersionId: string;
@@ -95,6 +120,7 @@ export type CreateInferenceTaskBody = {
   remark?: string;
 };
 
+/** 推理任务分页列表 */
 export type InferenceTaskPage = {
   data: InferenceTask[];
   total: number;
@@ -103,6 +129,7 @@ export type InferenceTaskPage = {
   totalPages: number;
 };
 
+/** 将字节数格式化为可读字符串（B / KB / MB…） */
 export function formatBytes(sizeBytes?: number) {
   if (sizeBytes === undefined || sizeBytes === null || Number.isNaN(sizeBytes)) {
     return '-';
@@ -120,6 +147,10 @@ export function formatBytes(sizeBytes?: number) {
   return `${value.toFixed(2)} ${units[unitIndex]}`;
 }
 
+/**
+ * 将 `minio://...` 或带 bucket 前缀的路径转为 `/files/download` 可用的 objectName。
+ * 下载日志、结果文件、可视化配图前都会用到。
+ */
 export function objectNameFromMinioPath(path?: string | null) {
   if (!path) return '';
   const clean = path.trim();
@@ -137,6 +168,10 @@ export function objectNameFromMinioPath(path?: string | null) {
   return withoutScheme;
 }
 
+/**
+ * 上传推理脚本 ZIP，登记为新的脚本版本。
+ * POST `/inference/scripts/upload`（multipart）。
+ */
 export async function uploadInferenceScript(
   body: {
     file: File;
@@ -168,6 +203,7 @@ export async function uploadInferenceScript(
   });
 }
 
+/** 列出可用推理脚本版本。GET `/inference/scripts` */
 export async function listInferenceScripts(options?: { [key: string]: unknown }) {
   return request<{ data: InferenceScriptVersion[] }>('/inference/scripts', {
     method: 'GET',
@@ -175,6 +211,7 @@ export async function listInferenceScripts(options?: { [key: string]: unknown })
   });
 }
 
+/** 按版本 ID 获取脚本详情。GET `/inference/scripts/{versionId}` */
 export async function getInferenceScript(versionId: string, options?: { [key: string]: unknown }) {
   return request<{ data: InferenceScriptVersion }>(
     `/inference/scripts/${encodeURIComponent(versionId)}`,
@@ -185,6 +222,7 @@ export async function getInferenceScript(versionId: string, options?: { [key: st
   );
 }
 
+/** 创建推理任务。POST `/inference/tasks` */
 export async function createInferenceTask(
   body: CreateInferenceTaskBody,
   options?: { [key: string]: unknown },
@@ -197,6 +235,7 @@ export async function createInferenceTask(
   });
 }
 
+/** 分页查询推理任务。GET `/inference/tasks` */
 export async function listInferenceTasks(
   params?: { page?: number; pageSize?: number; status?: string },
   options?: { [key: string]: unknown },
@@ -208,6 +247,7 @@ export async function listInferenceTasks(
   });
 }
 
+/** 获取推理任务详情。GET `/inference/tasks/{id}` */
 export async function getInferenceTask(id: string, options?: { [key: string]: unknown }) {
   return request<{ data: InferenceTask }>(`/inference/tasks/${encodeURIComponent(id)}`, {
     method: 'GET',
@@ -215,6 +255,7 @@ export async function getInferenceTask(id: string, options?: { [key: string]: un
   });
 }
 
+/** 停止运行中的推理任务。POST `/inference/tasks/{id}/stop` */
 export async function stopInferenceTask(id: string, options?: { [key: string]: unknown }) {
   return request<{ data: InferenceTask }>(
     `/inference/tasks/${encodeURIComponent(id)}/stop`,
@@ -225,6 +266,7 @@ export async function stopInferenceTask(id: string, options?: { [key: string]: u
   );
 }
 
+/** 重试失败且可重试的推理任务。POST `/inference/tasks/{id}/retry` */
 export async function retryInferenceTask(id: string, options?: { [key: string]: unknown }) {
   return request<{ data: InferenceTask }>(
     `/inference/tasks/${encodeURIComponent(id)}/retry`,
@@ -235,6 +277,7 @@ export async function retryInferenceTask(id: string, options?: { [key: string]: 
   );
 }
 
+/** 删除任务接口返回：是否已删、MinIO 清理是否入队等 */
 export type DeleteInferenceTaskResult = {
   id: string;
   deleted: boolean;
@@ -242,6 +285,7 @@ export type DeleteInferenceTaskResult = {
   queuedObjectCount?: number;
 };
 
+/** 删除推理任务。DELETE `/inference/tasks/{id}` */
 export async function deleteInferenceTask(
   id: string,
   options?: { [key: string]: unknown },
@@ -255,6 +299,7 @@ export async function deleteInferenceTask(
   );
 }
 
+/** 删除脚本版本接口返回 */
 export type DeleteInferenceScriptResult = {
   id: string;
   assetId: string;
@@ -263,6 +308,7 @@ export type DeleteInferenceScriptResult = {
   minioDeleteQueued?: boolean;
 };
 
+/** 删除推理脚本版本。DELETE `/inference/scripts/{versionId}` */
 export async function deleteInferenceScript(
   versionId: string,
   options?: { [key: string]: unknown },
@@ -276,6 +322,11 @@ export async function deleteInferenceScript(
   );
 }
 
+/**
+ * 获取推理任务结果摘要（状态、进度、result、logPath、outputPath 等）。
+ * GET `/inference/tasks/{id}/result`
+ * 打开结果抽屉时调用；日志正文仍需按 logPath 走文件下载。
+ */
 export async function getInferenceTaskResult(
   id: string,
   options?: { [key: string]: unknown },
