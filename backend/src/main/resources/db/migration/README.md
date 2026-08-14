@@ -11,7 +11,7 @@ Flyway repair 或重新基线化。
 
 ## 当前迁移总览
 
-当前已使用的最高迁移版本为 `V57`。V1-V30 是本分支已有的连续基础链路；
+当前已使用的最高迁移版本为 `V60`。V1-V30 是本分支已有的连续基础链路；
 服务器分支已使用 V31-V40（其中 V35 当前无迁移文件），V41 在该服务器迁移链之后
 补充模型版本完整性与生命周期结构，V42 增加训练代码审核模式配置及其显式审批证据。
 合并后的全部已用迁移均应保留。
@@ -65,6 +65,9 @@ Flyway repair 或重新基线化。
 | V45 | 管理员训练代码管理审计 | 跨 owner 管理操作审计 |
 | V56 | Kubernetes Pod/Job 配额与 Job TTL | 超级管理员资源策略 |
 | V57 | 在线训练方案单表、不可变版本与单活动版本约束 | 训练方案 YAML 管理 |
+| V58 | 资产规范证据 | 训练候选准入证据 |
+| V59 | 增加 OTHER 资产类型 | 未分类目录 |
+| V60 | 演示资产标记 `is_demo` | 全局共享只读资产 |
 
 其中服务器迁移链从 `V31__training_produced_model.sql` 开始，V31-V40 已存在于
 待合并的服务器分支。服务器的
@@ -307,6 +310,14 @@ Flyway repair 或重新基线化。
 - 仅重建模型资产、数据集资产和数据集上传会话的既有类型 CHECK，并增加 OTHER。
 - 不增加或删除字段，不修改历史数据；现有 CV/NLP/点云/机器人/LeRobot/多模态值保持有效。
 - OTHER 只是未分类目录，不放宽上传安全校验，不自动产生 `artifact_spec_id` 或训练资格。
+
+## V60__add_is_demo.sql
+
+- 为 `dataset_asset`、`model_asset`、`code_asset`、`inference_script_asset` 四张资产表增加
+  `is_demo BOOLEAN NOT NULL DEFAULT FALSE`。
+- 演示资产由超级管理员通过 `PUT /api/v2/admin/demo-assets/{type}/{assetId}` 标记；标记时
+  资产及其所有版本的 `owner_user_id` 迁移到系统账户 `0`，对所有用户可见、只读。
+- 版本表不增加 `is_demo`，靠 `owner_user_id = 0` 达成查询与访问放行。
 
 ## 维护规则
 

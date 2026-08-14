@@ -151,7 +151,8 @@ public class InferenceScriptService {
     public List<InferenceScriptVersionDto> listScripts() {
         List<InferenceScriptVersion> versions = authContext.isAdmin()
                 ? versionRepo.findByDeletedFalseOrderByCreatedAtDesc()
-                : versionRepo.findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(authContext.currentUserId());
+                : versionRepo.findByOwnerUserIdInAndDeletedFalseOrderByCreatedAtDesc(
+                        List.of(authContext.currentUserId(), AuthContext.SYSTEM_USER_ID));
         Map<String, InferenceScriptAsset> assets = assetRepo.findAllById(
                         versions.stream().map(InferenceScriptVersion::getAssetId).toList()
                 )
@@ -182,6 +183,9 @@ public class InferenceScriptService {
             ownerUserId = asset.getOwnerUserId();
         }
         authContext.requireOwnerAccess(ownerUserId, "推理脚本版本不存在或无权限");
+        if (asset != null) {
+            authContext.rejectDemoWrite(asset.getIsDemo());
+        }
 
         long taskReferences = taskRepo.countByScriptVersionId(version.getId());
         if (taskReferences > 0) {
@@ -237,6 +241,7 @@ public class InferenceScriptService {
         dto.setParamsSchema(fromJson(version.getParamsSchemaJson()));
         dto.setStatus(version.getStatus());
         dto.setOwnerUserId(version.getOwnerUserId());
+        dto.setIsDemo(asset != null && Boolean.TRUE.equals(asset.getIsDemo()));
         dto.setCreatedAt(version.getCreatedAt());
         return dto;
     }

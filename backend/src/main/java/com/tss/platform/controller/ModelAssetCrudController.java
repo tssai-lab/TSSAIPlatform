@@ -103,6 +103,7 @@ public class ModelAssetCrudController {
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             return ApiResponse.fail("no permission: " + id);
         }
+        authContext.rejectDemoWrite(asset.getIsDemo());
         if (body == null) {
             throw new AssetNameValidationException("request body cannot be empty");
         }

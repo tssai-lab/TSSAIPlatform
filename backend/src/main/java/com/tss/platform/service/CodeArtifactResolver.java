@@ -59,10 +59,14 @@ public class CodeArtifactResolver {
                 .orElseThrow(CodeAssetAccessException::new);
         CodeAsset asset = assetRepository.findByIdAndDeletedFalse(version.getAssetId())
                 .orElseThrow(CodeAssetAccessException::new);
-        if (asset.getOwnerUserId() == null
+        boolean isDemo = Boolean.TRUE.equals(asset.getIsDemo());
+        // 演示代码为平台预置、已验证审批的可信样例：跳过"使用者==拥有者"强绑定，对全平台共享；
+        // 校验/审批/风险证据链校验仍完整保留。
+        if (!isDemo
+                && (asset.getOwnerUserId() == null
                 || !consumerOwnerId.equals(asset.getOwnerUserId())
                 || !Objects.equals(asset.getOwnerUserId(), version.getOwnerUserId())
-                || !Objects.equals(asset.getId(), version.getAssetId())) {
+                || !Objects.equals(asset.getId(), version.getAssetId()))) {
             throw new CodeAssetAccessException();
         }
 
@@ -110,11 +114,19 @@ public class CodeArtifactResolver {
         String prefix = "users/" + consumerOwnerId
                 + "/codes/" + asset.getId()
                 + "/versions/" + version.getId() + "/";
-        String leaf = storagePath != null && storagePath.startsWith(prefix)
-                ? storagePath.substring(prefix.length())
-                : null;
+        String leaf;
+        if (isDemo) {
+            // 演示代码存储路径归属系统账户（非当前使用者），取最后一段文件名做路径健全性校验
+            leaf = storagePath != null && storagePath.contains("/")
+                    ? storagePath.substring(storagePath.lastIndexOf('/') + 1)
+                    : null;
+        } else {
+            leaf = storagePath != null && storagePath.startsWith(prefix)
+                    ? storagePath.substring(prefix.length())
+                    : null;
+        }
         require(storagePath != null
-                        && storagePath.startsWith(prefix)
+                        && !storagePath.isBlank()
                         && leaf != null
                         && !leaf.isBlank()
                         && !leaf.contains("/")

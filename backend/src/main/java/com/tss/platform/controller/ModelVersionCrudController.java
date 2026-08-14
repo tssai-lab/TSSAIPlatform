@@ -78,6 +78,7 @@ public class ModelVersionCrudController {
         if (asset == null || !authContext.canAccessOwner(asset.getOwnerUserId())) {
             return ApiResponse.fail("not found or no permission: " + assetId);
         }
+        authContext.rejectDemoWrite(asset.getIsDemo());
         if (repo.existsByAssetIdAndVersion(assetId, versionName)) {
             return ApiResponse.fail("model version already exists for asset: " + assetId);
         }

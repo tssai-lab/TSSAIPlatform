@@ -22,4 +22,6 @@ public class V2DatasetListItem {
     private Integer importProgress;
     private List<String> availableActions;
     private V2UserError userError;
+    /** 演示资产：全局共享、只读 */
+    private Boolean isDemo;
 }

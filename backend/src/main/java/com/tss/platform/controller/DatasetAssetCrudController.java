@@ -117,6 +117,7 @@ public class DatasetAssetCrudController {
         if (!authContext.canAccessOwner(e.getOwnerUserId())) {
             return ApiResponse.fail("no permission: " + id);
         }
+        authContext.rejectDemoWrite(e.getIsDemo());
         if (body == null) {
             throw new AssetNameValidationException("request body cannot be empty");
         }
@@ -161,6 +162,7 @@ public class DatasetAssetCrudController {
         if (existing.isEmpty() || !authContext.canAccessOwner(existing.get().getOwnerUserId())) {
             return ApiResponse.fail("not found or no permission: " + id);
         }
+        authContext.rejectDemoWrite(existing.get().getIsDemo());
         String versionId = body == null ? null : body.get("versionId");
         if (versionId == null || versionId.isBlank()) {
             return ApiResponse.fail("versionId cannot be empty");
@@ -190,6 +192,7 @@ public class DatasetAssetCrudController {
             auditHooks.delete(AuditObjectType.DATASET, id, "DATASET_DELETE", false, "not found or no permission");
             return ApiResponse.fail("not found or no permission: " + id);
         }
+        authContext.rejectDemoWrite(existing.get().getIsDemo());
 
         List<DatasetVersion> versions = versionRepo.findByAssetId(id);
         List<String> versionIds = versions.stream().map(DatasetVersion::getId).toList();

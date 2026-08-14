@@ -135,6 +135,7 @@ public class V2DatasetCatalogService {
                 statusJob,
                 objectMapper
         ));
+        item.setIsDemo(catalogItem.asset().getIsDemo());
         return item;
     }
 

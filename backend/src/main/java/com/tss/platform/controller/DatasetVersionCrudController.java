@@ -77,6 +77,7 @@ public class DatasetVersionCrudController {
         if (!authContext.canAccessOwner(ownerUserId)) {
             return ApiResponse.fail("no permission for asset: " + body.getAssetId());
         }
+        authContext.rejectDemoWrite(asset.get().getIsDemo());
         if (!authContext.isAdmin()) {
             return ApiResponse.fail("dataset versions must be created by upload service");
         }
@@ -193,6 +194,10 @@ public class DatasetVersionCrudController {
         if (!authContext.canAccessOwner(ownerUserId)) {
             return ApiResponse.fail("no permission for asset: " + targetAssetId);
         }
+        DatasetAsset parentAsset = assetRepo.findByIdAndDeletedFalse(targetAssetId).orElse(null);
+        if (parentAsset != null) {
+            authContext.rejectDemoWrite(parentAsset.getIsDemo());
+        }
         if (repo.existsByAssetIdAndVersionAndIdNot(targetAssetId, targetVersion, id)) {
             return ApiResponse.fail("dataset version already exists for asset: " + targetAssetId);
         }
@@ -220,6 +225,7 @@ public class DatasetVersionCrudController {
         if (asset == null) {
             return ApiResponse.fail("dataset version parent asset not found or deleted: " + version.getAssetId());
         }
+        authContext.rejectDemoWrite(asset.getIsDemo());
         String status = body == null ? null : body.get("status");
         String targetStatus;
         try {
@@ -257,6 +263,7 @@ public class DatasetVersionCrudController {
             log.warn("Reject dataset version delete because parent asset is missing or deleted: id={}, assetId={}", id, version.getAssetId());
             return ApiResponse.fail("dataset version parent asset not found or deleted: " + version.getAssetId());
         }
+        authContext.rejectDemoWrite(asset.getIsDemo());
         Integer ownerUserId = version.getOwnerUserId() != null ? version.getOwnerUserId() : asset.getOwnerUserId();
         if (id.equals(asset.getCurrentVersionId())) {
             log.warn("Reject dataset version delete because it is current version: id={}", id);

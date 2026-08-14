@@ -37,7 +37,7 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
             join ModelAsset a on a.id = v.assetId
             where v.deleted = false
               and a.deleted = false
-              and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+              and (:ownerUserId is null or a.isDemo = true or a.ownerUserId = :ownerUserId)
               and (:type is null or a.type = :type)
               and (
                     :keyword is null
@@ -59,7 +59,7 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
               and a.deleted = false
               and v.status = 'READY'
               and v.artifactSpecId in :artifactSpecIds
-              and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+              and (:ownerUserId is null or a.isDemo = true or a.ownerUserId = :ownerUserId)
               and (:type is null or a.type = :type)
               and (
                     :keyword is null

@@ -22,6 +22,9 @@ public interface CodeAssetRepository extends JpaRepository<CodeAsset, String>,
 
     List<CodeAsset> findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(Integer ownerUserId);
 
+    /** 演示训练代码：全局共享、只读 */
+    List<CodeAsset> findByIsDemoTrueAndDeletedFalseOrderByCreatedAtDesc();
+
     @Query("""
             select (count(a) > 0)
             from CodeAsset a

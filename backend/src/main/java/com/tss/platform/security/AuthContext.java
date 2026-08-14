@@ -6,6 +6,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class AuthContext {
 
+    /**
+     * 系统/演示资产归属账户 ID。is_demo 资产的 ownerUserId 迁移到该值，
+     * 表示"全局共享、只读"，任何登录用户可读但不可写。
+     */
+    public static final Integer SYSTEM_USER_ID = 0;
+
     public Integer currentUserId() {
         return StpUtil.getLoginIdAsInt();
     }
@@ -43,7 +49,16 @@ public class AuthContext {
     }
 
     public boolean canAccessOwner(Integer ownerUserId) {
-        return isAdmin() || (ownerUserId != null && ownerUserId.equals(currentUserId()));
+        return isAdmin()
+                || SYSTEM_USER_ID.equals(ownerUserId)
+                || (ownerUserId != null && ownerUserId.equals(currentUserId()));
+    }
+
+    /** 演示资产对所有用户可读；普通用户写演示资产一律拒绝（仅管理员可管理） */
+    public void rejectDemoWrite(Boolean isDemo) {
+        if (Boolean.TRUE.equals(isDemo) && !isAdmin()) {
+            throw new IllegalArgumentException("演示资产只读，不可修改");
+        }
     }
 
     public void requireOwnerAccess(Integer ownerUserId, String message) {
@@ -56,9 +71,16 @@ public class AuthContext {
         if (isAdmin()) {
             return true;
         }
-        return objectName != null
-                && ownerUserId != null
-                && ownerUserId.equals(currentUserId())
+        if (objectName == null || ownerUserId == null) {
+            return false;
+        }
+        if (SYSTEM_USER_ID.equals(ownerUserId)) {
+            // 演示资产对象全局可读。owner 0 仅由服务端为演示资产设置（标记时归属迁移），
+            // 对象物理路径保留原归属前缀（users/{原owner}/...），故不做前缀约束；
+            // 下载端点的 objectName 取自资产/版本 DB 的 storagePath，非客户端注入。
+            return objectName != null && !objectName.isBlank();
+        }
+        return ownerUserId.equals(currentUserId())
                 && objectName.startsWith(userPrefix(ownerUserId));
     }
 

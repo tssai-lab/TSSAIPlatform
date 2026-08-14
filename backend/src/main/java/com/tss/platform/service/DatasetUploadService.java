@@ -2184,6 +2184,7 @@ public class DatasetUploadService {
         if (!authContext.canAccessOwner(asset.getOwnerUserId())) {
             throw new IllegalArgumentException("no permission for asset: " + assetId);
         }
+        authContext.rejectDemoWrite(asset.getIsDemo());
         String assetTaskType = DatasetTaskType.normalize(asset.getType());
         if (!taskType.equals(assetTaskType)) {
             throw new IllegalArgumentException("dataset asset type mismatch");

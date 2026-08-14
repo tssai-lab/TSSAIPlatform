@@ -137,6 +137,7 @@ public class ModelController {
         item.put("type", asset != null ? asset.getType() : null);
         item.put("remark", asset != null ? asset.getRemark() : null);
         item.put("ownerUserId", version.getOwnerUserId());
+        item.put("isDemo", asset != null && Boolean.TRUE.equals(asset.getIsDemo()));
         item.put("fileName", version.getFileName());
         item.put("sizeBytes", version.getSizeBytes());
         item.put("artifactSha256", version.getArtifactSha256());
@@ -173,6 +174,7 @@ public class ModelController {
         item.put("type", a.map(ModelAsset::getType).orElse(null));
         item.put("remark", a.map(ModelAsset::getRemark).orElse(null));
         item.put("ownerUserId", ver.getOwnerUserId());
+        item.put("isDemo", a.map(ModelAsset::getIsDemo).orElse(false));
         item.put("fileName", ver.getFileName());
         item.put("sizeBytes", ver.getSizeBytes());
         item.put("artifactSha256", ver.getArtifactSha256());

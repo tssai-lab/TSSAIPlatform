@@ -75,7 +75,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                     select a
                     from DatasetAsset a
                     where a.deleted = false
-                      and a.ownerUserId = :ownerUserId
+                      and (a.isDemo = true or a.ownerUserId = :ownerUserId)
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
@@ -87,7 +87,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                     select count(a)
                     from DatasetAsset a
                     where a.deleted = false
-                      and a.ownerUserId = :ownerUserId
+                      and (a.isDemo = true or a.ownerUserId = :ownerUserId)
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
@@ -111,7 +111,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and v.deleted = false
                       and v.status = 'READY'
                       and v.artifactSpecId in :artifactSpecIds
-                      and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+                      and (:ownerUserId is null or a.isDemo = true or a.ownerUserId = :ownerUserId)
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
@@ -127,7 +127,7 @@ public interface DatasetAssetRepository extends JpaRepository<DatasetAsset, Stri
                       and v.deleted = false
                       and v.status = 'READY'
                       and v.artifactSpecId in :artifactSpecIds
-                      and (:ownerUserId is null or a.ownerUserId = :ownerUserId)
+                      and (:ownerUserId is null or a.isDemo = true or a.ownerUserId = :ownerUserId)
                       and (:type is null or a.type = :type)
                       and (
                             :keyword is null
