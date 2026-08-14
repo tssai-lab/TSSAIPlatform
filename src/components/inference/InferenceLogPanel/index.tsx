@@ -137,17 +137,26 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
   return (
     <div>
       <Space
-        align="center"
+        align="start"
         style={{
           width: '100%',
           justifyContent: 'space-between',
           marginBottom: 8,
         }}
       >
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          运行日志
-        </Typography.Title>
-        <Space size={4}>
+        <div>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            运行日志
+          </Typography.Title>
+          <Typography.Paragraph
+            type="secondary"
+            style={{ margin: '4px 0 0', fontSize: 13 }}
+          >
+            展示本任务的推理运行日志。体积不超过约 1MB
+            时为完整内容；过大时仅预览末尾，完整文件请点上方「下载日志」。
+          </Typography.Paragraph>
+        </div>
+        <Space size={4} style={{ flexShrink: 0 }}>
           <Button
             type="text"
             size="small"
