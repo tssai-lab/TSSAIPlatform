@@ -14,10 +14,10 @@ public class V2ModelUploadInitRequest {
     private String modelName;
     private String modelVersion;
     @Schema(
-            description = "上传者声明的模型任务类型（CV、NLP、POINT_CLOUD 或 ROBOT）；"
-                    + "服务端不从权重二进制内容推断或校验实际模态",
+            description = "上传者声明的模型目录类别（CV、NLP、POINT_CLOUD、ROBOT 或 OTHER）；"
+                    + "OTHER 仅表示未分类，不放宽文件安全校验，也不自动取得训练资格",
             example = "CV",
-            allowableValues = {"CV", "NLP", "POINT_CLOUD", "ROBOT"}
+            allowableValues = {"CV", "NLP", "POINT_CLOUD", "ROBOT", "OTHER"}
     )
     private String taskType;
     private String remark;

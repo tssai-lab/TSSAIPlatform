@@ -104,6 +104,26 @@ class SingleModalImportPlanBuilderTest {
     }
 
     @Test
+    void indexesOtherFilesBySafeContentKindWithoutGrantingATrainingType() {
+        ManifestImportPlan plan = builder.build(
+                "OTHER",
+                List.of(
+                        entry("archive/image.png"),
+                        entry("archive/scan.ply"),
+                        entry("archive/notes.yaml")
+                ),
+                0
+        );
+
+        assertEquals(
+                List.of("IMAGE", "TEXT", "POINT_CLOUD"),
+                plan.samples().stream()
+                        .map(sample -> sample.data().get(0).dataType())
+                        .toList()
+        );
+    }
+
+    @Test
     void rejectsEmptySingleModalZip() {
         assertThrows(
                 ManifestValidationException.class,

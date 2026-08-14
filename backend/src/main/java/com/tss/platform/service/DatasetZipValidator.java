@@ -61,6 +61,11 @@ final class DatasetZipValidator {
     private static final Set<String> LEROBOT_ZIP_ALLOWED_EXTENSIONS = Set.of(
             ".json", ".jsonl", ".parquet", ".mp4", ".mkv", ".txt", ".md"
     );
+    private static final Set<String> OTHER_ALLOWED_EXTENSIONS = Set.of(
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff",
+            ".txt", ".json", ".jsonl", ".csv", ".xlsx", ".xls", ".pdf", ".docx",
+            ".xml", ".yaml", ".yml", ".ply", ".pcd", ".parquet", ".mp4", ".mkv", ".md"
+    );
     private static final Set<String> LEROBOT_REPOSITORY_METADATA_FILES = Set.of(
             ".gitattributes"
     );
@@ -246,6 +251,14 @@ final class DatasetZipValidator {
             }
             return;
         }
+        if ("OTHER".equals(taskType)) {
+            if (!lower.endsWith(".zip") && !OTHER_ALLOWED_EXTENSIONS.contains(extensionOf(lower))) {
+                throw new IllegalArgumentException(
+                        "OTHER dataset only supports the platform safe file allowlist or zip containing those files"
+                );
+            }
+            return;
+        }
         if ("MULTIMODAL".equals(taskType) && !lower.endsWith(".zip")) {
             throw new IllegalArgumentException("MULTIMODAL 数据集仅支持 zip 压缩包");
         }
@@ -388,6 +401,13 @@ final class DatasetZipValidator {
                                 || (path.startsWith("videos/")
                                 && (path.endsWith(".mp4") || path.endsWith(".mkv")));
                         found = true;
+                    } else if ("OTHER".equals(taskType)) {
+                        if (!OTHER_ALLOWED_EXTENSIONS.contains(ext)) {
+                            throw new IllegalArgumentException(
+                                    "OTHER zip dataset contains an unsupported file: " + entryName
+                            );
+                        }
+                        found = true;
                     } else {
                         throw new IllegalArgumentException(taskType + " zip dataset format is not supported");
                     }
@@ -480,6 +500,9 @@ final class DatasetZipValidator {
             }
             if ("LEROBOT".equals(taskType)) {
                 throw new IllegalArgumentException("LEROBOT zip does not contain supported LeRobot dataset files");
+            }
+            if ("OTHER".equals(taskType)) {
+                throw new IllegalArgumentException("OTHER zip dataset must contain at least one safe supported file");
             }
         }
         return new ZipValidation(files, Set.copyOf(paths));
