@@ -1,5 +1,7 @@
 package com.tss.platform.training.plan;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.asset.spec.ArtifactSpecRegistry;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -9,7 +11,10 @@ class TrainingPlanRegistryTest {
 
     @Test
     void loadsBuiltInPlansWithTheirDeclaredExecutionContracts() {
-        TrainingPlanRegistry registry = new TrainingPlanRegistry(new TrainingPlanValidator());
+        TrainingPlanRegistry registry = new TrainingPlanRegistry(
+                new TrainingPlanValidator(new ArtifactSpecRegistry()),
+                new TrainingPlanYamlParser()
+        );
         registry.initialize();
 
         TrainingPlanDefinition yolo = registry.requireEnabled("yolo_object_detection", "v1");
@@ -32,5 +37,22 @@ class TrainingPlanRegistryTest {
                 .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
                 .findFirst().orElseThrow().path());
         assertTrue(huggingFace.inputs().dataset().annotationFormats().contains("FOLDER_CLASSIFICATION"));
+    }
+
+    @Test
+    void additiveV2FieldsDoNotChangeSerializedV1ApiShape() throws Exception {
+        TrainingPlanRegistry registry = new TrainingPlanRegistry(
+                new TrainingPlanValidator(new ArtifactSpecRegistry()),
+                new TrainingPlanYamlParser()
+        );
+        registry.initialize();
+
+        String json = new ObjectMapper().writeValueAsString(
+                registry.requireEnabled("hf_image_classification", "v1")
+        );
+
+        assertTrue(!json.contains("\"category\""));
+        assertTrue(!json.contains("\"acceptedSpecIds\""));
+        assertTrue(!json.contains("\"publishedModelSpecId\""));
     }
 }

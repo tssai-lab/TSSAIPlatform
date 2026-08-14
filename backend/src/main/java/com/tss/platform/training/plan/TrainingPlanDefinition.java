@@ -1,5 +1,7 @@
 package com.tss.platform.training.plan;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.util.List;
 import java.util.Map;
 
@@ -9,6 +11,7 @@ public record TrainingPlanDefinition(
         String version,
         String displayName,
         String description,
+        @JsonInclude(JsonInclude.Include.NON_NULL) PlanCategory category,
         Boolean enabled,
         String unavailableReason,
         List<TrainingMode> trainingModes,
@@ -28,6 +31,7 @@ public record TrainingPlanDefinition(
             String description,
             Boolean enabled,
             String unavailableReason,
+            List<TrainingMode> trainingModes,
             Execution execution,
             Inputs inputs,
             List<Parameter> parameters,
@@ -35,8 +39,33 @@ public record TrainingPlanDefinition(
             Outputs outputs,
             Security security
     ) {
-        this(schemaVersion, id, version, displayName, description, enabled, unavailableReason,
+        this(schemaVersion, id, version, displayName, description, null, enabled, unavailableReason,
+                trainingModes, execution, inputs, parameters, runtimes, outputs, security);
+    }
+
+    public TrainingPlanDefinition(
+            String schemaVersion,
+            String id,
+            String version,
+            String displayName,
+            String description,
+            Boolean enabled,
+            String unavailableReason,
+            Execution execution,
+            Inputs inputs,
+            List<Parameter> parameters,
+            List<RuntimeVariant> runtimes,
+            Outputs outputs,
+            Security security
+    ) {
+        this(schemaVersion, id, version, displayName, description, null, enabled, unavailableReason,
                 List.of(TrainingMode.FROM_SCRATCH), execution, inputs, parameters, runtimes, outputs, security);
+    }
+
+    public enum PlanCategory {
+        CV,
+        NLP,
+        OTHER
     }
 
     public enum TrainingMode {
@@ -66,8 +95,19 @@ public record TrainingPlanDefinition(
             List<String> formats,
             List<String> taskTypes,
             List<String> requiredEntries,
-            String formatGuide
+            String formatGuide,
+            @JsonInclude(JsonInclude.Include.NON_NULL) List<String> acceptedSpecIds
     ) {
+        public ModelInput(
+                Boolean required,
+                Boolean consumed,
+                List<String> formats,
+                List<String> taskTypes,
+                List<String> requiredEntries,
+                String formatGuide
+        ) {
+            this(required, consumed, formats, taskTypes, requiredEntries, formatGuide, null);
+        }
     }
 
     public record DatasetInput(
@@ -76,8 +116,19 @@ public record TrainingPlanDefinition(
             List<String> cvTaskTypes,
             List<String> annotationFormats,
             List<String> requiredEntries,
-            String formatGuide
+            String formatGuide,
+            @JsonInclude(JsonInclude.Include.NON_NULL) List<String> acceptedSpecIds
     ) {
+        public DatasetInput(
+                Boolean required,
+                List<String> taskTypes,
+                List<String> cvTaskTypes,
+                List<String> annotationFormats,
+                List<String> requiredEntries,
+                String formatGuide
+        ) {
+            this(required, taskTypes, cvTaskTypes, annotationFormats, requiredEntries, formatGuide, null);
+        }
     }
 
     public record CodeInput(
@@ -158,8 +209,20 @@ public record TrainingPlanDefinition(
             Boolean required,
             String format,
             Boolean publishAsModel,
-            Packaging packaging
+            Packaging packaging,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String publishedModelSpecId
     ) {
+        public Artifact(
+                String path,
+                ArtifactRole role,
+                Boolean required,
+                String format,
+                Boolean publishAsModel,
+                Packaging packaging
+        ) {
+            this(path, role, required, format, publishAsModel, packaging, null);
+        }
+
         public Artifact(
                 String path,
                 ArtifactRole role,
@@ -167,7 +230,7 @@ public record TrainingPlanDefinition(
                 String format,
                 Boolean publishAsModel
         ) {
-            this(path, role, required, format, publishAsModel, null);
+            this(path, role, required, format, publishAsModel, null, null);
         }
     }
 

@@ -1,8 +1,5 @@
 package com.tss.platform.training.plan;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import jakarta.annotation.PostConstruct;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -24,13 +21,15 @@ public class TrainingPlanRegistry {
     static final String RESOURCE_PATTERN = "classpath*:training-plans/*.yaml";
 
     private final TrainingPlanValidator validator;
-    private final ObjectMapper yamlMapper;
+    private final TrainingPlanYamlParser yamlParser;
     private volatile Map<String, Map<String, TrainingPlanDefinition>> plansById = Map.of();
 
-    public TrainingPlanRegistry(TrainingPlanValidator validator) {
+    public TrainingPlanRegistry(
+            TrainingPlanValidator validator,
+            TrainingPlanYamlParser yamlParser
+    ) {
         this.validator = validator;
-        this.yamlMapper = new ObjectMapper(new YAMLFactory())
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+        this.yamlParser = yamlParser;
     }
 
     @PostConstruct
@@ -125,8 +124,11 @@ public class TrainingPlanRegistry {
 
     private TrainingPlanDefinition read(Resource resource, String source) {
         try (InputStream inputStream = resource.getInputStream()) {
-            return yamlMapper.readValue(inputStream, TrainingPlanDefinition.class);
+            return yamlParser.parse(inputStream.readAllBytes(), source);
         } catch (Exception e) {
+            if (e instanceof TrainingPlanValidationException validationException) {
+                throw validationException;
+            }
             throw new IllegalStateException("读取训练方案失败 " + source + ": " + e.getMessage(), e);
         }
     }

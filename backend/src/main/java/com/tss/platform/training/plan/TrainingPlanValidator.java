@@ -1,5 +1,8 @@
 package com.tss.platform.training.plan;
 
+import com.tss.platform.asset.spec.ArtifactSpecDefinition;
+import com.tss.platform.asset.spec.ArtifactSpecRegistry;
+import com.tss.platform.asset.spec.AssetKind;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -16,7 +19,11 @@ import java.util.regex.Pattern;
 @Component
 public class TrainingPlanValidator {
 
-    public static final String SCHEMA_VERSION = "tss.training.plan/v1";
+    public static final String SCHEMA_VERSION_V1 = "tss.training.plan/v1";
+    public static final String SCHEMA_VERSION_V2 = "tss.training.plan/v2";
+    /** @deprecated use an explicit version constant. */
+    @Deprecated
+    public static final String SCHEMA_VERSION = SCHEMA_VERSION_V1;
     public static final String PROGRESS_PROTOCOL = "TSS_EVENT_JSONL_V1";
 
     private static final Pattern ID_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{2,63}$");
@@ -27,9 +34,19 @@ public class TrainingPlanValidator {
     private static final Pattern MEMORY_PATTERN = Pattern.compile("^[0-9]+(Mi|Gi)$");
     private static final Pattern FORMAT_PATTERN = Pattern.compile("^[A-Z][A-Z0-9_]{1,63}$");
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([A-Z_]+)}");
+    private static final Pattern IMMUTABLE_IMAGE_DIGEST_PATTERN = Pattern.compile(".*@sha256:[0-9a-f]{64}$");
+    private static final List<String> APPROVED_TRAINING_IMAGE_PREFIXES = List.of(
+            "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@sha256:",
+            "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@sha256:"
+    );
     private static final Set<String> ALLOWED_PLACEHOLDERS = Set.of(
             "MODEL_DIR", "DATA_DIR", "CODE_DIR", "OUTPUT_DIR", "PARAMS_FILE", "DEVICE"
     );
+    private final ArtifactSpecRegistry artifactSpecRegistry;
+
+    public TrainingPlanValidator(ArtifactSpecRegistry artifactSpecRegistry) {
+        this.artifactSpecRegistry = artifactSpecRegistry;
+    }
 
     public void validate(TrainingPlanDefinition plan, String source) {
         List<String> errors = new ArrayList<>();
@@ -37,10 +54,20 @@ public class TrainingPlanValidator {
             throw new TrainingPlanValidationException(source, List.of("配置不能为空"));
         }
 
-        requireEquals(plan.schemaVersion(), SCHEMA_VERSION, "schemaVersion", errors);
+        boolean v2 = SCHEMA_VERSION_V2.equals(plan.schemaVersion());
+        if (!v2 && !SCHEMA_VERSION_V1.equals(plan.schemaVersion())) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SCHEMA_UNSUPPORTED,
+                    "schemaVersion 仅支持 " + SCHEMA_VERSION_V1 + " 或 " + SCHEMA_VERSION_V2);
+        }
         requirePattern(plan.id(), ID_PATTERN, "id", errors);
         requirePattern(plan.version(), VERSION_PATTERN, "version", errors);
         requireText(plan.displayName(), "displayName", errors);
+        requireMaxLength(plan.displayName(), 128, "displayName", errors);
+        requireMaxLength(plan.description(), 2048, "description", errors);
+        requireMaxLength(plan.unavailableReason(), 512, "unavailableReason", errors);
+        if (v2 && plan.category() == null) {
+            errors.add("category 不能为空");
+        }
         if (plan.enabled() == null) {
             errors.add("enabled 不能为空");
         } else if (!plan.enabled() && isBlank(plan.unavailableReason())) {
@@ -49,10 +76,10 @@ public class TrainingPlanValidator {
 
         validateTrainingModes(plan.trainingModes(), errors);
         validateExecution(plan.execution(), errors);
-        validateInputs(plan.inputs(), errors);
+        validateInputs(plan.inputs(), v2, errors);
         validateParameters(plan.parameters(), errors);
-        validateRuntimes(plan.runtimes(), errors);
-        validateOutputs(plan.outputs(), errors);
+        validateRuntimes(plan.runtimes(), v2, errors);
+        validateOutputs(plan.outputs(), v2, errors);
         validateSecurity(plan.security(), errors);
 
         if (!errors.isEmpty()) {
@@ -124,6 +151,9 @@ public class TrainingPlanValidator {
         if (execution.entrypoint() != null && !execution.entrypoint().endsWith(".py")) {
             errors.add("execution.entrypoint 必须是 .py 文件");
         }
+        if (safeList(execution.arguments()).size() > 128) {
+            errors.add("execution.arguments 不能超过128项");
+        }
         for (String argument : safeList(execution.arguments())) {
             if (argument == null || argument.length() > 512 || argument.indexOf('\0') >= 0) {
                 errors.add("execution.arguments 包含非法参数");
@@ -141,7 +171,11 @@ public class TrainingPlanValidator {
         }
     }
 
-    private void validateInputs(TrainingPlanDefinition.Inputs inputs, List<String> errors) {
+    private void validateInputs(
+            TrainingPlanDefinition.Inputs inputs,
+            boolean v2,
+            List<String> errors
+    ) {
         if (inputs == null) {
             errors.add("inputs 不能为空");
             return;
@@ -152,9 +186,16 @@ public class TrainingPlanValidator {
         } else {
             requireBoolean(model.required(), "inputs.model.required", errors);
             requireBoolean(model.consumed(), "inputs.model.consumed", errors);
-            validateFormats(model.formats(), "inputs.model.formats", errors);
-            requireNonEmpty(model.taskTypes(), "inputs.model.taskTypes", errors);
-            validateRequiredEntries(model.requiredEntries(), "inputs.model.requiredEntries", errors);
+            requireMaxLength(model.formatGuide(), 4096, "inputs.model.formatGuide", errors);
+            if (v2) {
+                rejectLegacyModelInput(model, errors);
+                validateAcceptedSpecs(model.acceptedSpecIds(), AssetKind.MODEL,
+                        "inputs.model.acceptedSpecIds", errors);
+            } else {
+                validateFormats(model.formats(), "inputs.model.formats", errors);
+                requireNonEmpty(model.taskTypes(), "inputs.model.taskTypes", errors);
+                validateRequiredEntries(model.requiredEntries(), "inputs.model.requiredEntries", errors);
+            }
         }
 
         TrainingPlanDefinition.DatasetInput dataset = inputs.dataset();
@@ -162,8 +203,15 @@ public class TrainingPlanValidator {
             errors.add("inputs.dataset 不能为空");
         } else {
             requireBoolean(dataset.required(), "inputs.dataset.required", errors);
-            requireNonEmpty(dataset.taskTypes(), "inputs.dataset.taskTypes", errors);
-            validateRequiredEntries(dataset.requiredEntries(), "inputs.dataset.requiredEntries", errors);
+            requireMaxLength(dataset.formatGuide(), 4096, "inputs.dataset.formatGuide", errors);
+            if (v2) {
+                rejectLegacyDatasetInput(dataset, errors);
+                validateAcceptedSpecs(dataset.acceptedSpecIds(), AssetKind.DATASET,
+                        "inputs.dataset.acceptedSpecIds", errors);
+            } else {
+                requireNonEmpty(dataset.taskTypes(), "inputs.dataset.taskTypes", errors);
+                validateRequiredEntries(dataset.requiredEntries(), "inputs.dataset.requiredEntries", errors);
+            }
         }
 
         TrainingPlanDefinition.CodeInput code = inputs.code();
@@ -178,10 +226,77 @@ public class TrainingPlanValidator {
         }
     }
 
+    private void rejectLegacyModelInput(
+            TrainingPlanDefinition.ModelInput model,
+            List<String> errors
+    ) {
+        if (model.formats() != null
+                || model.taskTypes() != null
+                || model.requiredEntries() != null) {
+            errors.add("v2 inputs.model 禁止 formats/taskTypes/requiredEntries，必须使用 acceptedSpecIds");
+        }
+    }
+
+    private void rejectLegacyDatasetInput(
+            TrainingPlanDefinition.DatasetInput dataset,
+            List<String> errors
+    ) {
+        if (dataset.taskTypes() != null
+                || dataset.cvTaskTypes() != null
+                || dataset.annotationFormats() != null
+                || dataset.requiredEntries() != null) {
+            errors.add("v2 inputs.dataset 禁止 taskTypes/cvTaskTypes/annotationFormats/requiredEntries，必须使用 acceptedSpecIds");
+        }
+    }
+
+    private void validateAcceptedSpecs(
+            List<String> specIds,
+            AssetKind expectedKind,
+            String field,
+            List<String> errors
+    ) {
+        if (specIds == null || specIds.isEmpty()) {
+            errors.add(field + " 不能为空");
+            return;
+        }
+        if (specIds.size() > 32) {
+            errors.add(field + " 不能超过32项");
+        }
+        Set<String> unique = new HashSet<>();
+        for (String specId : specIds) {
+            if (isBlank(specId)) {
+                errors.add(field + " 不能包含空值");
+                continue;
+            }
+            String normalized = specId.trim();
+            if (!normalized.equals(specId)) {
+                errors.add(field + " 不能包含首尾空白: " + normalized);
+            }
+            if (!unique.add(normalized)) {
+                errors.add(field + " 不能重复: " + normalized);
+                continue;
+            }
+            ArtifactSpecDefinition definition = artifactSpecRegistry.find(normalized).orElse(null);
+            if (definition == null) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SPEC_UNKNOWN,
+                        field + " 包含未知资产规范: " + normalized);
+            } else if (definition.assetKind() != expectedKind) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SPEC_KIND_MISMATCH,
+                        field + " 资产类型错误: " + normalized);
+            } else if (!definition.canBeAcceptedByTrainingPlan()) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SPEC_NOT_TRAINING_READY,
+                        field + " 尚未具备训练能力: " + normalized);
+            }
+        }
+    }
+
     private void validateParameters(List<TrainingPlanDefinition.Parameter> parameters, List<String> errors) {
         if (parameters == null) {
             errors.add("parameters 不能为空");
             return;
+        }
+        if (parameters.size() > 128) {
+            errors.add("parameters 不能超过128项");
         }
         Set<String> names = new HashSet<>();
         for (TrainingPlanDefinition.Parameter parameter : parameters) {
@@ -194,6 +309,8 @@ public class TrainingPlanValidator {
                 errors.add("参数名称重复: " + parameter.name());
             }
             requireText(parameter.displayName(), "parameter.displayName", errors);
+            requireMaxLength(parameter.displayName(), 128, "parameter.displayName", errors);
+            requireMaxLength(parameter.description(), 512, "parameter.description", errors);
             if (parameter.type() == null) {
                 errors.add("参数 " + parameter.name() + " 缺少 type");
             }
@@ -202,16 +319,44 @@ public class TrainingPlanValidator {
                     && parameter.minimum() > parameter.maximum()) {
                 errors.add("参数 " + parameter.name() + " minimum 不能大于 maximum");
             }
+            if ((parameter.minimum() != null && !Double.isFinite(parameter.minimum()))
+                    || (parameter.maximum() != null && !Double.isFinite(parameter.maximum()))) {
+                errors.add("参数 " + parameter.name() + " minimum/maximum 必须是有限数字");
+            }
+            if (parameter.type() == TrainingPlanDefinition.ParameterType.STRING
+                    || parameter.type() == TrainingPlanDefinition.ParameterType.BOOLEAN) {
+                if (parameter.minimum() != null || parameter.maximum() != null) {
+                    errors.add("非数值参数 " + parameter.name() + " 不能声明 minimum/maximum");
+                }
+            }
             if (parameter.defaultValue() != null) {
                 validateParameterValue(parameter, parameter.defaultValue(), "参数默认值 " + parameter.name(), errors);
+            }
+            if (safeList(parameter.allowedValues()).size() > 128) {
+                errors.add("参数 " + parameter.name() + " allowedValues 不能超过128项");
+            }
+            Set<String> allowedFingerprints = new HashSet<>();
+            for (Object allowed : safeList(parameter.allowedValues())) {
+                validateParameterValue(parameter, allowed, "参数允许值 " + parameter.name(), errors);
+                String fingerprint = allowed == null ? "<null>" : allowed.getClass().getName() + ":" + allowed;
+                if (!allowedFingerprints.add(fingerprint)) {
+                    errors.add("参数 " + parameter.name() + " allowedValues 不能重复");
+                }
             }
         }
     }
 
-    private void validateRuntimes(List<TrainingPlanDefinition.RuntimeVariant> runtimes, List<String> errors) {
+    private void validateRuntimes(
+            List<TrainingPlanDefinition.RuntimeVariant> runtimes,
+            boolean v2,
+            List<String> errors
+    ) {
         if (runtimes == null || runtimes.isEmpty()) {
             errors.add("runtimes 至少包含一个运行环境");
             return;
+        }
+        if (runtimes.size() > 16) {
+            errors.add("runtimes 不能超过16项");
         }
         Set<String> runtimeIds = new HashSet<>();
         Set<String> resourceIds = new HashSet<>();
@@ -226,8 +371,12 @@ public class TrainingPlanValidator {
             }
             if (runtime.deviceType() == null) {
                 errors.add("runtime " + runtime.id() + " 缺少 deviceType");
+            } else if (v2 && runtime.deviceType() != TrainingPlanDefinition.DeviceType.CPU) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                        "runtimes.deviceType 当前仅允许发布 CPU runtime");
             }
             requireText(runtime.image(), "runtime.image", errors);
+            requireMaxLength(runtime.image(), 512, "runtime.image", errors);
             if (runtime.image() != null && runtime.image().chars().anyMatch(Character::isWhitespace)) {
                 errors.add("runtime.image 不能包含空白字符");
             }
@@ -235,13 +384,43 @@ public class TrainingPlanValidator {
                 errors.add("runtime " + runtime.id() + " 缺少 imagePullPolicy");
             }
             requireBoolean(runtime.productionDigestRequired(), "runtime.productionDigestRequired", errors);
+            if (v2) {
+                validateImportedRuntimePolicy(runtime, errors);
+            }
             if (runtime.resourceProfiles() == null || runtime.resourceProfiles().isEmpty()) {
                 errors.add("runtime " + runtime.id() + " 至少包含一个 resourceProfile");
                 continue;
             }
-            for (TrainingPlanDefinition.ResourceProfile profile : runtime.resourceProfiles()) {
-                validateResourceProfile(runtime, profile, resourceIds, errors);
+            if (runtime.resourceProfiles().size() > 16) {
+                errors.add("runtime " + runtime.id() + " 的 resourceProfiles 不能超过16项");
             }
+            for (TrainingPlanDefinition.ResourceProfile profile : runtime.resourceProfiles()) {
+                validateResourceProfile(runtime, profile, resourceIds, v2, errors);
+            }
+        }
+    }
+
+    private void validateImportedRuntimePolicy(
+            TrainingPlanDefinition.RuntimeVariant runtime,
+            List<String> errors
+    ) {
+        String image = runtime.image();
+        if (!isBlank(image)
+                && APPROVED_TRAINING_IMAGE_PREFIXES.stream().noneMatch(image::startsWith)) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "runtime.image 不在平台批准的训练镜像范围内");
+        }
+        if (!isBlank(image) && !IMMUTABLE_IMAGE_DIGEST_PATTERN.matcher(image).matches()) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "runtime.image 必须使用 sha256 镜像摘要");
+        }
+        if (!Boolean.TRUE.equals(runtime.productionDigestRequired())) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "runtime.productionDigestRequired 必须为true");
+        }
+        if (runtime.imagePullPolicy() == TrainingPlanDefinition.ImagePullPolicy.Never) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "runtime.imagePullPolicy 不允许 Never");
         }
     }
 
@@ -249,6 +428,7 @@ public class TrainingPlanValidator {
             TrainingPlanDefinition.RuntimeVariant runtime,
             TrainingPlanDefinition.ResourceProfile profile,
             Set<String> resourceIds,
+            boolean v2,
             List<String> errors
     ) {
         if (profile == null) {
@@ -278,9 +458,64 @@ public class TrainingPlanValidator {
                 errors.add("resourceProfile.nodeSelector 不能包含空键值");
             }
         }
+        if (safeMap(profile.nodeSelector()).size() > 16) {
+            errors.add("resourceProfile.nodeSelector 不能超过16项");
+        }
+        if (v2) {
+            validateImportedResourcePolicy(profile, errors);
+        }
     }
 
-    private void validateOutputs(TrainingPlanDefinition.Outputs outputs, List<String> errors) {
+    private void validateImportedResourcePolicy(
+            TrainingPlanDefinition.ResourceProfile profile,
+            List<String> errors
+    ) {
+        Integer requestCpu = parseCpuMillis(profile.cpuRequest());
+        Integer limitCpu = parseCpuMillis(profile.cpuLimit());
+        if (requestCpu != null && limitCpu != null && requestCpu > limitCpu) {
+            errors.add("resourceProfile.cpuRequest 不能大于 cpuLimit");
+        }
+        if (requestCpu != null && requestCpu <= 0) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.cpuRequest 必须大于0");
+        }
+        if (limitCpu != null && (limitCpu <= 0 || limitCpu > 8000)) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.cpuLimit 必须大于0且不超过8核");
+        }
+
+        Long requestMemory = parseMebibytes(profile.memoryRequest());
+        Long limitMemory = parseMebibytes(profile.memoryLimit());
+        if (requestMemory != null && limitMemory != null && requestMemory > limitMemory) {
+            errors.add("resourceProfile.memoryRequest 不能大于 memoryLimit");
+        }
+        if (requestMemory != null && requestMemory <= 0) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.memoryRequest 必须大于0");
+        }
+        if (limitMemory != null && (limitMemory <= 0 || limitMemory > 32768)) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.memoryLimit 必须大于0且不超过32Gi");
+        }
+
+        Long ephemeral = parseMebibytes(profile.ephemeralStorageLimit());
+        if (ephemeral != null && (ephemeral <= 0 || ephemeral > 51200)) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.ephemeralStorageLimit 必须大于0且不超过50Gi");
+        }
+
+        Map<String, String> selector = safeMap(profile.nodeSelector());
+        if (!selector.isEmpty() && !selector.equals(Map.of("tss.ai/node-pool", "cpu"))) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                    "resourceProfile.nodeSelector 只允许 tss.ai/node-pool=cpu");
+        }
+    }
+
+    private void validateOutputs(
+            TrainingPlanDefinition.Outputs outputs,
+            boolean v2,
+            List<String> errors
+    ) {
         if (outputs == null) {
             errors.add("outputs 不能为空");
             return;
@@ -291,6 +526,9 @@ public class TrainingPlanValidator {
         if (outputs.artifacts() == null || outputs.artifacts().isEmpty()) {
             errors.add("outputs.artifacts 至少包含一个产物");
             return;
+        }
+        if (outputs.artifacts().size() > 128) {
+            errors.add("outputs.artifacts 不能超过128项");
         }
         Set<String> paths = new HashSet<>();
         int publishCount = 0;
@@ -342,6 +580,11 @@ public class TrainingPlanValidator {
                         || artifact.role() != TrainingPlanDefinition.ArtifactRole.PRIMARY_MODEL) {
                     errors.add("发布模型产物必须是 required=true 的 PRIMARY_MODEL");
                 }
+                if (v2) {
+                    validatePublishedModelSpec(artifact.publishedModelSpecId(), errors);
+                }
+            } else if (v2 && !isBlank(artifact.publishedModelSpecId())) {
+                errors.add("非发布模型产物不能声明 publishedModelSpecId: " + artifact.path());
             }
             metricsDeclared |= artifact.role() == TrainingPlanDefinition.ArtifactRole.METRICS
                     && artifact.path() != null && artifact.path().equals(outputs.metricsPath());
@@ -361,6 +604,24 @@ public class TrainingPlanValidator {
             if (source != null && !paths.contains(source)) {
                 errors.add("artifact.packaging.sourcePath 必须引用已声明产物: " + source);
             }
+        }
+    }
+
+    private void validatePublishedModelSpec(String specId, List<String> errors) {
+        if (isBlank(specId)) {
+            errors.add("发布模型产物必须声明 publishedModelSpecId");
+            return;
+        }
+        ArtifactSpecDefinition definition = artifactSpecRegistry.find(specId.trim()).orElse(null);
+        if (definition == null) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SPEC_UNKNOWN,
+                    "publishedModelSpecId 未注册: " + specId.trim());
+        } else if (definition.assetKind() != AssetKind.MODEL) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SPEC_KIND_MISMATCH,
+                    "publishedModelSpecId 必须引用模型规范: " + specId.trim());
+        } else if (!definition.canBeAcceptedByTrainingPlan()) {
+            addError(errors, TrainingPlanErrorCode.PLAN_SPEC_NOT_TRAINING_READY,
+                    "publishedModelSpecId 尚未具备训练能力: " + specId.trim());
         }
     }
 
@@ -399,7 +660,7 @@ public class TrainingPlanValidator {
         }
         boolean typeValid = switch (definition.type()) {
             case INTEGER -> isIntegralNumber(value);
-            case NUMBER -> value instanceof Number;
+            case NUMBER -> value instanceof Number number && Double.isFinite(number.doubleValue());
             case STRING -> value instanceof String;
             case BOOLEAN -> value instanceof Boolean;
         };
@@ -429,6 +690,31 @@ public class TrainingPlanValidator {
         return java.util.Objects.equals(left, right);
     }
 
+    private Integer parseCpuMillis(String value) {
+        if (value == null || !CPU_PATTERN.matcher(value).matches()) {
+            return null;
+        }
+        try {
+            return value.endsWith("m")
+                    ? Integer.parseInt(value.substring(0, value.length() - 1))
+                    : Math.multiplyExact(Integer.parseInt(value), 1000);
+        } catch (ArithmeticException | NumberFormatException exception) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private Long parseMebibytes(String value) {
+        if (value == null || !MEMORY_PATTERN.matcher(value).matches()) {
+            return null;
+        }
+        try {
+            long amount = Long.parseLong(value.substring(0, value.length() - 2));
+            return value.endsWith("Gi") ? Math.multiplyExact(amount, 1024) : amount;
+        } catch (ArithmeticException | NumberFormatException exception) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     private boolean isIntegralNumber(Object value) {
         if (!(value instanceof Number number)) {
             return false;
@@ -453,6 +739,10 @@ public class TrainingPlanValidator {
     private void validateRelativePath(String value, String field, boolean codePath, List<String> errors) {
         if (isBlank(value)) {
             errors.add(field + " 不能为空");
+            return;
+        }
+        if (value.length() > 512) {
+            errors.add(field + " 不能超过512个字符");
             return;
         }
         String normalized = value.replace('\\', '/');
@@ -487,6 +777,20 @@ public class TrainingPlanValidator {
         if (isBlank(value)) {
             errors.add(field + " 不能为空");
         }
+    }
+
+    private void requireMaxLength(String value, int maximum, String field, List<String> errors) {
+        if (value != null && value.length() > maximum) {
+            errors.add(field + " 不能超过" + maximum + "个字符");
+        }
+    }
+
+    private void addError(
+            List<String> errors,
+            TrainingPlanErrorCode code,
+            String message
+    ) {
+        errors.add(code.name() + ": " + message);
     }
 
     private void requireEquals(String value, String expected, String field, List<String> errors) {
