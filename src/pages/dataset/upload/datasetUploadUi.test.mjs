@@ -10,10 +10,10 @@ import {
   visualUploadViolation,
 } from './datasetUploadUi.mjs';
 
-test('the upload page exposes exactly six stable directory categories', () => {
+test('the upload page exposes backend-supported directory categories', () => {
   assert.deepEqual(
     DATASET_DIRECTORY_OPTIONS.map((item) => item.value),
-    ['VISUAL', 'TEXT', 'POINT_CLOUD', 'ROBOT', 'MULTIMODAL', 'OTHER'],
+    ['VISUAL', 'TEXT', 'POINT_CLOUD', 'ROBOT', 'MULTIMODAL'],
   );
   assert.equal(directoryFromBackendType('CV'), 'VISUAL');
   assert.equal(directoryFromBackendType('LEROBOT'), 'ROBOT');
@@ -65,7 +65,7 @@ test('robot format and inherited evidence resolve conservatively', () => {
       type: 'LEROBOT',
     },
   );
-  assert.deepEqual(resolveDatasetUploadMetadata('OTHER'), { type: 'OTHER' });
+  assert.equal(resolveDatasetUploadMetadata('OTHER'), undefined);
   assert.equal(
     visualLayoutFromSpecId('dataset.cv.imagefolder/v1'),
     'IMAGE_FOLDER',

@@ -1,19 +1,32 @@
-/** 模型目录类型。POINT_CLOUD/ROBOT 为历史兼容展示，新上传入口只开放 CV/NLP/OTHER。 */
-export const MODEL_TYPE_OPTIONS = [
+/** 后端支持的模型目录类型（上传、编辑、列表筛选） */
+export const MODEL_BACKEND_TYPE_OPTIONS = [
   { value: 'CV', label: 'CV' },
   { value: 'NLP', label: 'NLP' },
   { value: 'POINT_CLOUD', label: '点云' },
   { value: 'ROBOT', label: 'ROBOT（预留）' },
+] as const;
+
+export type ModelBackendType =
+  (typeof MODEL_BACKEND_TYPE_OPTIONS)[number]['value'];
+
+/** 列表/详情展示（含历史 OTHER） */
+export const MODEL_TYPE_OPTIONS = [
+  ...MODEL_BACKEND_TYPE_OPTIONS,
   { value: 'OTHER', label: '其他（暂未归类）' },
 ] as const;
 
 export type ModelTaskType = (typeof MODEL_TYPE_OPTIONS)[number]['value'];
 
-export const MODEL_TYPE_VALUE_ENUM: Record<string, { text: string }> = {
+/** 列表筛选：仅后端支持的 type 参数 */
+export const MODEL_TYPE_FILTER_VALUE_ENUM: Record<string, { text: string }> = {
   CV: { text: 'CV' },
   NLP: { text: 'NLP' },
   POINT_CLOUD: { text: '点云' },
   ROBOT: { text: 'ROBOT' },
+};
+
+export const MODEL_TYPE_VALUE_ENUM: Record<string, { text: string }> = {
+  ...MODEL_TYPE_FILTER_VALUE_ENUM,
   OTHER: { text: '其他' },
 };
 

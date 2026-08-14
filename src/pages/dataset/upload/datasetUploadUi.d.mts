@@ -3,8 +3,7 @@ export type DatasetDirectory =
   | 'TEXT'
   | 'POINT_CLOUD'
   | 'ROBOT'
-  | 'MULTIMODAL'
-  | 'OTHER';
+  | 'MULTIMODAL';
 export type VisualFileLayout = 'UNLABELED' | 'IMAGE_FOLDER' | 'YOLO';
 export type RobotDataFormat = 'CONFIG' | 'LEROBOT';
 export type BackendDatasetType =

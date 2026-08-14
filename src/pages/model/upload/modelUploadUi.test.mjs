@@ -6,15 +6,15 @@ import {
   MODEL_UPLOAD_CATEGORY_OPTIONS,
 } from './modelUploadUi.mjs';
 
-test('new model uploads expose only CV, NLP and OTHER', () => {
+test('new model uploads expose backend taskType categories', () => {
   assert.deepEqual(
     MODEL_UPLOAD_CATEGORY_OPTIONS.map((item) => item.value),
-    ['CV', 'NLP', 'OTHER'],
+    ['CV', 'NLP', 'POINT_CLOUD', 'ROBOT'],
   );
   assert.equal(isModelUploadCategory('cv'), true);
-  assert.equal(isModelUploadCategory('OTHER'), true);
-  assert.equal(isModelUploadCategory('POINT_CLOUD'), false);
-  assert.equal(isModelUploadCategory('ROBOT'), false);
+  assert.equal(isModelUploadCategory('POINT_CLOUD'), true);
+  assert.equal(isModelUploadCategory('ROBOT'), true);
+  assert.equal(isModelUploadCategory('OTHER'), false);
 });
 
 test('new versions inherit identity and verified specification from the asset', () => {
