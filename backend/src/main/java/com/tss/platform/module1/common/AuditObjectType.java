@@ -10,5 +10,6 @@ public enum AuditObjectType {
     TRAIN_TASK,
     INFERENCE_TASK,
     TRAINING_CODE,
+    TRAINING_PLAN,
     UNKNOWN
 }
