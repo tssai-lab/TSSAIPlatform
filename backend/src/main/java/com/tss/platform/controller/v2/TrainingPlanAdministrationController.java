@@ -2,7 +2,10 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.TrainingPlanAdminDtos;
 import com.tss.platform.service.TrainingPlanAdministrationService;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @RestController
@@ -50,6 +54,21 @@ public class TrainingPlanAdministrationController {
     @GetMapping
     public List<TrainingPlanAdminDtos.Summary> list() {
         return service.list();
+    }
+
+    @GetMapping(value = "/templates/{templateId}", produces = "application/yaml")
+    public ResponseEntity<byte[]> template(@PathVariable String templateId) {
+        TrainingPlanAdminDtos.TemplateFile template = service.template(templateId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/yaml"))
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(template.fileName(), StandardCharsets.UTF_8)
+                                .build()
+                                .toString()
+                )
+                .body(template.yamlContent().getBytes(StandardCharsets.UTF_8));
     }
 
     @GetMapping("/{planId}/{version}")

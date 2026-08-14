@@ -21,6 +21,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class TrainingPlanAdministrationControllerTest {
@@ -81,5 +83,25 @@ class TrainingPlanAdministrationControllerTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("TRAINING_PLAN_ADMIN_FORBIDDEN"))
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    void downloadsBackendOwnedYamlTemplateAsAttachment() throws Exception {
+        when(service.template("cv-cpu-v2")).thenReturn(
+                new TrainingPlanAdminDtos.TemplateFile(
+                        "cv-cpu-v2",
+                        "training-plan-cv-cpu-v2.yaml",
+                        "schemaVersion: tss.training.plan/v2\n"
+                )
+        );
+
+        mvc.perform(get("/api/admin/training-plans/templates/cv-cpu-v2"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                        "Content-Disposition",
+                        org.hamcrest.Matchers.containsString("training-plan-cv-cpu-v2.yaml")
+                ))
+                .andExpect(content().contentType("application/yaml"))
+                .andExpect(content().string("schemaVersion: tss.training.plan/v2\n"));
     }
 }

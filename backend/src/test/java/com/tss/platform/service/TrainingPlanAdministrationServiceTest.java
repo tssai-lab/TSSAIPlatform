@@ -109,6 +109,51 @@ class TrainingPlanAdministrationServiceTest {
     }
 
     @Test
+    void downloadsCvCpuTemplateThatPassesTheSameParserAndValidator() {
+        TrainingPlanAdminDtos.TemplateFile result = service.template("cv-cpu-v2");
+        byte[] content = result.yamlContent().getBytes(StandardCharsets.UTF_8);
+        TrainingPlanDefinition definition = parser.parse(content, result.fileName());
+
+        validator.validate(definition, result.fileName());
+
+        assertEquals("cv-cpu-v2", result.templateId());
+        assertEquals("training-plan-cv-cpu-v2.yaml", result.fileName());
+        assertEquals("custom_cv_image_classification", definition.id());
+        assertEquals(TrainingPlanDefinition.PlanCategory.CV, definition.category());
+        assertEquals(
+                "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/"
+                        + "tss-platform/tss-cv-worker@sha256:"
+                        + "c319dc2ffc58119d0fa130b46eb90b8ab9b45e0e8e06683329dbbf75e69cb310",
+                definition.runtimes().get(0).image()
+        );
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void unknownTemplateReturnsStableNotFound() {
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> service.template("missing-template")
+        );
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
+        assertEquals("TRAINING_PLAN_TEMPLATE_NOT_FOUND", error.getErrorCode());
+    }
+
+    @Test
+    void templateChecksAuthorityBeforeTemplateExistence() {
+        when(authContext.isSuperAdmin()).thenReturn(false);
+
+        V2BusinessException error = assertThrows(
+                V2BusinessException.class,
+                () -> service.template("missing-template")
+        );
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        assertEquals("TRAINING_PLAN_ADMIN_FORBIDDEN", error.getErrorCode());
+    }
+
+    @Test
     void invalidPreviewReturnsStableIssueAndDoesNotThrowOrPersist() {
         TrainingPlanAdminDtos.Preview result = service.preview(file(new byte[0]));
 
