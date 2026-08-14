@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.util.List;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -58,6 +60,39 @@ class DatasetCatalogQueryServiceTest {
         verify(assetRepo).searchCatalogForAdmin(
                 isNull(),
                 isNull(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void trainingCandidateFilterRunsInDatabaseBeforePaging() {
+        DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        DatasetCatalogQueryService service = service(assetRepo, authContext);
+        when(authContext.isAdmin()).thenReturn(false);
+        when(authContext.currentUserId()).thenReturn(7);
+        when(assetRepo.searchTrainingCandidates(
+                eq(7),
+                isNull(),
+                isNull(),
+                eq(List.of("YOLO", "FOLDER_CLASSIFICATION")),
+                any(Pageable.class)
+        )).thenReturn(Page.empty());
+
+        service.listTrainingCandidates(
+                null,
+                null,
+                3,
+                null,
+                20,
+                List.of(" YOLO ", "FOLDER_CLASSIFICATION", "YOLO")
+        );
+
+        verify(assetRepo).searchTrainingCandidates(
+                eq(7),
+                isNull(),
+                isNull(),
+                eq(List.of("YOLO", "FOLDER_CLASSIFICATION")),
                 any(Pageable.class)
         );
     }

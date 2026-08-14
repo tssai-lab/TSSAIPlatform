@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v2/datasets")
 public class V2DatasetController {
@@ -24,8 +26,11 @@ public class V2DatasetController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer current,
-            @RequestParam(required = false) Integer pageSize
+            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) List<String> artifactSpecIds
     ) {
-        return service.list(type, keyword, page, current, pageSize);
+        return artifactSpecIds == null
+                ? service.list(type, keyword, page, current, pageSize)
+                : service.list(type, keyword, page, current, pageSize, artifactSpecIds);
     }
 }
