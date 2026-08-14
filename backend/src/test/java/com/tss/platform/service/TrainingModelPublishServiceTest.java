@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.tss.platform.entity.ModelAsset;
+import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.ModelAssetRepository;
 import com.tss.platform.repository.ModelVersionRepository;
@@ -52,7 +53,9 @@ class TrainingModelPublishServiceTest {
                 TrainingPlanDefinition.ArtifactRole.PRIMARY_MODEL,
                 true,
                 "HF_MODEL_ARCHIVE",
-                true
+                true,
+                null,
+                "model.cv.hf-image/v1"
         );
         ArtifactDigestService.DigestResult digest =
                 new ArtifactDigestService.DigestResult("a".repeat(64), 1234L);
@@ -88,5 +91,8 @@ class TrainingModelPublishServiceTest {
         assertEquals("model-version-1", assetCaptor.getValue().getCurrentVersionId());
         assertEquals("model-version-1", training.getProducedModelVersionId());
         assertEquals(TrainingModelPublishService.STATUS_PUBLISHED, training.getModelPublishStatus());
+        ArgumentCaptor<ModelVersion> versionCaptor = ArgumentCaptor.forClass(ModelVersion.class);
+        verify(versionRepo).saveAndFlush(versionCaptor.capture());
+        assertEquals("model.cv.hf-image/v1", versionCaptor.getValue().getArtifactSpecId());
     }
 }

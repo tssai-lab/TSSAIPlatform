@@ -1,5 +1,6 @@
 package com.tss.platform.service;
 
+import com.tss.platform.asset.spec.ArtifactSpecEvidence;
 import io.minio.StatObjectResponse;
 import org.springframework.stereotype.Service;
 
@@ -27,15 +28,24 @@ public class ModelArtifactIntegrityService {
     }
 
     public Inspection inspect(String objectName, Long expectedSize) {
+        return inspect(objectName, expectedSize, null);
+    }
+
+    public Inspection inspect(String objectName, Long expectedSize, String taskType) {
         validateMetadata(objectName, expectedSize, null);
         requireMatchingStat(objectName, expectedSize);
         MessageDigest digest = sha256();
         CountingInputStream counting = null;
+        String artifactSpecId = null;
         try (InputStream source = minioService.downloadStream(objectName)) {
             counting = new CountingInputStream(source);
             DigestInputStream digestInput = new DigestInputStream(counting, digest);
             if (isZip(objectName)) {
-                validateZipAndDrain(digestInput);
+                ModelWeightZipValidator.Inspection archive = validateZipAndDrain(digestInput);
+                artifactSpecId = ArtifactSpecEvidence.recognizeModelArchive(
+                        taskType,
+                        archive.filePaths()
+                );
             } else {
                 if (expectedSize > ModelWeightZipValidator.MAX_SINGLE_FILE_BYTES) {
                     throw new ModelArtifactException(
@@ -44,6 +54,7 @@ public class ModelArtifactIntegrityService {
                     );
                 }
                 drain(digestInput);
+                artifactSpecId = ArtifactSpecEvidence.recognizeSingleModel(taskType, objectName);
             }
         } catch (ModelArtifactException exception) {
             throw exception;
@@ -56,7 +67,8 @@ public class ModelArtifactIntegrityService {
         }
         return new Inspection(
                 actualSize,
-                HexFormat.of().formatHex(digest.digest())
+                HexFormat.of().formatHex(digest.digest()),
+                artifactSpecId
         );
     }
 
@@ -111,11 +123,14 @@ public class ModelArtifactIntegrityService {
         }
     }
 
-    private static void validateZipAndDrain(DigestInputStream digestInput) throws Exception {
+    private static ModelWeightZipValidator.Inspection validateZipAndDrain(
+            DigestInputStream digestInput
+    ) throws Exception {
         ZipInputStream zip = new ZipInputStream(digestInput, StandardCharsets.UTF_8);
         try {
+            ModelWeightZipValidator.Inspection inspection;
             try {
-                ModelWeightZipValidator.validate(zip);
+                inspection = ModelWeightZipValidator.validate(zip);
             } catch (IllegalArgumentException | ZipException exception) {
                 throw new ModelArtifactException(
                         "model artifact ZIP structure is invalid",
@@ -126,6 +141,7 @@ public class ModelArtifactIntegrityService {
             // ZipInputStream can stop at the central directory. Drain the remaining raw
             // bytes so the digest covers the exact immutable object, including trailers.
             drain(digestInput);
+            return inspection;
         } finally {
             zip.close();
         }
@@ -172,7 +188,10 @@ public class ModelArtifactIntegrityService {
                 : current.getMessage();
     }
 
-    public record Inspection(long sizeBytes, String sha256) {
+    public record Inspection(long sizeBytes, String sha256, String artifactSpecId) {
+        public Inspection(long sizeBytes, String sha256) {
+            this(sizeBytes, sha256, null);
+        }
     }
 
     private static final class CountingInputStream extends FilterInputStream {

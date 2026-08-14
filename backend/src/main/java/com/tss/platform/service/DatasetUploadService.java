@@ -563,14 +563,15 @@ public class DatasetUploadService {
                             .build()
             );
             failure = validationFailure();
-            Long fileCount = validateDatasetObjectFormat(
+            DatasetZipValidator.ValidationResult evidence = validateDatasetObjectWithEvidence(
                     reservation.session().getType(),
+                    reservation.session().getCvTaskType(),
                     reservation.session().getAnnotationFormat(),
                     reservation.session().getFileName(),
                     destinationObject,
                     reservation.session().getFileSize()
             );
-            reservation.version().setFileCount(fileCount);
+            reservation.version().setFileCount(evidence.fileCount());
             SingleModalDatasetIndexer.PreparedIndex preparedIndex =
                     singleModalDatasetIndexer == null
                             ? null
@@ -582,7 +583,7 @@ public class DatasetUploadService {
             completed = transactionTemplate.execute(
                     status -> finalizeSingleModalUpload(
                             reservation,
-                            fileCount,
+                            evidence,
                             preparedIndex
                     )
             );
@@ -783,7 +784,7 @@ public class DatasetUploadService {
 
     private DatasetUploadSession finalizeSingleModalUpload(
             SingleModalReservation reservation,
-            Long fileCount,
+            DatasetZipValidator.ValidationResult evidence,
             SingleModalDatasetIndexer.PreparedIndex preparedIndex
     ) {
         DatasetUploadSession session = getSession(reservation.session().getId());
@@ -809,7 +810,10 @@ public class DatasetUploadService {
         }
 
         Instant now = Instant.now();
-        version.setFileCount(fileCount);
+        requireCompatibleArtifactSpec(asset.getId(), evidence.artifactSpecId());
+        version.setFileCount(evidence.fileCount());
+        version.setArtifactSha256(evidence.sha256());
+        version.setArtifactSpecId(evidence.artifactSpecId());
         if (singleModalDatasetIndexer != null) {
             long consumableSamples = singleModalDatasetIndexer.persistPrepared(
                     asset,
@@ -825,6 +829,7 @@ public class DatasetUploadService {
         versionRepo.saveAndFlush(version);
 
         session.setStatus(STATUS_COMPLETED);
+        session.setArtifactSpecId(evidence.artifactSpecId());
         clearCompletionFailure(session);
         session.setStoragePath(reservation.destinationObject());
         session.setUpdatedAt(now);
@@ -1324,15 +1329,16 @@ public class DatasetUploadService {
                                 .build()
                 );
             }
-            Long fileCount = validateDatasetObjectFormat(
+            DatasetZipValidator.ValidationResult evidence = validateDatasetObjectWithEvidence(
                     taskType,
+                    cvTaskType,
                     annotationFormat,
                     reserved.version().getFileName(),
                     reserved.destinationObject(),
                     sizeBytes
             );
             reserved.version().setSizeBytes(sizeBytes);
-            reserved.version().setFileCount(fileCount);
+            reserved.version().setFileCount(evidence.fileCount());
             SingleModalDatasetIndexer.PreparedIndex preparedIndex =
                     singleModalDatasetIndexer == null
                             ? null
@@ -1344,7 +1350,7 @@ public class DatasetUploadService {
                     status -> finalizeFolderUpload(
                             reserved,
                             sizeBytes,
-                            fileCount,
+                            evidence,
                             preparedIndex
                     )
             );
@@ -1373,6 +1379,7 @@ public class DatasetUploadService {
                     versionEntity.getFileName(),
                     versionEntity.getStoragePath(),
                     versionEntity.getSizeBytes(),
+                    versionEntity.getArtifactSpecId(),
                     versionEntity.getOwnerUserId(),
                     versionEntity.getCreatedAt(),
                     publishedAt
@@ -1507,7 +1514,7 @@ public class DatasetUploadService {
     private FolderUploadPublication finalizeFolderUpload(
             FolderUploadReservation reservation,
             long sizeBytes,
-            Long fileCount,
+            DatasetZipValidator.ValidationResult evidence,
             SingleModalDatasetIndexer.PreparedIndex preparedIndex
     ) {
         DatasetVersion version = versionRepo
@@ -1524,8 +1531,11 @@ public class DatasetUploadService {
         }
 
         Instant now = Instant.now();
+        requireCompatibleArtifactSpec(asset.getId(), evidence.artifactSpecId());
         version.setSizeBytes(sizeBytes);
-        version.setFileCount(fileCount);
+        version.setFileCount(evidence.fileCount());
+        version.setArtifactSha256(evidence.sha256());
+        version.setArtifactSpecId(evidence.artifactSpecId());
         if (singleModalDatasetIndexer != null) {
             long consumableSamples = singleModalDatasetIndexer.persistPrepared(
                     asset,
@@ -1767,6 +1777,7 @@ public class DatasetUploadService {
         dto.setUploadedPartIndexes(uploadedPartIndexes);
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setArtifactSpecId(session.getArtifactSpecId());
         dto.setVersionNo(session.getVersionNo());
         dto.setVersionLabel(displayVersionLabel(session.getVersionLabel(), session.getVersion(), session.getVersionNo()));
         dto.setDescription(session.getDescription());
@@ -1845,6 +1856,7 @@ public class DatasetUploadService {
         );
         data.put("importJobId", session.getImportJobId());
         data.put("strictManifest", Boolean.TRUE.equals(session.getStrictManifest()));
+        data.put("artifactSpecId", session.getArtifactSpecId());
         data.put("importStatus", importStatus(session.getImportJobId()));
         data.put("ownerUserId", session.getOwnerUserId());
         data.put("createdAt", session.getCreatedAt());
@@ -1905,6 +1917,7 @@ public class DatasetUploadService {
             String fileName,
             String storagePath,
             Long sizeBytes,
+            String artifactSpecId,
             Integer ownerUserId,
             Instant createdAt,
             Instant updatedAt
@@ -1926,6 +1939,7 @@ public class DatasetUploadService {
         data.put("remark", remark);
         data.put("fileName", fileName);
         data.put("sizeBytes", sizeBytes);
+        data.put("artifactSpecId", artifactSpecId);
         data.put("status", STATUS_COMPLETED);
         data.put("ownerUserId", ownerUserId);
         data.put("createdAt", createdAt);
@@ -2473,6 +2487,38 @@ public class DatasetUploadService {
     ) throws Exception {
         return datasetZipValidator.validateDatasetObjectFormat(
                 taskType,
+                annotationFormat,
+                fileName,
+                objectName,
+                objectSize
+        );
+    }
+
+    private void requireCompatibleArtifactSpec(String assetId, String artifactSpecId) {
+        versionRepo
+                .findTopByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByVersionNoDesc(
+                        assetId
+                )
+                .ifPresent(existing -> {
+                    if (!Objects.equals(existing.getArtifactSpecId(), artifactSpecId)) {
+                        throw new IllegalArgumentException(
+                                "dataset artifact specification does not match existing asset versions"
+                        );
+                    }
+                });
+    }
+
+    private DatasetZipValidator.ValidationResult validateDatasetObjectWithEvidence(
+            String taskType,
+            String cvTaskType,
+            String annotationFormat,
+            String fileName,
+            String objectName,
+            long objectSize
+    ) throws Exception {
+        return datasetZipValidator.validateDatasetObjectWithEvidence(
+                taskType,
+                cvTaskType,
                 annotationFormat,
                 fileName,
                 objectName,

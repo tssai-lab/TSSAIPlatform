@@ -99,6 +99,7 @@ public class V2DatasetCatalogService {
         ));
         item.setCurrentVersionFileCount(catalogItem.currentVersionFileCount());
         item.setFileCount(catalogItem.currentVersionFileCount());
+        item.setArtifactSpecId(ready == null ? null : ready.getArtifactSpecId());
         item.setDisplayStatus(displayStatus);
         item.setHasDraft(draft != null);
         item.setWorkspaceId(draft == null ? null : draft.getId());

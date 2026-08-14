@@ -114,6 +114,7 @@ public class ModelController {
         item.put("fileName", version.getFileName());
         item.put("sizeBytes", version.getSizeBytes());
         item.put("artifactSha256", version.getArtifactSha256());
+        item.put("artifactSpecId", version.getArtifactSpecId());
         item.put("commitInfo", version.getCommitInfo());
         item.put("hyperParams", version.getHyperParams());
         item.put("isCurrent", asset != null
@@ -149,6 +150,7 @@ public class ModelController {
         item.put("fileName", ver.getFileName());
         item.put("sizeBytes", ver.getSizeBytes());
         item.put("artifactSha256", ver.getArtifactSha256());
+        item.put("artifactSpecId", ver.getArtifactSpecId());
         item.put("commitInfo", ver.getCommitInfo());
         item.put("hyperParams", ver.getHyperParams());
         item.put("isCurrent", a.map(asset -> ver.getId().equals(asset.getCurrentVersionId()))

@@ -55,6 +55,10 @@ public interface DatasetVersionRepository extends JpaRepository<DatasetVersion, 
 
     Optional<DatasetVersion> findTopByAssetIdAndDeletedFalseOrderByCreatedAtDesc(String assetId);
 
+    Optional<DatasetVersion> findTopByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByVersionNoDesc(
+            String assetId
+    );
+
     Optional<DatasetVersion> findByAssetIdAndVersionNoAndDeletedFalse(String assetId, Integer versionNo);
 
     List<DatasetVersion> findByAssetIdAndDeletedFalseOrderByVersionNoDesc(String assetId);
