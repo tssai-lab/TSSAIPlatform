@@ -23,7 +23,7 @@ fi
 cache_path="${TSS_MODEL_CACHE_HOST_PATH:-/opt/tss-platform/model-cache}"
 max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
 min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
-runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-13958643712}"
+runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
 cache_uid="${TSS_MODEL_CACHE_UID:-10001}"
 cache_gid="${TSS_MODEL_CACHE_GID:-10001}"
 

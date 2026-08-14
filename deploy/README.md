@@ -136,7 +136,7 @@ Defaults:
 - trusted init-container path: `/var/cache/tss/models`
 - maximum materialized cache data: 8 GiB on the disk-constrained Main node
 - reserved free filesystem space: 5 GiB
-- additional runtime image rollout reserve: 13 GiB during node validation
+- additional runtime image rollout reserve: 10 GiB during node validation
 - backend switch: disabled
 
 Capacity and memory behavior:
