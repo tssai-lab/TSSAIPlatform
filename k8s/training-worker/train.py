@@ -823,7 +823,6 @@ def run() -> None:
             trainingOutputObjectName=output_object,
             trainingOutputSha256=output_sha256,
             trainingOutputSizeBytes=output_size,
-            remark=f"trainingOutput=minio://{output_object}",
             startedAt=started_at,
             finishedAt=finished_at,
         )
