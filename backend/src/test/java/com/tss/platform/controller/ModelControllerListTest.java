@@ -142,6 +142,54 @@ class ModelControllerListTest {
     }
 
     @Test
+    void trainingCandidateFilterRunsBeforeRepositoryPagination() {
+        ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
+        ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);
+        AuthContext authContext = mock(AuthContext.class);
+        ModelController controller = new ModelController(
+                assetRepo,
+                versionRepo,
+                mock(ModelCodePreviewService.class),
+                authContext,
+                mock(ModelVersionLifecycleService.class)
+        );
+        Pageable pageable = PageRequest.of(1, 20);
+        when(authContext.isAdmin()).thenReturn(true);
+        when(versionRepo.searchVisibleTrainingCandidates(
+                isNull(),
+                isNull(),
+                isNull(),
+                eq(List.of("HF_MODEL_ARCHIVE", "WEIGHT_ARCHIVE")),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), pageable, 125));
+
+        ApiResponse<Map<String, Object>> response = controller.list(
+                null,
+                null,
+                2,
+                null,
+                20,
+                List.of(" HF_MODEL_ARCHIVE ", "WEIGHT_ARCHIVE", "HF_MODEL_ARCHIVE")
+        );
+
+        assertTrue(response.isSuccess());
+        assertEquals(125L, response.getData().get("total"));
+        verify(versionRepo).searchVisibleTrainingCandidates(
+                isNull(),
+                isNull(),
+                isNull(),
+                eq(List.of("HF_MODEL_ARCHIVE", "WEIGHT_ARCHIVE")),
+                any(Pageable.class)
+        );
+        verify(versionRepo, never()).searchVisibleCatalog(
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
     void detailDoesNotExposeInternalStoragePath() {
         ModelAssetRepository assetRepo = mock(ModelAssetRepository.class);
         ModelVersionRepository versionRepo = mock(ModelVersionRepository.class);

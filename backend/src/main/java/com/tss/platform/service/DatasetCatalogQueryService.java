@@ -58,7 +58,19 @@ public class DatasetCatalogQueryService {
             Integer current,
             Integer pageSize
     ) {
-        return list(type, keyword, page, current, pageSize, false);
+        return list(type, keyword, page, current, pageSize, false, null);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<CatalogItem> listTrainingCandidates(
+            String type,
+            String keyword,
+            Integer page,
+            Integer current,
+            Integer pageSize,
+            List<String> artifactSpecIds
+    ) {
+        return list(type, keyword, page, current, pageSize, false, artifactSpecIds);
     }
 
     @Transactional(readOnly = true)
@@ -69,7 +81,7 @@ public class DatasetCatalogQueryService {
             Integer current,
             Integer pageSize
     ) {
-        return list(type, keyword, page, current, pageSize, true);
+        return list(type, keyword, page, current, pageSize, true, null);
     }
 
     private PageResponse<CatalogItem> list(
@@ -78,7 +90,8 @@ public class DatasetCatalogQueryService {
             Integer page,
             Integer current,
             Integer pageSize,
-            boolean unpagedWhenPageSizeAbsent
+            boolean unpagedWhenPageSizeAbsent,
+            List<String> artifactSpecIds
     ) {
         String normalizedType = type == null || type.isBlank()
                 ? null
@@ -88,14 +101,33 @@ public class DatasetCatalogQueryService {
         boolean unpaged = unpagedWhenPageSizeAbsent && (pageSize == null || pageSize <= 0);
         int size = unpaged ? 0 : resolvePageSize(pageSize);
         Pageable pageable = unpaged ? Pageable.unpaged() : PageRequest.of(pageNo - 1, size);
-        Page<DatasetAsset> assetPage = authContext.isAdmin()
-                ? assetRepo.searchCatalogForAdmin(normalizedType, normalizedKeyword, pageable)
-                : assetRepo.searchCatalogForOwner(
-                        authContext.currentUserId(),
-                        normalizedType,
-                        normalizedKeyword,
-                        pageable
-                );
+        Page<DatasetAsset> assetPage;
+        if (artifactSpecIds != null) {
+            List<String> normalizedSpecIds = artifactSpecIds.stream()
+                    .filter(value -> value != null && !value.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .limit(50)
+                    .toList();
+            assetPage = normalizedSpecIds.isEmpty()
+                    ? Page.empty(pageable)
+                    : assetRepo.searchTrainingCandidates(
+                            authContext.isAdmin() ? null : authContext.currentUserId(),
+                            normalizedType,
+                            normalizedKeyword,
+                            normalizedSpecIds,
+                            pageable
+                    );
+        } else {
+            assetPage = authContext.isAdmin()
+                    ? assetRepo.searchCatalogForAdmin(normalizedType, normalizedKeyword, pageable)
+                    : assetRepo.searchCatalogForOwner(
+                            authContext.currentUserId(),
+                            normalizedType,
+                            normalizedKeyword,
+                            pageable
+                    );
+        }
 
         List<DatasetAsset> assets = assetPage.getContent();
         Set<String> assetIds = assets.stream()
