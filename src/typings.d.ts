@@ -6,7 +6,7 @@ declare namespace API {
     id: string;
     name: string;
     version: string;
-    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
+    type: 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
     uploadTime?: string;
     size?: string;
     sizeBytes?: number;
@@ -18,6 +18,8 @@ declare namespace API {
     assetId?: string;
     /** 制品 SHA-256；历史版本可能为空 */
     artifactSha256?: string;
+    /** 服务端根据文件内容签发的训练规格；为空表示只能存储，不能自动进入新训练候选 */
+    artifactSpecId?: string;
     commitInfo?: string;
     hyperParams?: Record<string, unknown>;
     isCurrent?: boolean;
@@ -38,6 +40,7 @@ declare namespace API {
     updatedAt?: string;
     remark?: string;
     artifactSha256?: string;
+    artifactSpecId?: string;
     commitInfo?: string;
     hyperParams?: Record<string, unknown>;
     isCurrent?: boolean;
@@ -90,6 +93,7 @@ declare namespace API {
     uploadedChunks?: number;
     uploadedBytes?: number;
     uploadedPartIndexes?: number[];
+    artifactSpecId?: string;
   };
 
   type ModelUploadCompleteParams = {

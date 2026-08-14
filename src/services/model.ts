@@ -1,6 +1,6 @@
 import { request } from '@umijs/max';
 
-export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
+export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
 
 type BackendModelItem = {
   id: string;
@@ -15,6 +15,7 @@ type BackendModelItem = {
   createdAt?: string;
   updatedAt?: string;
   artifactSha256?: string;
+  artifactSpecId?: string;
   commitInfo?: string;
   hyperParams?: Record<string, unknown>;
   isCurrent?: boolean;
@@ -44,6 +45,7 @@ export type ModelVersion = {
   updatedAt?: string;
   remark?: string;
   artifactSha256?: string;
+  artifactSpecId?: string;
   commitInfo?: string;
   hyperParams?: Record<string, unknown>;
   isCurrent?: boolean;
@@ -150,6 +152,7 @@ function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     artifactSha256: item.artifactSha256,
+    artifactSpecId: item.artifactSpecId,
     commitInfo: item.commitInfo,
     hyperParams: item.hyperParams,
     isCurrent: item.isCurrent,
@@ -183,6 +186,9 @@ function normalizeV2ModelUploadDto(raw: unknown): API.ModelUploadInitResult | nu
     uploadedPartIndexes: Array.isArray(data.uploadedPartIndexes)
       ? (data.uploadedPartIndexes as number[])
       : [],
+    artifactSpecId: data.artifactSpecId
+      ? String(data.artifactSpecId)
+      : undefined,
   };
 }
 
@@ -208,6 +214,9 @@ function normalizeV2ModelUploadComplete(raw: unknown): BackendModelItem | null {
     sizeBytes: data.fileSize != null ? Number(data.fileSize) : undefined,
     artifactSha256: data.artifactSha256
       ? String(data.artifactSha256)
+      : undefined,
+    artifactSpecId: data.artifactSpecId
+      ? String(data.artifactSpecId)
       : undefined,
     commitInfo: data.commitInfo ? String(data.commitInfo) : undefined,
     hyperParams: data.hyperParams as Record<string, unknown> | undefined,
@@ -431,7 +440,7 @@ export async function fetchModelConsumerManifest(
 
 /** GET /api/model/list 查询参数（module2-api-doc 3.1） */
 export type ModelListQuery = {
-  type?: 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
+  type?: ModelTaskType;
   keyword?: string;
   current?: number;
   pageSize?: number;

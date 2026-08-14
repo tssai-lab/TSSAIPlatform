@@ -4,6 +4,7 @@ import { history, useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
+  Descriptions,
   Form,
   Input,
   message,
@@ -14,7 +15,6 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
-import { MODEL_TYPE_OPTIONS } from '@/constants/model';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import {
   fetchModelAssetDetail,
@@ -37,6 +37,11 @@ import {
   LS_MODEL_UPLOAD_FP,
   LS_MODEL_UPLOAD_ID,
 } from '@/utils/uploadResume';
+import {
+  inheritedModelIdentity,
+  isModelUploadCategory,
+  MODEL_UPLOAD_CATEGORY_OPTIONS,
+} from './modelUploadUi.mjs';
 
 const CHUNK_FALLBACK = 5 * 1024 * 1024;
 
@@ -48,9 +53,17 @@ const ModelUpload: React.FC = () => {
   const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [existingVersions, setExistingVersions] = useState<string[]>([]);
   const [prefillLoading, setPrefillLoading] = useState(false);
+  const [inheritedIdentity, setInheritedIdentity] = useState<{
+    id: string;
+    name: string;
+    type: API.ModelItem['type'];
+    remark: string;
+    artifactSpecId?: string;
+  }>();
 
   const assetId = searchParams.get('assetId') ?? undefined;
   const isNewVersionUpload = !!assetId;
+  const selectedType = Form.useWatch('type', form);
 
   useEffect(() => {
     const id = localStorage.getItem(LS_MODEL_UPLOAD_ID);
@@ -64,8 +77,12 @@ const ModelUpload: React.FC = () => {
 
   useEffect(() => {
     const modelName = searchParams.get('modelName');
-    const type = searchParams.get('type');
+    const requestedType = searchParams.get('type');
     const version = searchParams.get('version');
+    const type =
+      !assetId && isModelUploadCategory(requestedType)
+        ? requestedType?.toUpperCase()
+        : undefined;
     if (modelName || type || version) {
       form.setFieldsValue({
         ...(modelName ? { modelName } : {}),
@@ -76,6 +93,7 @@ const ModelUpload: React.FC = () => {
 
     if (!assetId) {
       setExistingVersions([]);
+      setInheritedIdentity(undefined);
       return;
     }
 
@@ -83,17 +101,23 @@ const ModelUpload: React.FC = () => {
     fetchModelAssetDetail(assetId, { skipErrorHandler: true })
       .then((res) => {
         const detail = res?.data;
-        if (!detail) return;
+        const identity = inheritedModelIdentity(detail);
+        if (!detail || !identity) {
+          throw new Error('模型资产信息不完整');
+        }
+        setInheritedIdentity(identity);
         form.setFieldsValue({
-          modelName: detail.name,
-          type: detail.type,
+          modelName: identity.name,
+          type: identity.type,
+          remark: identity.remark,
         });
         const versions = detail.versions.map((v) => v.version).filter(Boolean);
         setExistingVersions(versions);
         form.setFieldValue('version', suggestNextModelVersion(versions));
       })
       .catch(() => {
-        message.warning('未能加载已有版本信息，请手动填写版本号');
+        setInheritedIdentity(undefined);
+        message.error('未能加载模型资产信息，请返回详情页后重试');
       })
       .finally(() => setPrefillLoading(false));
   }, [assetId, form, searchParams]);
@@ -118,6 +142,10 @@ const ModelUpload: React.FC = () => {
   };
 
   const handleSubmit = async (values: any) => {
+    if (isNewVersionUpload && !inheritedIdentity) {
+      message.error('模型资产信息尚未加载完成，不能上传新版本');
+      return;
+    }
     const fileList = (values.file ?? []) as UploadFile[];
     const file = fileList[0]?.originFileObj as File | undefined;
     if (!file) {
@@ -231,7 +259,7 @@ const ModelUpload: React.FC = () => {
         );
       }
 
-      await modelUploadComplete(
+      const completeRes = await modelUploadComplete(
         {
           uploadId,
           ...(assetId ? { assetId } : {}),
@@ -246,7 +274,12 @@ const ModelUpload: React.FC = () => {
       );
 
       clearResumeStorage();
-      message.success('上传成功');
+      const artifactSpecId = completeRes?.data?.artifactSpecId;
+      message.success(
+        artifactSpecId
+          ? `上传成功，已识别训练规格：${artifactSpecId}`
+          : '上传成功；当前版本未识别为可训练规格，可继续存储和下载',
+      );
       if (assetId) {
         history.push(`/model/detail/${encodeURIComponent(assetId)}`);
       } else {
@@ -278,6 +311,26 @@ const ModelUpload: React.FC = () => {
           description={`当前最新版本为 ${latestVersionLabel}，新版本号必须大于该版本（${MODEL_VERSION_FORMAT_HINT}）。`}
         />
       )}
+      {isNewVersionUpload && inheritedIdentity && (
+        <Descriptions
+          bordered
+          size="small"
+          column={1}
+          style={{ marginBottom: 16 }}
+          title="继承的模型资产信息"
+        >
+          <Descriptions.Item label="模型名称">
+            {inheritedIdentity.name}
+          </Descriptions.Item>
+          <Descriptions.Item label="目录类别">
+            {inheritedIdentity.type}
+          </Descriptions.Item>
+          <Descriptions.Item label="最近已识别训练规格">
+            {inheritedIdentity.artifactSpecId ??
+              '暂无（只代表可存储，不代表可训练）'}
+          </Descriptions.Item>
+        </Descriptions>
+      )}
       {resumeHint && (
         <Alert
           type="info"
@@ -290,16 +343,27 @@ const ModelUpload: React.FC = () => {
         />
       )}
       <Form form={form} onFinish={handleSubmit} layout="vertical">
-        <Form.Item
-          name="modelName"
-          label="模型名称"
-          rules={[{ required: true, message: '请输入模型名称' }]}
-        >
-          <Input
-            placeholder="请输入模型名称"
-            disabled={isNewVersionUpload || prefillLoading}
-          />
-        </Form.Item>
+        {isNewVersionUpload ? (
+          <>
+            <Form.Item name="modelName" hidden>
+              <Input />
+            </Form.Item>
+            <Form.Item name="type" hidden>
+              <Input />
+            </Form.Item>
+            <Form.Item name="remark" hidden>
+              <Input />
+            </Form.Item>
+          </>
+        ) : (
+          <Form.Item
+            name="modelName"
+            label="模型名称"
+            rules={[{ required: true, message: '请输入模型名称' }]}
+          >
+            <Input placeholder="请输入模型名称" />
+          </Form.Item>
+        )}
         <Form.Item
           name="version"
           label="版本号"
@@ -312,43 +376,56 @@ const ModelUpload: React.FC = () => {
         >
           <Input placeholder="例如：v1.0.0 或 v2" />
         </Form.Item>
-        <Form.Item
-          name="type"
-          label="类型"
-          rules={[{ required: true, message: '请选择类型' }]}
-        >
-          <Select
-            placeholder="请选择类型"
-            disabled={isNewVersionUpload || prefillLoading}
-            options={MODEL_TYPE_OPTIONS.map((item) => ({
-              value: item.value,
-              label: item.label,
-            }))}
-          />
-        </Form.Item>
-        <Form.Item
-          name="remark"
-          label="备注"
-          rules={[
-            { required: true, message: '请输入备注' },
-            {
-              validator: async (_, value) => {
-                if (value != null && !String(value).trim()) {
-                  throw new Error('备注不能为空或纯空格');
-                }
-              },
-            },
-            { max: 200, message: '备注不能超过 200 个字符' },
-          ]}
-          extra="资产级说明：整份模型资产的用途/来源备注，会一直挂在资产上（不是某个版本专属）。"
-        >
-          <Input.TextArea
-            rows={3}
-            placeholder="例如：ImageNet 预训练权重，供 CV 检测任务使用"
-            maxLength={200}
-            showCount
-          />
-        </Form.Item>
+        {!isNewVersionUpload && (
+          <>
+            <Form.Item
+              name="type"
+              label="目录类别"
+              rules={[{ required: true, message: '请选择目录类别' }]}
+              extra="类别只用于管理和检索；是否能训练，由文件内容识别结果和训练方案共同决定。"
+            >
+              <Select
+                placeholder="请选择目录类别"
+                options={MODEL_UPLOAD_CATEGORY_OPTIONS.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+              />
+            </Form.Item>
+            {selectedType === 'OTHER' && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="OTHER 只表示暂未归类"
+                description="平台仍会检查文件类型、大小和压缩包安全；上传成功后不会自动进入 CV/NLP 训练候选。"
+              />
+            )}
+            <Form.Item
+              name="remark"
+              label="资产备注"
+              rules={[
+                { required: true, message: '请输入资产备注' },
+                {
+                  validator: async (_, value) => {
+                    if (value != null && !String(value).trim()) {
+                      throw new Error('资产备注不能为空或纯空格');
+                    }
+                  },
+                },
+                { max: 200, message: '资产备注不能超过 200 个字符' },
+              ]}
+              extra="说明整份模型资产的用途或来源；以后上传新版本时自动继承。"
+            >
+              <Input.TextArea
+                rows={3}
+                placeholder="例如：ImageNet 预训练权重，供视觉任务使用"
+                maxLength={200}
+                showCount
+              />
+            </Form.Item>
+          </>
+        )}
         <Form.Item
           name="commitInfo"
           label="Commit 说明"
@@ -461,6 +538,7 @@ const ModelUpload: React.FC = () => {
               type="primary"
               htmlType="submit"
               loading={uploading || prefillLoading}
+              disabled={isNewVersionUpload && !inheritedIdentity}
             >
               提交
             </Button>
