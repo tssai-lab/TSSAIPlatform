@@ -15,6 +15,7 @@ class DatasetTaskTypeTest {
         assertEquals("ROBOT", DatasetTaskType.normalize("robot"));
         assertEquals("LEROBOT", DatasetTaskType.normalize("lerobot"));
         assertEquals("MULTIMODAL", DatasetTaskType.normalize("multimodal"));
+        assertEquals("OTHER", DatasetTaskType.normalize(" other "));
     }
 
     @Test

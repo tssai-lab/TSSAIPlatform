@@ -336,7 +336,7 @@ class DatasetControllerEnterpriseVersionTest {
 
         assertFalse(response.isSuccess());
         assertEquals(
-                "任务类型仅支持 CV, NLP, POINT_CLOUD, ROBOT, LEROBOT, MULTIMODAL",
+                "任务类型仅支持 CV, NLP, POINT_CLOUD, ROBOT, LEROBOT, MULTIMODAL, OTHER",
                 response.getErrorMessage()
         );
     }

@@ -85,6 +85,24 @@ class ModelUploadServiceV2Test {
     }
 
     @Test
+    void initAcceptsOtherAsAnUnclassifiedStorageCategory() {
+        Fixture fixture = new Fixture();
+        when(fixture.sessionRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        V2ModelUploadInitRequest request = fixture.request();
+        request.setTaskType(" other ");
+
+        V2ModelUploadDto result = fixture.service.initV2(request);
+
+        ArgumentCaptor<ModelUploadSession> captor =
+                ArgumentCaptor.forClass(ModelUploadSession.class);
+        verify(fixture.sessionRepo).save(captor.capture());
+        assertEquals("OTHER", captor.getValue().getTaskType());
+        assertNull(captor.getValue().getArtifactSpecId());
+        assertEquals("OTHER", result.getTaskType());
+        assertNull(result.getArtifactSpecId());
+    }
+
+    @Test
     void fingerprintResumeRequiresMatchingBusinessMetadata() {
         Fixture fixture = new Fixture();
         ModelUploadSession existing = fixture.session();
