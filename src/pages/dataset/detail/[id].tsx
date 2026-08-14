@@ -436,9 +436,9 @@ const DatasetDetail: React.FC = () => {
           return defaultVersionId;
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(
-        error?.info?.message || error?.message || '加载数据集详情失败',
+        getApiErrorMessage(error, '未找到该数据集，或不属于当前账号。'),
       );
       setDatasetInfo(null);
       setPreviewVersionId(undefined);
