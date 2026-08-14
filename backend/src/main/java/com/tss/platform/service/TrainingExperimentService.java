@@ -376,7 +376,7 @@ public class TrainingExperimentService {
         TrainingExperimentVersion version = repo.findByExperimentIdAndVersionNo(experimentId, versionNo)
                 .orElseThrow(() -> new IllegalArgumentException("指定实验版本不存在"));
         requireExperimentAccess(version);
-        applyResult(version, req);
+        applyResult(version, req, true);
         return toDto(repo.save(version));
     }
 
@@ -389,7 +389,7 @@ public class TrainingExperimentService {
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
-        applyResult(version, req);
+        applyResult(version, req, true);
         return toDto(repo.save(version));
     }
 
@@ -422,7 +422,7 @@ public class TrainingExperimentService {
             }
             return toDto(version);
         }
-        applyResult(version, req);
+        applyResult(version, req, false);
         return toDto(repo.save(version));
     }
 
@@ -599,7 +599,11 @@ public class TrainingExperimentService {
         }
     }
 
-    private void applyResult(TrainingExperimentVersion version, UpdateTrainingResultRequest req) {
+    private void applyResult(
+            TrainingExperimentVersion version,
+            UpdateTrainingResultRequest req,
+            boolean acceptRemark
+    ) {
         if (req == null) {
             throw new IllegalArgumentException("request body cannot be empty");
         }
@@ -657,7 +661,7 @@ public class TrainingExperimentService {
         if (validatedOutput == null && req.getFinishedAt() != null) {
             version.setFinishedAt(req.getFinishedAt());
         }
-        if (req.getRemark() != null) {
+        if (acceptRemark && req.getRemark() != null) {
             version.setRemark(req.getRemark());
         }
         version.setUpdatedAt(Instant.now());
