@@ -60,6 +60,10 @@ public interface ModelVersionRepository extends JpaRepository<ModelVersion, Stri
 
     Optional<ModelVersion> findByAssetIdAndVersionAndDeletedFalse(String assetId, String version);
 
+    Optional<ModelVersion> findFirstByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByCreatedAtDesc(
+            String assetId
+    );
+
     long countByAssetIdAndDeletedFalse(String assetId);
 
     boolean existsByAssetIdAndVersion(String assetId, String version);

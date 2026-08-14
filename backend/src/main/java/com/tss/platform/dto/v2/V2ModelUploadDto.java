@@ -27,6 +27,7 @@ public class V2ModelUploadDto {
     private String commitInfo;
     private Map<String, Object> hyperParams;
     private String artifactSha256;
+    private String artifactSpecId;
     private Boolean isCurrent;
     private Instant createdAt;
     private Instant updatedAt;

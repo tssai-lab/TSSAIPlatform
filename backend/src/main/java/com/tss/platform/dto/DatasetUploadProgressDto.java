@@ -22,6 +22,7 @@ public class DatasetUploadProgressDto {
     private List<Integer> uploadedPartIndexes;
     private String assetId;
     private String versionId;
+    private String artifactSpecId;
     private Integer versionNo;
     private String versionLabel;
     private String description;

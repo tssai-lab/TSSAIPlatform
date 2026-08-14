@@ -237,6 +237,7 @@ public class ModelVersionCrudController {
                 || body.getStoragePath() != null
                 || body.getSizeBytes() != null
                 || body.getArtifactSha256() != null
+                || body.getArtifactSpecId() != null
                 || body.getPublishedAt() != null
                 || body.getCreatedAt() != null
                 || body.getCreatedBy() != null
@@ -253,6 +254,7 @@ public class ModelVersionCrudController {
                 || body.getStoragePath() != null
                 || body.getSizeBytes() != null
                 || body.getArtifactSha256() != null
+                || body.getArtifactSpecId() != null
                 || body.getPublishedAt() != null
                 || body.getCreatedAt() != null
                 || body.getCreatedBy() != null

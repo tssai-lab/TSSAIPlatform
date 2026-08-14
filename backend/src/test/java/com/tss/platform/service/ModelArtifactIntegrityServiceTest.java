@@ -17,6 +17,7 @@ import java.util.zip.ZipOutputStream;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -36,6 +37,41 @@ class ModelArtifactIntegrityServiceTest {
                 service.inspect(objectName, (long) artifact.length);
 
         assertEquals(artifact.length, inspection.sizeBytes());
+        assertEquals(sha256(artifact), inspection.sha256());
+        assertNull(inspection.artifactSpecId());
+        verify(minio, times(1)).downloadStream(objectName);
+    }
+
+    @Test
+    void inspectRecognizesHfContractWhileHashingTheSameStream() throws Exception {
+        byte[] artifact = zip(
+                new Entry("model.yaml", "format: hf\n".getBytes()),
+                new Entry("config.json", "{}".getBytes()),
+                new Entry("model.safetensors", new byte[]{1, 2, 3})
+        );
+        String objectName = "users/7/models/model.zip";
+        MinioService minio = minio(objectName, artifact);
+        ModelArtifactIntegrityService service = new ModelArtifactIntegrityService(minio);
+
+        ModelArtifactIntegrityService.Inspection inspection =
+                service.inspect(objectName, (long) artifact.length, "CV");
+
+        assertEquals("model.cv.hf-image/v1", inspection.artifactSpecId());
+        assertEquals(sha256(artifact), inspection.sha256());
+        verify(minio, times(1)).downloadStream(objectName);
+    }
+
+    @Test
+    void inspectRecognizesDirectYoloWeightWithoutASecondObjectRead() throws Exception {
+        byte[] artifact = "opaque-yolo-weight".getBytes();
+        String objectName = "users/7/models/yolo11n.pt";
+        MinioService minio = minio(objectName, artifact);
+        ModelArtifactIntegrityService service = new ModelArtifactIntegrityService(minio);
+
+        ModelArtifactIntegrityService.Inspection inspection =
+                service.inspect(objectName, (long) artifact.length, "CV");
+
+        assertEquals("model.cv.yolo-weight/v1", inspection.artifactSpecId());
         assertEquals(sha256(artifact), inspection.sha256());
         verify(minio, times(1)).downloadStream(objectName);
     }
@@ -139,11 +175,17 @@ class ModelArtifactIntegrityServiceTest {
     }
 
     private static byte[] zip(String path, byte[] content) throws Exception {
+        return zip(new Entry(path, content));
+    }
+
+    private static byte[] zip(Entry... entries) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(output)) {
-            zip.putNextEntry(new ZipEntry(path));
-            zip.write(content);
-            zip.closeEntry();
+            for (Entry entry : entries) {
+                zip.putNextEntry(new ZipEntry(entry.path()));
+                zip.write(entry.content());
+                zip.closeEntry();
+            }
         }
         return output.toByteArray();
     }
@@ -152,5 +194,8 @@ class ModelArtifactIntegrityServiceTest {
         return HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(content)
         );
+    }
+
+    private record Entry(String path, byte[] content) {
     }
 }

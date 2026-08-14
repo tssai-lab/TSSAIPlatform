@@ -280,6 +280,7 @@ public class V2DatasetUploadService {
         dto.setTargetResourceId(session.getTargetResourceId());
         dto.setVersionLabel(source.getVersionLabel());
         dto.setStrictManifest(Boolean.TRUE.equals(session.getStrictManifest()));
+        dto.setArtifactSpecId(source.getArtifactSpecId());
         dto.setDisplayStatus(displayStatus(source.getStatus(), job));
         dto.setImportProgress(job == null ? null : job.getProgress());
         V2UserError importError = V2ImportJobDisplayHelper.userError(

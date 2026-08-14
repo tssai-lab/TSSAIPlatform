@@ -219,6 +219,7 @@ public class TrainingModelPublishService {
             modelVersion.setStoragePath(targetPath);
             modelVersion.setSizeBytes(targetSize);
             modelVersion.setArtifactSha256(artifact.sha256());
+            modelVersion.setArtifactSpecId(contract.publishedModelSpecId());
             modelVersion.setArtifactAttestedSha256(artifact.sha256());
             modelVersion.setArtifactAttestedAt(now);
             modelVersion.setDescription(limit("published from RunSpec training " + trainingId + ", format=" + contract.format(), 2048));
@@ -235,7 +236,11 @@ public class TrainingModelPublishService {
         } else if (Boolean.TRUE.equals(modelVersion.getDeleted())
                 || !Objects.equals(modelVersion.getAssetId(), assetId)
                 || !Objects.equals(modelVersion.getStoragePath(), targetPath)
-                || !Objects.equals(modelVersion.getArtifactSha256(), artifact.sha256())) {
+                || !Objects.equals(modelVersion.getArtifactSha256(), artifact.sha256())
+                || !Objects.equals(
+                        modelVersion.getArtifactSpecId(),
+                        contract.publishedModelSpecId()
+                )) {
             throw new IllegalStateException("published model version does not match the training artifact");
         }
         asset.setCurrentVersionId(modelVersionId);

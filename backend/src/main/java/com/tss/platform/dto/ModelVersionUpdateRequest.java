@@ -24,6 +24,7 @@ public class ModelVersionUpdateRequest {
     private String storagePath;
     private Long sizeBytes;
     private String artifactSha256;
+    private String artifactSpecId;
     private Instant publishedAt;
     private Instant createdAt;
     private Integer createdBy;

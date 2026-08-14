@@ -53,6 +53,9 @@ public class ModelVersion {
     @Column(name = "artifact_sha256", length = 64)
     private String artifactSha256;
 
+    @Column(name = "artifact_spec_id", length = 128)
+    private String artifactSpecId;
+
     @JsonIgnore
     @Column(name = "artifact_attested_sha256", length = 64)
     private String artifactAttestedSha256;

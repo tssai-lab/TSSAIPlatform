@@ -163,6 +163,9 @@ class DatasetUploadServiceEnterpriseVersionTest {
         assertEquals(asset.getId(), version.getAssetId());
         assertEquals(version.getId(), asset.getCurrentVersionId());
         assertTrue(version.getStoragePath().contains("/v1/corpus.txt"));
+        assertTrue(version.getArtifactSha256().matches("[0-9a-f]{64}"));
+        assertEquals("dataset.nlp.documents/v1", version.getArtifactSpecId());
+        assertEquals(version.getArtifactSpecId(), session.getArtifactSpecId());
     }
 
     @Test
@@ -221,6 +224,8 @@ class DatasetUploadServiceEnterpriseVersionTest {
         ArgumentCaptor<DatasetVersion> versionCaptor = ArgumentCaptor.forClass(DatasetVersion.class);
         verify(versionRepo, times(2)).saveAndFlush(versionCaptor.capture());
         assertEquals(2L, versionCaptor.getValue().getFileCount());
+        assertEquals("dataset.nlp.documents/v1", versionCaptor.getValue().getArtifactSpecId());
+        assertTrue(versionCaptor.getValue().getArtifactSha256().matches("[0-9a-f]{64}"));
     }
 
     @Test
@@ -826,6 +831,8 @@ class DatasetUploadServiceEnterpriseVersionTest {
 
         assertEquals(first.get("id"), second.get("id"));
         assertEquals(first.get("versionNo"), second.get("versionNo"));
+        assertEquals("dataset.nlp.documents/v1", first.get("artifactSpecId"));
+        assertEquals(first.get("artifactSpecId"), second.get("artifactSpecId"));
         verify(versionRepo, times(2)).saveAndFlush(any(DatasetVersion.class));
         verify(minioClient, times(1)).composeObject(any());
     }

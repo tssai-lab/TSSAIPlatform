@@ -50,6 +50,9 @@ public class ModelUploadSession {
     @Column(name = "storage_path", length = 1024)
     private String storagePath;
 
+    @Column(name = "artifact_spec_id", length = 128)
+    private String artifactSpecId;
+
     @Column(name = "asset_id", length = 64)
     private String assetId;
 

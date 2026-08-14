@@ -25,6 +25,7 @@ public class V2DatasetUploadDto {
     private String targetResourceId;
     private String versionLabel;
     private Boolean strictManifest;
+    private String artifactSpecId;
     private String displayStatus;
     private Integer importProgress;
     private V2UserError userError;

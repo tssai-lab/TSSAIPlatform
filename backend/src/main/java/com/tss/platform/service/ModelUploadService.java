@@ -265,7 +265,8 @@ public class ModelUploadService {
                     composeAndValidateModelObject(
                             plan.destName(),
                             plan.chunks(),
-                            plan.session().getFileSize()
+                            plan.session().getFileSize(),
+                            plan.target().taskType()
                     );
             objectReady = true;
             CompletionPersistenceResult persisted = transactionTemplate.execute(status ->
@@ -323,7 +324,8 @@ public class ModelUploadService {
             dto.setStatus(stringValue(completed.get("status")));
             dto.setModelId(stringValue(completed.get("id")));
             dto.setAssetId(stringValue(completed.get("assetId")));
-            dto.setArtifactSha256(stringValue(completed.get("artifactSha256")));
+        dto.setArtifactSha256(stringValue(completed.get("artifactSha256")));
+            dto.setArtifactSpecId(refreshed.getArtifactSpecId());
             dto.setIsCurrent(Boolean.TRUE.equals(completed.get("isCurrent")));
             dto.setUpdatedAt(refreshed.getUpdatedAt());
             return dto;
@@ -417,7 +419,8 @@ public class ModelUploadService {
     private ModelArtifactIntegrityService.Inspection composeAndValidateModelObject(
             String destName,
             List<ModelUploadChunk> chunks,
-            Long expectedSize
+            Long expectedSize,
+            String taskType
     ) {
         try {
             List<ComposeSource> sources = chunks.stream()
@@ -433,7 +436,7 @@ public class ModelUploadService {
                             .sources(sources)
                             .build()
             );
-            return artifactIntegrityService.inspect(destName, expectedSize);
+            return artifactIntegrityService.inspect(destName, expectedSize, taskType);
         } catch (Exception e) {
             removeObjectQuietly(destName);
             throw new IllegalArgumentException("合并文件失败: " + e.getMessage());
@@ -456,6 +459,7 @@ public class ModelUploadService {
         if (existingDraft != null && !"DRAFT".equals(existingDraft.getStatus())) {
             throw duplicateVersion(assetId, plan.version());
         }
+        requireCompatibleArtifactSpec(assetId, inspection.artifactSpecId());
 
         Instant now = Instant.now();
         ModelAsset asset = target.asset();
@@ -478,6 +482,7 @@ public class ModelUploadService {
         ver.setStoragePath(plan.destName());
         ver.setSizeBytes(plan.session().getFileSize());
         ver.setArtifactSha256(inspection.sha256());
+        ver.setArtifactSpecId(inspection.artifactSpecId());
         ver.setArtifactAttestedSha256(inspection.sha256());
         ver.setArtifactAttestedAt(now);
         ver.setCommitInfo(resolveCommitInfo(req, plan.session()));
@@ -501,6 +506,7 @@ public class ModelUploadService {
         session.setStoragePath(plan.destName());
         session.setAssetId(assetId);
         session.setVersionId(plan.versionId());
+        session.setArtifactSpecId(inspection.artifactSpecId());
         session.setUpdatedAt(now);
         sessionRepo.saveAndFlush(session);
         return new CompletionPersistenceResult(session, asset, ver);
@@ -707,6 +713,7 @@ public class ModelUploadService {
         dto.setStoragePath(session.getStoragePath());
         dto.setAssetId(session.getAssetId());
         dto.setVersionId(session.getVersionId());
+        dto.setArtifactSpecId(session.getArtifactSpecId());
         dto.setCommitInfo(session.getCommitInfo());
         dto.setHyperParams(session.getHyperParams());
         dto.setCreatedAt(session.getCreatedAt());
@@ -735,6 +742,7 @@ public class ModelUploadService {
         dto.setRemark(session.getRemark());
         dto.setCommitInfo(session.getCommitInfo());
         dto.setHyperParams(session.getHyperParams());
+        dto.setArtifactSpecId(progress.getArtifactSpecId());
         dto.setCreatedAt(session.getCreatedAt());
         dto.setUpdatedAt(session.getUpdatedAt());
         return dto;
@@ -806,6 +814,9 @@ public class ModelUploadService {
                 asset != null ? asset.getRemark() : null
         );
         data.put("artifactSha256", version == null ? null : version.getArtifactSha256());
+        data.put("artifactSpecId", version == null
+                ? session.getArtifactSpecId()
+                : version.getArtifactSpecId());
         data.put("commitInfo", version == null ? session.getCommitInfo() : version.getCommitInfo());
         data.put("hyperParams", version == null ? session.getHyperParams() : version.getHyperParams());
         data.put("isCurrent", version != null
@@ -1076,6 +1087,20 @@ public class ModelUploadService {
         return normalized
                 .replaceAll("[\\\\/:*?\"<>|]", "_")
                 .toLowerCase(Locale.ROOT);
+    }
+
+    private void requireCompatibleArtifactSpec(String assetId, String artifactSpecId) {
+        modelVersionRepo
+                .findFirstByAssetIdAndArtifactSpecIdIsNotNullAndDeletedFalseOrderByCreatedAtDesc(
+                        assetId
+                )
+                .ifPresent(existing -> {
+                    if (!Objects.equals(existing.getArtifactSpecId(), artifactSpecId)) {
+                        throw new IllegalArgumentException(
+                                "model artifact specification does not match existing asset versions"
+                        );
+                    }
+                });
     }
 
     private record CompletionTarget(
