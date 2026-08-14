@@ -322,10 +322,21 @@ public class TrainingExperimentService {
         TrainingExperimentVersion version = repo.findByExperimentIdAndVersionNo(experimentId, versionNo)
                 .orElseThrow(() -> new IllegalArgumentException("指定实验版本不存在"));
         requireExperimentAccess(version);
-        if (version.getRunSpecJson() != null) {
-            throw new IllegalArgumentException("任务提交后参数快照不可修改，请基于该版本创建新训练版本");
+        if (req == null) {
+            throw new IllegalArgumentException("request body cannot be empty");
         }
         Object params = req.getHyperParams() != null ? req.getHyperParams() : req.getParams();
+        if (version.getRunSpecJson() != null) {
+            if (req.getRemark() == null) {
+                throw new IllegalArgumentException("任务提交后参数快照不可修改，请基于该版本创建新训练版本");
+            }
+            if (params != null && !sameJson(version.getHyperParamsJson(), params)) {
+                throw new IllegalArgumentException("任务提交后参数快照不可修改，只能修改备注");
+            }
+            version.setRemark(req.getRemark());
+            version.setUpdatedAt(Instant.now());
+            return toDto(repo.save(version));
+        }
         if (params == null) {
             throw new IllegalArgumentException("hyperParams 不能为空");
         }
@@ -596,6 +607,14 @@ public class TrainingExperimentService {
             ObjectNode fallback = objectMapper.createObjectNode();
             fallback.put("raw", json);
             return fallback;
+        }
+    }
+
+    private boolean sameJson(String storedJson, Object submittedValue) {
+        try {
+            return fromJson(storedJson).equals(toJsonNode(submittedValue));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("hyperParams 必须是合法 JSON");
         }
     }
 
