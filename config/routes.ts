@@ -114,6 +114,7 @@ export default [
             name: '代码资产管理',
             component: './task/trainingCode/adminAssets',
             access: 'isAdmin',
+            hideInMenu: true,
           },
           {
             path: '/task/code/upload',

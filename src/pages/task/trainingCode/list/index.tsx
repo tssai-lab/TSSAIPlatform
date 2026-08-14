@@ -264,6 +264,14 @@ const TrainingCodeList: React.FC = () => {
             待审核
           </Button>
         ) : null,
+        access.isAdmin ? (
+          <Button
+            key="admin-assets"
+            onClick={() => history.push('/task/code/admin-assets')}
+          >
+            代码资产管理
+          </Button>
+        ) : null,
         <Button
           key="upload"
           type="primary"
