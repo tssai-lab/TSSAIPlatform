@@ -10,6 +10,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class ArtifactSpecEvidenceTest {
 
     @Test
+    void otherCategoryNeverSignsATrainingSpecification() {
+        assertNull(ArtifactSpecEvidence.recognizeModelArchive(
+                "OTHER",
+                List.of("model.yaml", "config.json", "weights.safetensors")
+        ));
+        assertNull(ArtifactSpecEvidence.recognizeDatasetArchive(
+                "OTHER",
+                null,
+                null,
+                List.of("data/train/cat/one.jpg")
+        ));
+        assertNull(ArtifactSpecEvidence.recognizeSingleDataset("OTHER", "notes.yaml"));
+    }
+
+    @Test
     void recognizesOnlyCompleteUnambiguousModelContracts() {
         assertEquals(
                 ArtifactSpecIds.MODEL_CV_HF_IMAGE,

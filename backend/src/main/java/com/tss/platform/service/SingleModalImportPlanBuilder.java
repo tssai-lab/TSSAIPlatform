@@ -117,6 +117,7 @@ public class SingleModalImportPlanBuilder {
             case "POINT_CLOUD" -> describePointCloudFile(extension, path);
             case "ROBOT" -> describeRobotFile(extension, path);
             case "LEROBOT" -> describeLeRobotFile(extension, path);
+            case "OTHER" -> describeOtherFile(extension, path);
             default -> throw new IllegalArgumentException(
                     "single-modal import plan does not support task type: " + taskType
             );
@@ -184,6 +185,16 @@ public class SingleModalImportPlanBuilder {
                 yield unsupported(extension, path);
             }
             default -> unsupported(extension, path);
+        };
+    }
+
+    private static FileDescriptor describeOtherFile(String extension, String path) {
+        return switch (extension) {
+            case "jpg", "jpeg", "png", "bmp", "gif", "webp", "tif", "tiff" ->
+                    describeCvFile(extension, path);
+            case "pcd", "ply" -> describePointCloudFile(extension, path);
+            case "mp4", "mkv", "parquet" -> describeLeRobotFile(extension, path);
+            default -> describeTextLikeFile(extension, path);
         };
     }
 

@@ -6,9 +6,10 @@ public enum TaskType {
     CV,
     NLP,
     POINT_CLOUD,
-    ROBOT;
+    ROBOT,
+    OTHER;
 
-    private static final String SUPPORTED_TYPES = "CV, NLP, POINT_CLOUD, ROBOT";
+    private static final String SUPPORTED_TYPES = "CV, NLP, POINT_CLOUD, ROBOT, OTHER";
 
     public static String normalize(String value) {
         if (value == null || value.isBlank()) {

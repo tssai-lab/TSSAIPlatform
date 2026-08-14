@@ -296,6 +296,18 @@ Flyway repair 或重新基线化。
 - 数据库再次限制 v2 Schema、256 KiB UTF-8 YAML 存储上限和 SHA-256 格式；完整
   YAML 语义、安全策略和资产规范仍由 I-1 同源校验器负责。
 
+## V58__artifact_spec_evidence.sql
+
+- 为模型/数据集版本和各自上传会话增加可空的服务端资产规范证据。
+- 历史数据不回填；无法从真实内容唯一证明的资产保持 NULL。
+- 增加规范 ID 格式约束，以及 READY 版本按 owner/spec 查询的部分索引。
+
+## V59__add_other_asset_category.sql
+
+- 仅重建模型资产、数据集资产和数据集上传会话的既有类型 CHECK，并增加 OTHER。
+- 不增加或删除字段，不修改历史数据；现有 CV/NLP/点云/机器人/LeRobot/多模态值保持有效。
+- OTHER 只是未分类目录，不放宽上传安全校验，不自动产生 `artifact_spec_id` 或训练资格。
+
 ## 维护规则
 
 - 已执行的版本化迁移只读维护，不修改文件内容或 checksum。
