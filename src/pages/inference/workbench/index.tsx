@@ -161,6 +161,32 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
+  // 结果抽屉打开且任务未结束时，刷新状态 / logPath，供日志终端轮询追加
+  useEffect(() => {
+    if (!drawerOpen || !selectedTask?.id) return;
+    const running = ['pending', 'queued', 'scheduled', 'running'].includes(
+      selectedTask.status,
+    );
+    if (!running) return;
+
+    const taskId = selectedTask.id;
+    const timer = window.setInterval(() => {
+      void getInferenceTaskResult(taskId, { skipErrorHandler: true })
+        .then((res) => {
+          const latest = res?.data;
+          if (!latest) return;
+          setSelectedTask((prev) =>
+            prev && prev.id === taskId ? { ...prev, ...latest } : prev,
+          );
+        })
+        .catch(() => {
+          // 保持抽屉内已有数据
+        });
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [drawerOpen, selectedTask?.id, selectedTask?.status]);
+
   const modelSelectOptions = useMemo(
     () =>
       modelOptions

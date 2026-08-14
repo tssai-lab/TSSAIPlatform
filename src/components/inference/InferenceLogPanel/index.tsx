@@ -1,36 +1,29 @@
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Alert, Button, message, Space, Spin, Typography } from 'antd';
-import React, { useEffect, useState } from 'react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import { Button, message, Space, Spin, Typography } from 'antd';
+import React, { useEffect, useRef, useState } from 'react';
+import { VISUALIZATION_CONFIG } from '@/constants/platform';
 import { downloadObject } from '@/services/files';
 import { objectNameFromMinioPath } from '@/services/inference';
+import '@xterm/xterm/css/xterm.css';
 
-const DEFAULT_MAX_PREVIEW_BYTES = 1_000_000;
+const TERMINAL_HEIGHT = 360;
 
 const RUNNING_STATUSES = new Set(['pending', 'queued', 'scheduled', 'running']);
 
-type LoadState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'empty'; message: string }
-  | {
-      status: 'ready';
-      content: string;
-      truncated: boolean;
-      sizeBytes: number;
-    }
-  | { status: 'error'; message: string };
+type UiStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
 export type InferenceLogPanelProps = {
   logPath?: string | null;
   status?: string;
-  /** 超过该字节数只保留末尾，默认 1MB */
-  maxPreviewBytes?: number;
+  /** 运行中轮询间隔，默认与任务状态轮询一致 */
+  pollIntervalMs?: number;
 };
 
 async function readLogBlob(
   blob: Blob,
-  maxPreviewBytes: number,
-): Promise<{ content: string; truncated: boolean; sizeBytes: number }> {
+): Promise<{ content: string; sizeBytes: number }> {
   if (blob.type && blob.type.includes('application/json')) {
     const text = await blob.text();
     let msg = text;
@@ -46,49 +39,147 @@ async function readLogBlob(
     throw new Error(msg || '日志加载失败');
   }
 
-  const sizeBytes = blob.size;
-  if (sizeBytes <= maxPreviewBytes) {
-    return {
-      content: await blob.text(),
-      truncated: false,
-      sizeBytes,
-    };
-  }
+  return {
+    content: await blob.text(),
+    sizeBytes: blob.size,
+  };
+}
 
-  const slice = blob.slice(sizeBytes - maxPreviewBytes);
-  let content = await slice.text();
-  const firstNl = content.indexOf('\n');
-  if (firstNl >= 0 && firstNl < content.length - 1) {
-    content = content.slice(firstNl + 1);
-  }
-  return { content, truncated: true, sizeBytes };
+function toTerminalText(content: string) {
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return normalized.endsWith('\n') ? normalized : `${normalized}\n`;
 }
 
 const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
   logPath,
   status,
-  maxPreviewBytes = DEFAULT_MAX_PREVIEW_BYTES,
+  pollIntervalMs = VISUALIZATION_CONFIG.TASK_STATUS_POLL_INTERVAL_MS,
 }) => {
-  const [state, setState] = useState<LoadState>({ status: 'idle' });
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const contentRef = useRef('');
+  const followRef = useRef(true);
+  const fetchingRef = useRef(false);
+
+  const [uiStatus, setUiStatus] = useState<UiStatus>('idle');
+  const [emptyMessage, setEmptyMessage] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [live, setLive] = useState(false);
+  const [hasContent, setHasContent] = useState(false);
+
+  const isRunning = status ? RUNNING_STATUSES.has(status) : false;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const term = new Terminal({
+      convertEol: true,
+      disableStdin: true,
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      fontSize: 12,
+      lineHeight: 1.35,
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      theme: {
+        background: '#0b1220',
+        foreground: '#e5e7eb',
+        cursor: '#94a3b8',
+        selectionBackground: '#334155',
+      },
+      // 放大回滚缓冲，尽量容纳完整日志浏览
+      scrollback: 100000,
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(host);
+    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
+
+    term.onScroll(() => {
+      const buf = term.buffer.active;
+      followRef.current = buf.viewportY >= buf.baseY;
+    });
+
+    const ro = new ResizeObserver(() => {
+      try {
+        fit.fit();
+      } catch {
+        // 容器尚未可见时 fit 可能抛错
+      }
+    });
+    ro.observe(host);
+
+    return () => {
+      ro.disconnect();
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+      contentRef.current = '';
+    };
+  }, []);
+
+  const applyContent = (next: string) => {
+    const term = termRef.current;
+    if (!term) return;
+    const prev = contentRef.current;
+
+    if (!prev) {
+      term.reset();
+      term.write(toTerminalText(next));
+    } else if (next === prev) {
+      return;
+    } else if (next.startsWith(prev)) {
+      const delta = next.slice(prev.length);
+      if (delta) {
+        term.write(delta.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+      }
+    } else {
+      term.reset();
+      term.write(toTerminalText(next));
+    }
+
+    contentRef.current = next;
+    setHasContent(true);
+    if (followRef.current) {
+      term.scrollToBottom();
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
 
-    const run = async () => {
+    contentRef.current = '';
+    termRef.current?.reset();
+    setHasContent(false);
+    followRef.current = true;
+
+    const fetchOnce = async (opts?: { silent?: boolean }) => {
       const objectName = objectNameFromMinioPath(logPath);
       if (!objectName) {
-        const running = status ? RUNNING_STATUSES.has(status) : false;
+        contentRef.current = '';
+        termRef.current?.reset();
         if (!cancelled) {
-          setState({
-            status: 'empty',
-            message: running ? '任务进行中，日志生成后可查看' : '暂无日志文件',
-          });
+          setLive(false);
+          setHasContent(false);
+          setUiStatus('empty');
+          setEmptyMessage(
+            isRunning ? '任务进行中，日志生成后可查看' : '暂无日志文件',
+          );
         }
         return;
       }
 
-      if (!cancelled) setState({ status: 'loading' });
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+      if (!opts?.silent && !contentRef.current) {
+        setUiStatus('loading');
+      }
+
       try {
         const blob = await downloadObject(objectName, {
           skipErrorHandler: true,
@@ -97,37 +188,59 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         if (!(blob instanceof Blob)) {
           throw new Error('日志响应不是文件流');
         }
-        const result = await readLogBlob(blob, maxPreviewBytes);
+        const result = await readLogBlob(blob);
         if (cancelled) return;
+
         if (!result.content.trim()) {
-          setState({ status: 'empty', message: '日志文件为空' });
+          contentRef.current = '';
+          termRef.current?.reset();
+          setHasContent(false);
+          setUiStatus('empty');
+          setEmptyMessage('日志文件为空');
+          setLive(isRunning);
           return;
         }
-        setState({
-          status: 'ready',
-          content: result.content,
-          truncated: result.truncated,
-          sizeBytes: result.sizeBytes,
-        });
+
+        applyContent(result.content);
+        setUiStatus('ready');
+        setLive(isRunning);
+        try {
+          fitRef.current?.fit();
+        } catch {
+          // ignore
+        }
       } catch (err: any) {
         if (cancelled) return;
-        setState({
-          status: 'error',
-          message: err?.message || '日志加载失败',
-        });
+        if (!contentRef.current) {
+          setUiStatus('error');
+          setEmptyMessage(err?.message || '日志加载失败');
+          setHasContent(false);
+        }
+        setLive(false);
+      } finally {
+        fetchingRef.current = false;
       }
     };
 
-    void run();
+    void fetchOnce();
+
+    if (isRunning) {
+      timer = window.setInterval(() => {
+        void fetchOnce({ silent: true });
+      }, pollIntervalMs);
+    }
+
     return () => {
       cancelled = true;
+      if (timer) window.clearInterval(timer);
     };
-  }, [logPath, status, maxPreviewBytes, reloadKey]);
+  }, [logPath, status, pollIntervalMs, isRunning, reloadKey]);
 
   const handleCopy = async () => {
-    if (state.status !== 'ready') return;
+    const text = contentRef.current;
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(state.content);
+      await navigator.clipboard.writeText(text);
       message.success('已复制日志');
     } catch {
       message.error('复制失败');
@@ -145,15 +258,21 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         }}
       >
         <div>
-          <Typography.Title level={5} style={{ margin: 0 }}>
-            运行日志
-          </Typography.Title>
+          <Space align="center" size={8}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              运行日志
+            </Typography.Title>
+            {live && (
+              <Typography.Text type="success" style={{ fontSize: 12 }}>
+                ● 实时输出中
+              </Typography.Text>
+            )}
+          </Space>
           <Typography.Paragraph
             type="secondary"
             style={{ margin: '4px 0 0', fontSize: 13 }}
           >
-            展示本任务的推理运行日志。体积不超过约 1MB
-            时为完整内容；过大时仅预览末尾，完整文件请点上方「下载日志」。
+            终端内展示本任务的完整推理运行日志，可滚动查看；也可使用上方「下载日志」保存文件。
           </Typography.Paragraph>
         </div>
         <Space size={4} style={{ flexShrink: 0 }}>
@@ -161,7 +280,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
             type="text"
             size="small"
             icon={<ReloadOutlined />}
-            disabled={!logPath || state.status === 'loading'}
+            disabled={!logPath || (uiStatus === 'loading' && !hasContent)}
             onClick={() => setReloadKey((k) => k + 1)}
           >
             刷新
@@ -170,7 +289,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
             type="text"
             size="small"
             icon={<CopyOutlined />}
-            disabled={state.status !== 'ready'}
+            disabled={!hasContent}
             onClick={() => void handleCopy()}
           >
             复制
@@ -178,43 +297,43 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         </Space>
       </Space>
 
-      {state.status === 'ready' && state.truncated && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 8 }}
-          message={`日志较大（约 ${(state.sizeBytes / 1024).toFixed(0)} KB），仅预览末尾；完整内容请使用「下载日志」。`}
-        />
+      {(uiStatus === 'empty' || uiStatus === 'error') && (
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', fontSize: 13, marginBottom: 8 }}
+        >
+          {emptyMessage}
+        </Typography.Text>
       )}
 
-      {state.status === 'loading' || state.status === 'idle' ? (
-        <div style={{ padding: 24, textAlign: 'center' }}>
-          <Spin size="small" />
-        </div>
-      ) : state.status === 'empty' || state.status === 'error' ? (
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-          {state.message}
-        </Typography.Text>
-      ) : (
-        <pre
-          style={{
-            margin: 0,
-            padding: 12,
-            minHeight: 120,
-            maxHeight: 360,
-            overflow: 'auto',
-            background: '#111827',
-            color: '#e5e7eb',
-            borderRadius: 6,
-            fontSize: 12,
-            lineHeight: 1.5,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}
-        >
-          {state.content}
-        </pre>
-      )}
+      <div
+        style={{
+          position: 'relative',
+          height: TERMINAL_HEIGHT,
+          padding: 8,
+          background: '#0b1220',
+          borderRadius: 6,
+          overflow: 'hidden',
+          border: '1px solid #1e293b',
+        }}
+      >
+        {uiStatus === 'loading' && !hasContent && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(11, 18, 32, 0.72)',
+            }}
+          >
+            <Spin size="small" />
+          </div>
+        )}
+        <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+      </div>
     </div>
   );
 };
