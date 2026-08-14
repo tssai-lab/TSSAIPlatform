@@ -141,6 +141,7 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("54");
         expectedVersions.add("55");
         expectedVersions.add("56");
+        expectedVersions.add("57");
         Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version
@@ -161,7 +162,8 @@ class CodeAssetPostgresContainerTest {
                 "code_asset_audit_log",
                 "code_risk_assessment",
                 "code_risk_finding",
-                "platform_system_config"
+                "platform_system_config",
+                "training_plan_definition"
         )) {
             assertEquals(
                     1L,

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -22,6 +23,9 @@ public class TrainingPlanRegistry {
 
     private final TrainingPlanValidator validator;
     private final TrainingPlanYamlParser yamlParser;
+    private volatile Map<String, Map<String, TrainingPlanDefinition>> builtInPlansById = Map.of();
+    private volatile Map<String, Map<String, TrainingPlanDefinition>> onlinePlansById = Map.of();
+    private volatile List<BuiltInPlan> builtInPlans = List.of();
     private volatile Map<String, Map<String, TrainingPlanDefinition>> plansById = Map.of();
 
     public TrainingPlanRegistry(
@@ -49,9 +53,16 @@ public class TrainingPlanRegistry {
         }
 
         Map<String, Map<String, TrainingPlanDefinition>> loaded = new TreeMap<>();
+        List<BuiltInPlan> loadedMetadata = new ArrayList<>();
         for (Resource resource : resources) {
             String source = resource.getDescription();
-            TrainingPlanDefinition plan = read(resource, source);
+            byte[] content;
+            try (InputStream inputStream = resource.getInputStream()) {
+                content = inputStream.readAllBytes();
+            } catch (IOException exception) {
+                throw new IllegalStateException("读取训练方案失败 " + source, exception);
+            }
+            TrainingPlanDefinition plan = read(content, source);
             validator.validate(plan, source);
             Map<String, TrainingPlanDefinition> versions = loaded.computeIfAbsent(
                     plan.id(), ignored -> new TreeMap<>(TrainingPlanRegistry::compareVersions)
@@ -59,11 +70,68 @@ public class TrainingPlanRegistry {
             if (versions.putIfAbsent(plan.version(), plan) != null) {
                 throw new IllegalStateException("训练方案ID和版本重复: " + plan.id() + "@" + plan.version());
             }
+            loadedMetadata.add(new BuiltInPlan(
+                    plan,
+                    new String(content, StandardCharsets.UTF_8),
+                    TrainingPlanContent.sha256(content)
+            ));
         }
 
-        Map<String, Map<String, TrainingPlanDefinition>> immutable = new LinkedHashMap<>();
-        loaded.forEach((id, versions) -> immutable.put(id, Map.copyOf(versions)));
-        plansById = Map.copyOf(immutable);
+        Map<String, Map<String, TrainingPlanDefinition>> immutable = immutable(loaded);
+        loadedMetadata.sort(Comparator
+                .comparing((BuiltInPlan item) -> item.definition().id())
+                .thenComparing(item -> item.definition().version(), TrainingPlanRegistry::compareVersions));
+        builtInPlansById = immutable;
+        builtInPlans = List.copyOf(loadedMetadata);
+        plansById = merge(immutable, onlinePlansById);
+    }
+
+    public synchronized PreparedOnlineSnapshot prepareOnlinePlans(
+            List<TrainingPlanDefinition> onlinePlans
+    ) {
+        Map<String, Map<String, TrainingPlanDefinition>> loaded = new TreeMap<>();
+        for (TrainingPlanDefinition plan : onlinePlans == null ? List.<TrainingPlanDefinition>of() : onlinePlans) {
+            validator.validate(plan, "online:" + (plan == null ? "unknown" : plan.id()));
+            if (isBuiltIn(plan.id(), plan.version())) {
+                throw new IllegalArgumentException(
+                        "在线训练方案不能覆盖内置方案: " + plan.id() + "@" + plan.version()
+                );
+            }
+            Map<String, TrainingPlanDefinition> versions = loaded.computeIfAbsent(
+                    plan.id(), ignored -> new TreeMap<>(TrainingPlanRegistry::compareVersions)
+            );
+            if (versions.putIfAbsent(plan.version(), plan) != null) {
+                throw new IllegalArgumentException(
+                        "在线训练方案ID和版本重复: " + plan.id() + "@" + plan.version()
+                );
+            }
+        }
+        Map<String, Map<String, TrainingPlanDefinition>> online = immutable(loaded);
+        return new PreparedOnlineSnapshot(online, merge(builtInPlansById, online));
+    }
+
+    public synchronized void installOnlinePlans(PreparedOnlineSnapshot prepared) {
+        if (prepared == null) {
+            throw new IllegalArgumentException("prepared online training plans cannot be null");
+        }
+        onlinePlansById = prepared.onlinePlansById;
+        plansById = prepared.combinedPlansById;
+    }
+
+    public synchronized void replaceOnlinePlans(List<TrainingPlanDefinition> onlinePlans) {
+        installOnlinePlans(prepareOnlinePlans(onlinePlans));
+    }
+
+    public List<BuiltInPlan> listBuiltInPlans() {
+        return builtInPlans;
+    }
+
+    public boolean isBuiltIn(String planId, String version) {
+        if (planId == null || version == null) {
+            return false;
+        }
+        Map<String, TrainingPlanDefinition> versions = builtInPlansById.get(planId.trim());
+        return versions != null && versions.containsKey(version.trim());
     }
 
     public List<TrainingPlanDefinition> listLatest(boolean includeDisabled) {
@@ -122,15 +190,8 @@ public class TrainingPlanRegistry {
         );
     }
 
-    private TrainingPlanDefinition read(Resource resource, String source) {
-        try (InputStream inputStream = resource.getInputStream()) {
-            return yamlParser.parse(inputStream.readAllBytes(), source);
-        } catch (Exception e) {
-            if (e instanceof TrainingPlanValidationException validationException) {
-                throw validationException;
-            }
-            throw new IllegalStateException("读取训练方案失败 " + source + ": " + e.getMessage(), e);
-        }
+    private TrainingPlanDefinition read(byte[] content, String source) {
+        return yamlParser.parse(content, source);
     }
 
     private Optional<TrainingPlanDefinition> latestOf(Map<String, TrainingPlanDefinition> versions) {
@@ -145,6 +206,55 @@ public class TrainingPlanRegistry {
 
     private static int parseVersion(String version) {
         return Integer.parseInt(version.substring(1));
+    }
+
+    private static Map<String, Map<String, TrainingPlanDefinition>> immutable(
+            Map<String, Map<String, TrainingPlanDefinition>> source
+    ) {
+        Map<String, Map<String, TrainingPlanDefinition>> result = new LinkedHashMap<>();
+        source.forEach((id, versions) -> result.put(id, Map.copyOf(versions)));
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, Map<String, TrainingPlanDefinition>> merge(
+            Map<String, Map<String, TrainingPlanDefinition>> builtIns,
+            Map<String, Map<String, TrainingPlanDefinition>> online
+    ) {
+        Map<String, Map<String, TrainingPlanDefinition>> merged = new TreeMap<>();
+        builtIns.forEach((id, versions) -> merged.put(id, new TreeMap<>(versions)));
+        online.forEach((id, versions) -> {
+            Map<String, TrainingPlanDefinition> target = merged.computeIfAbsent(
+                    id, ignored -> new TreeMap<>(TrainingPlanRegistry::compareVersions)
+            );
+            versions.forEach((version, plan) -> {
+                if (target.putIfAbsent(version, plan) != null) {
+                    throw new IllegalArgumentException(
+                            "在线训练方案不能覆盖内置方案: " + id + "@" + version
+                    );
+                }
+            });
+        });
+        return immutable(merged);
+    }
+
+    public record BuiltInPlan(
+            TrainingPlanDefinition definition,
+            String yamlContent,
+            String sha256
+    ) {
+    }
+
+    public static final class PreparedOnlineSnapshot {
+        private final Map<String, Map<String, TrainingPlanDefinition>> onlinePlansById;
+        private final Map<String, Map<String, TrainingPlanDefinition>> combinedPlansById;
+
+        private PreparedOnlineSnapshot(
+                Map<String, Map<String, TrainingPlanDefinition>> onlinePlansById,
+                Map<String, Map<String, TrainingPlanDefinition>> combinedPlansById
+        ) {
+            this.onlinePlansById = onlinePlansById;
+            this.combinedPlansById = combinedPlansById;
+        }
     }
 
     public record ResolvedRuntime(
