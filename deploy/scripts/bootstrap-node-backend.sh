@@ -68,7 +68,7 @@ model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/opt/tss-platform/model-cach
 model_cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
 model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
 model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
-model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-13958643712}"
+model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
 
 if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
   echo "TSS_MODEL_CACHE_ENABLED must be true or false." >&2

@@ -193,6 +193,7 @@ for _ in $(seq 1 60); do
       validation_args+=("$cv_image" "$nlp_image")
     fi
     if TSS_EXPECTED_INFERENCE_IMAGE="$image" \
+      TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}" \
       /usr/local/sbin/tss-node-validate-deployment "${validation_args[@]}"; then
       echo "Inference runtime deployment is healthy and functionally validated: node=$TSS_NODE_ID image=$image"
       exit 0
