@@ -5,8 +5,8 @@ import { history, useAccess } from '@umijs/max';
 import {
   Alert,
   Button,
+  Card,
   Col,
-  Drawer,
   Empty,
   Form,
   Input,
@@ -99,13 +99,14 @@ const AdminCodeAssetsPage: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType | null>(null);
   const browseRef = useRef<BrowseState | null>(null);
-  const [editOpen, setEditOpen] = useState(false);
+  const activeAssetRef = useRef<V2AdminCodeAsset | null>(null);
+  const [activeAsset, setActiveAsset] = useState<V2AdminCodeAsset | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [editing, setEditing] = useState<V2AdminCodeAsset | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editProfileLocked, setEditProfileLocked] = useState(false);
   const [editOriginalProfile, setEditOriginalProfile] = useState<string>();
   const [form] = Form.useForm();
-  const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsAssetName, setVersionsAssetName] = useState('');
   const [versionsAssetId, setVersionsAssetId] = useState<string>();
@@ -133,6 +134,10 @@ const AdminCodeAssetsPage: React.FC = () => {
   useEffect(() => {
     browseRef.current = browse;
   }, [browse]);
+
+  useEffect(() => {
+    activeAssetRef.current = activeAsset;
+  }, [activeAsset]);
 
   useEffect(() => {
     if (!access.isAdmin) {
@@ -163,33 +168,47 @@ const AdminCodeAssetsPage: React.FC = () => {
     setBrowse((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
-  const openEdit = async (record: V2AdminCodeAsset) => {
-    const assetId = record.assetId || record.id;
-    if (!assetId) return;
-    try {
-      const [detail, versionList] = await Promise.all([
-        getAdminCodeAsset(assetId, { skipErrorHandler: true }),
-        listAdminCodeAssetVersions(assetId, { skipErrorHandler: true }).catch(
-          () => [],
-        ),
-      ]);
-      const hasVersions = Array.isArray(versionList) && versionList.length > 0;
-      const profile = detail.trainingProfile?.trim() || '';
-      setEditProfileLocked(hasVersions);
-      setEditOriginalProfile(profile);
-      setEditing(detail);
-      form.setFieldsValue({
-        name: detail.name,
-        trainingProfile: profile,
-        purpose: detail.purpose,
-        runtime: detail.runtime,
-        entryScript: detail.entryScript,
-        remark: detail.remark,
-      });
-      setEditOpen(true);
-    } catch (e: unknown) {
-      message.error(getApiErrorMessage(e, '加载资产失败'));
-    }
+  const applyAssetMeta = (
+    detail: V2AdminCodeAsset,
+    versionList: V2CodeVersion[],
+  ) => {
+    const hasVersions = Array.isArray(versionList) && versionList.length > 0;
+    const profile = detail.trainingProfile?.trim() || '';
+    setEditProfileLocked(hasVersions);
+    setEditOriginalProfile(profile);
+    setEditing(detail);
+    form.setFieldsValue({
+      name: detail.name,
+      trainingProfile: profile,
+      purpose: detail.purpose,
+      runtime: detail.runtime,
+      entryScript: detail.entryScript,
+      remark: detail.remark,
+    });
+  };
+
+  const loadAssetMeta = async (assetId: string) => {
+    const [detail, versionList] = await Promise.all([
+      getAdminCodeAsset(assetId, { skipErrorHandler: true }),
+      listAdminCodeAssetVersions(assetId, { skipErrorHandler: true }).catch(
+        () => [],
+      ),
+    ]);
+    const versionsNext = Array.isArray(versionList) ? versionList : [];
+    applyAssetMeta(detail, versionsNext);
+    setVersions(versionsNext);
+    setVersionsAssetId(assetId);
+    setVersionsAssetName(detail.name || assetId);
+    return { detail, versionsNext };
+  };
+
+  const exitDetail = () => {
+    closeBrowse();
+    setActiveAsset(null);
+    setEditing(null);
+    setVersions([]);
+    setVersionsAssetId(undefined);
+    actionRef.current?.reload();
   };
 
   const submitEdit = async () => {
@@ -213,8 +232,22 @@ const AdminCodeAssetsPage: React.FC = () => {
       }
       await patchAdminCodeAsset(assetId, patch, { skipErrorHandler: true });
       message.success('资产已更新');
-      setEditOpen(false);
-      actionRef.current?.reload();
+      await loadAssetMeta(assetId);
+      setActiveAsset((prev) =>
+        prev
+          ? {
+              ...prev,
+              name: values.name?.trim(),
+              trainingProfile: editProfileLocked
+                ? prev.trainingProfile
+                : values.trainingProfile?.trim(),
+              purpose: values.purpose?.trim(),
+              runtime: values.runtime?.trim(),
+              entryScript: values.entryScript?.trim(),
+              remark: values.remark?.trim(),
+            }
+          : prev,
+      );
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e, '更新失败'));
     } finally {
@@ -347,6 +380,29 @@ const AdminCodeAssetsPage: React.FC = () => {
     }
   };
 
+  const enterAsset = async (record: V2AdminCodeAsset) => {
+    const assetId = record.assetId || record.id;
+    if (!assetId) return;
+    setActiveAsset(record);
+    setDetailLoading(true);
+    closeBrowse();
+    try {
+      const { detail } = await loadAssetMeta(assetId);
+      const merged: V2AdminCodeAsset = {
+        ...record,
+        ...detail,
+        assetId: detail.assetId || detail.id || assetId,
+        ownerUserId: detail.ownerUserId ?? record.ownerUserId,
+      };
+      setActiveAsset(merged);
+      await openWorkspaceBrowse(merged);
+    } catch (e: unknown) {
+      message.error(getApiErrorMessage(e, '加载资产失败'));
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const handleSaveDraft = async () => {
     const current = browseRef.current;
     if (!current || current.mode !== 'workspace' || !selectedPath) return;
@@ -409,7 +465,12 @@ const AdminCodeAssetsPage: React.FC = () => {
             }`,
           );
           closeBrowse();
-          actionRef.current?.reload();
+          const asset = activeAssetRef.current;
+          if (asset) {
+            const assetId = asset.assetId || asset.id;
+            if (assetId) await loadAssetMeta(assetId);
+            await openWorkspaceBrowse(asset);
+          }
         } catch (e: unknown) {
           message.error(getApiErrorMessage(e, '发布失败'));
           throw e;
@@ -445,7 +506,12 @@ const AdminCodeAssetsPage: React.FC = () => {
             }`,
           );
           closeBrowse();
-          actionRef.current?.reload();
+          const asset = activeAssetRef.current;
+          if (asset) {
+            const assetId = asset.assetId || asset.id;
+            if (assetId) await loadAssetMeta(assetId);
+            await openWorkspaceBrowse(asset);
+          }
         } catch (e: unknown) {
           message.error(getApiErrorMessage(e, '发布失败'));
           throw e;
@@ -465,7 +531,12 @@ const AdminCodeAssetsPage: React.FC = () => {
         skipErrorHandler: true,
       });
       message.success('已放弃工作区草稿');
-      closeBrowse();
+      const asset = activeAssetRef.current;
+      if (asset) {
+        await openWorkspaceBrowse(asset);
+      } else {
+        closeBrowse();
+      }
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e, '放弃工作区失败'));
     } finally {
@@ -682,41 +753,22 @@ const AdminCodeAssetsPage: React.FC = () => {
   };
 
   const handleOpenWorkspaceFromVersion = async (version: V2CodeVersion) => {
-    const assetId = versionsAssetId;
+    const asset = activeAssetRef.current;
+    const assetId = versionsAssetId || asset?.assetId || asset?.id;
     const versionId = version.versionId || version.id || version.codeVersionId;
     if (!assetId || !versionId) {
       message.error('缺少 assetId / versionId');
       return;
     }
-    setVersionsOpen(false);
     await openWorkspaceBrowse(
-      {
-        assetId,
-        id: assetId,
-        name: versionsAssetName,
-      } as V2AdminCodeAsset,
+      asset ||
+        ({
+          assetId,
+          id: assetId,
+          name: versionsAssetName,
+        } as V2AdminCodeAsset),
       versionId,
     );
-  };
-
-  const openVersions = async (record: V2AdminCodeAsset) => {
-    const assetId = record.assetId || record.id;
-    if (!assetId) return;
-    setVersionsAssetName(record.name || assetId);
-    setVersionsAssetId(assetId);
-    setVersionsOpen(true);
-    setVersionsLoading(true);
-    setVersions([]);
-    try {
-      const list = await listAdminCodeAssetVersions(assetId, {
-        skipErrorHandler: true,
-      });
-      setVersions(Array.isArray(list) ? list : []);
-    } catch (e: unknown) {
-      message.error(getApiErrorMessage(e, '加载版本失败'));
-    } finally {
-      setVersionsLoading(false);
-    }
   };
 
   const openVersionBrowse = async (version: V2CodeVersion) => {
@@ -791,43 +843,14 @@ const AdminCodeAssetsPage: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 280,
+      width: 100,
       render: (_, record) => {
         const assetId = record.assetId || record.id;
         if (!assetId) return null;
         return (
-          <Space size={0} wrap>
-            <Button type="link" onClick={() => void openEdit(record)}>
-              编辑
-            </Button>
-            <Button type="link" onClick={() => void openVersions(record)}>
-              版本
-            </Button>
-            <Button
-              type="link"
-              onClick={() => void openWorkspaceBrowse(record)}
-            >
-              打开工作区
-            </Button>
-            <Popconfirm
-              title="确认软删除该代码资产？"
-              onConfirm={async () => {
-                try {
-                  await deleteAdminCodeAsset(assetId, {
-                    skipErrorHandler: true,
-                  });
-                  message.success('已删除');
-                  actionRef.current?.reload();
-                } catch (e: unknown) {
-                  message.error(getApiErrorMessage(e, '删除失败'));
-                }
-              }}
-            >
-              <Button type="link" danger>
-                删除
-              </Button>
-            </Popconfirm>
-          </Space>
+          <Button type="link" onClick={() => void enterAsset(record)}>
+            管理
+          </Button>
         );
       },
     },
@@ -929,206 +952,230 @@ const AdminCodeAssetsPage: React.FC = () => {
     },
   ];
 
+  const activeAssetId = activeAsset?.assetId || activeAsset?.id;
+
   return (
     <PageContainer
-      title="代码资产管理（管理员）"
-      subTitle="跨 owner 维护；不授予训练消费权。列表支持服务端排序。"
-    >
-      <ProTable<V2AdminCodeAsset>
-        actionRef={actionRef}
-        rowKey={(r) => r.assetId || r.id || r.name || String(Math.random())}
-        columns={columns}
-        search={{ labelWidth: 'auto' }}
-        scroll={{ x: 960 }}
-        pagination={{ pageSize: 20, showSizeChanger: true }}
-        request={async (params, sort) => {
-          const sortEntry = Object.entries(sort || {})[0];
-          let sortBy: string = 'UPDATED_AT';
-          let sortDirection: 'ASC' | 'DESC' = 'DESC';
-          if (sortEntry) {
-            const [field, order] = sortEntry;
-            sortDirection = order === 'ascend' ? 'ASC' : 'DESC';
-            if (field === 'name') sortBy = 'NAME';
-            else if (field === 'ownerUserId') sortBy = 'OWNER_USER_ID';
-            else if (field === 'createdAt') sortBy = 'CREATED_AT';
-            else sortBy = 'UPDATED_AT';
-          }
-          const page = Math.max(0, (params.current || 1) - 1);
-          try {
-            const res = await listAdminCodeAssets(
-              {
-                page,
-                pageSize: params.pageSize || 20,
-                keyword: params.keyword?.trim() || undefined,
-                ownerUserId: params.ownerUserId?.trim() || undefined,
-                trainingProfile: params.trainingProfile?.trim() || undefined,
-                sortBy,
-                sortDirection,
-              },
-              { skipErrorHandler: true },
-            );
-            const pageData = normalizeAdminCodeAssetPage(res);
-            return {
-              data: pageData.items,
-              success: true,
-              total: pageData.total,
-            };
-          } catch (e: unknown) {
-            message.error(getApiErrorMessage(e, '加载管理员代码资产失败'));
-            return { data: [], success: false, total: 0 };
-          }
-        }}
-      />
-
-      <Modal
-        title="编辑代码资产"
-        open={editOpen}
-        onCancel={() => setEditOpen(false)}
-        onOk={() => void submitEdit()}
-        confirmLoading={editLoading}
-        destroyOnClose
-      >
-        {editProfileLocked ? (
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="trainingProfile 已锁定"
-            description={`该资产已有不可变代码版本，训练方案不可再修改（当前：${editOriginalProfile || '-'}）。如需更换方案请新建代码资产。`}
-          />
-        ) : null}
-        <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="trainingProfile"
-            label="trainingProfile"
-            extra={
-              editProfileLocked
-                ? '首版发布后由版本快照固化，此处只读'
-                : '仅可在尚无代码版本时设置或修改'
-            }
-          >
-            <Input disabled={editProfileLocked} />
-          </Form.Item>
-          <Form.Item name="purpose" label="purpose">
-            <Input />
-          </Form.Item>
-          <Form.Item name="runtime" label="runtime">
-            <Input />
-          </Form.Item>
-          <Form.Item name="entryScript" label="entryScript">
-            <Input />
-          </Form.Item>
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title={`资产版本 · ${versionsAssetName}`}
-        open={versionsOpen}
-        onCancel={() => setVersionsOpen(false)}
-        footer={null}
-        width={960}
-        destroyOnClose
-      >
-        <Table<V2CodeVersion>
-          size="small"
-          loading={versionsLoading}
-          rowKey={(r) =>
-            r.versionId || r.id || r.codeVersionId || String(Math.random())
-          }
-          dataSource={versions}
-          pagination={false}
-          locale={{ emptyText: '暂无版本' }}
-          columns={versionColumns as any}
-          scroll={{ x: 900 }}
-        />
-      </Modal>
-
-      <Drawer
-        title={browse?.title || '浏览'}
-        open={Boolean(browse)}
-        onClose={closeBrowse}
-        width={1080}
-        destroyOnClose
-        extra={
-          browse?.mode === 'workspace' && !browse.workspaceReadOnly ? (
-            <Space wrap>
+      title={
+        activeAsset
+          ? activeAsset.name || versionsAssetName || '代码资产'
+          : '代码资产管理（管理员）'
+      }
+      subTitle={
+        activeAsset
+          ? `跨 owner 维护 · owner=${activeAsset.ownerUserId ?? '-'}（不授予训练消费权）`
+          : '跨 owner 维护；不授予训练消费权。点「管理」进入详情，在同一页改元数据、版本与文件。'
+      }
+      onBack={activeAsset ? exitDetail : undefined}
+      extra={
+        activeAsset && activeAssetId ? (
+          <Space wrap>
+            {browse?.mode !== 'workspace' ? (
               <Button
-                loading={actionLoading}
-                disabled={!selectedPath || !previewDirty || !workspaceEditable}
-                onClick={() => void handleSaveDraft()}
+                loading={browseLoading}
+                onClick={() => void openWorkspaceBrowse(activeAsset)}
               >
-                保存草稿
+                打开工作区
               </Button>
+            ) : null}
+            <Popconfirm
+              title="确认软删除该代码资产？"
+              description="将软删除整个代码资产。若已被训练引用或存在打开工作区，删除会失败。"
+              onConfirm={async () => {
+                try {
+                  await deleteAdminCodeAsset(activeAssetId, {
+                    skipErrorHandler: true,
+                  });
+                  message.success('已删除');
+                  exitDetail();
+                } catch (e: unknown) {
+                  message.error(getApiErrorMessage(e, '删除失败'));
+                }
+              }}
+            >
+              <Button danger>删除资产</Button>
+            </Popconfirm>
+          </Space>
+        ) : undefined
+      }
+    >
+      {activeAsset ? (
+        <Spin spinning={detailLoading}>
+          <Card
+            title="资产信息"
+            extra={
               <Button
                 type="primary"
-                loading={actionLoading}
-                disabled={!workspaceEditable}
-                onClick={handleSaveAndPublish}
+                loading={editLoading}
+                onClick={() => void submitEdit()}
               >
-                保存并发布
+                保存元数据
               </Button>
-              <Button
-                loading={actionLoading}
-                disabled={!workspaceEditable}
-                onClick={() => void handleValidateWorkspace()}
-              >
-                校验工作区
-              </Button>
-              <Button
-                loading={actionLoading}
-                disabled={!workspaceEditable}
-                onClick={handlePublishDraftOnly}
-              >
-                发布草稿
-              </Button>
-              <Popconfirm
-                title="放弃整个工作区草稿？"
-                onConfirm={() => void handleAbandonWorkspace()}
-              >
-                <Button loading={actionLoading} danger>
-                  放弃工作区
+            }
+            style={{ marginBottom: 16 }}
+          >
+            {editProfileLocked ? (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="trainingProfile 已锁定"
+                description={`该资产已有不可变代码版本，训练方案不可再修改（当前：${editOriginalProfile || '-'}）。如需更换方案请新建代码资产。`}
+              />
+            ) : null}
+            <Form form={form} layout="vertical">
+              <Row gutter={16}>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="name"
+                    label="名称"
+                    rules={[{ required: true }]}
+                  >
+                    <Input />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="trainingProfile"
+                    label="trainingProfile"
+                    extra={
+                      editProfileLocked
+                        ? '首版发布后由版本快照固化，此处只读'
+                        : '仅可在尚无代码版本时设置或修改'
+                    }
+                  >
+                    <Input disabled={editProfileLocked} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Form.Item name="purpose" label="purpose">
+                    <Input />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Form.Item name="runtime" label="runtime">
+                    <Input />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Form.Item name="entryScript" label="entryScript">
+                    <Input />
+                  </Form.Item>
+                </Col>
+                <Col span={24}>
+                  <Form.Item
+                    name="remark"
+                    label="备注"
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Input.TextArea rows={2} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Form>
+          </Card>
+
+          <Card title="资产版本" style={{ marginBottom: 16 }}>
+            <Table<V2CodeVersion>
+              size="small"
+              loading={versionsLoading}
+              rowKey={(r) =>
+                r.versionId || r.id || r.codeVersionId || String(Math.random())
+              }
+              dataSource={versions}
+              pagination={false}
+              locale={{ emptyText: '暂无版本' }}
+              columns={versionColumns as any}
+              scroll={{ x: 900 }}
+              rowClassName={(r) => {
+                const id = r.versionId || r.id || r.codeVersionId;
+                if (browse?.mode === 'version' && browse.targetId === id) {
+                  return 'ant-table-row-selected';
+                }
+                if (
+                  browse?.mode === 'workspace' &&
+                  browse.baseVersionId &&
+                  id === browse.baseVersionId
+                ) {
+                  return 'ant-table-row-selected';
+                }
+                return '';
+              }}
+            />
+          </Card>
+
+          {workspaceEditable ? (
+            <div style={{ marginBottom: 12 }}>
+              <Space wrap>
+                <Button
+                  loading={actionLoading}
+                  disabled={!selectedPath || !previewDirty}
+                  onClick={() => void handleSaveDraft()}
+                >
+                  保存草稿
                 </Button>
-              </Popconfirm>
-            </Space>
-          ) : null
-        }
-      >
-        {browse?.subtitle ? (
-          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-            {browse.subtitle}
-          </Typography.Paragraph>
-        ) : null}
-        {browse?.mode === 'workspace' && !browse.workspaceReadOnly ? (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message="管理员工作区编辑"
-            description="修改写入 owner 的 OPEN 工作区；发布后会生成新版本并由原用户选用训练。此处编辑不会给你本人训练消费权。"
-          />
-        ) : null}
-        <Spin spinning={browseLoading}>
-          {browseFiles.length === 0 && !browseLoading ? (
-            <Empty description="工作区/版本下暂无文件" />
-          ) : (
-            <Row gutter={16}>
-              <Col span={8}>
-                <Space
+                <Button
+                  type="primary"
+                  loading={actionLoading}
+                  onClick={handleSaveAndPublish}
+                >
+                  保存并发布
+                </Button>
+                <Button
+                  loading={actionLoading}
+                  onClick={() => void handleValidateWorkspace()}
+                >
+                  校验工作区
+                </Button>
+                <Button
+                  loading={actionLoading}
+                  onClick={handlePublishDraftOnly}
+                >
+                  发布草稿
+                </Button>
+                <Popconfirm
+                  title="放弃整个工作区草稿？"
+                  onConfirm={() => void handleAbandonWorkspace()}
+                >
+                  <Button loading={actionLoading} danger>
+                    放弃工作区
+                  </Button>
+                </Popconfirm>
+              </Space>
+              {browse?.subtitle ? (
+                <div
                   style={{
-                    width: '100%',
-                    justifyContent: 'space-between',
-                    marginBottom: 8,
+                    marginTop: 6,
+                    fontSize: 12,
+                    color: '#8c8c8c',
+                    lineHeight: 1.5,
                   }}
                 >
-                  <Typography.Text strong>文件目录</Typography.Text>
-                  {workspaceEditable ? (
-                    <Space size={4} wrap>
+                  {browse.subtitle}
+                </div>
+              ) : null}
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 8 }}
+                message="管理员工作区编辑"
+                description="修改写入 owner 的 OPEN 工作区；发布后会生成新版本并由原用户选用训练。此处编辑不会给你本人训练消费权。"
+              />
+            </div>
+          ) : browse?.mode === 'version' ? (
+            <Typography.Paragraph type="secondary">
+              当前为版本快照（只读）。可在上方版本表点「编辑」基于该版本打开工作区，或点右上角「打开工作区」。
+            </Typography.Paragraph>
+          ) : null}
+
+          <Row gutter={16}>
+            <Col xs={24} lg={8}>
+              <Card
+                title={browse?.mode === 'workspace' ? '工作区目录' : '代码目录'}
+                style={{ marginBottom: 16 }}
+                extra={
+                  workspaceEditable ? (
+                    <Space wrap size={4}>
                       <Button
                         size="small"
                         icon={<FileAddOutlined />}
@@ -1138,7 +1185,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                           setNewFileOpen(true);
                         }}
                       >
-                        新建
+                        新建文件
                       </Button>
                       <Button
                         size="small"
@@ -1150,41 +1197,50 @@ const AdminCodeAssetsPage: React.FC = () => {
                           setRenameFileOpen(true);
                         }}
                       >
-                        移动
+                        重命名
                       </Button>
                     </Space>
-                  ) : null}
-                </Space>
-                <div
-                  style={{ marginTop: 8, maxHeight: '70vh', overflow: 'auto' }}
-                >
-                  <Tree
-                    treeData={treeData as DataNode[]}
-                    selectedKeys={selectedPath ? [selectedPath] : []}
-                    expandedKeys={expandedKeys}
-                    onExpand={(keys) => setExpandedKeys(keys)}
-                    onSelect={(keys, info) => {
-                      if (!browse || !info.node.isLeaf) return;
-                      const path = String(keys[0] || '');
-                      if (!path) return;
-                      void loadBrowseFile(browse, path);
-                    }}
-                  />
-                </div>
-              </Col>
-              <Col span={16}>
-                <Space
-                  style={{
-                    width: '100%',
-                    justifyContent: 'space-between',
-                    marginBottom: 8,
-                  }}
-                >
-                  <Typography.Text strong>
+                  ) : undefined
+                }
+              >
+                <Spin spinning={browseLoading}>
+                  {browseFiles.length === 0 && !browseLoading ? (
+                    <Empty description="暂无文件。可打开工作区或选择一个版本查看。" />
+                  ) : (
+                    <div
+                      style={{
+                        maxHeight: 560,
+                        overflow: 'auto',
+                        paddingRight: 4,
+                      }}
+                    >
+                      <Tree
+                        treeData={treeData as DataNode[]}
+                        selectedKeys={selectedPath ? [selectedPath] : []}
+                        expandedKeys={expandedKeys}
+                        onExpand={(keys) => setExpandedKeys(keys)}
+                        onSelect={(keys, info) => {
+                          if (!browse || !info.node.isLeaf) return;
+                          const path = String(keys[0] || '');
+                          if (!path) return;
+                          void loadBrowseFile(browse, path);
+                        }}
+                      />
+                    </div>
+                  )}
+                </Spin>
+              </Card>
+            </Col>
+            <Col xs={24} lg={16}>
+              <Card
+                title={
+                  <>
                     {workspaceEditable ? '编辑' : '预览'}
                     {selectedPath ? ` · ${selectedPath}` : ''}
-                  </Typography.Text>
-                  {selectedPath ? (
+                  </>
+                }
+                extra={
+                  selectedPath ? (
                     <Space size={8}>
                       <Button
                         size="small"
@@ -1216,9 +1272,11 @@ const AdminCodeAssetsPage: React.FC = () => {
                         </>
                       ) : null}
                     </Space>
-                  ) : null}
-                </Space>
-                <Spin spinning={previewLoading}>
+                  ) : undefined
+                }
+                style={{ marginBottom: 16 }}
+              >
+                <Spin spinning={previewLoading || browseLoading}>
                   {workspaceEditable ? (
                     <CodeEditor
                       value={previewContent}
@@ -1247,11 +1305,57 @@ const AdminCodeAssetsPage: React.FC = () => {
                     </pre>
                   )}
                 </Spin>
-              </Col>
-            </Row>
-          )}
+              </Card>
+            </Col>
+          </Row>
         </Spin>
-      </Drawer>
+      ) : (
+        <ProTable<V2AdminCodeAsset>
+          actionRef={actionRef}
+          rowKey={(r) => r.assetId || r.id || r.name || String(Math.random())}
+          columns={columns}
+          search={{ labelWidth: 'auto' }}
+          scroll={{ x: 960 }}
+          pagination={{ pageSize: 20, showSizeChanger: true }}
+          request={async (params, sort) => {
+            const sortEntry = Object.entries(sort || {})[0];
+            let sortBy: string = 'UPDATED_AT';
+            let sortDirection: 'ASC' | 'DESC' = 'DESC';
+            if (sortEntry) {
+              const [field, order] = sortEntry;
+              sortDirection = order === 'ascend' ? 'ASC' : 'DESC';
+              if (field === 'name') sortBy = 'NAME';
+              else if (field === 'ownerUserId') sortBy = 'OWNER_USER_ID';
+              else if (field === 'createdAt') sortBy = 'CREATED_AT';
+              else sortBy = 'UPDATED_AT';
+            }
+            const page = Math.max(0, (params.current || 1) - 1);
+            try {
+              const res = await listAdminCodeAssets(
+                {
+                  page,
+                  pageSize: params.pageSize || 20,
+                  keyword: params.keyword?.trim() || undefined,
+                  ownerUserId: params.ownerUserId?.trim() || undefined,
+                  trainingProfile: params.trainingProfile?.trim() || undefined,
+                  sortBy,
+                  sortDirection,
+                },
+                { skipErrorHandler: true },
+              );
+              const pageData = normalizeAdminCodeAssetPage(res);
+              return {
+                data: pageData.items,
+                success: true,
+                total: pageData.total,
+              };
+            } catch (e: unknown) {
+              message.error(getApiErrorMessage(e, '加载管理员代码资产失败'));
+              return { data: [], success: false, total: 0 };
+            }
+          }}
+        />
+      )}
 
       <Modal
         title="新建文件"
