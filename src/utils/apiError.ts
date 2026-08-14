@@ -60,6 +60,25 @@ function pickBizMessage(err: any, data: any): string | undefined {
   return trimmed || undefined;
 }
 
+/** 用户可见文案里不要带回资产/版本 ID（越权 404 时后端常把 ID 拼进 message） */
+const RESOURCE_ID_IN_TEXT =
+  /\b(?:model|dataset|code)[-_](?:asset|ver|version)[-_][a-zA-Z0-9]+\b/gi;
+
+export function stripResourceIdsFromUserText(text: string): string {
+  return text
+    .replace(RESOURCE_ID_IN_TEXT, '')
+    .replace(/\s*[:：]\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function mapNotFoundOrForbiddenMessage(raw: string): string | undefined {
+  if (/not found or no permission/i.test(raw)) {
+    return '未找到该资源，或不属于当前账号。';
+  }
+  return undefined;
+}
+
 /** 将 MANIFEST / 工作区 userError.details 格式化为短文案 */
 export function formatUserErrorDetails(details: unknown): string | undefined {
   if (details == null) return undefined;
@@ -121,10 +140,13 @@ export function getApiErrorMessage(err: any, fallback = '请求失败'): string 
   }
 
   if (bizMessage) {
-    if (detailsText && !bizMessage.includes(detailsText)) {
-      return `${bizMessage}（${detailsText}）`;
+    const mapped = mapNotFoundOrForbiddenMessage(bizMessage);
+    if (mapped) return mapped;
+    const safeMessage = stripResourceIdsFromUserText(bizMessage);
+    if (detailsText && !safeMessage.includes(detailsText)) {
+      return `${safeMessage}（${stripResourceIdsFromUserText(detailsText)}）`;
     }
-    return bizMessage;
+    return safeMessage;
   }
 
   if (status === 404) {

@@ -47,6 +47,7 @@ import {
   switchModelCurrentVersion,
   updateModelAsset,
 } from '@/services/platform';
+import { getApiErrorMessage } from '@/utils/apiError';
 import {
   buildCodeFileTreeData,
   collectCodeFileTreeExpandedKeys,
@@ -117,9 +118,9 @@ const ModelDetail: React.FC = () => {
           .map((v) => resolveModelVersionId(v, assetId))
           .find(Boolean);
       setSelectedVersionId(defaultVersionId);
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(
-        error?.info?.message || error?.message || '加载模型详情失败',
+        getApiErrorMessage(error, '未找到该模型，或不属于当前账号。'),
       );
       setAssetInfo(null);
     } finally {
@@ -812,9 +813,20 @@ const ModelDetail: React.FC = () => {
                           </Typography.Text>
                         </Descriptions.Item>
                         <Descriptions.Item label="制品大小" span={2}>
-                          {consumerManifest?.sizeBytes
-                            ? `${(consumerManifest.sizeBytes / 1024 / 1024).toFixed(2)} MB · ${consumerManifest.fileName}`
-                            : selectedVersion.fileName || '-'}
+                          {(() => {
+                            const sizeBytes =
+                              consumerManifest?.sizeBytes ??
+                              selectedVersion.sizeBytes;
+                            const fileName =
+                              consumerManifest?.fileName ||
+                              selectedVersion.fileName;
+                            if (sizeBytes == null || Number.isNaN(sizeBytes)) {
+                              return fileName || '-';
+                            }
+                            return fileName
+                              ? `${sizeBytes} 字节 · ${fileName}`
+                              : `${sizeBytes} 字节`;
+                          })()}
                         </Descriptions.Item>
                         <Descriptions.Item label="超参" span={2}>
                           {(() => {
