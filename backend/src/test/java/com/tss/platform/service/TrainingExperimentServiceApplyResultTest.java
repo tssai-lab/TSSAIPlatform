@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.dto.UpdateTrainingResultRequest;
+import com.tss.platform.dto.UpdateHyperParamsRequest;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.CodeAssetRepository;
 import com.tss.platform.repository.CodeVersionRepository;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -109,6 +111,49 @@ class TrainingExperimentServiceApplyResultTest {
         service.updateResultInternal("train-remark", req);
 
         assertEquals("用户填写的验收说明", version.getRemark());
+    }
+
+    @Test
+    void submittedTaskAllowsRemarkUpdateWithoutChangingHyperParams() {
+        TrainingExperimentVersion version = runningVersion("train-submitted", 100);
+        version.setExperimentId("exp-submitted");
+        version.setRunSpecJson("{}");
+        version.setHyperParamsJson("{\"epochs\":1,\"batchSize\":4}");
+        version.setRemark("旧备注");
+        when(repo.findByExperimentIdAndVersionNo("exp-submitted", 1))
+                .thenReturn(Optional.of(version));
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateHyperParamsRequest req = new UpdateHyperParamsRequest();
+        req.setHyperParams(java.util.Map.of("batchSize", 4, "epochs", 1));
+        req.setRemark("恢复后的用户备注");
+
+        service.updateHyperParams("exp-submitted", 1, req);
+
+        assertEquals("{\"epochs\":1,\"batchSize\":4}", version.getHyperParamsJson());
+        assertEquals("恢复后的用户备注", version.getRemark());
+    }
+
+    @Test
+    void submittedTaskStillRejectsHyperParamChanges() {
+        TrainingExperimentVersion version = runningVersion("train-immutable", 100);
+        version.setExperimentId("exp-immutable");
+        version.setRunSpecJson("{}");
+        version.setHyperParamsJson("{\"epochs\":1}");
+        when(repo.findByExperimentIdAndVersionNo("exp-immutable", 1))
+                .thenReturn(Optional.of(version));
+
+        UpdateHyperParamsRequest req = new UpdateHyperParamsRequest();
+        req.setHyperParams(java.util.Map.of("epochs", 2));
+        req.setRemark("只想改备注");
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.updateHyperParams("exp-immutable", 1, req)
+        );
+
+        assertEquals("任务提交后参数快照不可修改，只能修改备注", error.getMessage());
+        assertEquals("{\"epochs\":1}", version.getHyperParamsJson());
     }
 
     @Test
