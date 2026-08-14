@@ -1,4 +1,4 @@
-import { InboxOutlined, UploadOutlined } from '@ant-design/icons';
+import { UploadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
 import {
@@ -49,16 +49,9 @@ import {
   datasetVersionFormRules,
 } from '@/utils/datasetVersion';
 import {
-  MODEL_VERSION_FORMAT_HINT,
-  validateModelVersionFormat,
-} from '@/utils/modelVersion';
-import { uploadModelZipPackage } from '@/utils/modelZipUpload';
-import {
   buildDatasetFileFingerprint,
   LS_DATASET_UPLOAD_FP,
   LS_DATASET_UPLOAD_ID,
-  LS_MODEL_UPLOAD_FP,
-  LS_MODEL_UPLOAD_ID,
 } from '@/utils/uploadResume';
 
 const POINT_CLOUD_ACCEPT = '.ply,.pcd,.zip';
@@ -277,9 +270,6 @@ const TaskCreate: React.FC = () => {
   const [datasetLoading, setDatasetLoading] = useState(false);
   const [codeLoading, setCodeLoading] = useState(false);
 
-  const [modelInputMode, setModelInputMode] = useState<'select' | 'upload'>(
-    'select',
-  );
   const [datasetInputMode, setDatasetInputMode] = useState<'select' | 'upload'>(
     'select',
   );
@@ -295,8 +285,6 @@ const TaskCreate: React.FC = () => {
   const [selectedCodeApprovalStatus, setSelectedCodeApprovalStatus] =
     useState<string>();
 
-  const [modelUploading, setModelUploading] = useState(false);
-  const [modelUploadPercent, setModelUploadPercent] = useState(0);
   const [datasetUploading, setDatasetUploading] = useState(false);
   const [datasetUploadPercent, setDatasetUploadPercent] = useState(0);
   const [codeUploading, setCodeUploading] = useState(false);
@@ -487,7 +475,6 @@ const TaskCreate: React.FC = () => {
 
     const applyModelSelection = async (modelId: string) => {
       if (cancelled || !modelId) return;
-      setModelInputMode('select');
       setSelectedBaseModelVersionId(modelId);
       form.setFieldsValue({ baseModelVersionId: modelId });
       ensureOption(modelId);
@@ -750,7 +737,6 @@ const TaskCreate: React.FC = () => {
       });
     };
 
-    setModelInputMode('select');
     setSelectedBaseModelVersionId(presetBaseModelVersionId);
     form.setFieldsValue({ baseModelVersionId: presetBaseModelVersionId });
     ensureOption(presetBaseModelVersionId);
@@ -833,48 +819,6 @@ const TaskCreate: React.FC = () => {
       codeOptions.find((item) => item.codeVersionId === selectedCodeVersionId),
     [codeOptions, selectedCodeVersionId],
   );
-
-  const uploadModelWeightZip = async (values: {
-    modelName: string;
-    version: string;
-    type: string;
-    remark: string;
-    file: UploadFile[];
-  }) => {
-    const file = values.file?.[0]?.originFileObj as File | undefined;
-    if (!file) {
-      throw new Error('请选择基础模型权重文件');
-    }
-
-    setModelUploading(true);
-    setModelUploadPercent(0);
-    const requestOpts = { skipErrorHandler: true } as const;
-    try {
-      const result = await uploadModelZipPackage({
-        file,
-        modelName: values.modelName,
-        version: values.version,
-        type: values.type,
-        remark: values.remark,
-        onProgress: setModelUploadPercent,
-        onUploadSession: ({ uploadId, fileFingerprint }) => {
-          localStorage.setItem(LS_MODEL_UPLOAD_ID, uploadId);
-          localStorage.setItem(LS_MODEL_UPLOAD_FP, fileFingerprint);
-        },
-        requestOpts,
-      });
-      localStorage.removeItem(LS_MODEL_UPLOAD_ID);
-      localStorage.removeItem(LS_MODEL_UPLOAD_FP);
-      setSelectedBaseModelVersionId(result.modelVersionId);
-      form.setFieldValue('baseModelVersionId', result.modelVersionId);
-      await reloadModelOptions();
-      message.success(`基础模型权重上传成功：${result.modelVersionId}`);
-      setModelInputMode('select');
-    } finally {
-      setModelUploading(false);
-      setModelUploadPercent(0);
-    }
-  };
 
   const uploadDatasetZip = async (values: {
     datasetName: string;
@@ -1488,155 +1432,51 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 1 && (
             <>
-              <Radio.Group
-                value={modelInputMode}
-                onChange={(e) => setModelInputMode(e.target.value)}
-                disabled={!selectedTrainingPlanId}
+              <Alert
+                type="info"
+                showIcon
                 style={{ marginBottom: 16 }}
+                message="训练时只选择已经上传完成的模型版本"
+                description="需要新模型时，请先到模型管理独立上传；上传分类与训练方案分开，训练方案只负责筛选真正兼容的版本。"
+              />
+              <Form.Item
+                label="基础模型权重版本"
+                required={isExperimentContinue}
+                extra={
+                  isExperimentContinue
+                    ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
+                    : '这里只显示当前训练方案允许的已有模型版本'
+                }
               >
-                <Radio.Button value="select">选择已有</Radio.Button>
-                <Radio.Button value="upload">上传新包</Radio.Button>
-              </Radio.Group>
-              {modelInputMode === 'select' ? (
-                <Form.Item
-                  label="基础模型权重版本"
-                  required={isExperimentContinue}
-                  extra={
-                    isExperimentContinue
-                      ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
-                      : '允许 .pt/.pth/.onnx/.pkl/.joblib/.yaml/.yml/.json/.txt/.md；禁止脚本与可执行文件'
-                  }
+                <Select
+                  placeholder="请选择基础模型权重版本"
+                  showSearch
+                  allowClear
+                  loading={modelLoading}
+                  disabled={!selectedTrainingPlanId}
+                  optionFilterProp="label"
+                  value={selectedBaseModelVersionId}
+                  onChange={(value?: string) => {
+                    setSelectedBaseModelVersionId(value);
+                    form.setFieldsValue({ baseModelVersionId: value });
+                  }}
+                  options={filteredModelSelectOptions.map((item) => ({
+                    value: item.id,
+                    label: `${item.name} / ${item.version || 'v?'} / ${item.type} / ${item.id}`,
+                  }))}
+                />
+              </Form.Item>
+              <Space style={{ marginBottom: 16 }}>
+                <Button
+                  onClick={() => void reloadModelOptions()}
+                  loading={modelLoading}
                 >
-                  <Select
-                    placeholder="请选择基础模型权重版本"
-                    showSearch
-                    allowClear
-                    loading={modelLoading}
-                    disabled={!selectedTrainingPlanId}
-                    optionFilterProp="label"
-                    value={selectedBaseModelVersionId}
-                    onChange={(value?: string) => {
-                      setSelectedBaseModelVersionId(value);
-                      form.setFieldsValue({ baseModelVersionId: value });
-                    }}
-                    options={filteredModelSelectOptions.map((item) => ({
-                      value: item.id,
-                      label: `${item.name} / ${item.version || 'v?'} / ${item.type} / ${item.id}`,
-                    }))}
-                  />
-                </Form.Item>
-              ) : (
-                <>
-                  <Form.Item
-                    name="modelName"
-                    label="模型名称"
-                    rules={[{ required: true, message: '请输入模型名称' }]}
-                  >
-                    <Input placeholder="例如：fusion-base-weights" />
-                  </Form.Item>
-                  <Form.Item
-                    name="modelVersion"
-                    label="版本号"
-                    extra={MODEL_VERSION_FORMAT_HINT}
-                    rules={[
-                      { required: true, message: '请输入版本号' },
-                      {
-                        validator: (_: unknown, value: string) => {
-                          const err = validateModelVersionFormat(value);
-                          return err
-                            ? Promise.reject(new Error(err))
-                            : Promise.resolve();
-                        },
-                      },
-                    ]}
-                  >
-                    <Input placeholder="例如：v1.0.0 或 v1" />
-                  </Form.Item>
-                  <Form.Item name="modelType" label="类型">
-                    <Select
-                      options={[
-                        { value: 'NLP', label: 'NLP' },
-                        { value: 'CV', label: 'CV' },
-                      ].filter(
-                        (option) =>
-                          !selectedTrainingPlan?.inputs?.model?.taskTypes
-                            ?.length ||
-                          selectedTrainingPlan.inputs.model.taskTypes.includes(
-                            option.value,
-                          ),
-                      )}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="modelRemark"
-                    label="备注"
-                    rules={[
-                      { required: true, message: '请输入备注' },
-                      { max: 200, message: '备注不能超过 200 个字符' },
-                    ]}
-                  >
-                    <Input.TextArea
-                      rows={3}
-                      placeholder="例如：fusion 基线权重"
-                      maxLength={200}
-                      showCount
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="modelFile"
-                    label="权重 ZIP"
-                    valuePropName="fileList"
-                    getValueFromEvent={(e) => e?.fileList}
-                    rules={[{ required: true, message: '请选择模型权重文件' }]}
-                    extra={`支持 .zip、.safetensors、.pt、.pth、.ckpt、.onnx，最大 ${UPLOAD_CONFIG.MODEL.MAX_SIZE / 1024 / 1024 / 1024}GB`}
-                  >
-                    <Upload.Dragger
-                      maxCount={1}
-                      beforeUpload={() => false}
-                      accept={UPLOAD_CONFIG.MODEL.ACCEPT_TYPES.join(',')}
-                    >
-                      <p className="ant-upload-drag-icon">
-                        <InboxOutlined />
-                      </p>
-                      <p className="ant-upload-text">
-                        点击或拖拽上传模型权重文件
-                      </p>
-                    </Upload.Dragger>
-                  </Form.Item>
-                  {modelUploading && (
-                    <Progress
-                      percent={modelUploadPercent}
-                      style={{ marginBottom: 16 }}
-                    />
-                  )}
-                  <Button
-                    type="primary"
-                    loading={modelUploading}
-                    onClick={async () => {
-                      try {
-                        const values = await form.validateFields([
-                          'modelName',
-                          'modelVersion',
-                          'modelType',
-                          'modelRemark',
-                          'modelFile',
-                        ]);
-                        await uploadModelWeightZip({
-                          modelName: values.modelName,
-                          version: values.modelVersion,
-                          type: values.modelType,
-                          remark: values.modelRemark,
-                          file: values.modelFile,
-                        });
-                      } catch (error: any) {
-                        message.error(getApiErrorMessage(error));
-                      }
-                    }}
-                  >
-                    上传并选用
-                  </Button>
-                </>
-              )}
+                  刷新模型列表
+                </Button>
+                <Button href="/model/upload" target="_blank">
+                  去模型管理上传
+                </Button>
+              </Space>
               {selectedModel && (
                 <Descriptions size="small" column={1} bordered>
                   <Descriptions.Item label="baseModelVersionId">
