@@ -4,6 +4,7 @@ import {
   mapV2DatasetToListItem,
   type V2DatasetListPage,
 } from './datasetV2';
+import { collectPaginatedCandidates } from './paginatedCandidates.mjs';
 
 function formatBytes(sizeBytes?: number) {
   if (sizeBytes === undefined || sizeBytes === null || Number.isNaN(sizeBytes)) {
@@ -182,6 +183,7 @@ export type DatasetListQuery = {
   current?: number;
   pageSize?: number;
   page?: number;
+  artifactSpecIds?: string;
 };
 
 /** 多模态 zip 样本分组方式（module2-api-doc §6.1） */
@@ -912,6 +914,38 @@ export async function fetchDatasetList(options?: {
   }
 
   return { data: [], total: 0 };
+}
+
+/** V2 训练方案候选：不回退未按规格筛选的旧接口，并取回全部服务端分页。 */
+export async function fetchTrainingDatasetCandidates(
+  artifactSpecIds: string[],
+) {
+  const normalizedSpecIds = [...new Set(artifactSpecIds.map((value) => value.trim()))]
+    .filter(Boolean);
+  if (!normalizedSpecIds.length) return { data: [], total: 0 };
+  return collectPaginatedCandidates<DatasetListItem>(
+    async (current, pageSize) => {
+      const raw = await getV2DatasetList({
+        current,
+        pageSize,
+        artifactSpecIds: normalizedSpecIds.join(','),
+      });
+      const page = normalizeV2ListPage(raw);
+      if (!page) throw new Error('数据集候选列表响应格式无效');
+      return {
+        data: page.data.map(mapV2DatasetToListItem),
+        total: page.total,
+      };
+    },
+    { keyOf: (item) => item.versionId, pageSize: 200 },
+  );
+}
+
+export async function fetchAllDatasetList() {
+  return collectPaginatedCandidates<DatasetListItem>(
+    (current, pageSize) => fetchDatasetList({ current, pageSize }),
+    { keyOf: (item) => item.versionId, pageSize: 200 },
+  );
 }
 
 /** 数据集资产详情（兼容旧 `fetchDatasetDetail`：无独立 `/detail` 时走资产接口） */

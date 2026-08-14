@@ -18,7 +18,7 @@ import {
   Upload,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import type { DatasetType } from '@/services/dataset';
 import {
@@ -27,10 +27,12 @@ import {
   checkCodeVersionForTraining,
   createExperimentVersion,
   createTask,
+  fetchAllDatasetList,
+  fetchAllModelList,
   fetchApprovedCodeVersions,
-  fetchDatasetList,
-  fetchModelList,
   fetchTaskDetail,
+  fetchTrainingDatasetCandidates,
+  fetchTrainingModelCandidates,
   fetchTrainingPlans,
   getCodeVersionDetail,
   getModelVersion,
@@ -277,6 +279,8 @@ const TaskCreate: React.FC = () => {
 
   const [modelLoading, setModelLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
+  const modelLoadSequence = useRef(0);
+  const datasetLoadSequence = useRef(0);
   const [codeLoading, setCodeLoading] = useState(false);
 
   const [codeInputMode, setCodeInputMode] = useState<'select' | 'upload'>(
@@ -417,18 +421,26 @@ const TaskCreate: React.FC = () => {
     selectedTrainingPlan,
   ]);
 
-  const reloadModelOptions = () => {
+  const reloadModelOptions = (artifactSpecIds?: string[]) => {
+    const sequence = ++modelLoadSequence.current;
     setModelLoading(true);
-    return fetchModelList({ pageSize: 100 })
+    const request = artifactSpecIds
+      ? fetchTrainingModelCandidates(artifactSpecIds)
+      : fetchAllModelList();
+    return request
       .then((res: any) => {
+        if (sequence !== modelLoadSequence.current) return;
         const list = (res?.data ?? []).filter((item: API.ModelItem) => item.id);
         setModelOptions(list);
       })
       .catch((error: any) => {
+        if (sequence !== modelLoadSequence.current) return;
         setModelOptions([]);
         message.error(error?.message || '基础模型权重列表加载失败');
       })
-      .finally(() => setModelLoading(false));
+      .finally(() => {
+        if (sequence === modelLoadSequence.current) setModelLoading(false);
+      });
   };
 
   const reloadCodeOptions = () => {
@@ -449,20 +461,28 @@ const TaskCreate: React.FC = () => {
       .finally(() => setCodeLoading(false));
   };
 
-  const reloadDatasetOptions = () => {
+  const reloadDatasetOptions = (artifactSpecIds?: string[]) => {
+    const sequence = ++datasetLoadSequence.current;
     setDatasetLoading(true);
-    return fetchDatasetList({ pageSize: 100 })
+    const request = artifactSpecIds
+      ? fetchTrainingDatasetCandidates(artifactSpecIds)
+      : fetchAllDatasetList();
+    return request
       .then((res) => {
+        if (sequence !== datasetLoadSequence.current) return;
         const list = (res?.data ?? []).filter(
           (item: API.DatasetItem) => item.versionId,
         );
         setDatasetOptions(list ?? []);
       })
       .catch((error: any) => {
+        if (sequence !== datasetLoadSequence.current) return;
         setDatasetOptions([]);
         message.error(error?.message || '数据集版本列表加载失败');
       })
-      .finally(() => setDatasetLoading(false));
+      .finally(() => {
+        if (sequence === datasetLoadSequence.current) setDatasetLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -481,6 +501,16 @@ const TaskCreate: React.FC = () => {
         message.error(error?.message || '训练方案加载失败'),
       );
   }, []);
+
+  useEffect(() => {
+    if (!selectedTrainingPlan) return;
+    const modelSpecs = selectedTrainingPlan.inputs?.model?.acceptedSpecIds;
+    const datasetSpecs = selectedTrainingPlan.inputs?.dataset?.acceptedSpecIds;
+    void reloadModelOptions(Array.isArray(modelSpecs) ? modelSpecs : undefined);
+    void reloadDatasetOptions(
+      Array.isArray(datasetSpecs) ? datasetSpecs : undefined,
+    );
+  }, [selectedTrainingPlan]);
 
   useEffect(() => {
     if (!isExperimentContinue) return;
@@ -1400,7 +1430,11 @@ const TaskCreate: React.FC = () => {
               </Form.Item>
               <Space style={{ marginBottom: 16 }}>
                 <Button
-                  onClick={() => void reloadModelOptions()}
+                  onClick={() =>
+                    void reloadModelOptions(
+                      specDrivenModel ? acceptedModelSpecIds : undefined,
+                    )
+                  }
                   loading={modelLoading}
                 >
                   刷新模型列表
@@ -1513,7 +1547,11 @@ const TaskCreate: React.FC = () => {
               </Form.Item>
               <Space style={{ marginBottom: 16 }}>
                 <Button
-                  onClick={() => void reloadDatasetOptions()}
+                  onClick={() =>
+                    void reloadDatasetOptions(
+                      specDrivenDataset ? acceptedDatasetSpecIds : undefined,
+                    )
+                  }
                   loading={datasetLoading}
                 >
                   刷新数据集列表
