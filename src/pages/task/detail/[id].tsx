@@ -44,6 +44,10 @@ import {
   updateExperimentHyperParams,
 } from '@/services/platform';
 import {
+  fetchTrainingPlans,
+  type TrainingPlan,
+} from '@/services/trainingPlans';
+import {
   formatDisplayDateTime,
   formatDurationBetween,
 } from '@/utils/formatDateTime';
@@ -65,6 +69,11 @@ import {
   getTrainingStatusText,
   isTrainingTerminal,
 } from '@/utils/trainingStatusDisplay';
+import {
+  buildTrainingOutputArtifactItems,
+  readHyperParamSummary,
+  resolveTrainingPlanDisplayName,
+} from './trainingDetailPresentation.mjs';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -98,6 +107,16 @@ type TaskDetailInfo = API.TaskItem & {
   modelArtifactSizeBytes?: number;
   modelPublishStatus?: string;
   modelPublishError?: string;
+  trainingOutput?: {
+    artifacts?: Array<{
+      format?: string;
+      objectName?: string;
+      path?: string;
+      role?: string;
+      sha256?: string;
+      sizeBytes?: number;
+    }>;
+  };
 };
 
 function _shortId(v?: string, keep = 10) {
@@ -148,9 +167,7 @@ function renderHyperParamsCell(hp: unknown) {
   }
   const obj = normalizeHyperParams(hp);
   if (!obj) return '-';
-  const epochs = obj.epochs ?? obj.num_epochs;
-  const batch = obj.batch_size ?? obj.batch;
-  const lr = obj.learning_rate ?? obj.lr0;
+  const { epochs, batch, lr } = readHyperParamSummary(obj);
   const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
   if (hasSummary) {
     const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
@@ -176,9 +193,7 @@ function renderHyperParamsDetail(hp: unknown) {
   }
   const obj = normalizeHyperParams(hp);
   if (!obj) return '-';
-  const epochs = obj.epochs ?? obj.num_epochs;
-  const batch = obj.batch_size ?? obj.batch;
-  const lr = obj.learning_rate ?? obj.lr0;
+  const { epochs, batch, lr } = readHyperParamSummary(obj);
   const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
   const jsonText = JSON.stringify(obj, null, 2);
   return (
@@ -446,6 +461,7 @@ const TaskDetail: React.FC = () => {
   const [displayNamesReady, setDisplayNamesReady] = useState(0);
   const [versionHistoryPage, setVersionHistoryPage] = useState(1);
   const [versionHistoryPageSize, setVersionHistoryPageSize] = useState(10);
+  const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
 
   const renderCodeVersionCell = useCallback(
     (codeVersionId?: string) => {
@@ -465,6 +481,18 @@ const TaskDetail: React.FC = () => {
 
   const runId = taskInfo?.runId || manualRunId;
   const experimentId = taskInfo?.experimentId;
+  const trainingPlanDisplayName = resolveTrainingPlanDisplayName(
+    taskInfo?.trainingProfile,
+    trainingPlans,
+  );
+
+  useEffect(() => {
+    fetchTrainingPlans({ skipErrorHandler: true })
+      .then((response) =>
+        setTrainingPlans(Array.isArray(response?.data) ? response.data : []),
+      )
+      .catch(() => setTrainingPlans([]));
+  }, []);
 
   const loadTaskDetail = useCallback(
     async (showLoading = false) => {
@@ -497,6 +525,18 @@ const TaskDetail: React.FC = () => {
 
         if (data) {
           setTaskInfo(data);
+          setVersions((current) =>
+            current.map((version) =>
+              version.id === data?.id
+                ? {
+                    ...version,
+                    status: data.status,
+                    progress: data.progress,
+                    metrics: data.metrics,
+                  }
+                : version,
+            ),
+          );
           setLoadError('');
           await preloadTaskVersionDisplayNames(
             data.modelVersionId || (data as TaskDetailInfo).baseModelVersionId,
@@ -1115,7 +1155,7 @@ const TaskDetail: React.FC = () => {
           </Descriptions.Item>
           {(taskInfo as TaskDetailInfo).trainingProfile && (
             <Descriptions.Item label="训练方案" span={2}>
-              图文一致性基线训练
+              {trainingPlanDisplayName}
               <Typography.Text
                 type="secondary"
                 style={{ marginLeft: 8, fontSize: 12 }}
@@ -1271,13 +1311,15 @@ const TaskDetail: React.FC = () => {
             )}
           </Space>
 
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginTop: 12 }}
-            message="推理输入说明"
-            description="该融合模型使用特征 JSONL 或对应数据集推理，不能直接输入原始图片；进入推理页后请选择兼容的融合模型推理脚本。"
-          />
+          {isConsistencyProfileTask(taskInfo.metrics) && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 12 }}
+              message="推理输入说明"
+              description="该融合模型使用特征 JSONL 或对应数据集推理，不能直接输入原始图片；进入推理页后请选择兼容的融合模型推理脚本。"
+            />
+          )}
         </Card>
       )}
 
@@ -1585,6 +1627,8 @@ const TaskDetail: React.FC = () => {
           outputPath={taskInfo.outputPath}
           logPath={taskInfo.logPath}
           files={taskInfo.files}
+          trainingOutput={taskInfo.trainingOutput}
+          consistencyProfile={isConsistencyProfileTask(taskInfo.metrics)}
           producedModelVersionId={
             (taskInfo as TaskDetailInfo).producedModelVersionId
           }
@@ -1634,6 +1678,8 @@ const TrainingArtifactsList: React.FC<{
   outputPath?: string;
   logPath?: string;
   files?: { name: string; desc: string; objectName?: string }[];
+  trainingOutput?: TaskDetailInfo['trainingOutput'];
+  consistencyProfile?: boolean;
   producedModelVersionId?: string;
   modelArtifactPath?: string;
   modelArtifactSizeBytes?: number;
@@ -1645,6 +1691,8 @@ const TrainingArtifactsList: React.FC<{
   outputPath,
   logPath,
   files,
+  trainingOutput,
+  consistencyProfile,
   producedModelVersionId,
   modelArtifactPath,
   modelArtifactSizeBytes,
@@ -1697,9 +1745,16 @@ const TrainingArtifactsList: React.FC<{
     taskStatus,
   ]);
 
+  const outputItems = useMemo(
+    () => buildTrainingOutputArtifactItems(trainingOutput),
+    [trainingOutput],
+  );
   const consistencyItems = useMemo(
-    () => buildConsistencyArtifactItems(outputPath, logPath),
-    [outputPath, logPath],
+    () =>
+      consistencyProfile
+        ? buildConsistencyArtifactItems(outputPath, logPath)
+        : [],
+    [consistencyProfile, outputPath, logPath],
   );
   const legacyItems = useMemo(() => {
     const list: ArtifactListItem[] = (files || []).map((f, i) => ({
@@ -1733,15 +1788,23 @@ const TrainingArtifactsList: React.FC<{
     return list;
   }, [files, logPath, outputPath]);
 
-  const fileItems = consistencyItems.length
-    ? consistencyItems.map((item, i) => ({
-        key: `c-${i}-${item.name}`,
+  const fileItems = outputItems.length
+    ? outputItems.map((item, i) => ({
+        key: `output-${i}-${item.name}`,
         name: item.name,
         desc: item.desc,
         objectName: item.objectName,
         kind: 'file' as const,
       }))
-    : legacyItems;
+    : consistencyItems.length
+      ? consistencyItems.map((item, i) => ({
+          key: `c-${i}-${item.name}`,
+          name: item.name,
+          desc: item.desc,
+          objectName: item.objectName,
+          kind: 'file' as const,
+        }))
+      : legacyItems;
 
   const items: ArtifactListItem[] = [
     ...(resultModelItem ? [resultModelItem] : []),
