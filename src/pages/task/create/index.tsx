@@ -39,6 +39,11 @@ import {
 } from '@/services/platform';
 import type { TrainingPlan } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
+import {
+  filterDatasetCandidates,
+  filterModelCandidates,
+  isSpecDrivenInput,
+} from './trainingAssetCompatibility.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
   model: 'logreg',
@@ -100,7 +105,21 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
           <div>
             <Typography.Text strong>数据集要求</Typography.Text>
             <div style={{ marginTop: 8 }}>
-              {dataset?.requiredEntries?.length ? (
+              {dataset?.acceptedSpecIds?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>服务器验证规格：</Typography.Text>
+                  <Space wrap>
+                    {dataset.acceptedSpecIds.map((specId) => (
+                      <Tag key={specId} color="blue">
+                        {specId}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {dataset.formatGuide ? (
+                    <pre style={PRE_STYLE}>{dataset.formatGuide.trim()}</pre>
+                  ) : null}
+                </Space>
+              ) : dataset?.requiredEntries?.length ? (
                 <Space direction="vertical" size={6} style={{ width: '100%' }}>
                   <Typography.Text>压缩包内必须包含以下路径：</Typography.Text>
                   <Space wrap>
@@ -131,7 +150,21 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
           <div>
             <Typography.Text strong>模型要求</Typography.Text>
             <div style={{ marginTop: 8 }}>
-              {model?.requiredEntries?.length ? (
+              {model?.acceptedSpecIds?.length ? (
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <Typography.Text>服务器验证规格：</Typography.Text>
+                  <Space wrap>
+                    {model.acceptedSpecIds.map((specId) => (
+                      <Tag key={specId} color="purple">
+                        {specId}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {model.formatGuide ? (
+                    <pre style={PRE_STYLE}>{model.formatGuide.trim()}</pre>
+                  ) : null}
+                </Space>
+              ) : model?.requiredEntries?.length ? (
                 <Space direction="vertical" size={6} style={{ width: '100%' }}>
                   <Typography.Text>压缩包内必须包含以下文件：</Typography.Text>
                   <Space wrap>
@@ -290,38 +323,59 @@ const TaskCreate: React.FC = () => {
     () => trainingPlans.find((plan) => plan.id === selectedTrainingPlanId),
     [selectedTrainingPlanId, trainingPlans],
   );
+  const specDrivenModel = isSpecDrivenInput(
+    selectedTrainingPlan?.inputs?.model,
+  );
+  const acceptedModelSpecIds =
+    selectedTrainingPlan?.inputs?.model?.acceptedSpecIds ?? [];
 
   const filteredModelSelectOptions = useMemo(() => {
-    const allowed = selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
-    if (!allowed.length) return modelSelectOptions;
-    return modelSelectOptions.filter((model) => allowed.includes(model.type));
+    return filterModelCandidates(
+      modelSelectOptions,
+      selectedTrainingPlan?.inputs?.model,
+    );
   }, [modelSelectOptions, selectedTrainingPlan]);
 
-  /** 单一数据集类型的训练方案以方案声明为准；旧方案继续沿用模型类型约束。 */
+  /** v2 按规格筛选；旧方案继续沿用单一任务类型或模型类型约束。 */
   const planDatasetTypes =
     selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
+  const specDrivenDataset = isSpecDrivenInput(
+    selectedTrainingPlan?.inputs?.dataset,
+  );
+  const acceptedDatasetSpecIds =
+    selectedTrainingPlan?.inputs?.dataset?.acceptedSpecIds ?? [];
   const requiredDatasetType = (
-    planDatasetTypes.length === 1
-      ? planDatasetTypes[0]
-      : (
-          selectedModel ||
-          modelSelectOptions.find(
-            (item) => item.id === selectedBaseModelVersionId,
-          )
-        )?.type
+    specDrivenDataset
+      ? undefined
+      : planDatasetTypes.length === 1
+        ? planDatasetTypes[0]
+        : (
+            selectedModel ||
+            modelSelectOptions.find(
+              (item) => item.id === selectedBaseModelVersionId,
+            )
+          )?.type
   ) as DatasetType | undefined;
+  const datasetSelectionReady = Boolean(
+    selectedTrainingPlan && selectedBaseModelVersionId,
+  );
 
   const filteredDatasetOptions = useMemo(() => {
-    const planTypes = selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
-    return datasetOptions.filter((d: API.DatasetItem) => {
-      if (!d.versionId) return false;
-      if (planTypes.length && !planTypes.includes(d.type)) {
-        return false;
-      }
-      if (!requiredDatasetType) return d.type !== 'MULTIMODAL';
-      return d.type === requiredDatasetType;
-    });
-  }, [datasetOptions, requiredDatasetType, selectedTrainingPlan]);
+    const compatible = filterDatasetCandidates(
+      datasetOptions,
+      selectedTrainingPlan?.inputs?.dataset,
+    );
+    if (specDrivenDataset) return compatible;
+    if (!requiredDatasetType) {
+      return compatible.filter((dataset) => dataset.type !== 'MULTIMODAL');
+    }
+    return compatible.filter((dataset) => dataset.type === requiredDatasetType);
+  }, [
+    datasetOptions,
+    requiredDatasetType,
+    selectedTrainingPlan,
+    specDrivenDataset,
+  ]);
 
   const filteredCodeOptions = useMemo(
     () =>
@@ -342,15 +396,26 @@ const TaskCreate: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!requiredDatasetType || !selectedDatasetVersionId) return;
+    if (!selectedTrainingPlan || !selectedDatasetVersionId) return;
     const dataset = datasetOptions.find(
       (item) => item.versionId === selectedDatasetVersionId,
     );
-    if (dataset && dataset.type !== requiredDatasetType) {
+    if (
+      dataset &&
+      !filteredDatasetOptions.some(
+        (item) => item.versionId === selectedDatasetVersionId,
+      )
+    ) {
       setSelectedDatasetVersionId(undefined);
       form.setFieldValue('datasetVersionId', undefined);
     }
-  }, [datasetOptions, form, requiredDatasetType, selectedDatasetVersionId]);
+  }, [
+    datasetOptions,
+    filteredDatasetOptions,
+    form,
+    selectedDatasetVersionId,
+    selectedTrainingPlan,
+  ]);
 
   const reloadModelOptions = () => {
     setModelLoading(true);
@@ -429,6 +494,8 @@ const TaskCreate: React.FC = () => {
             item.id === modelId
               ? {
                   ...item,
+                  ...meta,
+                  id: item.id,
                   name: meta.name || item.name,
                   version: meta.version || item.version,
                   type: (meta.type as API.ModelItem['type']) || item.type,
@@ -438,10 +505,11 @@ const TaskCreate: React.FC = () => {
         }
         return [
           {
-            id: modelId,
             name: meta?.name || `结果模型 ${modelId.slice(0, 8)}…`,
             version: meta?.version || '-',
             type: (meta?.type || 'NLP') as API.ModelItem['type'],
+            ...meta,
+            id: modelId,
           } as API.ModelItem,
           ...prev,
         ];
@@ -464,6 +532,8 @@ const TaskCreate: React.FC = () => {
           name: d.name || d.fileName || '结果模型',
           version: d.version || '-',
           type: d.type || 'NLP',
+          status: d.status,
+          artifactSpecId: d.artifactSpecId,
         });
       } catch {
         // keep placeholder option
@@ -693,6 +763,8 @@ const TaskCreate: React.FC = () => {
             item.id === modelId
               ? {
                   ...item,
+                  ...meta,
+                  id: item.id,
                   name: meta.name || item.name,
                   version: meta.version || item.version,
                   type: (meta.type as API.ModelItem['type']) || item.type,
@@ -702,10 +774,11 @@ const TaskCreate: React.FC = () => {
         }
         return [
           {
-            id: modelId,
             name: meta?.name || `模型 ${modelId.slice(0, 8)}…`,
             version: meta?.version || '-',
             type: (meta?.type || 'NLP') as API.ModelItem['type'],
+            ...meta,
+            id: modelId,
           } as API.ModelItem,
           ...prev,
         ];
@@ -725,6 +798,8 @@ const TaskCreate: React.FC = () => {
           name: d.name || d.fileName || '基础模型权重',
           version: d.version || '-',
           type: d.type || 'NLP',
+          status: d.status,
+          artifactSpecId: d.artifactSpecId,
         });
       })
       .catch(() => {
@@ -992,22 +1067,21 @@ const TaskCreate: React.FC = () => {
       const model = modelSelectOptions.find(
         (item) => item.id === selectedBaseModelVersionId,
       );
-      const allowedModelTypes =
-        selectedTrainingPlan?.inputs?.model?.taskTypes ?? [];
       if (
-        model &&
-        allowedModelTypes.length &&
-        !allowedModelTypes.includes(model.type)
+        !model ||
+        !filteredModelSelectOptions.some(
+          (item) => item.id === selectedBaseModelVersionId,
+        )
       ) {
-        message.error(`当前训练方案不支持 ${model.type} 类型模型`);
-        throw new Error('model type is incompatible with training plan');
+        message.error('所选模型未通过当前训练方案的规格与 READY 状态校验');
+        throw new Error('model is incompatible with training plan');
       }
       return;
     }
     if (step === 2) {
-      if (!requiredDatasetType) {
-        message.error('请先在第二步选择或上传基础模型权重');
-        throw new Error('missing model type');
+      if (!datasetSelectionReady) {
+        message.error('请先在第二步选择基础模型权重');
+        throw new Error('missing model');
       }
       if (!selectedDatasetVersionId) {
         message.error('请选择或上传训练数据集');
@@ -1016,21 +1090,14 @@ const TaskCreate: React.FC = () => {
       const dataset = datasetOptions.find(
         (item) => item.versionId === selectedDatasetVersionId,
       );
-      if (dataset && dataset.type !== requiredDatasetType) {
-        message.error(
-          `数据集类型（${dataset.type}）须与基础模型类型（${requiredDatasetType}）一致`,
-        );
-        throw new Error('type mismatch');
-      }
-      const allowedDatasetTypes =
-        selectedTrainingPlan?.inputs?.dataset?.taskTypes ?? [];
       if (
-        dataset &&
-        allowedDatasetTypes.length &&
-        !allowedDatasetTypes.includes(dataset.type)
+        !dataset ||
+        !filteredDatasetOptions.some(
+          (item) => item.versionId === selectedDatasetVersionId,
+        )
       ) {
-        message.error(`当前训练方案不支持 ${dataset.type} 类型数据集`);
-        throw new Error('dataset type is incompatible with training plan');
+        message.error('所选数据集未通过当前训练方案的规格与 READY 状态校验');
+        throw new Error('dataset is incompatible with training plan');
       }
       return;
     }
@@ -1252,6 +1319,7 @@ const TaskCreate: React.FC = () => {
                     trainingPlans.reduce(
                       (acc, plan) => {
                         const cat =
+                          plan.category ||
                           plan.inputs?.model?.taskTypes?.[0] ||
                           plan.inputs?.dataset?.taskTypes?.[0] ||
                           'OTHER';
@@ -1302,7 +1370,9 @@ const TaskCreate: React.FC = () => {
                 extra={
                   isExperimentContinue
                     ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
-                    : '这里只显示当前训练方案允许的已有模型版本'
+                    : specDrivenModel
+                      ? `只显示 READY 且规格属于：${acceptedModelSpecIds.join('、')}`
+                      : '这里只显示当前训练方案允许且状态为 READY 的已有模型版本'
                 }
               >
                 <Select
@@ -1311,6 +1381,11 @@ const TaskCreate: React.FC = () => {
                   allowClear
                   loading={modelLoading}
                   disabled={!selectedTrainingPlanId}
+                  notFoundContent={
+                    selectedTrainingPlanId
+                      ? '没有通过该方案规格校验且状态为 READY 的模型'
+                      : '请先选择训练方案'
+                  }
                   optionFilterProp="label"
                   value={selectedBaseModelVersionId}
                   onChange={(value?: string) => {
@@ -1319,7 +1394,7 @@ const TaskCreate: React.FC = () => {
                   }}
                   options={filteredModelSelectOptions.map((item) => ({
                     value: item.id,
-                    label: `${item.name} / ${item.version || 'v?'} / ${item.type} / ${item.id}`,
+                    label: `${item.name} / ${item.version || 'v?'} / ${item.artifactSpecId || item.type} / ${item.id}`,
                   }))}
                 />
               </Form.Item>
@@ -1347,6 +1422,9 @@ const TaskCreate: React.FC = () => {
                   <Descriptions.Item label="版本">
                     {selectedModel.version}
                   </Descriptions.Item>
+                  <Descriptions.Item label="服务器验证规格">
+                    {selectedModel.artifactSpecId ?? '无'}
+                  </Descriptions.Item>
                 </Descriptions>
               )}
             </>
@@ -1354,13 +1432,21 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 2 && (
             <>
-              {!requiredDatasetType ? (
+              {!datasetSelectionReady ? (
                 <Alert
                   type="warning"
                   showIcon
                   style={{ marginBottom: 16 }}
                   message="请先选择基础模型权重"
-                  description="训练数据集类型须与基础模型权重一致（如 CV 模型对应 CV 数据集）。请返回上一步完成选择后再继续。"
+                  description="请返回上一步完成选择；随后平台会按训练方案 YAML 筛选可用数据集。"
+                />
+              ) : specDrivenDataset ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="数据集由训练方案规格筛选"
+                  description={`只显示 READY 且服务器验证规格属于：${acceptedDatasetSpecIds.join('、')}`}
                 />
               ) : (
                 <Alert
@@ -1382,21 +1468,30 @@ const TaskCreate: React.FC = () => {
                 name="datasetVersionId"
                 label="数据集版本"
                 extra={
-                  requiredDatasetType
-                    ? `当前仍按已有规则展示 ${requiredDatasetType} 类型数据集；下一阶段将改为由训练方案声明兼容范围`
-                    : '请先在第一步选择基础模型权重'
+                  specDrivenDataset
+                    ? `YAML 允许规格：${acceptedDatasetSpecIds.join('、')}`
+                    : requiredDatasetType
+                      ? `旧版方案按 ${requiredDatasetType} 类型和 READY 状态筛选`
+                      : '请先在第一步选择基础模型权重'
                 }
               >
                 <Select
                   placeholder={
-                    requiredDatasetType
-                      ? `请选择 ${requiredDatasetType} 数据集版本`
-                      : '请先选择基础模型权重'
+                    specDrivenDataset
+                      ? '请选择符合 YAML 规格的数据集版本'
+                      : requiredDatasetType
+                        ? `请选择 ${requiredDatasetType} 数据集版本`
+                        : '请先选择基础模型权重'
                   }
                   showSearch
                   loading={datasetLoading}
                   optionFilterProp="label"
-                  disabled={!requiredDatasetType}
+                  disabled={!datasetSelectionReady}
+                  notFoundContent={
+                    datasetSelectionReady
+                      ? '没有通过该方案规格校验且状态为 READY 的数据集'
+                      : '请先选择基础模型权重'
+                  }
                   value={selectedDatasetVersionId}
                   onChange={(value: string) => {
                     setSelectedDatasetVersionId(value);
@@ -1409,7 +1504,7 @@ const TaskCreate: React.FC = () => {
                       return [
                         {
                           value: versionId,
-                          label: `${d.name} / ${d.version || 'v?'} / ${d.type} / ${versionId}`,
+                          label: `${d.name} / ${d.version || 'v?'} / ${d.artifactSpecId || d.type} / ${versionId}`,
                         },
                       ];
                     },

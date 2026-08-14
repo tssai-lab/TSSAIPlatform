@@ -39,6 +39,7 @@ export type V2DatasetListItem = {
   type: DatasetType;
   currentVersion?: V2DatasetCurrentVersion | null;
   currentVersionFileCount?: number | null;
+  artifactSpecId?: string | null;
   displayStatus: V2DatasetDisplayStatus;
   hasDraft?: boolean;
   /** @deprecated 新契约用 workspaceId */
@@ -207,6 +208,7 @@ export function mapV2DatasetToListItem(row: V2DatasetListItem): DatasetListItem 
     versionId: current?.versionId,
     version: current?.versionLabel,
     versionStatus: current?.status,
+    artifactSpecId: row.artifactSpecId ?? undefined,
     fileCount: row.currentVersionFileCount ?? undefined,
     uploadTime: row.uploadTime,
     sizeBytes: row.sizeBytes,

@@ -1,10 +1,12 @@
 import { request } from '@umijs/max';
 
 export type TrainingPlan = {
+  schemaVersion?: string;
   id: string;
   version: string;
   displayName: string;
   description?: string;
+  category?: 'CV' | 'NLP' | 'OTHER';
   enabled: boolean;
   trainingModes: string[];
   execution: {
@@ -14,13 +16,15 @@ export type TrainingPlan = {
   };
   inputs: {
     model: {
-      taskTypes: string[];
+      taskTypes?: string[];
+      acceptedSpecIds?: string[];
       requiredEntries?: string[];
       formats?: string[];
       formatGuide?: string;
     };
     dataset: {
-      taskTypes: string[];
+      taskTypes?: string[];
+      acceptedSpecIds?: string[];
       cvTaskTypes?: string[];
       annotationFormats?: string[];
       requiredEntries?: string[];
