@@ -65,8 +65,6 @@ const ROBOT_ACCEPT = '.xml,.yaml,.yml,.zip';
 const LEROBOT_ACCEPT = '.zip';
 const VISUAL_ACCEPT = '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.zip';
 const TEXT_ACCEPT = '.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.zip';
-const OTHER_ACCEPT =
-  '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.xml,.yaml,.yml,.ply,.pcd,.parquet,.mp4,.mkv,.md,.zip';
 
 function isRobotFileName(fileName: string) {
   const ext = fileName.split('.').pop()?.toLowerCase();
@@ -347,11 +345,6 @@ const DatasetUpload: React.FC = () => {
       }
     }
 
-    if (type === 'OTHER' && files.length !== 1) {
-      message.error('其他类别请上传单个安全文件，多个文件请先打包为 zip');
-      return;
-    }
-
     setUploading(true);
     setMerging(false);
     setUploadPercent(0);
@@ -625,15 +618,6 @@ const DatasetUpload: React.FC = () => {
             />
           </Form.Item>
         )}
-        {directoryCategory === 'OTHER' && (
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="其他类别只表示暂未归类"
-            description="平台仍会检查文件类型、大小和压缩包安全；上传成功后不会自动进入视觉或文本训练候选。"
-          />
-        )}
         {datasetType === 'MULTIMODAL' && (
           <>
             <Form.Item
@@ -732,16 +716,14 @@ const DatasetUpload: React.FC = () => {
                     ? ROBOT_ACCEPT
                     : datasetType === 'LEROBOT'
                       ? LEROBOT_ACCEPT
-                      : datasetType === 'OTHER'
-                        ? OTHER_ACCEPT
-                        : datasetType === 'NLP'
-                          ? TEXT_ACCEPT
-                          : datasetType === 'CV'
-                            ? visualFileLayout === 'IMAGE_FOLDER' ||
-                              visualFileLayout === 'YOLO'
-                              ? '.zip'
-                              : VISUAL_ACCEPT
-                            : undefined
+                      : datasetType === 'NLP'
+                        ? TEXT_ACCEPT
+                        : datasetType === 'CV'
+                          ? visualFileLayout === 'IMAGE_FOLDER' ||
+                            visualFileLayout === 'YOLO'
+                            ? '.zip'
+                            : VISUAL_ACCEPT
+                          : undefined
             }
             beforeUpload={() => false}
             onChange={(e) => {
@@ -762,15 +744,13 @@ const DatasetUpload: React.FC = () => {
                     ? '选择机器人配置（.xml / .yaml / .yml / .zip）'
                     : datasetType === 'LEROBOT'
                       ? '选择 LeRobot v3 数据集（.zip）'
-                      : datasetType === 'OTHER'
-                        ? '选择安全文件或 zip（单文件）'
-                        : datasetType === 'NLP'
-                          ? '选择文本文件或 zip（单文件）'
-                          : visualFileLayout === 'YOLO'
-                            ? '选择 YOLO zip（单文件）'
-                            : visualFileLayout === 'IMAGE_FOLDER'
-                              ? '选择 ImageFolder zip（单文件）'
-                              : '选择图片或 zip（可多选图片）'}
+                      : datasetType === 'NLP'
+                        ? '选择文本文件或 zip（单文件）'
+                        : visualFileLayout === 'YOLO'
+                          ? '选择 YOLO zip（单文件）'
+                          : visualFileLayout === 'IMAGE_FOLDER'
+                            ? '选择 ImageFolder zip（单文件）'
+                            : '选择图片或 zip（可多选图片）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>
@@ -786,15 +766,13 @@ const DatasetUpload: React.FC = () => {
                   ? ' ROBOT：支持单文件 .xml/.yaml/.yml 或仅含配置类文件的 zip；上传完成后为 READY。'
                   : datasetType === 'LEROBOT'
                     ? ' LeRobot：上传标准 LeRobot v3 zip，包含 meta、data 与 videos 目录；上传完成后可按时序查看。'
-                    : datasetType === 'OTHER'
-                      ? ' OTHER：仅允许平台安全白名单文件；未知格式、可执行文件和不安全 zip 会被后端拒绝。'
-                      : datasetType === 'NLP'
-                        ? ' 文本类支持 txt/json/jsonl/csv/xlsx/xls/pdf/docx 或包含这些文件的 zip。'
-                        : visualFileLayout === 'YOLO'
-                          ? ' YOLO：zip 内须有 data.yaml 和匹配的图片/标签。'
-                          : visualFileLayout === 'IMAGE_FOLDER'
-                            ? ' ImageFolder：按类别子目录组织图片，并整体打包为单个 zip。'
-                            : ' 未标注图片：可多选图片或上传只含图片的 zip。'}
+                    : datasetType === 'NLP'
+                      ? ' 文本类支持 txt/json/jsonl/csv/xlsx/xls/pdf/docx 或包含这些文件的 zip。'
+                      : visualFileLayout === 'YOLO'
+                        ? ' YOLO：zip 内须有 data.yaml 和匹配的图片/标签。'
+                        : visualFileLayout === 'IMAGE_FOLDER'
+                          ? ' ImageFolder：按类别子目录组织图片，并整体打包为单个 zip。'
+                          : ' 未标注图片：可多选图片或上传只含图片的 zip。'}
           </div>
         </Form.Item>
         {uploading && (

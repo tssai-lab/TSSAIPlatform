@@ -28,7 +28,11 @@ import type { Key } from 'react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodePreview from '@/components/CodePreview';
 import ZipReadmePanel from '@/components/ZipReadmePanel';
-import { MODEL_TYPE_COLORS, MODEL_TYPE_OPTIONS } from '@/constants/model';
+import {
+  MODEL_BACKEND_TYPE_OPTIONS,
+  MODEL_TYPE_COLORS,
+  MODEL_TYPE_VALUE_ENUM,
+} from '@/constants/model';
 import { resolveModelVersionId } from '@/services/model';
 import {
   deleteModelAsset,
@@ -260,7 +264,7 @@ const ModelDetail: React.FC = () => {
     if (!assetInfo) return;
     assetForm.setFieldsValue({
       name: assetInfo.name,
-      type: assetInfo.type,
+      type: assetInfo.type === 'OTHER' ? undefined : assetInfo.type,
       remark: assetInfo.remark,
     });
     setAssetModalOpen(true);
@@ -412,7 +416,7 @@ const ModelDetail: React.FC = () => {
           </Descriptions.Item>
           <Descriptions.Item label="类型">
             <Tag color={MODEL_TYPE_COLORS[assetInfo.type] ?? 'default'}>
-              {assetInfo.type}
+              {MODEL_TYPE_VALUE_ENUM[assetInfo.type]?.text ?? assetInfo.type}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="资产 ID">
@@ -853,6 +857,15 @@ const ModelDetail: React.FC = () => {
         destroyOnClose
       >
         <Form form={assetForm} layout="vertical">
+          {assetInfo?.type === 'OTHER' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="历史类型 OTHER"
+              description="后端仅支持 CV、NLP、点云、ROBOT；保存前请改选正式类型。"
+            />
+          )}
           <Form.Item
             name="name"
             label="模型名称"
@@ -865,7 +878,7 @@ const ModelDetail: React.FC = () => {
             label="类型"
             rules={[{ required: true, message: '请选择类型' }]}
           >
-            <Select options={[...MODEL_TYPE_OPTIONS]} />
+            <Select options={[...MODEL_BACKEND_TYPE_OPTIONS]} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={3} />

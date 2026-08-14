@@ -952,6 +952,7 @@ const DatasetDetail: React.FC = () => {
   const supportsInlinePreview =
     datasetInfo?.type === 'CV' ||
     datasetInfo?.type === 'NLP' ||
+    datasetInfo?.type === 'ROBOT' ||
     datasetInfo?.type === 'LEROBOT';
   /** 有活动 V2 工作区即展示面板（不依赖预览是否切到 target DRAFT 行） */
   const showWorkspacePanel = !!activeWorkspace && !!workspaceDatasetType;

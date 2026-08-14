@@ -3,7 +3,10 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history } from '@umijs/max';
 import { Button, message, Popconfirm, Space } from 'antd';
 import React, { useRef } from 'react';
-import { MODEL_TYPE_VALUE_ENUM } from '@/constants/model';
+import {
+  MODEL_BACKEND_TYPE_OPTIONS,
+  MODEL_TYPE_VALUE_ENUM,
+} from '@/constants/model';
 import {
   deleteModelAsset,
   deleteModelVersion,
@@ -92,7 +95,15 @@ const ModelList: React.FC = () => {
       dataIndex: 'type',
       key: 'type',
       width: 88,
-      valueEnum: MODEL_TYPE_VALUE_ENUM,
+      valueType: 'select',
+      fieldProps: {
+        options: MODEL_BACKEND_TYPE_OPTIONS.map((item) => ({
+          label: item.label,
+          value: item.value,
+        })),
+      },
+      render: (_, record) =>
+        MODEL_TYPE_VALUE_ENUM[record.type]?.text ?? record.type,
       sorter: true,
     },
     {
