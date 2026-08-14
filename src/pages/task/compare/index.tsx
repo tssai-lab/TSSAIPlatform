@@ -2,7 +2,7 @@
  * 训练后模型性能对比页
  * - 输出模型对比结果表（终值指标、排名）
  * - 多任务过程曲线对比
- * - 性能提升曲线：同一训练不同版本，或同一模型+同一数据集（不要求同一资产版本）
+ * - 性能提升曲线：同一训练不同版本，或具有稳定资产标识的同一模型+同一数据集
  */
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
@@ -77,6 +77,13 @@ const METRIC_LABELS: Record<string, string> = {
   val_mAP50_95: '验证 mAP50-95',
 };
 
+const RESULT_METRIC_PRIORITY = [
+  'val_accuracy',
+  'val_mAP50_95',
+  'val_mAP50',
+  'train_loss',
+];
+
 /** 任务项（带 runId） */
 type TaskWithRunId = API.TaskItem & { runId?: string };
 
@@ -86,8 +93,14 @@ type TaskMetricsData = {
   taskName: string;
   modelName: string;
   datasetName: string;
+  modelId?: string;
+  datasetId?: string;
+  modelVersionId?: string;
+  datasetVersionId?: string;
   experimentId?: string;
   versionNo?: number;
+  createTime?: string;
+  producedModelVersionId?: string;
   runId: string;
   metrics: Record<string, { step: number; value: number }[]>;
 };
@@ -114,17 +127,21 @@ function formatNum(v: number | null | undefined, digits = 4) {
   return Number(v).toFixed(digits);
 }
 
-/** 相对序列起点的提升率（用于准确率类指标） */
-function toRelativeImprovement(series: { step: number; value: number }[]) {
-  if (!series.length) return [];
-  const sorted = [...series].sort((a, b) => a.step - b.step);
-  const base = sorted[0]?.value;
-  if (Math.abs(base) < 1e-9)
-    return sorted.map((p) => ({ step: p.step, value: 0 }));
-  return sorted.map((p) => ({
-    step: p.step,
-    value: ((p.value - base) / Math.abs(base)) * 100,
-  }));
+function isLowerBetter(metricKey: string) {
+  return metricKey.toLowerCase().includes('loss');
+}
+
+/** 相对首个模型版本的提升率；loss 下降视为提升，其余指标上升视为提升。 */
+function relativeImprovement(
+  value: number,
+  baseline: number,
+  lowerIsBetter: boolean,
+) {
+  if (Math.abs(baseline) < 1e-9) {
+    return Math.abs(value - baseline) < 1e-9 ? 0 : null;
+  }
+  const delta = lowerIsBetter ? baseline - value : value - baseline;
+  return (delta / Math.abs(baseline)) * 100;
 }
 
 const TASK_COLORS = [
@@ -138,11 +155,11 @@ const TASK_COLORS = [
   '#9a60b4',
 ];
 
-/** 同模型同数据集组键（按名称，不按 modelVersionId / datasetVersionId） */
-function modelDatasetGroupKey(r: TaskMetricsData): string {
-  const m = (r.modelName || '_unknown').trim();
-  const d = (r.datasetName || '_unknown').trim();
-  return `${m}\x1E${d}`;
+/** 只使用稳定资产标识分组；名称可能重复，不能作为“同一模型”的证据。 */
+function modelDatasetGroupKey(r: TaskMetricsData): string | null {
+  const modelKey = (r.modelId || r.modelVersionId || '').trim();
+  const datasetKey = (r.datasetId || r.datasetVersionId || '').trim();
+  return modelKey && datasetKey ? `${modelKey}\x1E${datasetKey}` : null;
 }
 
 /** ref / echarts 实例用的短键，避免特殊字符问题 */
@@ -159,11 +176,14 @@ function sortTasksForCurve(tasks: TaskMetricsData[]): TaskMetricsData[] {
     const va = a.versionNo;
     const vb = b.versionNo;
     if (va != null && vb != null && va !== vb) return va - vb;
+    const ta = Date.parse(a.createTime || '');
+    const tb = Date.parse(b.createTime || '');
+    if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
     return String(a.taskName).localeCompare(String(b.taskName));
   });
 }
 
-/** 性能提升分组：同一 experimentId，或同模型名+同数据集名（不要求资产版本一致） */
+/** 性能提升分组：同一 experimentId，或具有稳定资产标识的同模型+同数据集。 */
 function buildImprovementGroups(data: TaskMetricsData[]): ComparableGroup[] {
   const groups: ComparableGroup[] = [];
   const expMemberSets = new Set<string>();
@@ -193,11 +213,8 @@ function buildImprovementGroups(data: TaskMetricsData[]): ComparableGroup[] {
 
   const byMd = new Map<string, TaskMetricsData[]>();
   for (const r of data) {
-    const m = (r.modelName || '').trim();
-    const d = (r.datasetName || '').trim();
-    // 名称缺失或仅为占位时不参与「同模型同数据集」分组
-    if (!m || !d || m === '-' || d === '-') continue;
     const k = modelDatasetGroupKey(r);
+    if (!k) continue;
     if (!byMd.has(k)) byMd.set(k, []);
     byMd.get(k)?.push(r);
   }
@@ -249,6 +266,8 @@ function experimentVersionToTaskRow(d: any, hint?: API.TaskItem): API.TaskItem {
         : hint?.datasetName,
     experimentId: d.experimentId,
     versionNo: d.versionNo,
+    producedModelVersionId:
+      d.producedModelVersionId || hint?.producedModelVersionId,
   };
 }
 
@@ -263,6 +282,7 @@ const TaskCompare: React.FC = () => {
     'train_loss',
     'val_accuracy',
   ]);
+  const [resultMetric, setResultMetric] = useState<string>('val_accuracy');
   /** 相同模型提升曲线使用的指标 */
   const [sameModelMetric, setSameModelMetric] =
     useState<string>('val_accuracy'); // 指标 key，与 MLflow 一致
@@ -390,8 +410,8 @@ const TaskCompare: React.FC = () => {
   const loadCompareData = useCallback(
     async (overrideIds?: string[]) => {
       const ids = (overrideIds ?? (selectedRowKeys as string[])).map(String);
-      if (ids.length === 0) {
-        message.warning('请先选择至少一个任务');
+      if (ids.length < 2) {
+        message.warning('合同要求至少选择 2 个训练任务进行同屏对比');
         return;
       }
       setMetricsLoading(true);
@@ -443,12 +463,22 @@ const TaskCompare: React.FC = () => {
               taskName: t.name || meta.name,
               modelName: meta.modelName || t.modelName || '-',
               datasetName: meta.datasetName || t.datasetName || '-',
+              modelId: meta.modelId || t.modelId,
+              datasetId: meta.datasetId || t.datasetId,
+              modelVersionId: meta.modelVersionId || t.modelVersionId,
+              datasetVersionId: meta.datasetVersionId || t.datasetVersionId,
               experimentId:
                 (t as API.TaskItem).experimentId ||
                 (meta as API.TaskItem).experimentId,
               versionNo:
                 (t as API.TaskItem).versionNo ??
                 (meta as API.TaskItem).versionNo,
+              createTime:
+                (t as API.TaskItem).createTime ||
+                (meta as API.TaskItem).createTime,
+              producedModelVersionId:
+                (t as API.TaskItem).producedModelVersionId ||
+                (meta as API.TaskItem).producedModelVersionId,
               runId,
               metrics,
             });
@@ -456,10 +486,21 @@ const TaskCompare: React.FC = () => {
             failed += 1;
           }
         }
-        setMetricsData(results);
-        if (!results.length) {
-          message.error('未能获取任何任务的训练指标');
-        } else if (failed > 0) {
+        const hasComparableMetric = MLFLOW_METRIC_KEYS.some(
+          (key) =>
+            results.filter((task) => task.metrics[key]?.length).length >= 2,
+        );
+        if (results.length < 2 || !hasComparableMetric) {
+          setMetricsData([]);
+          message.error(
+            results.length < 2
+              ? '有效训练指标不足 2 个任务，无法形成合同要求的对比'
+              : '所选任务没有共同核心指标，无法进行有效对比',
+          );
+        } else {
+          setMetricsData(results);
+        }
+        if (results.length >= 2 && hasComparableMetric && failed > 0) {
           message.warning(
             `已加载 ${results.length} 个任务；另有 ${failed} 个指标拉取失败已跳过`,
           );
@@ -501,29 +542,46 @@ const TaskCompare: React.FC = () => {
   const comparisonRows = useMemo(() => {
     if (!metricsData.length) return [];
     const rows = metricsData.map((r) => {
-      const acc = lastPoint(r.metrics.val_accuracy);
-      const m50 = lastPoint(r.metrics.val_mAP50);
-      const loss = lastPoint(r.metrics.train_loss);
-      const score = acc?.value ?? 0;
+      const finalPoint = lastPoint(r.metrics[resultMetric]);
       return {
         key: r.taskId,
         taskName: r.taskName,
         modelName: r.modelName,
         datasetName: r.datasetName,
-        valAcc: acc?.value,
-        valM50: m50?.value,
-        trainLoss: loss?.value,
-        bestStepAcc: acc?.step,
-        score,
+        producedModelVersionId: r.producedModelVersionId,
+        metricValue: finalPoint?.value,
+        metricStep: finalPoint?.step,
       };
     });
-    const sorted = [...rows].sort((a, b) => (b.score || 0) - (a.score || 0));
-    return sorted.map((row, i) => ({ ...row, rank: i + 1 }));
-  }, [metricsData]);
+    const lowerIsBetter = isLowerBetter(resultMetric);
+    const sorted = [...rows].sort((a, b) => {
+      if (a.metricValue == null && b.metricValue == null) return 0;
+      if (a.metricValue == null) return 1;
+      if (b.metricValue == null) return -1;
+      return lowerIsBetter
+        ? a.metricValue - b.metricValue
+        : b.metricValue - a.metricValue;
+    });
+    let ranked = 0;
+    return sorted.map((row) => ({
+      ...row,
+      rank: row.metricValue == null ? null : ++ranked,
+    }));
+  }, [metricsData, resultMetric]);
 
   const sameModelGroups = useMemo(
     (): ComparableGroup[] => buildImprovementGroups(metricsData),
     [metricsData],
+  );
+
+  const displayedSameModelGroups = useMemo(
+    () =>
+      sameModelGroups.filter(
+        (group) =>
+          group.tasks.filter((task) => task.metrics[sameModelMetric]?.length)
+            .length >= 2,
+      ),
+    [sameModelGroups, sameModelMetric],
   );
 
   // 多任务过程曲线
@@ -574,9 +632,9 @@ const TaskCompare: React.FC = () => {
     };
   }, [metricsData, selectedMetrics]);
 
-  // 相同模型 + 相同数据集：原始指标曲线 + 相对起点提升率
+  // 相同模型 + 相同数据集：各版本最终指标 + 相对首版提升率
   useEffect(() => {
-    sameModelGroups.forEach((group) => {
+    displayedSameModelGroups.forEach((group) => {
       const { slug, tasks: list } = group;
       const rawKey = `same_raw_${slug}`;
       const impKey = `same_imp_${slug}`;
@@ -585,27 +643,45 @@ const TaskCompare: React.FC = () => {
       const elImp = sameModelImpRefs.current[impKey];
       if (!elRaw || !elImp) return;
 
-      const seriesRaw = list
-        .filter((t) => t.metrics[metric]?.length)
-        .map((t, i) => ({
-          name: t.taskName,
+      const points = list
+        .map((task) => ({ task, point: lastPoint(task.metrics[metric]) }))
+        .filter(
+          (
+            item,
+          ): item is {
+            task: TaskMetricsData;
+            point: { step: number; value: number };
+          } => item.point != null,
+        );
+      const labels = points.map(({ task }) =>
+        task.versionNo != null
+          ? `第 ${task.versionNo} 版 · ${task.taskName}`
+          : task.taskName,
+      );
+      const baseline = points[0]?.point.value;
+      const lowerIsBetter = isLowerBetter(metric);
+      const seriesRaw = [
+        {
+          name: METRIC_LABELS[metric] || metric,
           type: 'line' as const,
-          smooth: true,
-          data: t.metrics[metric]?.map((p) => [p.step, p.value]),
-          itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
-        }));
-      const seriesImp = list
-        .filter((t) => t.metrics[metric]?.length)
-        .map((t, i) => ({
-          name: t.taskName,
+          smooth: false,
+          data: points.map(({ point }) => point.value),
+          itemStyle: { color: TASK_COLORS[0] },
+        },
+      ];
+      const seriesImp = [
+        {
+          name: '相对首版提升率',
           type: 'line' as const,
-          smooth: true,
-          data: toRelativeImprovement(t.metrics[metric] ?? []).map((p) => [
-            p.step,
-            p.value,
-          ]),
-          itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
-        }));
+          smooth: false,
+          data: points.map(({ point }) =>
+            baseline == null
+              ? 0
+              : relativeImprovement(point.value, baseline, lowerIsBetter),
+          ),
+          itemStyle: { color: TASK_COLORS[1] },
+        },
+      ];
 
       if (!sameModelRawCharts.current[rawKey]) {
         sameModelRawCharts.current[rawKey] = echarts.init(elRaw);
@@ -614,34 +690,46 @@ const TaskCompare: React.FC = () => {
         sameModelImpCharts.current[impKey] = echarts.init(elImp);
       }
       const label = METRIC_LABELS[metric] || metric;
-      sameModelRawCharts.current[rawKey]?.setOption({
-        tooltip: { trigger: 'axis' },
-        legend: { bottom: 0 },
-        grid: {
-          left: '3%',
-          right: '4%',
-          bottom: '15%',
-          top: '12%',
-          containLabel: true,
+      sameModelRawCharts.current[rawKey]?.setOption(
+        {
+          tooltip: { trigger: 'axis' },
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '24%',
+            top: '12%',
+            containLabel: true,
+          },
+          xAxis: {
+            type: 'category',
+            data: labels,
+            axisLabel: { interval: 0, rotate: labels.length > 3 ? 24 : 0 },
+          },
+          yAxis: { type: 'value', name: label },
+          series: seriesRaw,
         },
-        xAxis: { type: 'value', name: 'Step' },
-        yAxis: { type: 'value', name: label },
-        series: seriesRaw,
-      });
-      sameModelImpCharts.current[impKey]?.setOption({
-        tooltip: { trigger: 'axis' },
-        legend: { bottom: 0 },
-        grid: {
-          left: '3%',
-          right: '4%',
-          bottom: '15%',
-          top: '12%',
-          containLabel: true,
+        true,
+      );
+      sameModelImpCharts.current[impKey]?.setOption(
+        {
+          tooltip: { trigger: 'axis' },
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '24%',
+            top: '12%',
+            containLabel: true,
+          },
+          xAxis: {
+            type: 'category',
+            data: labels,
+            axisLabel: { interval: 0, rotate: labels.length > 3 ? 24 : 0 },
+          },
+          yAxis: { type: 'value', name: '相对首版提升 (%)' },
+          series: seriesImp,
         },
-        xAxis: { type: 'value', name: 'Step' },
-        yAxis: { type: 'value', name: '相对起点提升 (%)' },
-        series: seriesImp,
-      });
+        true,
+      );
     });
 
     return () => {
@@ -654,7 +742,7 @@ const TaskCompare: React.FC = () => {
         sameModelImpCharts.current[k] = null;
       });
     };
-  }, [metricsData, sameModelGroups, sameModelMetric]);
+  }, [metricsData, displayedSameModelGroups, sameModelMetric]);
 
   const columns: ColumnType<API.TaskItem>[] = [
     { title: '任务名称', dataIndex: 'name', key: 'name' },
@@ -689,8 +777,10 @@ const TaskCompare: React.FC = () => {
       dataIndex: 'rank',
       key: 'rank',
       width: 72,
-      render: (v: number) =>
-        v === 1 ? (
+      render: (v: number | null) =>
+        v == null ? (
+          '-'
+        ) : v === 1 ? (
           <Tag color="gold">#{v}</Tag>
         ) : v === 2 ? (
           <Tag color="default">#{v}</Tag>
@@ -702,27 +792,26 @@ const TaskCompare: React.FC = () => {
     { title: '模型', dataIndex: 'modelName', key: 'modelName' },
     { title: '数据集', dataIndex: 'datasetName', key: 'datasetName' },
     {
-      title: '最终验证准确率',
-      dataIndex: 'valAcc',
-      key: 'valAcc',
+      title: '结果模型版本',
+      dataIndex: 'producedModelVersionId',
+      key: 'producedModelVersionId',
+      render: (v: string | undefined) =>
+        v ? (
+          <span title={v}>{v.length > 18 ? `${v.slice(0, 18)}…` : v}</span>
+        ) : (
+          '-'
+        ),
+    },
+    {
+      title: `最终${METRIC_LABELS[resultMetric] || resultMetric}`,
+      dataIndex: 'metricValue',
+      key: 'metricValue',
       render: (v: number | undefined) => (v != null ? formatNum(v, 4) : '-'),
     },
     {
-      title: '最终 mAP50',
-      dataIndex: 'valM50',
-      key: 'valM50',
-      render: (v: number | undefined) => (v != null ? formatNum(v, 4) : '-'),
-    },
-    {
-      title: '最终训练损失',
-      dataIndex: 'trainLoss',
-      key: 'trainLoss',
-      render: (v: number | undefined) => (v != null ? formatNum(v, 4) : '-'),
-    },
-    {
-      title: '准确率末值 Step',
-      dataIndex: 'bestStepAcc',
-      key: 'bestStepAcc',
+      title: '末值 Step',
+      dataIndex: 'metricStep',
+      key: 'metricStep',
       width: 120,
       render: (v: number | undefined) => (v != null ? String(v) : '-'),
     },
@@ -737,15 +826,56 @@ const TaskCompare: React.FC = () => {
     metricsData.some((t) => t.metrics[k] && t.metrics[k].length > 0),
   );
 
+  const comparableMetrics = MLFLOW_METRIC_KEYS.filter(
+    (key) =>
+      metricsData.filter((task) => task.metrics[key]?.length).length >= 2,
+  );
+
+  const sameModelComparableMetrics = comparableMetrics.filter((key) =>
+    sameModelGroups.some(
+      (group) =>
+        group.tasks.filter((task) => task.metrics[key]?.length).length >= 2,
+    ),
+  );
+
+  useEffect(() => {
+    if (!comparableMetrics.length) return;
+    if (comparableMetrics.some((key) => key === resultMetric)) return;
+    const next =
+      RESULT_METRIC_PRIORITY.find((key) =>
+        comparableMetrics.includes(key as (typeof MLFLOW_METRIC_KEYS)[number]),
+      ) || comparableMetrics[0];
+    if (next) setResultMetric(next);
+  }, [comparableMetrics.join(','), resultMetric]);
+
+  useEffect(() => {
+    if (!availableMetrics.length) {
+      setSelectedMetrics([]);
+      return;
+    }
+    setSelectedMetrics((current) => {
+      const valid = current.filter((key) =>
+        availableMetrics.some((available) => available === key),
+      );
+      const next = Array.from(new Set([...valid, ...availableMetrics])).slice(
+        0,
+        Math.min(2, availableMetrics.length),
+      );
+      return next.join(',') === current.join(',') ? current : next;
+    });
+  }, [availableMetrics.join(',')]);
+
   const metricSelectOptions = useMemo((): string[] => {
-    const up = availableMetrics.filter(
+    const up = sameModelComparableMetrics.filter(
       (k) => k.includes('accuracy') || k.includes('mAP'),
     );
     if (up.length > 0) return [...up];
-    const nonLoss = availableMetrics.filter((k) => k !== 'train_loss');
+    const nonLoss = sameModelComparableMetrics.filter(
+      (k) => k !== 'train_loss',
+    );
     if (nonLoss.length > 0) return [...nonLoss];
-    return [...availableMetrics];
-  }, [availableMetrics]);
+    return [...sameModelComparableMetrics];
+  }, [sameModelComparableMetrics]);
 
   useEffect(() => {
     if (
@@ -759,7 +889,7 @@ const TaskCompare: React.FC = () => {
   return (
     <PageContainer
       title="模型性能对比"
-      subTitle="选择训练完成后的任务，对比终值指标与过程曲线；同一训练的不同版本，或同一模型+同一数据集的多条任务，可查看性能提升曲线"
+      subTitle="选择训练完成后的任务，对比终值指标与过程曲线；同一训练的不同版本，或具有相同模型/数据集资产标识的任务，可查看性能提升曲线"
       onBack={() => history.push('/task/list')}
       extra={
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
@@ -895,13 +1025,13 @@ const TaskCompare: React.FC = () => {
               type="primary"
               onClick={() => void loadCompareData()}
               loading={metricsLoading}
-              disabled={selectedRowKeys.length === 0}
+              disabled={selectedRowKeys.length < 2}
             >
               加载对比数据
             </Button>
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
               已选 {selectedRowKeys.length}{' '}
-              个任务。性能提升曲线适用于：同一训练不同版本，或同一模型+同一数据集（不要求资产版本一致）且
+              个任务。性能提升曲线适用于：同一训练不同版本，或具有相同模型/数据集稳定资产标识且
               ≥2 条
             </span>
           </Space>
@@ -913,9 +1043,23 @@ const TaskCompare: React.FC = () => {
           title="模型对比结果"
           style={{ marginBottom: 16 }}
           extra={
-            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              按验证准确率终值排序
-            </span>
+            <Space size={8}>
+              <span style={{ color: '#8c8c8c', fontSize: 12 }}>对比指标</span>
+              <Select
+                style={{ width: 180 }}
+                value={resultMetric}
+                onChange={setResultMetric}
+                options={comparableMetrics.map((key) => ({
+                  label: METRIC_LABELS[key] || key,
+                  value: key,
+                }))}
+              />
+              <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+                {isLowerBetter(resultMetric)
+                  ? '数值越低排名越高'
+                  : '数值越高排名越高'}
+              </span>
+            </Space>
           }
         >
           <Table
@@ -928,16 +1072,16 @@ const TaskCompare: React.FC = () => {
         </Card>
       )}
 
-      {metricsData.length > 0 && sameModelGroups.length === 0 && (
+      {metricsData.length > 0 && displayedSameModelGroups.length === 0 && (
         <Card style={{ marginBottom: 16 }}>
           <div style={{ color: '#8c8c8c' }}>
             未形成性能提升分组。请选择同一训练（同一
-            experimentId）的不同版本，或模型名与数据集名均相同的多条任务（不要求同一资产版本）。
+            experimentId）的不同版本，或具有相同模型和数据集稳定资产标识的多条任务。名称相同但资产标识不同的任务不会被误判为同一模型。
           </div>
         </Card>
       )}
 
-      {metricsData.length > 0 && sameModelGroups.length > 0 && (
+      {metricsData.length > 0 && displayedSameModelGroups.length > 0 && (
         <Card
           title="性能提升曲线"
           style={{ marginBottom: 16 }}
@@ -957,11 +1101,11 @@ const TaskCompare: React.FC = () => {
           }
         >
           <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 16 }}>
-            分组条件：① 同一训练不同版本；② 或同一模型名 + 同一数据集名（不要求
-            model/dataset 版本 ID 一致）。左图为指标随 Step
-            变化；右图为相对该次训练起点的提升幅度（%）。
+            分组条件：① 同一训练不同版本；②
+            或模型与数据集的稳定资产标识均相同。左图比较各版本训练结束时的指标；右图展示相对首个版本的提升幅度（loss
+            下降计为提升；首版指标为 0 时不伪造百分比）。
           </div>
-          {sameModelGroups.map((group) => {
+          {displayedSameModelGroups.map((group) => {
             const { slug, title, kind, modelName, datasetName } = group;
             const rawKey = `same_raw_${slug}`;
             const impKey = `same_imp_${slug}`;
@@ -995,7 +1139,7 @@ const TaskCompare: React.FC = () => {
                   <div>
                     <div style={{ marginBottom: 8, fontSize: 13 }}>
                       {METRIC_LABELS[sameModelMetric] || sameModelMetric}
-                      （过程）
+                      （各版本最终值）
                     </div>
                     <div
                       ref={(el) => {
@@ -1010,7 +1154,7 @@ const TaskCompare: React.FC = () => {
                   </div>
                   <div>
                     <div style={{ marginBottom: 8, fontSize: 13 }}>
-                      相对训练起点的提升率（%）
+                      相对首个版本的提升率（%）
                     </div>
                     <div
                       ref={(el) => {
@@ -1090,7 +1234,7 @@ const TaskCompare: React.FC = () => {
       {metricsData.length > 0 && (
         <div style={{ marginTop: 16, color: '#8c8c8c', fontSize: 12 }}>
           提示：对比数据来自
-          MLflow。「性能提升」适用于同一训练不同版本，或同一模型名+同一数据集名（不要求资产版本一致）。
+          MLflow。「性能提升」适用于同一训练不同版本，或具有相同模型和数据集稳定资产标识的任务。
         </div>
       )}
     </PageContainer>
