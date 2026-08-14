@@ -11,6 +11,12 @@ export type TrainingCodeReviewMode = 'DIRECT_PASS' | 'STANDARD_REVIEW';
 export const DEFAULT_USER_LOG_LIMIT_MB = 50;
 export const MIN_USER_LOG_LIMIT_MB = 1;
 export const MAX_USER_LOG_LIMIT_MB = 10240;
+export const MIN_POD_QUOTA = 1;
+export const MAX_POD_QUOTA = 50;
+export const MIN_JOB_QUOTA = 1;
+export const MAX_JOB_QUOTA = 200;
+export const MIN_JOB_TTL_SECONDS = 60;
+export const MAX_JOB_TTL_SECONDS = 3600;
 
 export interface SystemConfig {
   /**
@@ -23,6 +29,17 @@ export interface SystemConfig {
   logMaxSize?: number;
   /** 与 logMaxSize 等价，读响应两者都会返回 */
   userLogStorageLimitMb?: number;
+  updatedAt?: string;
+}
+
+export interface KubernetesResourcePolicy {
+  podQuota: number;
+  jobQuota: number;
+  jobTtlSecondsAfterFinished: number;
+  usedPods: number;
+  usedJobs: number;
+  clusterName: string;
+  namespace: string;
   updatedAt?: string;
 }
 
@@ -112,4 +129,38 @@ export async function updateSystemConfig(
       logMaxSize,
     }),
   };
+}
+
+/** 获取 Main 当前集群的真实资源策略；失败时不得回落到浏览器本地值。 */
+export async function fetchKubernetesResourcePolicy(options?: {
+  [key: string]: any;
+}) {
+  return request<{
+    code: number;
+    message: string;
+    data?: KubernetesResourcePolicy;
+  }>(SYSTEM_API_CONFIG.ENDPOINTS.RESOURCE_POLICY_GET, {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+/** 更新只影响 ResourceQuota 和之后新建 Job 的 TTL。 */
+export async function updateKubernetesResourcePolicy(
+  params: Pick<
+    KubernetesResourcePolicy,
+    'podQuota' | 'jobQuota' | 'jobTtlSecondsAfterFinished'
+  >,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    code: number;
+    message: string;
+    data?: KubernetesResourcePolicy;
+  }>(SYSTEM_API_CONFIG.ENDPOINTS.RESOURCE_POLICY_UPDATE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    data: params,
+    ...(options || {}),
+  });
 }
