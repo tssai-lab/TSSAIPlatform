@@ -26,6 +26,7 @@ TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY=registry.example/tss-inference-worker-cp
 TSS_CV_IMAGE_REPOSITORY=registry.example/tss-cv-worker
 TSS_NLP_IMAGE_REPOSITORY=registry.example/tss-nlp-worker
 TSS_PLATFORM_DIR=/nonexistent/tss-platform
+TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=10737418240
 EOF
 
 fail_case() {
@@ -70,6 +71,7 @@ grep -F 'tss-node-load-backend' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-deployment "$image" "$expected_image_id"' "$backend_activator" >/dev/null
 grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_loader" >/dev/null
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null
+grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
 grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/dev/null
 grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
