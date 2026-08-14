@@ -107,7 +107,14 @@ public class TrainingRunSpecFactory {
                 .orElseThrow(() -> new IllegalArgumentException("model asset does not exist"));
         requireOwner(modelVersion.getOwnerUserId(), modelAsset.getOwnerUserId(), "model version");
         requireReadyArtifact(modelVersion.getStatus(), modelVersion.getStoragePath(), modelVersion.getSizeBytes(), "model");
-        requireTaskType(plan.inputs().model().taskTypes(), modelAsset.getType(), "model");
+        String modelSpecId = resolveAcceptedSpec(
+                plan.inputs().model().acceptedSpecIds(),
+                modelVersion.getArtifactSpecId(),
+                "model"
+        );
+        if (modelSpecId == null) {
+            requireTaskType(plan.inputs().model().taskTypes(), modelAsset.getType(), "model");
+        }
 
         DatasetVersion datasetVersion = datasetVersionRepository
                 .findByIdAndDeletedFalse(command.datasetVersionId())
@@ -116,12 +123,19 @@ public class TrainingRunSpecFactory {
                 .orElseThrow(() -> new IllegalArgumentException("dataset asset does not exist"));
         requireOwner(datasetVersion.getOwnerUserId(), datasetAsset.getOwnerUserId(), "dataset version");
         requireReadyArtifact(datasetVersion.getStatus(), datasetVersion.getStoragePath(), datasetVersion.getSizeBytes(), "dataset");
-        requireTaskType(plan.inputs().dataset().taskTypes(), datasetAsset.getType(), "dataset");
-        requireAllowed(plan.inputs().dataset().cvTaskTypes(),
-                firstText(datasetVersion.getCvTaskType(), datasetAsset.getCvTaskType()), "dataset cvTaskType");
-        requireAllowed(plan.inputs().dataset().annotationFormats(),
-                firstText(datasetVersion.getAnnotationFormat(), datasetAsset.getAnnotationFormat()),
-                "dataset annotationFormat");
+        String datasetSpecId = resolveAcceptedSpec(
+                plan.inputs().dataset().acceptedSpecIds(),
+                datasetVersion.getArtifactSpecId(),
+                "dataset"
+        );
+        if (datasetSpecId == null) {
+            requireTaskType(plan.inputs().dataset().taskTypes(), datasetAsset.getType(), "dataset");
+            requireAllowed(plan.inputs().dataset().cvTaskTypes(),
+                    firstText(datasetVersion.getCvTaskType(), datasetAsset.getCvTaskType()), "dataset cvTaskType");
+            requireAllowed(plan.inputs().dataset().annotationFormats(),
+                    firstText(datasetVersion.getAnnotationFormat(), datasetAsset.getAnnotationFormat()),
+                    "dataset annotationFormat");
+        }
 
         CodeVersion codeVersion = codeVersionRepository.findByIdAndDeletedFalse(command.codeVersionId())
                 .orElseThrow(() -> new IllegalArgumentException("code version does not exist"));
@@ -150,17 +164,19 @@ public class TrainingRunSpecFactory {
                 new TrainingRunSpec.Inputs(
                         new TrainingRunSpec.InputArtifact(
                                 modelVersion.getId(), modelVersion.getStoragePath(), modelSha256,
-                                modelVersion.getSizeBytes(), resolveModelFormat(plan, modelVersion.getFileName()),
+                                modelVersion.getSizeBytes(), resolveModelFormat(plan, modelVersion.getFileName(), modelSpecId),
                                 materializedFileName(modelVersion.getFileName(), plan.inputs().model().requiredEntries()),
                                 isArchive(modelVersion.getFileName()),
-                                safeEntries(plan.inputs().model().requiredEntries())
+                                safeEntries(plan.inputs().model().requiredEntries()),
+                                modelSpecId
                         ),
                         new TrainingRunSpec.InputArtifact(
                                 datasetVersion.getId(), datasetVersion.getStoragePath(), datasetSha256,
-                                datasetVersion.getSizeBytes(), resolveDatasetFormat(datasetVersion, datasetAsset),
+                                datasetVersion.getSizeBytes(), resolveDatasetFormat(datasetVersion, datasetAsset, datasetSpecId),
                                 materializedFileName(datasetVersion.getFileName(), plan.inputs().dataset().requiredEntries()),
                                 isArchive(datasetVersion.getFileName()),
-                                safeEntries(plan.inputs().dataset().requiredEntries())
+                                safeEntries(plan.inputs().dataset().requiredEntries()),
+                                datasetSpecId
                         ),
                         new TrainingRunSpec.CodeArtifact(
                                 codeVersion.getId(), command.codeArtifact().storagePath(),
@@ -327,7 +343,10 @@ public class TrainingRunSpecFactory {
         );
     }
 
-    private String resolveModelFormat(TrainingPlanDefinition plan, String fileName) {
+    private String resolveModelFormat(TrainingPlanDefinition plan, String fileName, String artifactSpecId) {
+        if (artifactSpecId != null) {
+            return artifactSpecId;
+        }
         List<String> allowed = plan.inputs().model().formats();
         String normalized = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
         String inferred = normalized.endsWith(".pt") ? "YOLO_PT"
@@ -342,9 +361,33 @@ public class TrainingRunSpecFactory {
         throw new IllegalArgumentException("model file format is not supported by selected plan");
     }
 
-    private String resolveDatasetFormat(DatasetVersion version, DatasetAsset asset) {
+    private String resolveDatasetFormat(
+            DatasetVersion version,
+            DatasetAsset asset,
+            String artifactSpecId
+    ) {
+        if (artifactSpecId != null) {
+            return artifactSpecId;
+        }
         String annotation = firstText(version.getAnnotationFormat(), asset.getAnnotationFormat());
         return annotation == null ? "DATASET_ARCHIVE" : annotation.trim().toUpperCase(Locale.ROOT);
+    }
+
+    static String resolveAcceptedSpec(List<String> acceptedSpecIds, String actualSpecId, String field) {
+        if (acceptedSpecIds == null) {
+            return null;
+        }
+        if (acceptedSpecIds.isEmpty()) {
+            throw new IllegalArgumentException(field + " acceptedSpecIds cannot be empty");
+        }
+        if (actualSpecId == null || actualSpecId.isBlank()) {
+            throw new IllegalArgumentException(field + " version has no verified artifact specification");
+        }
+        String normalized = actualSpecId.trim();
+        if (acceptedSpecIds.stream().noneMatch(normalized::equals)) {
+            throw new IllegalArgumentException(field + " artifact specification is incompatible with selected plan");
+        }
+        return normalized;
     }
 
     private boolean isArchive(String fileName) {
