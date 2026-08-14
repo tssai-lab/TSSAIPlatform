@@ -132,6 +132,11 @@ public class TrainingModelPublishService {
         if (!expectedSource.equals(sourcePath)) {
             throw new IllegalArgumentException("training model artifact path does not match RunSpec");
         }
+        String taskType = modelVersionRepo.findById(snapshot.getModelVersionId())
+                .flatMap(version -> modelAssetRepo.findById(version.getAssetId()))
+                .map(ModelAsset::getType)
+                .filter(type -> type != null && !type.isBlank())
+                .orElseThrow(() -> new IllegalArgumentException("input model task type is unavailable"));
         long sourceSize = snapshot.getModelArtifactSizeBytes() == null
                 ? minioService.stat(sourcePath).size()
                 : snapshot.getModelArtifactSizeBytes();
@@ -140,6 +145,12 @@ public class TrainingModelPublishService {
         if (expectedDigest != null && !expectedDigest.equals(source.sha256())) {
             throw new IllegalArgumentException("training model artifact SHA-256 mismatch");
         }
+        ModelArtifactIntegrityService.Inspection sourceInspection =
+                modelArtifactIntegrityService.inspect(sourcePath, sourceSize, taskType);
+        if (!sourceInspection.sha256().equals(source.sha256())) {
+            throw new IllegalArgumentException("training model artifact changed during validation");
+        }
+        requirePublishedModelSpec(contract, sourceInspection);
 
         String assetId = deterministicId("model-asset-train-", snapshot.getExperimentId());
         String modelVersionId = deterministicId("model-ver-train-", snapshot.getId());
@@ -152,19 +163,31 @@ public class TrainingModelPublishService {
         }
         long targetSize = minioService.stat(targetPath).size();
         ModelArtifactIntegrityService.Inspection target =
-                modelArtifactIntegrityService.inspect(targetPath, targetSize);
+                modelArtifactIntegrityService.inspect(targetPath, targetSize, taskType);
         if (!target.sha256().equals(source.sha256())) {
             throw new IllegalStateException("published model artifact SHA-256 mismatch");
         }
-        String taskType = modelVersionRepo.findById(snapshot.getModelVersionId())
-                .flatMap(version -> modelAssetRepo.findById(version.getAssetId()))
-                .map(ModelAsset::getType)
-                .filter(type -> type != null && !type.isBlank())
-                .orElseThrow(() -> new IllegalArgumentException("input model task type is unavailable"));
+        requirePublishedModelSpec(contract, target);
         transactionTemplate.executeWithoutResult(status -> persistPublishedRunSpecModel(
                 snapshot.getId(), runSpec, contract, source, assetId, modelVersionId,
                 versionName, targetPath, targetSize, fileName, taskType
         ));
+    }
+
+    private void requirePublishedModelSpec(
+            TrainingPlanDefinition.Artifact contract,
+            ModelArtifactIntegrityService.Inspection inspection
+    ) {
+        String expectedSpecId = contract.publishedModelSpecId();
+        if (expectedSpecId == null || expectedSpecId.isBlank()) {
+            return;
+        }
+        if (!expectedSpecId.equals(inspection.artifactSpecId())) {
+            throw new IllegalArgumentException(
+                    "training model artifact does not satisfy publishedModelSpecId: "
+                            + expectedSpecId
+            );
+        }
     }
 
     private void persistPublishedRunSpecModel(
