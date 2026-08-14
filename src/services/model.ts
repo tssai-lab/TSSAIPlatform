@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { collectPaginatedCandidates } from './paginatedCandidates.mjs';
 
 export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
 
@@ -445,6 +446,7 @@ export type ModelListQuery = {
   current?: number;
   pageSize?: number;
   page?: number;
+  artifactSpecIds?: string;
 };
 
 export async function getModelList(params?: ModelListQuery & {
@@ -716,6 +718,7 @@ export async function fetchModelList(options?: {
   type?: string;
   sortBy?: string;
   sortDirection?: string;
+  artifactSpecIds?: string[];
 }) {
   const params: ModelListQuery & {
     sortBy?: string;
@@ -745,6 +748,9 @@ export async function fetchModelList(options?: {
   if (options?.sortDirection) {
     params.sortDirection = options.sortDirection;
   }
+  if (options?.artifactSpecIds) {
+    params.artifactSpecIds = options.artifactSpecIds.join(',');
+  }
 
   const res = await getModelList(params);
   const inner = res?.data;
@@ -753,6 +759,29 @@ export async function fetchModelList(options?: {
     .filter((item): item is API.ModelItem => Boolean(item));
   const total = inner?.total ?? list.length;
   return { data: list, total };
+}
+
+/** V2 训练方案候选：服务端先按规格筛选，再逐页取回，避免 100 条截断。 */
+export async function fetchTrainingModelCandidates(artifactSpecIds: string[]) {
+  const normalizedSpecIds = [...new Set(artifactSpecIds.map((value) => value.trim()))]
+    .filter(Boolean);
+  if (!normalizedSpecIds.length) return { data: [], total: 0 };
+  return collectPaginatedCandidates<API.ModelItem>(
+    (current, pageSize) =>
+      fetchModelList({
+        current,
+        pageSize,
+        artifactSpecIds: normalizedSpecIds,
+      }),
+    { keyOf: (item) => item.id, pageSize: 200 },
+  );
+}
+
+export async function fetchAllModelList() {
+  return collectPaginatedCandidates<API.ModelItem>(
+    (current, pageSize) => fetchModelList({ current, pageSize }),
+    { keyOf: (item) => item.id, pageSize: 200 },
+  );
 }
 
 /** §4+§5 模型资产详情（资产 + 版本列表） */

@@ -7,6 +7,8 @@
  */
 export {
   fetchModelList,
+  fetchAllModelList,
+  fetchTrainingModelCandidates,
   fetchModelDetail,
   fetchModelAssetDetail,
   fetchModelVersionCodePreview,
@@ -40,6 +42,8 @@ export {
 
 export {
   fetchDatasetList,
+  fetchAllDatasetList,
+  fetchTrainingDatasetCandidates,
   fetchDatasetDetail,
   listDatasetAssets,
   uploadDataset,
