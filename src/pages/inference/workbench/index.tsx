@@ -31,6 +31,7 @@ import {
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import InferenceResultVisual from '@/components/inference/ResultVisual';
 import {
   createInferenceTask,
@@ -153,9 +154,7 @@ const InferenceWorkbench: React.FC = () => {
       const latest = res?.data;
       if (!latest) return;
       setSelectedTask((prev) =>
-        prev && prev.id === task.id
-          ? { ...prev, ...latest }
-          : prev,
+        prev && prev.id === task.id ? { ...prev, ...latest } : prev,
       );
     } catch {
       // 列表中的 result 仍可展示
@@ -471,7 +470,10 @@ const InferenceWorkbench: React.FC = () => {
       hideInSearch: true,
       width: 90,
       render: (_, record) => {
-        if (record.retryCount === undefined || record.maxRetries === undefined) {
+        if (
+          record.retryCount === undefined ||
+          record.maxRetries === undefined
+        ) {
           return '-';
         }
         return `${record.retryCount}/${record.maxRetries}`;
@@ -516,7 +518,8 @@ const InferenceWorkbench: React.FC = () => {
         );
         const retryCount = record.retryCount ?? 0;
         const maxRetries = record.maxRetries ?? 3;
-        const canRetry = record.status === 'failed' && record.retryable === true;
+        const canRetry =
+          record.status === 'failed' && record.retryable === true;
         return (
           <Space size={4}>
             <Button
@@ -1018,6 +1021,11 @@ const InferenceWorkbench: React.FC = () => {
                 下载日志
               </Button>
             </Space>
+
+            <InferenceLogPanel
+              logPath={selectedTask.logPath}
+              status={selectedTask.status}
+            />
 
             <Collapse
               size="small"
