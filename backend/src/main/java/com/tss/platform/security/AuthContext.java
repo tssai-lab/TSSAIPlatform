@@ -75,8 +75,10 @@ public class AuthContext {
             return false;
         }
         if (SYSTEM_USER_ID.equals(ownerUserId)) {
-            // 演示资产对象全局可读
-            return objectName.startsWith(userPrefix(ownerUserId));
+            // 演示资产对象全局可读。owner 0 仅由服务端为演示资产设置（标记时归属迁移），
+            // 对象物理路径保留原归属前缀（users/{原owner}/...），故不做前缀约束；
+            // 下载端点的 objectName 取自资产/版本 DB 的 storagePath，非客户端注入。
+            return objectName != null && !objectName.isBlank();
         }
         return ownerUserId.equals(currentUserId())
                 && objectName.startsWith(userPrefix(ownerUserId));
