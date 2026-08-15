@@ -9,18 +9,25 @@ import {
   approveCodeVersion,
   deleteCodeAsset,
   downloadCodeVersionZip,
-  fetchCodeVersionList,
+  fetchOwnerCodeVersionInventory,
   getCodeUserDisplayName,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
 
 function approvalTag(status?: string) {
-  if (status === 'APPROVED') {
+  const value = String(status || '').toUpperCase();
+  if (value === 'APPROVED') {
     return <Tag color="success">APPROVED</Tag>;
   }
-  if (status === 'PENDING') {
+  if (value === 'PENDING') {
     return <Tag color="warning">PENDING</Tag>;
+  }
+  if (value === 'REJECTED') {
+    return <Tag color="error">REJECTED</Tag>;
+  }
+  if (value === 'REVOKED') {
+    return <Tag>REVOKED</Tag>;
   }
   return <Tag>{status || '-'}</Tag>;
 }
@@ -42,14 +49,9 @@ const TrainingCodeList: React.FC = () => {
     pageSize?: number;
   }) => {
     try {
-      const res = await fetchCodeVersionList(
-        {
-          ...(params.codeAssetName?.trim()
-            ? { codeName: params.codeAssetName.trim() }
-            : {}),
-        },
-        { skipErrorHandler: true },
-      );
+      const res = await fetchOwnerCodeVersionInventory({
+        skipErrorHandler: true,
+      });
       if (res?.success === false) {
         message.error(res?.errorMessage || '训练代码列表加载失败');
         return { data: [], success: false, total: 0 };
@@ -57,9 +59,11 @@ const TrainingCodeList: React.FC = () => {
       let list = Array.isArray(res?.data) ? res.data : [];
       const keyword = params.codeAssetName?.trim()?.toLowerCase();
       if (keyword) {
-        list = list.filter((item) =>
-          item.codeAssetName?.toLowerCase().includes(keyword),
-        );
+        list = list.filter((item) => {
+          const name = getCodeUserDisplayName(item).toLowerCase();
+          const fileName = String(item.fileName || '').toLowerCase();
+          return name.includes(keyword) || fileName.includes(keyword);
+        });
       }
       return {
         data: list,
@@ -253,10 +257,10 @@ const TrainingCodeList: React.FC = () => {
       subTitle={
         isTrainingCodeAutoApproveEnabled()
           ? '当前为自动审核：上传/发布后默认通过，可直接用于发起训练（READY + APPROVED）'
-          : '训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段'
+          : '上传后即产生列表记录，可查看 PENDING / APPROVED / REJECTED 等审核状态。仅 READY + APPROVED 可用于发起训练'
       }
       extra={[
-        access.isAdmin && !isTrainingCodeAutoApproveEnabled() ? (
+        access.isAdmin ? (
           <Button
             key="pending"
             onClick={() => history.push('/task/code/pending')}

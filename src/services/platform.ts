@@ -149,6 +149,7 @@ export {
   decideCodeVersion,
   fetchCodeVersionList,
   fetchApprovedCodeVersions,
+  fetchOwnerCodeVersionInventory,
   fetchPendingCodeReviewTasks,
   getCodeVersionDetail,
   getCodeUserDisplayName,

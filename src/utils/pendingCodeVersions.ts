@@ -66,3 +66,18 @@ export function removePendingCodeVersion(codeVersionId: string) {
 export function markPendingCodeApproved(codeVersionId: string) {
   removePendingCodeVersion(codeVersionId);
 }
+
+/** 拒绝/撤销后仍保留本地记录，便于列表展示审核状态 */
+export function markPendingCodeStatus(
+  codeVersionId: string,
+  approvalStatus: string,
+): PendingCodeVersionRecord[] {
+  const id = codeVersionId?.trim();
+  if (!id) return listPendingCodeVersions();
+  const existing = readAll().find((item) => item.codeVersionId === id);
+  return upsertPendingCodeVersion({
+    ...(existing || { codeVersionId: id }),
+    codeVersionId: id,
+    approvalStatus,
+  });
+}
