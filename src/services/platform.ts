@@ -51,6 +51,7 @@ export {
   createDatasetVersion,
   updateDatasetVersion,
   deleteDatasetVersion,
+  downloadDatasetVersion,
   switchDatasetCurrentVersion,
   updateDatasetVersionStatus,
   datasetUploadInit,

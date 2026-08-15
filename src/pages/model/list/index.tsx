@@ -13,6 +13,7 @@ import {
   downloadModelVersion,
   fetchModelList as fetchModelListService,
 } from '@/services/platform';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
 const ModelList: React.FC = () => {
@@ -64,13 +65,19 @@ const ModelList: React.FC = () => {
   };
 
   const handleDownload = async (record: API.ModelItem) => {
+    const progress = beginDownloadProgress();
     try {
       await downloadModelVersion(record.id, record.fileName, {
         skipErrorHandler: true,
+        onProgress: progress.update,
       });
-      message.success('开始下载');
+      progress.close();
+      message.success('下载完成');
     } catch (error: any) {
-      message.error(error?.info?.message || error?.message || '下载失败');
+      progress.close();
+      const tip = error?.info?.message || error?.message || '下载失败';
+      if (tip === '已取消下载') return;
+      message.error(tip);
     }
   };
 

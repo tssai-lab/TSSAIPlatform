@@ -38,6 +38,7 @@ import {
   createOrOpenDatasetWorkspace,
   deleteDataset,
   deleteDatasetVersion,
+  downloadDatasetVersion,
   extractActiveImportJobId,
   fetchDatasetDetail,
   getDatasetVersionAllocation,
@@ -61,6 +62,7 @@ import {
   supportsDatasetWorkspaceEdit,
   type WorkspaceEditableDatasetType,
 } from '@/utils/datasetWorkspace';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { loadImportJobId, saveImportJobId } from '@/utils/importJobStorage';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
@@ -467,12 +469,26 @@ const DatasetDetail: React.FC = () => {
     }
   };
 
-  const handleDownload = (versionId?: string, storagePath?: string) => {
+  const handleDownload = async (
+    versionId?: string,
+    storagePath?: string,
+    fileName?: string,
+  ) => {
     if (versionId) {
-      window.open(
-        `/api/dataset-versions/${encodeURIComponent(versionId)}/download`,
-        '_blank',
-      );
+      const progress = beginDownloadProgress();
+      try {
+        await downloadDatasetVersion(versionId, fileName, {
+          skipErrorHandler: true,
+          onProgress: progress.update,
+        });
+        progress.close();
+        message.success('下载完成');
+      } catch (error: unknown) {
+        progress.close();
+        const tip = getApiErrorMessage(error, '下载失败');
+        if (tip === '已取消下载') return;
+        message.error(tip);
+      }
       return;
     }
     if (!storagePath) {
@@ -1052,6 +1068,7 @@ const DatasetDetail: React.FC = () => {
                     )
                   : undefined,
                 datasetInfo.latestVersion?.storagePath,
+                datasetInfo.latestVersion?.fileName,
               )
             }
           >
@@ -1597,6 +1614,7 @@ const DatasetDetail: React.FC = () => {
                                       datasetInfo.id,
                                     ),
                                     record.storagePath,
+                                    record.fileName,
                                   )
                                 }
                               >

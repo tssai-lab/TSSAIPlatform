@@ -5,6 +5,10 @@
  * 成功响应直接返回 DTO/流；失败为 V2ErrorResponse（不经 legacy ApiResponse 包装）。
  */
 import { request } from '@umijs/max';
+import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
+
+/** @deprecated 请改用 FILE_DOWNLOAD_REQUEST_TIMEOUT */
+export const CODE_DOWNLOAD_REQUEST_TIMEOUT = FILE_DOWNLOAD_REQUEST_TIMEOUT;
 
 export type V2CodeLanguageId =
   | 'python'
@@ -630,6 +634,7 @@ export function mapAdminReviewTaskToListItem(
     riskStatus: task.riskStatus,
     reviewDisposition: task.reviewDisposition,
     submittedAt: task.submittedAt,
+    ownerUserId: task.ownerUserId,
   };
 }
 
@@ -663,6 +668,7 @@ export function mapAdminReviewTaskDetailToCodeVersionDetail(
     riskPolicyVersion: detail.riskPolicyVersion,
     submittedAt: detail.submittedAt,
     sizeBytes: detail.sizeBytes,
+    ownerUserId: detail.ownerUserId,
     entryScript: detail.entryScript,
     runtime: detail.runtime,
     purpose: detail.purpose,
@@ -924,6 +930,7 @@ export async function downloadV2CodeWorkspaceFileBlob(
       params: { path },
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -1004,6 +1011,7 @@ export async function downloadV2CodeVersionFileBlob(
       params: { path },
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -1020,6 +1028,7 @@ export async function downloadV2CodeVersionZip(
       method: 'GET',
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -1668,6 +1677,7 @@ export async function downloadAdminCodeWorkspaceFileBlob(
       params: { path },
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -1732,6 +1742,7 @@ export async function downloadAdminCodeVersionFileBlob(
       params: { path },
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -1793,6 +1804,7 @@ export async function downloadAdminCodeVersionZip(
       method: 'GET',
       responseType: 'blob',
       skipErrorHandler: true,
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );

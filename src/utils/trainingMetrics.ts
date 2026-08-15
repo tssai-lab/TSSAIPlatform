@@ -99,10 +99,31 @@ export function formatMetricValue(value: unknown): string {
   return String(value);
 }
 
-export function getAvailableMetricKeys(data: MetricsDataMap): string[] {
-  return TRAINING_MLFLOW_METRIC_KEYS.filter(
-    (key) => (data[key]?.length ?? 0) > 0,
-  );
+/**
+ * 是否适合以 Step 为横轴的过程曲线。
+ * 以下视为终值/无过程意义，不进折线（避免画出 y=a 水平线）：
+ * - 空或仅 1 个点
+ * - 多个点但 Step 全相同
+ * - 多个点但数值全程不变（常见：验证准确率只记了一个常数却按 epoch 重复写入）
+ */
+export function isStepSeriesMetric(points?: MetricPoint[] | null): boolean {
+  if (!points?.length) return false;
+  if (points.length <= 1) return false;
+  const steps = new Set(points.map((p) => p.step));
+  if (steps.size <= 1) return false;
+  const values = points
+    .map((p) => p.value)
+    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (values.length <= 1) return false;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  // 全程同一数值 → 不画过程折线
+  if (max === min) return false;
+  // 浮点近似常数也排除（相对/绝对极差都极小）
+  const span = max - min;
+  const scale = Math.max(Math.abs(min), Math.abs(max), 1);
+  if (span / scale < 1e-12) return false;
+  return true;
 }
 
 export function getLatestMetricValue(
@@ -110,6 +131,28 @@ export function getLatestMetricValue(
 ): number | undefined {
   if (!points?.length) return undefined;
   return points[points.length - 1]?.value;
+}
+
+/** 有数据的标准指标（含终值单点） */
+export function getAvailableMetricKeys(data: MetricsDataMap): string[] {
+  return TRAINING_MLFLOW_METRIC_KEYS.filter(
+    (key) => (data[key]?.length ?? 0) > 0,
+  );
+}
+
+/** 适合过程曲线（Step 横轴）的指标 */
+export function getSeriesMetricKeys(data: MetricsDataMap): string[] {
+  return TRAINING_MLFLOW_METRIC_KEYS.filter((key) =>
+    isStepSeriesMetric(data[key]),
+  );
+}
+
+/** 仅有终值/单点的指标（用卡片或表格，不进过程曲线） */
+export function getScalarMetricKeys(data: MetricsDataMap): string[] {
+  return TRAINING_MLFLOW_METRIC_KEYS.filter((key) => {
+    const points = data[key];
+    return (points?.length ?? 0) > 0 && !isStepSeriesMetric(points);
+  });
 }
 
 /** 标准 MLflow 指标末值摘要（无数据时 value 为 undefined） */
@@ -183,7 +226,8 @@ export function buildMetricsChartOption(
   const series = keys
     .map((key) => {
       const points = metricsData[key] ?? [];
-      if (!points.length) return null;
+      // 折线仅绘制多 step 过程序列；终值单点不进 Step 曲线
+      if (!isStepSeriesMetric(points)) return null;
       return buildSeries(key, points, style);
     })
     .filter(Boolean);

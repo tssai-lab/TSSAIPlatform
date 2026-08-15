@@ -126,17 +126,40 @@ export function getApiErrorMessage(err: any, fallback = '请求失败'): string 
   const status = err?.response?.status;
   const data = err?.response?.data;
   const errorCode = pickErrorCode(err, data);
+  const reasonCodeRaw =
+    data?.details?.reasonCode ??
+    err?.info?.details?.reasonCode ??
+    err?.reasonCode;
+  const reasonCode =
+    typeof reasonCodeRaw === 'string' && reasonCodeRaw.trim()
+      ? reasonCodeRaw.trim()
+      : undefined;
   const bizMessage = pickBizMessage(err, data);
   const detailsText = formatUserErrorDetails(
     data?.details ?? err?.info?.details,
   );
 
-  if (errorCode && WORKSPACE_ERROR_HINTS[errorCode]) {
-    const hint = WORKSPACE_ERROR_HINTS[errorCode];
+  // 优先用更细的 reasonCode（如 CODE_ASSET_CONFLICT + WORKSPACE_BASE_CONFLICT）
+  const hintCode =
+    (reasonCode && WORKSPACE_ERROR_HINTS[reasonCode]
+      ? reasonCode
+      : undefined) ||
+    (errorCode && WORKSPACE_ERROR_HINTS[errorCode] ? errorCode : undefined);
+
+  if (hintCode && WORKSPACE_ERROR_HINTS[hintCode]) {
+    const hint = WORKSPACE_ERROR_HINTS[hintCode];
     if (detailsText && !hint.includes(detailsText)) {
       return `${hint}（${detailsText}）`;
     }
     return hint;
+  }
+
+  // 前端主动抛出的基线冲突（无 HTTP response）
+  if (
+    typeof err?.message === 'string' &&
+    err.message.includes('已有基于其他版本的编辑工作区')
+  ) {
+    return err.message;
   }
 
   if (bizMessage) {

@@ -392,6 +392,7 @@ const TrainingCodeUpload: React.FC = () => {
       if (initialStatus !== 'APPROVED') {
         upsertPendingCodeVersion({
           codeVersionId: data.codeVersionId,
+          codeAssetId: data.codeAssetId,
           codeAssetName: values.codeName.trim(),
           fileName: data.fileName,
           trainingProfile: data.trainingProfile || trainingProfile,

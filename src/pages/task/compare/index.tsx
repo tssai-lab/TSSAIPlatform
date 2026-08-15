@@ -35,6 +35,10 @@ import {
   listExperimentVersions,
 } from '@/services/platform';
 import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
+import {
+  isStepSeriesMetric,
+  METRIC_LABELS as SHARED_METRIC_LABELS,
+} from '@/utils/trainingMetrics';
 
 const COMPARE_POOL_KEY = 'comparePoolIds';
 
@@ -71,6 +75,7 @@ function saveComparePool(ids: string[]) {
 }
 
 const METRIC_LABELS: Record<string, string> = {
+  ...SHARED_METRIC_LABELS,
   train_loss: '训练损失',
   val_accuracy: '验证准确率',
   val_mAP50: '验证 mAP50',
@@ -569,6 +574,104 @@ const TaskCompare: React.FC = () => {
     }));
   }, [metricsData, resultMetric]);
 
+  /** 单值/常数指标：用于排名下方的多指标统一对照表 */
+  const finalTableMetricKeys = useMemo(
+    () =>
+      MLFLOW_METRIC_KEYS.filter((key) =>
+        metricsData.some((task) => {
+          const pts = task.metrics[key];
+          return (pts?.length ?? 0) > 0 && !isStepSeriesMetric(pts);
+        }),
+      ),
+    [metricsData],
+  );
+
+  const finalTableBestByMetric = useMemo(() => {
+    const best = new Map<string, number>();
+    for (const key of finalTableMetricKeys) {
+      const values = metricsData
+        .map((task) => lastPoint(task.metrics[key])?.value)
+        .filter((v): v is number => v != null && Number.isFinite(v));
+      if (!values.length) continue;
+      best.set(
+        key,
+        isLowerBetter(key) ? Math.min(...values) : Math.max(...values),
+      );
+    }
+    return best;
+  }, [metricsData, finalTableMetricKeys]);
+
+  const finalTableRows = useMemo(
+    () =>
+      metricsData.map((task) => {
+        const row: Record<string, string | number | undefined> = {
+          key: task.taskId,
+          taskName: task.taskName,
+          modelName: task.modelName,
+          datasetName: task.datasetName,
+        };
+        for (const key of finalTableMetricKeys) {
+          row[key] = lastPoint(task.metrics[key])?.value;
+        }
+        return row;
+      }),
+    [metricsData, finalTableMetricKeys],
+  );
+
+  const finalTableColumns: ColumnType<
+    Record<string, string | number | undefined>
+  >[] = useMemo(() => {
+    const base: ColumnType<Record<string, string | number | undefined>>[] = [
+      {
+        title: '任务名称',
+        dataIndex: 'taskName',
+        key: 'taskName',
+        fixed: 'left',
+        width: 180,
+        ellipsis: true,
+      },
+      {
+        title: '模型',
+        dataIndex: 'modelName',
+        key: 'modelName',
+        width: 140,
+        ellipsis: true,
+      },
+      {
+        title: '数据集',
+        dataIndex: 'datasetName',
+        key: 'datasetName',
+        width: 140,
+        ellipsis: true,
+      },
+    ];
+    const metricCols: ColumnType<
+      Record<string, string | number | undefined>
+    >[] = finalTableMetricKeys.map((key) => ({
+      title: METRIC_LABELS[key] || key,
+      dataIndex: key,
+      key,
+      width: 130,
+      render: (v: number | undefined) => {
+        if (v == null || !Number.isFinite(v)) return '-';
+        const best = finalTableBestByMetric.get(key);
+        const isBest = best != null && v === best;
+        return (
+          <span
+            style={{
+              fontWeight: isBest ? 600 : 400,
+              color: isBest ? '#1677ff' : undefined,
+            }}
+          >
+            {formatNum(v, 4)}
+            {isBest ? ' ★' : ''}
+          </span>
+        );
+      },
+    }));
+    return [...base, ...metricCols];
+  }, [finalTableMetricKeys, finalTableBestByMetric]);
+
   const sameModelGroups = useMemo(
     (): ComparableGroup[] => buildImprovementGroups(metricsData),
     [metricsData],
@@ -584,11 +687,11 @@ const TaskCompare: React.FC = () => {
     [sameModelGroups, sameModelMetric],
   );
 
-  // 多任务过程曲线
+  // 多任务过程曲线（仅多 step 序列）
   useEffect(() => {
     if (metricsData.length === 0 || selectedMetrics.length === 0) return;
     const metricsToShow = selectedMetrics.filter((m) =>
-      metricsData.some((t) => t.metrics[m] && t.metrics[m].length > 0),
+      metricsData.some((t) => isStepSeriesMetric(t.metrics[m])),
     );
     if (metricsToShow.length === 0) return;
 
@@ -596,7 +699,7 @@ const TaskCompare: React.FC = () => {
       const el = chartRefs.current[metricKey];
       if (!el) return;
       const series = metricsData
-        .filter((t) => t.metrics[metricKey] && t.metrics[metricKey].length > 0)
+        .filter((t) => isStepSeriesMetric(t.metrics[metricKey]))
         .map((t, i) => ({
           name: `${t.taskName}`,
           type: 'line' as const,
@@ -822,13 +925,15 @@ const TaskCompare: React.FC = () => {
     onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
   };
 
-  const availableMetrics = MLFLOW_METRIC_KEYS.filter((k) =>
-    metricsData.some((t) => t.metrics[k] && t.metrics[k].length > 0),
-  );
-
+  /** 终值表可用（含单点标量） */
   const comparableMetrics = MLFLOW_METRIC_KEYS.filter(
     (key) =>
       metricsData.filter((task) => task.metrics[key]?.length).length >= 2,
+  );
+
+  /** 过程曲线可用：至少一条任务对该指标有多 step 序列 */
+  const processSeriesMetrics = MLFLOW_METRIC_KEYS.filter((key) =>
+    metricsData.some((task) => isStepSeriesMetric(task.metrics[key])),
   );
 
   const sameModelComparableMetrics = comparableMetrics.filter((key) =>
@@ -849,21 +954,20 @@ const TaskCompare: React.FC = () => {
   }, [comparableMetrics.join(','), resultMetric]);
 
   useEffect(() => {
-    if (!availableMetrics.length) {
+    if (!processSeriesMetrics.length) {
       setSelectedMetrics([]);
       return;
     }
     setSelectedMetrics((current) => {
       const valid = current.filter((key) =>
-        availableMetrics.some((available) => available === key),
+        processSeriesMetrics.some((available) => available === key),
       );
-      const next = Array.from(new Set([...valid, ...availableMetrics])).slice(
-        0,
-        Math.min(2, availableMetrics.length),
-      );
+      const next = Array.from(
+        new Set([...valid, ...processSeriesMetrics]),
+      ).slice(0, Math.min(2, processSeriesMetrics.length));
       return next.join(',') === current.join(',') ? current : next;
     });
-  }, [availableMetrics.join(',')]);
+  }, [processSeriesMetrics.join(',')]);
 
   const metricSelectOptions = useMemo((): string[] => {
     const up = sameModelComparableMetrics.filter(
@@ -889,7 +993,7 @@ const TaskCompare: React.FC = () => {
   return (
     <PageContainer
       title="模型性能对比"
-      subTitle="选择训练完成后的任务，对比终值指标与过程曲线；同一训练的不同版本，或具有相同模型/数据集资产标识的任务，可查看性能提升曲线"
+      subTitle="先按单指标排名，再在下方对单值指标做多维对照；过程序列看曲线。同一训练不同版本或同模型+同数据集可看性能提升。"
       onBack={() => history.push('/task/list')}
       extra={
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
@@ -1038,9 +1142,9 @@ const TaskCompare: React.FC = () => {
         </div>
       </Card>
 
-      {metricsData.length > 0 && (
+      {metricsData.length > 0 && comparableMetrics.length > 0 && (
         <Card
-          title="模型对比结果"
+          title="按单指标排名"
           style={{ marginBottom: 16 }}
           extra={
             <Space size={8}>
@@ -1069,6 +1173,36 @@ const TaskCompare: React.FC = () => {
             pagination={false}
             size="small"
           />
+        </Card>
+      )}
+
+      {metricsData.length > 0 && (
+        <Card
+          title="单值指标多维对照"
+          style={{ marginBottom: 16 }}
+          extra={
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              仅单点/常数指标；各列独立对比，★ 为该列最优（loss 越低越好）
+            </span>
+          }
+        >
+          {finalTableMetricKeys.length > 0 ? (
+            <Table
+              rowKey="key"
+              size="small"
+              pagination={false}
+              scroll={{
+                x: Math.max(720, 460 + finalTableMetricKeys.length * 130),
+              }}
+              columns={finalTableColumns}
+              dataSource={finalTableRows}
+            />
+          ) : (
+            <div style={{ color: '#8c8c8c' }}>
+              当前所选任务没有单值/常数类指标（或均为多 Step
+              过程序列）。过程指标请看下方曲线。
+            </div>
+          )}
         </Card>
       )}
 
@@ -1180,33 +1314,36 @@ const TaskCompare: React.FC = () => {
           style={{ marginBottom: 16 }}
           extra={
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              勾选指标，每个指标一张图
+              仅多 Step 序列；单值/常数请看上方「单值指标多维对照」
             </span>
           }
         >
-          {availableMetrics.length > 0 ? (
+          {processSeriesMetrics.length > 0 ? (
             <Checkbox.Group
               value={selectedMetrics}
               onChange={(vals) => setSelectedMetrics(vals as string[])}
-              options={availableMetrics.map((k) => ({
+              options={processSeriesMetrics.map((k) => ({
                 label: METRIC_LABELS[k] || k,
                 value: k,
               }))}
             />
           ) : (
-            <div style={{ color: '#8c8c8c' }}>暂无可用指标序列</div>
+            <div style={{ color: '#8c8c8c' }}>
+              暂无多 Step
+              过程序列。若指标仅为终值单点，请使用上方「按单指标排名」「单值指标多维对照」或「性能提升曲线」。
+            </div>
           )}
         </Card>
       )}
 
       {metricsData.length > 0 &&
-        availableMetrics.length > 0 &&
+        processSeriesMetrics.length > 0 &&
         selectedMetrics.length > 0 && (
           <Card title="过程曲线图">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               {selectedMetrics.map((metricKey) => {
-                const hasData = metricsData.some(
-                  (t) => t.metrics[metricKey]?.length > 0,
+                const hasData = metricsData.some((t) =>
+                  isStepSeriesMetric(t.metrics[metricKey]),
                 );
                 if (!hasData) return null;
                 return (
