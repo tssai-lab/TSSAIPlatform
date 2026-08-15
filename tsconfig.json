@@ -1,23 +1,12 @@
 {
+  "extends": "./src/.umi/tsconfig.json",
   "compilerOptions": {
-    "baseUrl": "./",
-    "target": "esnext",
-    "module": "ESNext",
-    "moduleResolution": "node",
-    "jsx": "react-jsx",
-    "esModuleInterop": true,
-    "experimentalDecorators": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "noImplicitReturns": true,
-    "declaration": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "ignoreDeprecations": "6.0",
     "paths": {
       "@/*": ["./src/*"],
       "@@/*": ["./src/.umi/*"],
-      "@@test/*": ["./src/.umi-test/*"]
+      "@@test/*": ["./src/.umi-test/*"],
+      "@umijs/max": ["./node_modules/umi"],
+      "@umijs/max/typings": ["./src/.umi/typings"]
     }
   },
   "include": ["./**/*.d.ts", "./**/*.ts", "./**/*.tsx"]

@@ -893,11 +893,14 @@ export async function fetchDatasetList(options?: {
 
   if (v1Result.status === 'fulfilled') {
     const inner = v1Result.value?.data;
-    const v1List = inner?.data ?? [];
+    const v1List: DatasetListItem[] = inner?.data ?? [];
     if (list.length && v1List.length) {
       // V2 为主，用 V1 补 size/fileName/versionRemark（不依赖 V1 storagePath）
-      const v1ById = new Map(
-        v1List.map((item) => [item.assetId || item.id, item]),
+      const v1ById = new Map<string | undefined, DatasetListItem>(
+        v1List.map((item: DatasetListItem) => [
+          item.assetId || item.id,
+          item,
+        ]),
       );
       list = list.map((item) => {
         const v1 = v1ById.get(item.assetId || item.id);
@@ -1000,7 +1003,7 @@ export async function fetchDatasetDetail(id: string, options?: { [key: string]: 
       options,
     );
     const row = (listRes?.data?.data ?? []).find(
-      (item) => (item.assetId || item.id) === asset.id,
+      (item: DatasetListItem) => (item.assetId || item.id) === asset.id,
     );
     listLatestVersionId = row?.versionId;
     currentVersionId = row?.versionId;
