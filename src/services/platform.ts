@@ -153,6 +153,7 @@ export {
   fetchPendingCodeReviewTasks,
   getCodeVersionDetail,
   getCodeUserDisplayName,
+  normalizeCodeApprovalStatus,
   saveCodeVersionFileAndPublish,
   publishCodeWorkspaceDraft,
   deleteCodeAsset,

@@ -9,7 +9,8 @@
  * - 关闭 → DIRECT_PASS
  * - 开启 → STANDARD_REVIEW
  *
- * 配置优先读系统配置接口；前端同时缓存到 localStorage。
+ * 注意：GET/POST /api/system/config/* 仅管理员可用；普通用户会 403。
+ * 因此不能把「同步失败 / 未同步」当成「审核已关闭」。
  */
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 
@@ -22,6 +23,8 @@ export type TrainingCodeReviewLocalConfig = {
   /** true = STANDARD_REVIEW；false = DIRECT_PASS */
   enableTrainingCodeAdminReview: boolean;
   trainingCodeReviewMode?: 'DIRECT_PASS' | 'STANDARD_REVIEW';
+  /** 是否已从服务端成功同步（普通用户通常为 false） */
+  syncedFromServer?: boolean;
 };
 
 export function getTrainingCodeReviewLocalConfig(): TrainingCodeReviewLocalConfig {
@@ -34,6 +37,7 @@ export function getTrainingCodeReviewLocalConfig(): TrainingCodeReviewLocalConfi
     trainingCodeReviewMode:
       cached?.trainingCodeReviewMode ||
       (enable ? 'STANDARD_REVIEW' : 'DIRECT_PASS'),
+    syncedFromServer: cached?.syncedFromServer === true,
   };
 }
 
@@ -54,24 +58,43 @@ export function setTrainingCodeReviewLocalConfig(
   const next: TrainingCodeReviewLocalConfig = {
     enableTrainingCodeAdminReview: !!enable,
     trainingCodeReviewMode: mode || 'DIRECT_PASS',
+    syncedFromServer:
+      config.syncedFromServer != null
+        ? !!config.syncedFromServer
+        : prev.syncedFromServer === true,
   };
   storage.set(STORAGE_KEYS.TRAINING_CODE_REVIEW_CONFIG, next);
   return next;
 }
 
-/** 是否启用管理员人工审核（STANDARD_REVIEW） */
-export function isTrainingCodeAdminReviewEnabled(): boolean {
-  return getTrainingCodeReviewLocalConfig().enableTrainingCodeAdminReview;
+/** 是否已从服务端成功读到审核开关（管理员保存/拉取后为 true） */
+export function hasSyncedTrainingCodeReviewConfig(): boolean {
+  return getTrainingCodeReviewLocalConfig().syncedFromServer === true;
 }
 
-/** 是否自动审核通过（DIRECT_PASS） */
+/**
+ * 是否启用管理员人工审核（STANDARD_REVIEW）。
+ * 未同步成功前不假定已关闭，避免普通用户 403 后被误导。
+ */
+export function isTrainingCodeAdminReviewEnabled(): boolean {
+  const cfg = getTrainingCodeReviewLocalConfig();
+  if (!cfg.syncedFromServer) return true;
+  return cfg.enableTrainingCodeAdminReview;
+}
+
+/**
+ * 是否自动审核通过（DIRECT_PASS）。
+ * 未同步成功前返回 false，避免前端误走「自动审批」旁路。
+ */
 export function isTrainingCodeAutoApproveEnabled(): boolean {
-  return !isTrainingCodeAdminReviewEnabled();
+  const cfg = getTrainingCodeReviewLocalConfig();
+  if (!cfg.syncedFromServer) return false;
+  return !cfg.enableTrainingCodeAdminReview;
 }
 
 /**
  * 从系统配置接口同步训练代码审核模式到本机缓存。
- * 接口失败时保留已有缓存 / 默认值。
+ * 接口失败（含普通用户 403）时保留已有缓存，且不得写成「已关闭」。
  */
 export async function syncTrainingCodeReviewConfigFromServer(options?: {
   [key: string]: any;
@@ -87,10 +110,11 @@ export async function syncTrainingCodeReviewConfigFromServer(options?: {
         enableTrainingCodeAdminReview:
           res.data.enableTrainingCodeAdminReview ?? false,
         trainingCodeReviewMode: res.data.trainingCodeReviewMode,
+        syncedFromServer: true,
       });
     }
   } catch {
-    // 保留本地缓存
+    // 保留本地缓存；普通用户 403 时保持 syncedFromServer 原值
   }
   return getTrainingCodeReviewLocalConfig();
 }

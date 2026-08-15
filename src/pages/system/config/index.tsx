@@ -83,6 +83,8 @@ function writeLocalSystemConfig(config: SystemConfig) {
   setTrainingCodeReviewLocalConfig({
     enableTrainingCodeAdminReview:
       config.enableTrainingCodeAdminReview ?? false,
+    trainingCodeReviewMode: config.trainingCodeReviewMode,
+    syncedFromServer: true,
   });
 }
 

@@ -56,6 +56,7 @@ import {
   normalizeAdminCodeAssetPage,
   normalizeAdminReviewTaskPage,
   mapV2CodeVersionToLegacy,
+  normalizeV2ApprovalStatus,
   validateV2CodeVersion,
   errorMessageFromV2,
   errorMessageFromV2Blob,
@@ -192,6 +193,13 @@ export type CodeVersionApprovalResult = {
   approvalStatus: string;
   decisionSource?: string;
 };
+
+/** 归一化审批状态；决策动词 APPROVE/REJECT/REVOKE 也映射到状态枚举 */
+export function normalizeCodeApprovalStatus(
+  status?: string | null,
+): string | undefined {
+  return normalizeV2ApprovalStatus(status);
+}
 
 export type CodeVersionListItem = {
   codeVersionId: string;
@@ -634,24 +642,29 @@ export async function decideCodeVersion(
     detailError = error;
   }
 
-  const mapApprovalResult = (data: Record<string, unknown>) => ({
-    success: true as const,
-    data: {
-      codeVersionId,
-      approvalStatus:
-        (data?.decision as string) ||
-        (data?.approvalStatus as string) ||
-        (decision === 'APPROVE'
-          ? 'APPROVED'
-          : decision === 'REJECT'
-            ? 'REJECTED'
-            : 'REVOKED'),
-      decisionSource:
-        typeof data?.decisionSource === 'string'
-          ? data.decisionSource
-          : undefined,
-    } as CodeVersionApprovalResult,
-  });
+  const mapApprovalResult = (data: Record<string, unknown>) => {
+    const raw =
+      (typeof data?.approvalStatus === 'string' && data.approvalStatus) ||
+      (typeof data?.decision === 'string' && data.decision) ||
+      '';
+    const normalized = normalizeCodeApprovalStatus(raw) ||
+      (decision === 'APPROVE'
+        ? 'APPROVED'
+        : decision === 'REJECT'
+          ? 'REJECTED'
+          : 'REVOKED');
+    return {
+      success: true as const,
+      data: {
+        codeVersionId,
+        approvalStatus: normalized,
+        decisionSource:
+          typeof data?.decisionSource === 'string'
+            ? data.decisionSource
+            : undefined,
+      } as CodeVersionApprovalResult,
+    };
+  };
 
   if (detail) {
     if (decision === 'REVOKE' || hasV2ApprovalEvidence(detail)) {
@@ -714,8 +727,7 @@ async function peekCodeApprovalStatus(
       skipErrorHandler: true,
       ...(options || {}),
     });
-    const status = String(detail?.approvalStatus || '').toUpperCase();
-    return status || undefined;
+    return normalizeCodeApprovalStatus(detail?.approvalStatus) || undefined;
   } catch {
     return undefined;
   }
@@ -1040,6 +1052,10 @@ export async function getCodeVersionDetail(
           mapped.riskLevel ||
           riskAssessment?.riskLevel ||
           manifest?.riskLevel,
+        reviewDisposition:
+          mapped.reviewDisposition ||
+          riskAssessment?.disposition ||
+          undefined,
         riskAssessmentId:
           mapped.riskAssessmentId ||
           riskAssessment?.id ||
