@@ -220,6 +220,9 @@ export type CodeVersionListItem = {
   riskLevel?: string;
   reviewDisposition?: string;
   riskPolicyVersion?: string;
+  /** 上传/创建时间（优先展示） */
+  createdAt?: string;
+  /** 与 createdAt 同源，待审队列等场景沿用此字段名 */
   submittedAt?: string;
 };
 
@@ -328,6 +331,7 @@ function mergeLocalPendingRows(
       trainingProfile: item.trainingProfile || '',
       approvalStatus: item.approvalStatus || 'PENDING',
       status: '',
+      createdAt: item.uploadedAt,
       submittedAt: item.uploadedAt,
     }));
   return extras.length ? [...extras, ...rows] : rows;
@@ -835,7 +839,6 @@ export type CodeVersionTrainingCheckResult = {
 export type CodeVersionDetail = CodeVersionListItem & {
   sizeBytes?: number;
   remark?: string;
-  createdAt?: string;
   artifactSha256?: string;
   entryScript?: string;
   runtime?: string;
