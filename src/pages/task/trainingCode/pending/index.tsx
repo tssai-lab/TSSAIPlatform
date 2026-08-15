@@ -14,6 +14,7 @@ import {
   Input,
   Modal,
   message,
+  Popconfirm,
   Row,
   Space,
   Spin,
@@ -53,7 +54,7 @@ import type { PendingCodeVersionRecord } from '@/utils/pendingCodeVersions';
 import {
   listPendingCodeVersions,
   markPendingCodeApproved,
-  removePendingCodeVersion,
+  markPendingCodeStatus,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
 
@@ -116,12 +117,7 @@ const TrainingCodePending: React.FC = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm();
   const [adding, setAdding] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectTarget, setRejectTarget] = useState<CodeVersionListItem | null>(
-    null,
-  );
-  const [rejectForm] = Form.useForm();
-  const [rejecting, setRejecting] = useState(false);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [findingsOpen, setFindingsOpen] = useState(false);
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [findings, setFindings] = useState<FindingRow[]>([]);
@@ -252,35 +248,23 @@ const TrainingCodePending: React.FC = () => {
     }
   };
 
-  const openReject = (record: CodeVersionListItem) => {
-    setRejectTarget(record);
-    rejectForm.resetFields();
-    setRejectOpen(true);
-  };
-
-  const handleReject = async () => {
-    if (!rejectTarget) return;
-    const values = await rejectForm.validateFields();
-    setRejecting(true);
+  const handleReject = async (record: CodeVersionListItem) => {
+    setRejectingId(record.codeVersionId);
     try {
-      const res = await rejectCodeVersion(
-        rejectTarget.codeVersionId,
-        String(values.reason || '').trim(),
-        { skipErrorHandler: true },
-      );
+      const res = await rejectCodeVersion(record.codeVersionId, '已拒绝', {
+        skipErrorHandler: true,
+      });
       if (res?.success === false) {
         message.error(res?.errorMessage || '拒绝失败');
         return;
       }
-      removePendingCodeVersion(rejectTarget.codeVersionId);
+      markPendingCodeStatus(record.codeVersionId, 'REJECTED');
       message.success('已拒绝该训练代码版本');
-      setRejectOpen(false);
-      setRejectTarget(null);
       actionRef.current?.reload();
     } catch (error: unknown) {
       message.error(getApiErrorMessage(error, '拒绝失败'));
     } finally {
-      setRejecting(false);
+      setRejectingId(null);
     }
   };
 
@@ -304,7 +288,7 @@ const TrainingCodePending: React.FC = () => {
         message.error(res?.errorMessage || '撤销失败');
         return;
       }
-      removePendingCodeVersion(revokeTarget.codeVersionId);
+      markPendingCodeStatus(revokeTarget.codeVersionId, 'REVOKED');
       message.success('已撤销该版本的批准');
       setRevokeOpen(false);
       setRevokeTarget(null);
@@ -621,9 +605,20 @@ const TrainingCodePending: React.FC = () => {
                 >
                   通过
                 </Button>
-                <Button type="link" danger onClick={() => openReject(record)}>
-                  拒绝
-                </Button>
+                <Popconfirm
+                  title="确认拒绝该训练代码版本？"
+                  okText="确认拒绝"
+                  cancelText="取消"
+                  okButtonProps={{
+                    danger: true,
+                    loading: rejectingId === record.codeVersionId,
+                  }}
+                  onConfirm={() => void handleReject(record)}
+                >
+                  <Button type="link" danger>
+                    拒绝
+                  </Button>
+                </Popconfirm>
               </>
             ) : null}
             {isApproved ? (
@@ -795,27 +790,6 @@ const TrainingCodePending: React.FC = () => {
             initialValue={CONSISTENCY_TRAINING_PROFILE}
           >
             <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title="拒绝训练代码版本"
-        open={rejectOpen}
-        onCancel={() => setRejectOpen(false)}
-        onOk={handleReject}
-        confirmLoading={rejecting}
-        okText="确认拒绝"
-        okButtonProps={{ danger: true }}
-        destroyOnClose
-      >
-        <Form form={rejectForm} layout="vertical">
-          <Form.Item
-            name="reason"
-            label="拒绝原因"
-            rules={[{ required: true, message: '请填写拒绝原因' }]}
-          >
-            <Input.TextArea rows={4} placeholder="说明拒绝理由（必填）" />
           </Form.Item>
         </Form>
       </Modal>

@@ -3,7 +3,10 @@
  */
 import { request } from '@umijs/max';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
-import { upsertPendingCodeVersion } from '@/utils/pendingCodeVersions';
+import {
+  listPendingCodeVersions,
+  upsertPendingCodeVersion,
+} from '@/utils/pendingCodeVersions';
 import {
   approveV2CodeVersion,
   buildV2ApprovalRequest,
@@ -277,6 +280,106 @@ export async function fetchApprovedCodeVersions(options?: { [key: string]: any }
     ...res,
     data: res.data.filter((item) => item.approvalStatus === 'APPROVED'),
   };
+}
+
+function unwrapAssetList(payload: unknown): import('./codeV2').V2CodeAsset[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+    if (Array.isArray(obj.items)) {
+      return obj.items as import('./codeV2').V2CodeAsset[];
+    }
+    if (Array.isArray(obj.data)) {
+      return obj.data as import('./codeV2').V2CodeAsset[];
+    }
+    const nested = obj.data;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const inner = nested as Record<string, unknown>;
+      if (Array.isArray(inner.items)) {
+        return inner.items as import('./codeV2').V2CodeAsset[];
+      }
+    }
+  }
+  return [];
+}
+
+/** 本地待审登记补进列表，避免 PENDING/REJECTED 被 legacy 列表滤掉后看不到记录 */
+function mergeLocalPendingRows(
+  rows: CodeVersionListItem[],
+): CodeVersionListItem[] {
+  const remoteIds = new Set(rows.map((item) => item.codeVersionId));
+  const extras: CodeVersionListItem[] = listPendingCodeVersions()
+    .filter((item) => item.codeVersionId && !remoteIds.has(item.codeVersionId))
+    .map((item) => ({
+      codeVersionId: item.codeVersionId,
+      codeAssetId: '',
+      codeName: item.codeAssetName,
+      codeAssetName: item.codeAssetName || item.codeVersionId,
+      version: '',
+      fileName: item.fileName || '',
+      trainingProfile: item.trainingProfile || '',
+      approvalStatus: item.approvalStatus || 'PENDING',
+      status: '',
+      submittedAt: item.uploadedAt,
+    }));
+  return extras.length ? [...extras, ...rows] : rows;
+}
+
+/**
+ * 当前用户全部代码版本（含 PENDING / REJECTED / REVOKED），供训练代码列表看审核状态。
+ * legacy /code/version/list 只返回 READY+APPROVED，不能用来展示待审/拒绝记录。
+ */
+export async function fetchOwnerCodeVersionInventory(options?: {
+  [key: string]: any;
+}) {
+  const opts = { skipErrorHandler: true, ...(options || {}) };
+  try {
+    const assets = unwrapAssetList(await listV2CodeAssets(opts));
+    const rows: CodeVersionListItem[] = [];
+    await Promise.all(
+      assets.map(async (asset) => {
+        const assetId = String(asset.id || '').trim();
+        if (!assetId) return;
+        try {
+          const versions = unwrapVersionList(
+            await listV2CodeAssetVersions(assetId, opts),
+          );
+          versions.forEach((version) => {
+            const mapped = mapV2CodeVersionToLegacy(version);
+            const displayName =
+              (asset.name && !isInternalGeneratedCodeAssetName(asset.name)
+                ? asset.name.trim()
+                : undefined) ||
+              mapped.codeName ||
+              mapped.codeAssetName;
+            if (!mapped.codeVersionId) return;
+            rows.push({
+              ...mapped,
+              codeAssetId: mapped.codeAssetId || assetId,
+              codeName: displayName || mapped.codeName,
+              codeAssetName: displayName || mapped.codeAssetName,
+              trainingProfile:
+                mapped.trainingProfile || asset.trainingProfile || '',
+            });
+          });
+        } catch {
+          // 单个资产版本失败不影响其它资产
+        }
+      }),
+    );
+    const enriched = await Promise.all(
+      rows.map((item) =>
+        enrichCodeVersionDisplayFields(item, { ...opts, enrichRisk: true }),
+      ),
+    );
+    const merged = mergeLocalPendingRows(enriched);
+    return { success: true, data: merged, total: merged.length };
+  } catch {
+    const res = await fetchCodeVersionList(undefined, options);
+    const list = Array.isArray(res?.data) ? res.data : [];
+    const merged = mergeLocalPendingRows(list);
+    return { ...res, data: merged, total: merged.length };
+  }
 }
 
 /** 管理员待审核队列：走 V2 `/api/v2/admin/code-review-tasks` */

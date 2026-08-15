@@ -41,6 +41,7 @@ import {
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
   markPendingCodeApproved,
+  markPendingCodeStatus,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
 
@@ -111,10 +112,14 @@ const TrainingCodeUpload: React.FC = () => {
         }
       }
       if (approvalStatus === 'REJECTED') {
+        markPendingCodeStatus(codeVersionId, 'REJECTED');
         if (announcedRejectedRef.current !== codeVersionId) {
           announcedRejectedRef.current = codeVersionId;
           message.error('管理员已拒绝该训练代码版本，不能用于发起训练');
         }
+      }
+      if (approvalStatus === 'REVOKED') {
+        markPendingCodeStatus(codeVersionId, 'REVOKED');
       }
       return approvalStatus;
     },
@@ -488,7 +493,7 @@ const TrainingCodeUpload: React.FC = () => {
               showIcon
               style={{ marginBottom: 16 }}
               message="管理员已拒绝该训练代码版本"
-              description="审核状态为 REJECTED，不能用于发起训练。可点「刷新状态」再次确认，或改用其他已通过版本。"
+              description="审核状态为 REJECTED，不能用于发起训练。可到训练代码列表查看该记录。"
             />
           )}
           {isRevoked && (
@@ -506,7 +511,7 @@ const TrainingCodeUpload: React.FC = () => {
               showIcon
               style={{ marginBottom: 16 }}
               message="当前为 PENDING，等待审核结果"
-              description="管理员通过后本页变为 APPROVED；拒绝后变为 REJECTED。点「刷新状态」可同步最新结果。"
+              description="可先返回训练代码列表继续其他操作；列表中已有本条记录，可随时查看审核状态。管理员通过后变为 APPROVED，拒绝后变为 REJECTED。"
             />
           )}
           {isApproved && (
@@ -617,6 +622,16 @@ const TrainingCodeUpload: React.FC = () => {
               }
             >
               刷新状态
+            </Button>
+            <Button
+              onClick={() =>
+                history.push(
+                  `/task/code/detail/${encodeURIComponent(uploadResult.codeVersionId)}`,
+                  { from: 'upload' },
+                )
+              }
+            >
+              查看详情
             </Button>
             <Button onClick={() => history.push('/task/code/list')}>
               返回列表

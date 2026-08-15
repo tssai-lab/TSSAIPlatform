@@ -124,12 +124,17 @@ const TrainingCodeDetail: React.FC = () => {
   const { codeVersionId = '' } = useParams<{ codeVersionId: string }>();
   const location = useLocation();
   const locationState = location.state as
-    | { record?: CodeVersionListItem; from?: 'pending' | 'list' }
+    | { record?: CodeVersionListItem; from?: 'pending' | 'list' | 'upload' }
     | undefined;
   const listRecord = locationState?.record;
   const fromPending = locationState?.from === 'pending';
+  const fromUpload = locationState?.from === 'upload';
   const adminReviewMode = fromPending && access.isAdmin;
-  const backPath = fromPending ? '/task/code/pending' : '/task/code/list';
+  const backPath = fromPending
+    ? '/task/code/pending'
+    : fromUpload
+      ? '/task/code/upload'
+      : '/task/code/list';
 
   const [meta, setMeta] = useState<CodeVersionDetail | null>(
     listRecord ? { ...listRecord } : null,
