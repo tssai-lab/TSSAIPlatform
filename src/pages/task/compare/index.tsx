@@ -1,6 +1,6 @@
 /**
  * 训练后模型性能对比页
- * - 输出模型对比结果表（终值指标、排名）
+ * - 单值指标多维对照表
  * - 多任务过程曲线对比
  * - 性能提升曲线：同一训练不同版本，或具有稳定资产标识的同一模型+同一数据集
  */
@@ -17,6 +17,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
 } from 'antd';
 import type { ColumnType } from 'antd/es/table';
 import * as echarts from 'echarts';
@@ -34,6 +35,7 @@ import {
   fetchTaskList,
   listExperimentVersions,
 } from '@/services/platform';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
 import {
   isStepSeriesMetric,
@@ -82,13 +84,6 @@ const METRIC_LABELS: Record<string, string> = {
   val_mAP50_95: '验证 mAP50-95',
 };
 
-const RESULT_METRIC_PRIORITY = [
-  'val_accuracy',
-  'val_mAP50_95',
-  'val_mAP50',
-  'train_loss',
-];
-
 /** 任务项（带 runId） */
 type TaskWithRunId = API.TaskItem & { runId?: string };
 
@@ -132,6 +127,123 @@ function formatNum(v: number | null | undefined, digits = 4) {
   return Number(v).toFixed(digits);
 }
 
+/** 版本展示：同名任务靠版本号区分 */
+function formatVersionNo(versionNo?: number) {
+  return versionNo != null ? `第 ${versionNo} 版` : '-';
+}
+
+/** 截断 ID，完整值放 title */
+function shortId(id?: string, keep = 10) {
+  if (!id) return '-';
+  return id.length > keep ? `${id.slice(0, keep)}…` : id;
+}
+
+/** 曲线图例：名称 + 版本 + 短任务 ID，避免多条同名线无法辨认 */
+function formatTaskSeriesName(
+  task: Pick<TaskMetricsData, 'taskName' | 'versionNo' | 'taskId'>,
+) {
+  const parts = [task.taskName || '未命名'];
+  if (task.versionNo != null) parts.push(`v${task.versionNo}`);
+  parts.push(shortId(task.taskId, 8));
+  return parts.join(' · ');
+}
+
+/** 性能提升图横轴短标签：优先版本 + 短 ID，名称过长时压缩 */
+function formatImprovementAxisLabel(
+  task: Pick<TaskMetricsData, 'taskName' | 'versionNo' | 'taskId'>,
+) {
+  const ver = task.versionNo != null ? `v${task.versionNo}` : null;
+  const id = shortId(task.taskId, 8);
+  const name = (task.taskName || '未命名').slice(0, 12);
+  return [ver, id, name].filter(Boolean).join('\n');
+}
+
+/** 性能提升图 tooltip：数值优先，身份信息次要 */
+function formatImprovementTooltipHtml(
+  task: TaskMetricsData,
+  valueLines: string[],
+) {
+  const identity = [
+    task.versionNo != null ? `第 ${task.versionNo} 版` : null,
+    shortId(task.taskId, 10),
+    task.taskName || '未命名',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const detail = [
+    task.experimentId ? `实验 ${shortId(task.experimentId, 14)}` : null,
+    task.createTime ? formatDisplayDateTime(task.createTime) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return [
+    ...valueLines.map(
+      (line) => `<div style="font-size:13px;font-weight:600">${line}</div>`,
+    ),
+    `<div style="margin-top:6px;opacity:.85">${identity}</div>`,
+    detail
+      ? `<div style="margin-top:2px;font-size:11px;opacity:.7">${detail}</div>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('');
+}
+
+/** 表格身份列：一行主名称 + 一行次要标识，悬停看完整信息 */
+function TaskIdentityCell(props: {
+  taskName?: string;
+  versionNo?: number;
+  experimentId?: string;
+  taskId?: string;
+  createTime?: string;
+  modelName?: string;
+  datasetName?: string;
+}) {
+  const {
+    taskName,
+    versionNo,
+    experimentId,
+    taskId,
+    createTime,
+    modelName,
+    datasetName,
+  } = props;
+  const metaParts = [
+    versionNo != null ? `v${versionNo}` : null,
+    taskId ? shortId(taskId, 8) : null,
+    createTime ? formatDisplayDateTime(createTime) : null,
+  ].filter(Boolean);
+  const tipLines = [
+    taskName ? `名称：${taskName}` : null,
+    versionNo != null ? `训练版本：第 ${versionNo} 版` : null,
+    experimentId ? `实验 ID：${experimentId}` : null,
+    taskId ? `任务 ID：${taskId}` : null,
+    createTime ? `创建时间：${formatDisplayDateTime(createTime)}` : null,
+    modelName && modelName !== '-' ? `模型：${modelName}` : null,
+    datasetName && datasetName !== '-' ? `数据集：${datasetName}` : null,
+  ].filter(Boolean) as string[];
+  const body = (
+    <div style={{ lineHeight: 1.35 }}>
+      <div style={{ fontWeight: 500 }}>{taskName || '未命名'}</div>
+      {metaParts.length > 0 && (
+        <div style={{ color: '#8c8c8c', fontSize: 12 }}>
+          {metaParts.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+  if (!tipLines.length) return body;
+  return (
+    <Tooltip
+      title={
+        <div style={{ whiteSpace: 'pre-line' }}>{tipLines.join('\n')}</div>
+      }
+    >
+      {body}
+    </Tooltip>
+  );
+}
+
 function isLowerBetter(metricKey: string) {
   return metricKey.toLowerCase().includes('loss');
 }
@@ -147,6 +259,24 @@ function relativeImprovement(
   }
   const delta = lowerIsBetter ? baseline - value : value - baseline;
   return (delta / Math.abs(baseline)) * 100;
+}
+
+/** 复用或重建 echarts 实例（DOM 换了 / 已 dispose 则重建） */
+function ensureEcharts(
+  store: React.MutableRefObject<Record<string, echarts.ECharts | null>>,
+  key: string,
+  el: HTMLDivElement,
+): echarts.ECharts {
+  const prev = store.current[key];
+  if (prev && !prev.isDisposed() && prev.getDom() === el) {
+    return prev;
+  }
+  if (prev && !prev.isDisposed()) {
+    prev.dispose();
+  }
+  const chart = echarts.init(el);
+  store.current[key] = chart;
+  return chart;
 }
 
 const TASK_COLORS = [
@@ -287,7 +417,6 @@ const TaskCompare: React.FC = () => {
     'train_loss',
     'val_accuracy',
   ]);
-  const [resultMetric, setResultMetric] = useState<string>('val_accuracy');
   /** 相同模型提升曲线使用的指标 */
   const [sameModelMetric, setSameModelMetric] =
     useState<string>('val_accuracy'); // 指标 key，与 MLflow 一致
@@ -544,37 +673,7 @@ const TaskCompare: React.FC = () => {
     }
   }, [loading, taskList, idsFromUrl, loadCompareData]);
 
-  const comparisonRows = useMemo(() => {
-    if (!metricsData.length) return [];
-    const rows = metricsData.map((r) => {
-      const finalPoint = lastPoint(r.metrics[resultMetric]);
-      return {
-        key: r.taskId,
-        taskName: r.taskName,
-        modelName: r.modelName,
-        datasetName: r.datasetName,
-        producedModelVersionId: r.producedModelVersionId,
-        metricValue: finalPoint?.value,
-        metricStep: finalPoint?.step,
-      };
-    });
-    const lowerIsBetter = isLowerBetter(resultMetric);
-    const sorted = [...rows].sort((a, b) => {
-      if (a.metricValue == null && b.metricValue == null) return 0;
-      if (a.metricValue == null) return 1;
-      if (b.metricValue == null) return -1;
-      return lowerIsBetter
-        ? a.metricValue - b.metricValue
-        : b.metricValue - a.metricValue;
-    });
-    let ranked = 0;
-    return sorted.map((row) => ({
-      ...row,
-      rank: row.metricValue == null ? null : ++ranked,
-    }));
-  }, [metricsData, resultMetric]);
-
-  /** 单值/常数指标：用于排名下方的多指标统一对照表 */
+  /** 单值/常数指标：用于多指标统一对照表 */
   const finalTableMetricKeys = useMemo(
     () =>
       MLFLOW_METRIC_KEYS.filter((key) =>
@@ -606,7 +705,11 @@ const TaskCompare: React.FC = () => {
       metricsData.map((task) => {
         const row: Record<string, string | number | undefined> = {
           key: task.taskId,
+          taskId: task.taskId,
           taskName: task.taskName,
+          versionNo: task.versionNo,
+          experimentId: task.experimentId,
+          createTime: task.createTime,
           modelName: task.modelName,
           datasetName: task.datasetName,
         };
@@ -623,26 +726,21 @@ const TaskCompare: React.FC = () => {
   >[] = useMemo(() => {
     const base: ColumnType<Record<string, string | number | undefined>>[] = [
       {
-        title: '任务名称',
-        dataIndex: 'taskName',
-        key: 'taskName',
+        title: '任务',
+        key: 'taskIdentity',
         fixed: 'left',
-        width: 180,
-        ellipsis: true,
-      },
-      {
-        title: '模型',
-        dataIndex: 'modelName',
-        key: 'modelName',
-        width: 140,
-        ellipsis: true,
-      },
-      {
-        title: '数据集',
-        dataIndex: 'datasetName',
-        key: 'datasetName',
-        width: 140,
-        ellipsis: true,
+        width: 220,
+        render: (_, row) => (
+          <TaskIdentityCell
+            taskName={row.taskName as string | undefined}
+            versionNo={row.versionNo as number | undefined}
+            experimentId={row.experimentId as string | undefined}
+            taskId={row.taskId as string | undefined}
+            createTime={row.createTime as string | undefined}
+            modelName={row.modelName as string | undefined}
+            datasetName={row.datasetName as string | undefined}
+          />
+        ),
       },
     ];
     const metricCols: ColumnType<
@@ -695,39 +793,76 @@ const TaskCompare: React.FC = () => {
     );
     if (metricsToShow.length === 0) return;
 
+    let cancelled = false;
+    const observers: ResizeObserver[] = [];
+
+    const paint = () => {
+      if (cancelled) return;
+      metricsToShow.forEach((metricKey) => {
+        const el = chartRefs.current[metricKey];
+        if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+        const series = metricsData
+          .filter((t) => isStepSeriesMetric(t.metrics[metricKey]))
+          .map((t, i) => ({
+            name: formatTaskSeriesName(t),
+            type: 'line' as const,
+            smooth: true,
+            data: t.metrics[metricKey].map((p) => [p.step, p.value]),
+            itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
+          }));
+        if (series.length === 0) return;
+        const chart = ensureEcharts(chartInstances, metricKey, el);
+        chart.setOption({
+          tooltip: { trigger: 'axis' },
+          legend: { bottom: 0 },
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            top: '10%',
+            containLabel: true,
+          },
+          xAxis: { type: 'value', name: 'Step' },
+          yAxis: { type: 'value', name: 'Value' },
+          series,
+        });
+        chart.resize();
+      });
+    };
+
+    // 监听容器尺寸：父级布局晚于 effect 时避免空白；后续 resize 也能跟上
     metricsToShow.forEach((metricKey) => {
       const el = chartRefs.current[metricKey];
-      if (!el) return;
-      const series = metricsData
-        .filter((t) => isStepSeriesMetric(t.metrics[metricKey]))
-        .map((t, i) => ({
-          name: `${t.taskName}`,
-          type: 'line' as const,
-          smooth: true,
-          data: t.metrics[metricKey].map((p) => [p.step, p.value]),
-          itemStyle: { color: TASK_COLORS[i % TASK_COLORS.length] },
-        }));
-      if (series.length === 0) return;
-      if (!chartInstances.current[metricKey]) {
-        chartInstances.current[metricKey] = echarts.init(el);
-      }
-      chartInstances.current[metricKey]?.setOption({
-        tooltip: { trigger: 'axis' },
-        legend: { bottom: 0 },
-        grid: {
-          left: '3%',
-          right: '4%',
-          bottom: '15%',
-          top: '10%',
-          containLabel: true,
-        },
-        xAxis: { type: 'value', name: 'Step' },
-        yAxis: { type: 'value', name: 'Value' },
-        series,
+      if (!el || typeof ResizeObserver === 'undefined') return;
+      const ro = new ResizeObserver(() => {
+        paint();
       });
+      ro.observe(el);
+      observers.push(ro);
     });
 
+    // 双 rAF + 短延迟：等 Card/布局完成后再 init
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(paint);
+    });
+    const retryTimer = window.setTimeout(paint, 80);
+
+    const onWinResize = () => {
+      metricsToShow.forEach((k) => {
+        const chart = chartInstances.current[k];
+        if (chart && !chart.isDisposed()) chart.resize();
+      });
+    };
+    window.addEventListener('resize', onWinResize);
+
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      window.clearTimeout(retryTimer);
+      observers.forEach((o) => {
+        o.disconnect();
+      });
+      window.removeEventListener('resize', onWinResize);
       metricsToShow.forEach((k) => {
         chartInstances.current[k]?.dispose();
         chartInstances.current[k] = null;
@@ -737,105 +872,205 @@ const TaskCompare: React.FC = () => {
 
   // 相同模型 + 相同数据集：各版本最终指标 + 相对首版提升率
   useEffect(() => {
-    displayedSameModelGroups.forEach((group) => {
-      const { slug, tasks: list } = group;
-      const rawKey = `same_raw_${slug}`;
-      const impKey = `same_imp_${slug}`;
-      const metric = sameModelMetric;
-      const elRaw = sameModelRawRefs.current[rawKey];
-      const elImp = sameModelImpRefs.current[impKey];
-      if (!elRaw || !elImp) return;
+    let cancelled = false;
+    const observers: ResizeObserver[] = [];
 
-      const points = list
-        .map((task) => ({ task, point: lastPoint(task.metrics[metric]) }))
-        .filter(
-          (
-            item,
-          ): item is {
-            task: TaskMetricsData;
-            point: { step: number; value: number };
-          } => item.point != null,
+    const paint = () => {
+      if (cancelled) return;
+      displayedSameModelGroups.forEach((group) => {
+        const { slug, tasks: list } = group;
+        const rawKey = `same_raw_${slug}`;
+        const impKey = `same_imp_${slug}`;
+        const metric = sameModelMetric;
+        const elRaw = sameModelRawRefs.current[rawKey];
+        const elImp = sameModelImpRefs.current[impKey];
+        if (!elRaw || !elImp) return;
+        if (
+          elRaw.clientWidth === 0 ||
+          elRaw.clientHeight === 0 ||
+          elImp.clientWidth === 0 ||
+          elImp.clientHeight === 0
+        ) {
+          return;
+        }
+
+        const points = list
+          .map((task) => ({ task, point: lastPoint(task.metrics[metric]) }))
+          .filter(
+            (
+              item,
+            ): item is {
+              task: TaskMetricsData;
+              point: { step: number; value: number };
+            } => item.point != null,
+          );
+        const labels = points.map(({ task }) =>
+          formatImprovementAxisLabel(task),
         );
-      const labels = points.map(({ task }) =>
-        task.versionNo != null
-          ? `第 ${task.versionNo} 版 · ${task.taskName}`
-          : task.taskName,
-      );
-      const baseline = points[0]?.point.value;
-      const lowerIsBetter = isLowerBetter(metric);
-      const seriesRaw = [
-        {
-          name: METRIC_LABELS[metric] || metric,
-          type: 'line' as const,
-          smooth: false,
-          data: points.map(({ point }) => point.value),
-          itemStyle: { color: TASK_COLORS[0] },
-        },
-      ];
-      const seriesImp = [
-        {
-          name: '相对首版提升率',
-          type: 'line' as const,
-          smooth: false,
-          data: points.map(({ point }) =>
-            baseline == null
-              ? 0
-              : relativeImprovement(point.value, baseline, lowerIsBetter),
-          ),
-          itemStyle: { color: TASK_COLORS[1] },
-        },
-      ];
+        const baseline = points[0]?.point.value;
+        const lowerIsBetter = isLowerBetter(metric);
+        const seriesRaw = [
+          {
+            name: METRIC_LABELS[metric] || metric,
+            type: 'line' as const,
+            smooth: false,
+            data: points.map(({ point }) => point.value),
+            itemStyle: { color: TASK_COLORS[0] },
+          },
+        ];
+        const seriesImp = [
+          {
+            name: '相对首版提升率',
+            type: 'line' as const,
+            smooth: false,
+            data: points.map(({ point }) =>
+              baseline == null
+                ? 0
+                : relativeImprovement(point.value, baseline, lowerIsBetter),
+            ),
+            itemStyle: { color: TASK_COLORS[1] },
+          },
+        ];
 
-      if (!sameModelRawCharts.current[rawKey]) {
-        sameModelRawCharts.current[rawKey] = echarts.init(elRaw);
-      }
-      if (!sameModelImpCharts.current[impKey]) {
-        sameModelImpCharts.current[impKey] = echarts.init(elImp);
-      }
-      const label = METRIC_LABELS[metric] || metric;
-      sameModelRawCharts.current[rawKey]?.setOption(
-        {
-          tooltip: { trigger: 'axis' },
-          grid: {
-            left: '3%',
-            right: '4%',
-            bottom: '24%',
-            top: '12%',
-            containLabel: true,
+        const rawChart = ensureEcharts(sameModelRawCharts, rawKey, elRaw);
+        const impChart = ensureEcharts(sameModelImpCharts, impKey, elImp);
+        const label = METRIC_LABELS[metric] || metric;
+        const metricName = METRIC_LABELS[metric] || metric;
+        rawChart.setOption(
+          {
+            tooltip: {
+              trigger: 'axis',
+              formatter: (params: unknown) => {
+                const list = Array.isArray(params) ? params : [params];
+                const first = list[0] as {
+                  dataIndex?: number;
+                  value?: unknown;
+                };
+                const idx = first?.dataIndex ?? 0;
+                const item = points[idx];
+                if (!item) return '';
+                const val =
+                  typeof first?.value === 'number'
+                    ? formatNum(first.value, 4)
+                    : String(first?.value ?? '-');
+                return formatImprovementTooltipHtml(item.task, [
+                  `${metricName}：${val}`,
+                ]);
+              },
+            },
+            grid: {
+              left: '3%',
+              right: '4%',
+              bottom: '28%',
+              top: '12%',
+              containLabel: true,
+            },
+            xAxis: {
+              type: 'category',
+              data: labels,
+              axisLabel: {
+                interval: 0,
+                rotate: labels.length > 3 ? 20 : 0,
+                lineHeight: 14,
+                fontSize: 11,
+              },
+            },
+            yAxis: { type: 'value', name: label },
+            series: seriesRaw,
           },
-          xAxis: {
-            type: 'category',
-            data: labels,
-            axisLabel: { interval: 0, rotate: labels.length > 3 ? 24 : 0 },
+          true,
+        );
+        impChart.setOption(
+          {
+            tooltip: {
+              trigger: 'axis',
+              formatter: (params: unknown) => {
+                const list = Array.isArray(params) ? params : [params];
+                const first = list[0] as {
+                  dataIndex?: number;
+                  value?: unknown;
+                };
+                const idx = first?.dataIndex ?? 0;
+                const item = points[idx];
+                if (!item) return '';
+                const raw =
+                  typeof first?.value === 'number'
+                    ? first.value
+                    : Number(first?.value);
+                const val = Number.isFinite(raw)
+                  ? `${formatNum(raw, 2)}%`
+                  : '-';
+                return formatImprovementTooltipHtml(item.task, [
+                  `相对首版提升：${val}`,
+                ]);
+              },
+            },
+            grid: {
+              left: '3%',
+              right: '4%',
+              bottom: '28%',
+              top: '12%',
+              containLabel: true,
+            },
+            xAxis: {
+              type: 'category',
+              data: labels,
+              axisLabel: {
+                interval: 0,
+                rotate: labels.length > 3 ? 20 : 0,
+                lineHeight: 14,
+                fontSize: 11,
+              },
+            },
+            yAxis: { type: 'value', name: '相对首版提升 (%)' },
+            series: seriesImp,
           },
-          yAxis: { type: 'value', name: label },
-          series: seriesRaw,
-        },
-        true,
-      );
-      sameModelImpCharts.current[impKey]?.setOption(
-        {
-          tooltip: { trigger: 'axis' },
-          grid: {
-            left: '3%',
-            right: '4%',
-            bottom: '24%',
-            top: '12%',
-            containLabel: true,
-          },
-          xAxis: {
-            type: 'category',
-            data: labels,
-            axisLabel: { interval: 0, rotate: labels.length > 3 ? 24 : 0 },
-          },
-          yAxis: { type: 'value', name: '相对首版提升 (%)' },
-          series: seriesImp,
-        },
-        true,
-      );
+          true,
+        );
+        rawChart.resize();
+        impChart.resize();
+      });
+    };
+
+    displayedSameModelGroups.forEach((group) => {
+      const rawKey = `same_raw_${group.slug}`;
+      const impKey = `same_imp_${group.slug}`;
+      [
+        sameModelRawRefs.current[rawKey],
+        sameModelImpRefs.current[impKey],
+      ].forEach((el) => {
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(() => {
+          paint();
+        });
+        ro.observe(el);
+        observers.push(ro);
+      });
     });
 
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(paint);
+    });
+    const retryTimer = window.setTimeout(paint, 80);
+
+    const onWinResize = () => {
+      Object.values(sameModelRawCharts.current).forEach((c) => {
+        if (c && !c.isDisposed()) c.resize();
+      });
+      Object.values(sameModelImpCharts.current).forEach((c) => {
+        if (c && !c.isDisposed()) c.resize();
+      });
+    };
+    window.addEventListener('resize', onWinResize);
+
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      window.clearTimeout(retryTimer);
+      observers.forEach((o) => {
+        o.disconnect();
+      });
+      window.removeEventListener('resize', onWinResize);
       Object.keys(sameModelRawCharts.current).forEach((k) => {
         sameModelRawCharts.current[k]?.dispose();
         sameModelRawCharts.current[k] = null;
@@ -849,6 +1084,22 @@ const TaskCompare: React.FC = () => {
 
   const columns: ColumnType<API.TaskItem>[] = [
     { title: '任务名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '训练版本',
+      dataIndex: 'versionNo',
+      key: 'versionNo',
+      width: 96,
+      render: (v: number | undefined) => formatVersionNo(v),
+    },
+    {
+      title: '实验 ID',
+      dataIndex: 'experimentId',
+      key: 'experimentId',
+      width: 120,
+      ellipsis: true,
+      render: (v: string | undefined) =>
+        v ? <span title={v}>{shortId(v, 12)}</span> : '-',
+    },
     { title: '模型', dataIndex: 'modelName', key: 'modelName' },
     { title: '数据集', dataIndex: 'datasetName', key: 'datasetName' },
     {
@@ -856,6 +1107,7 @@ const TaskCompare: React.FC = () => {
       dataIndex: 'createTime',
       key: 'createTime',
       width: 180,
+      render: (v: string | undefined) => formatDisplayDateTime(v),
     },
     {
       title: '状态',
@@ -871,52 +1123,6 @@ const TaskCompare: React.FC = () => {
         };
         return map[v] || v;
       },
-    },
-  ];
-
-  const resultColumns: ColumnType<(typeof comparisonRows)[0]>[] = [
-    {
-      title: '排名',
-      dataIndex: 'rank',
-      key: 'rank',
-      width: 72,
-      render: (v: number | null) =>
-        v == null ? (
-          '-'
-        ) : v === 1 ? (
-          <Tag color="gold">#{v}</Tag>
-        ) : v === 2 ? (
-          <Tag color="default">#{v}</Tag>
-        ) : (
-          `#${v}`
-        ),
-    },
-    { title: '任务名称', dataIndex: 'taskName', key: 'taskName' },
-    { title: '模型', dataIndex: 'modelName', key: 'modelName' },
-    { title: '数据集', dataIndex: 'datasetName', key: 'datasetName' },
-    {
-      title: '结果模型版本',
-      dataIndex: 'producedModelVersionId',
-      key: 'producedModelVersionId',
-      render: (v: string | undefined) =>
-        v ? (
-          <span title={v}>{v.length > 18 ? `${v.slice(0, 18)}…` : v}</span>
-        ) : (
-          '-'
-        ),
-    },
-    {
-      title: `最终${METRIC_LABELS[resultMetric] || resultMetric}`,
-      dataIndex: 'metricValue',
-      key: 'metricValue',
-      render: (v: number | undefined) => (v != null ? formatNum(v, 4) : '-'),
-    },
-    {
-      title: '末值 Step',
-      dataIndex: 'metricStep',
-      key: 'metricStep',
-      width: 120,
-      render: (v: number | undefined) => (v != null ? String(v) : '-'),
     },
   ];
 
@@ -942,16 +1148,6 @@ const TaskCompare: React.FC = () => {
         group.tasks.filter((task) => task.metrics[key]?.length).length >= 2,
     ),
   );
-
-  useEffect(() => {
-    if (!comparableMetrics.length) return;
-    if (comparableMetrics.some((key) => key === resultMetric)) return;
-    const next =
-      RESULT_METRIC_PRIORITY.find((key) =>
-        comparableMetrics.includes(key as (typeof MLFLOW_METRIC_KEYS)[number]),
-      ) || comparableMetrics[0];
-    if (next) setResultMetric(next);
-  }, [comparableMetrics.join(','), resultMetric]);
 
   useEffect(() => {
     if (!processSeriesMetrics.length) {
@@ -993,7 +1189,7 @@ const TaskCompare: React.FC = () => {
   return (
     <PageContainer
       title="模型性能对比"
-      subTitle="先按单指标排名，再在下方对单值指标做多维对照；过程序列看曲线。同一训练不同版本或同模型+同数据集可看性能提升。"
+      subTitle="对单值指标做多维对照，过程序列看曲线。同名任务看「任务」列副文案（版本 / 短 ID / 时间），悬停可看完整实验 ID、模型与数据集。同一训练不同版本或同模型+同数据集可看性能提升。"
       onBack={() => history.push('/task/list')}
       extra={
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
@@ -1142,47 +1338,14 @@ const TaskCompare: React.FC = () => {
         </div>
       </Card>
 
-      {metricsData.length > 0 && comparableMetrics.length > 0 && (
-        <Card
-          title="按单指标排名"
-          style={{ marginBottom: 16 }}
-          extra={
-            <Space size={8}>
-              <span style={{ color: '#8c8c8c', fontSize: 12 }}>对比指标</span>
-              <Select
-                style={{ width: 180 }}
-                value={resultMetric}
-                onChange={setResultMetric}
-                options={comparableMetrics.map((key) => ({
-                  label: METRIC_LABELS[key] || key,
-                  value: key,
-                }))}
-              />
-              <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-                {isLowerBetter(resultMetric)
-                  ? '数值越低排名越高'
-                  : '数值越高排名越高'}
-              </span>
-            </Space>
-          }
-        >
-          <Table
-            rowKey="key"
-            columns={resultColumns}
-            dataSource={comparisonRows}
-            pagination={false}
-            size="small"
-          />
-        </Card>
-      )}
-
       {metricsData.length > 0 && (
         <Card
           title="单值指标多维对照"
           style={{ marginBottom: 16 }}
           extra={
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              仅单点/常数指标；各列独立对比，★ 为该列最优（loss 越低越好）
+              仅单点/常数指标；悬停「任务」列可看完整标识；★ 为该列最优（loss
+              越低越好）
             </span>
           }
         >
@@ -1192,7 +1355,7 @@ const TaskCompare: React.FC = () => {
               size="small"
               pagination={false}
               scroll={{
-                x: Math.max(720, 460 + finalTableMetricKeys.length * 130),
+                x: Math.max(480, 240 + finalTableMetricKeys.length * 130),
               }}
               columns={finalTableColumns}
               dataSource={finalTableRows}
@@ -1277,10 +1440,6 @@ const TaskCompare: React.FC = () => {
                     </div>
                     <div
                       ref={(el) => {
-                        if (!el && sameModelRawCharts.current[rawKey]) {
-                          sameModelRawCharts.current[rawKey]?.dispose();
-                          sameModelRawCharts.current[rawKey] = null;
-                        }
                         sameModelRawRefs.current[rawKey] = el;
                       }}
                       style={{ height: 300, width: '100%' }}
@@ -1292,15 +1451,26 @@ const TaskCompare: React.FC = () => {
                     </div>
                     <div
                       ref={(el) => {
-                        if (!el && sameModelImpCharts.current[impKey]) {
-                          sameModelImpCharts.current[impKey]?.dispose();
-                          sameModelImpCharts.current[impKey] = null;
-                        }
                         sameModelImpRefs.current[impKey] = el;
                       }}
                       style={{ height: 300, width: '100%' }}
                     />
                   </div>
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: '#8c8c8c',
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  横轴点对应任务（悬停数据点可看完整 ID）：
+                  {group.tasks.map((task, idx) => (
+                    <span key={task.taskId} style={{ marginRight: 12 }}>
+                      {idx + 1}. {formatTaskSeriesName(task)}
+                    </span>
+                  ))}
                 </div>
               </div>
             );
@@ -1330,7 +1500,7 @@ const TaskCompare: React.FC = () => {
           ) : (
             <div style={{ color: '#8c8c8c' }}>
               暂无多 Step
-              过程序列。若指标仅为终值单点，请使用上方「按单指标排名」「单值指标多维对照」或「性能提升曲线」。
+              过程序列。若指标仅为终值单点，请使用上方「单值指标多维对照」或「性能提升曲线」。
             </div>
           )}
         </Card>
@@ -1353,10 +1523,6 @@ const TaskCompare: React.FC = () => {
                     </div>
                     <div
                       ref={(el) => {
-                        if (!el && chartInstances.current[metricKey]) {
-                          chartInstances.current[metricKey]?.dispose();
-                          chartInstances.current[metricKey] = null;
-                        }
                         chartRefs.current[metricKey] = el;
                       }}
                       style={{ height: 320, width: '100%' }}
