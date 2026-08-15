@@ -986,12 +986,10 @@ export async function getOrCreateV2EditSession(
   );
   return {
     editSessionId: ws.workspaceId,
-    datasetId: ws.datasetId,
     status: ws.status,
     parentVersionId: ws.baseVersion?.versionId,
     sampleCount: ws.sampleCount,
     canPublish: ws.publishReadiness?.canPublish,
-    workspaceRevision: ws.workspaceRevision,
     targetVersionId: ws.targetVersion?.versionId,
     ...ws,
   };

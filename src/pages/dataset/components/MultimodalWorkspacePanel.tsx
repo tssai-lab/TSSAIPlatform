@@ -69,7 +69,9 @@ type MultimodalWorkspacePanelProps = {
   onImportJobDiscovered?: (importJobId: string) => void;
 };
 
-function mapSampleRow(row: Record<string, unknown>): MultimodalSampleSummary {
+type WorkspaceSampleSummary = Omit<MultimodalSampleSummary, 'datasetVersionId'>;
+
+function mapSampleRow(row: Record<string, unknown>): WorkspaceSampleSummary {
   const sampleId = String(row.sampleId || row.id || '');
   return {
     sampleId,
@@ -77,8 +79,6 @@ function mapSampleRow(row: Record<string, unknown>): MultimodalSampleSummary {
     externalId: String(row.externalId || ''),
     deleted: Boolean(row.deleted),
     tags: (row.tags as Record<string, unknown>) || undefined,
-    dataCount: row.dataCount as number | undefined,
-    annotationCount: row.annotationCount as number | undefined,
   };
 }
 
@@ -100,7 +100,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
   const [revision, setRevision] = useState(workspaceRevision);
   const [readiness, setReadiness] = useState<V2PublishReadiness | null>(null);
 
-  const [samples, setSamples] = useState<MultimodalSampleSummary[]>([]);
+  const [samples, setSamples] = useState<WorkspaceSampleSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -509,7 +509,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
     }
   };
 
-  const columns: ColumnsType<MultimodalSampleSummary> = [
+  const columns: ColumnsType<WorkspaceSampleSummary> = [
     { title: '序号', dataIndex: 'sampleIndex', width: 72 },
     {
       title: isMultimodalDataset ? '外部 ID' : '文件标识',
@@ -533,7 +533,7 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
                 </Tag>
               ));
             },
-          } as ColumnsType<MultimodalSampleSummary>[number],
+          } as ColumnsType<WorkspaceSampleSummary>[number],
         ]
       : []),
     {
@@ -749,11 +749,11 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
                 {detail.externalId || '-'}
               </Descriptions.Item>
             </Descriptions>
-            {Array.isArray((detail as any).data) && (
+            {Array.isArray(detail.data) && (
               <div>
                 <Typography.Title level={5}>数据组件</Typography.Title>
-                {((detail as any).data as any[]).map((d) => (
-                  <Tag key={d.dataId || d.id}>
+                {detail.data.map((d) => (
+                  <Tag key={d.sampleDataId}>
                     {MULTIMODAL_DATA_TYPE_LABEL[d.dataType] ||
                       d.dataType ||
                       d.fileName ||
@@ -762,11 +762,11 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
                 ))}
               </div>
             )}
-            {Array.isArray((detail as any).annotations) && (
+            {Array.isArray(detail.annotations) && (
               <div>
                 <Typography.Title level={5}>标注</Typography.Title>
-                {((detail as any).annotations as any[]).map((a) => (
-                  <Tag key={a.annotationId || a.id}>
+                {detail.annotations.map((a) => (
+                  <Tag key={a.annotationId}>
                     {a.annotationType || a.format || '标注'}
                   </Tag>
                 ))}
