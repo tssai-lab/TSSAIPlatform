@@ -13,23 +13,28 @@ import {
   getCodeUserDisplayName,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { resolveOwnerFacingApproval } from '@/utils/codeApprovalDisplay';
 import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
 
-function approvalTag(status?: string) {
-  const value = String(status || '').toUpperCase();
-  if (value === 'APPROVED') {
-    return <Tag color="success">APPROVED</Tag>;
-  }
-  if (value === 'PENDING') {
-    return <Tag color="warning">PENDING</Tag>;
-  }
-  if (value === 'REJECTED') {
-    return <Tag color="error">REJECTED</Tag>;
-  }
-  if (value === 'REVOKED') {
-    return <Tag>REVOKED</Tag>;
-  }
-  return <Tag>{status || '-'}</Tag>;
+function approvalTag(
+  status?: string,
+  reviewDisposition?: string,
+  adminReviewMode?: boolean,
+) {
+  const facing = resolveOwnerFacingApproval({
+    approvalStatus: status,
+    reviewDisposition,
+    adminReviewMode,
+  });
+  const color =
+    facing.tone === 'success'
+      ? 'success'
+      : facing.tone === 'error'
+        ? 'error'
+        : facing.tone === 'warning'
+          ? 'warning'
+          : 'default';
+  return <Tag color={color}>{facing.label}</Tag>;
 }
 
 function statusTag(status?: string) {
@@ -165,7 +170,12 @@ const TrainingCodeList: React.FC = () => {
         String(a.approvalStatus || '').localeCompare(
           String(b.approvalStatus || ''),
         ),
-      render: (_, record) => approvalTag(record.approvalStatus),
+      render: (_, record) =>
+        approvalTag(
+          record.approvalStatus,
+          record.reviewDisposition,
+          !access.isAdmin || !isTrainingCodeAutoApproveEnabled(),
+        ),
     },
     {
       title: '校验状态',
@@ -256,8 +266,8 @@ const TrainingCodeList: React.FC = () => {
       title="训练代码"
       subTitle={
         isTrainingCodeAutoApproveEnabled()
-          ? '当前为自动审核：上传/发布后默认通过，可直接用于发起训练（READY + APPROVED）'
-          : '上传后即产生列表记录，可查看 PENDING / APPROVED / REJECTED 等审核状态。仅 READY + APPROVED 可用于发起训练'
+          ? '当前为自动审核：上传/发布后可由系统直接通过或拒绝'
+          : '上传后即产生列表记录。系统无法自动通过时显示 PENDING，由管理员决定 APPROVED / REJECTED；仅 APPROVED 版本可用于发起训练'
       }
       extra={[
         access.isAdmin ? (

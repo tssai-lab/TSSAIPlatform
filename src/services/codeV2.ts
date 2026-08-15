@@ -23,6 +23,28 @@ export type V2CodeApprovalStatus =
   | 'REVOKED'
   | string;
 
+/** 归一化审批状态；决策动词也映射到状态枚举 */
+export function normalizeV2ApprovalStatus(
+  status?: string | null,
+): V2CodeApprovalStatus | undefined {
+  const value = String(status || '')
+    .trim()
+    .toUpperCase();
+  if (!value) return undefined;
+  if (value === 'APPROVE') return 'APPROVED';
+  if (value === 'REJECT') return 'REJECTED';
+  if (value === 'REVOKE') return 'REVOKED';
+  if (
+    value === 'PENDING' ||
+    value === 'APPROVED' ||
+    value === 'REJECTED' ||
+    value === 'REVOKED'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 export type V2CodeAsset = {
   id?: string;
   name?: string;
@@ -517,7 +539,7 @@ export function mapV2CodeVersionToLegacy(detail: V2CodeVersion) {
     version: detail.versionLabel || detail.version || '',
     fileName: detail.fileName || '',
     trainingProfile: detail.trainingProfile || '',
-    approvalStatus: detail.approvalStatus || '',
+    approvalStatus: normalizeV2ApprovalStatus(detail.approvalStatus) || '',
     status: detail.status || '',
     sizeBytes: detail.sizeBytes,
     remark: detail.remark,
