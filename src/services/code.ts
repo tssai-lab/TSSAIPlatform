@@ -109,7 +109,11 @@ export async function uploadCodeZip(
     remark?: string;
   },
   options?: { [key: string]: any },
-) {
+): Promise<{
+  success: boolean;
+  data: CodeUploadResult;
+  errorMessage?: string;
+}> {
   const formData = new FormData();
   formData.append('file', params.file);
 
@@ -173,7 +177,7 @@ export async function uploadCodeZip(
         codeVersionId,
         version: mapped.version || params.version || 'v1',
         fileName: mapped.fileName || params.file.name,
-        storagePath: mapped.storagePath || '',
+        storagePath: '',
         sizeBytes: mapped.sizeBytes ?? params.file.size,
         trainingProfile:
           mapped.trainingProfile ||
