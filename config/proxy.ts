@@ -10,22 +10,40 @@
  * @doc https://umijs.org/docs/guides/proxy
  */
 
-/** 后端服务器预设：DEV_SERVER=master 切换主节点，默认 node */
-const SERVERS: Record<string, { api: string; mlflow: string }> = {
+type ServerPreset = {
+  api: string;
+  mlflow: string;
+  /** Main 的公网网关会负责把 /mlflow-api 改写为 /ajax-api。 */
+  mlflowThroughGateway?: boolean;
+};
+
+/** 测试环境以 Main 为默认目标；DEV_SERVER=node 可显式切换旧节点。 */
+const SERVERS: Record<string, ServerPreset> = {
   node: {
     api: 'http://47.114.84.133:8080',
     mlflow: 'http://47.114.84.133:5000',
   },
   master: {
-    api: 'http://47.111.225.144:8080',
-    mlflow: 'http://47.111.225.144:5000',
+    // Main 的 8080/5000 仅本机监听；外部开发机必须走 Nginx 80 端口。
+    api: 'http://47.111.225.144',
+    mlflow: 'http://47.111.225.144',
+    mlflowThroughGateway: true,
   },
 };
 
-const activeServer = SERVERS[process.env.DEV_SERVER || 'node'];
+const activeServer =
+  SERVERS[process.env.DEV_SERVER || 'master'] || SERVERS.master;
 
 const API_TARGET = process.env.DEV_API_TARGET || activeServer.api;
 const MLFLOW_TARGET = process.env.DEV_MLFLOW_TARGET || activeServer.mlflow;
+const MLFLOW_PROXY = {
+  target: MLFLOW_TARGET,
+  changeOrigin: true,
+  // 显式覆盖目标视为直连 MLflow；Main 网关则保留 /mlflow-api 交给 Nginx 改写。
+  ...(!activeServer.mlflowThroughGateway || process.env.DEV_MLFLOW_TARGET
+    ? { pathRewrite: { '^/mlflow-api': '/ajax-api' } }
+    : {}),
+};
 
 export default {
   /** 本地开发环境：api 与 mlflow 代理 */
@@ -36,11 +54,7 @@ export default {
       changeOrigin: true,
     },
     /** 独立 MLflow 服务，用于任务详情页训练指标 */
-    '/mlflow-api/': {
-      target: MLFLOW_TARGET,
-      changeOrigin: true,
-      pathRewrite: { '^/mlflow-api': '/ajax-api' },
-    },
+    '/mlflow-api/': MLFLOW_PROXY,
     /** openAPI服务*/
     '/v3/api-docs': {
       target: API_TARGET,
@@ -74,11 +88,7 @@ export default {
       target: API_TARGET,
       changeOrigin: true,
     },
-    '/mlflow-api/': {
-      target: MLFLOW_TARGET,
-      changeOrigin: true,
-      pathRewrite: { '^/mlflow-api': '/ajax-api' },
-    },
+    '/mlflow-api/': MLFLOW_PROXY,
     '/v3/api-docs': {
       target: API_TARGET,
       changeOrigin: true,
