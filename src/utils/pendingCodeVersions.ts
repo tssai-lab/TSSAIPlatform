@@ -7,6 +7,8 @@
 
 export type PendingCodeVersionRecord = {
   codeVersionId: string;
+  /** 有则删除/列表展示可直接用，避免「缺少 codeAssetId」 */
+  codeAssetId?: string;
   codeAssetName?: string;
   fileName?: string;
   trainingProfile?: string;
@@ -75,8 +77,10 @@ export function markPendingCodeStatus(
   const id = codeVersionId?.trim();
   if (!id) return listPendingCodeVersions();
   const existing = readAll().find((item) => item.codeVersionId === id);
+  // 管理员误写空壳时不要凭空新建；仅更新已有上传登记
+  if (!existing) return listPendingCodeVersions();
   return upsertPendingCodeVersion({
-    ...(existing || { codeVersionId: id }),
+    ...existing,
     codeVersionId: id,
     approvalStatus,
   });

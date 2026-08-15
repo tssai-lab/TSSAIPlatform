@@ -3,8 +3,10 @@
  */
 import { request } from '@umijs/max';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 import {
   listPendingCodeVersions,
+  removePendingCodeVersion,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
 import {
@@ -39,7 +41,6 @@ import {
   downloadV2CodeVersionFileBlob,
   importV2CodeAssetZip,
   listV2CodeAssets,
-  downloadV2CodeVersionZip,
   deprecateV2CodeVersion,
   archiveV2CodeVersion,
   upgradeV2CodeArtifact,
@@ -75,7 +76,6 @@ import {
   deprecateAdminCodeVersion,
   archiveAdminCodeVersion,
   downloadAdminCodeVersionFileBlob,
-  downloadAdminCodeVersionZip,
   getAdminCodeReviewTaskTree,
   getAdminCodeReviewTaskFileContent,
   type V2CodeWorkspace,
@@ -117,7 +117,7 @@ export async function uploadCodeZip(
     codeName: params.codeName,
     version: params.version || 'v1',
     trainingProfile:
-      params.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
+    params.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
   };
   if (params.remark?.trim()) {
     query.remark = params.remark.trim();
@@ -224,6 +224,8 @@ export type CodeVersionListItem = {
   createdAt?: string;
   /** 与 createdAt 同源，待审队列等场景沿用此字段名 */
   submittedAt?: string;
+  /** 资产归属用户 ID（管理员跨用户视图） */
+  ownerUserId?: number | string;
 };
 
 /** 训练代码版本列表（当前用户可见版本；现网 OpenAPI 无查询参数） */
@@ -314,16 +316,33 @@ function unwrapAssetList(payload: unknown): import('./codeV2').V2CodeAsset[] {
   return [];
 }
 
-/** 本地待审登记补进列表，避免 PENDING/REJECTED 被 legacy 列表滤掉后看不到记录 */
+/** 本地待审登记补进列表，避免 PENDING/REJECTED 被 legacy 列表滤掉后看不到记录。
+ * 仅合并「当前用户上传/发布」类登记；管理员待审产生的空壳不得混进本人列表。
+ */
 function mergeLocalPendingRows(
   rows: CodeVersionListItem[],
 ): CodeVersionListItem[] {
   const remoteIds = new Set(rows.map((item) => item.codeVersionId));
+  const ownerSources = new Set(['upload', 'publish', 'manual', 'api']);
   const extras: CodeVersionListItem[] = listPendingCodeVersions()
-    .filter((item) => item.codeVersionId && !remoteIds.has(item.codeVersionId))
+    .filter((item) => {
+      const id = item.codeVersionId?.trim();
+      if (!id || remoteIds.has(id)) return false;
+      const source = item.source;
+      if (source && !ownerSources.has(source)) return false;
+      // 无名称/文件名/资产 ID 的空壳（常见于管理员拒绝时误写入）一律丢弃
+      if (
+        !item.codeAssetName?.trim() &&
+        !item.fileName?.trim() &&
+        !item.codeAssetId?.trim()
+      ) {
+        return false;
+      }
+      return true;
+    })
     .map((item) => ({
       codeVersionId: item.codeVersionId,
-      codeAssetId: '',
+      codeAssetId: item.codeAssetId?.trim() || '',
       codeName: item.codeAssetName,
       codeAssetName: item.codeAssetName || item.codeVersionId,
       version: '',
@@ -478,7 +497,7 @@ async function enrichAdminReviewListItem(
     try {
       const detail = await getAdminCodeReviewTaskDetail(next.codeVersionId, {
         skipErrorHandler: true,
-        ...(options || {}),
+      ...(options || {}),
       });
       const legacy = mapAdminReviewTaskDetailToCodeVersionDetail(detail);
       next = {
@@ -613,6 +632,7 @@ async function fallbackPendingFromAdminAssets(
               riskLevel: version.riskLevel,
               riskStatus: version.riskStatus,
               submittedAt: version.publishedAt || version.createdAt,
+              ownerUserId: asset.ownerUserId,
             });
             existingIds.add(versionId);
           });
@@ -702,13 +722,13 @@ export async function decideCodeVersion(
     const data = await approveV2CodeVersion(codeVersionId, body, options);
     return mapApprovalResult(data as Record<string, unknown>);
   } catch {
-    return request<{
-      success: boolean;
-      data: CodeVersionApprovalResult;
-      errorMessage?: string;
-    }>(`/code/version/${encodeURIComponent(codeVersionId)}/approve`, {
-      method: 'POST',
-      ...(options || {}),
+  return request<{
+    success: boolean;
+    data: CodeVersionApprovalResult;
+    errorMessage?: string;
+  }>(`/code/version/${encodeURIComponent(codeVersionId)}/approve`, {
+    method: 'POST',
+    ...(options || {}),
     });
   }
 }
@@ -1398,18 +1418,18 @@ export async function checkCodeVersionForTraining(
 ) {
   const legacyCheck = () =>
     request<{
-      success: boolean;
-      data: CodeVersionTrainingCheckResult;
-      errorMessage?: string;
-    }>(
-      `/code/version/${encodeURIComponent(
-        codeVersionId,
-      )}/training-check?trainingProfile=${encodeURIComponent(trainingProfile)}`,
-      {
-        method: 'GET',
-        ...(options || {}),
-      },
-    );
+    success: boolean;
+    data: CodeVersionTrainingCheckResult;
+    errorMessage?: string;
+  }>(
+    `/code/version/${encodeURIComponent(
+      codeVersionId,
+    )}/training-check?trainingProfile=${encodeURIComponent(trainingProfile)}`,
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
 
   try {
     return await legacyCheck();
@@ -1467,16 +1487,65 @@ export async function checkCodeVersionForTraining(
 /**
  * 软删除训练代码资产（V2）。
  * 需先读取 assetRevision 做 CAS；存在打开工作区或被训练引用时后端会 409。
+ * 若缺 codeAssetId，可传 codeVersionId，由版本详情回填资产 ID。
  */
 export async function deleteCodeAsset(
-  codeAssetId: string,
-  options?: { [key: string]: any },
+  codeAssetId: string | undefined | null,
+  options?: { [key: string]: any } & { codeVersionId?: string },
 ) {
-  const assetId = codeAssetId?.trim();
-  if (!assetId) {
-    throw new Error('缺少 codeAssetId');
-  }
   const opts = { skipErrorHandler: true, ...(options || {}) };
+  const versionId =
+    typeof options?.codeVersionId === 'string'
+      ? options.codeVersionId.trim()
+      : '';
+  let assetId = (codeAssetId || '').trim();
+
+  if (!assetId && versionId) {
+    try {
+      const detail = await getV2CodeVersion(versionId, opts);
+      assetId = String(detail.assetId || detail.codeAssetId || '').trim();
+    } catch (error: any) {
+      const status = error?.response?.status ?? error?.info?.status;
+      const msg = await errorMessageFromV2(error).catch(() => undefined);
+      // 服务端已无该版本：清掉本地待审幽灵，避免一直删不掉
+      if (
+        status === 404 ||
+        /not found|不存在|无权限|CODE_ASSET_NOT_FOUND/i.test(String(msg || ''))
+      ) {
+        removePendingCodeVersion(versionId);
+        return {
+          success: true,
+          data: {
+            codeAssetId: '',
+            codeVersionId: versionId,
+            deleted: true,
+            localOnly: true,
+          },
+        };
+      }
+      const tip = msg || '无法解析代码资产，删除失败';
+      const err = new Error(tip);
+      (err as any).cause = error;
+      throw err;
+    }
+  }
+
+  if (!assetId) {
+    if (versionId) {
+      removePendingCodeVersion(versionId);
+      return {
+        success: true,
+        data: {
+          codeAssetId: '',
+          codeVersionId: versionId,
+          deleted: true,
+          localOnly: true,
+        },
+      };
+    }
+    throw new Error('缺少代码资产标识，无法删除');
+  }
+
   try {
     const asset = await getV2CodeAsset(assetId, opts);
     const revision = asset?.assetRevision;
@@ -1484,6 +1553,9 @@ export async function deleteCodeAsset(
       throw new Error('缺少 assetRevision，无法删除');
     }
     await deleteV2CodeAsset(assetId, revision, opts);
+    if (versionId) {
+      removePendingCodeVersion(versionId);
+    }
     return {
       success: true,
       data: {
@@ -1752,6 +1824,7 @@ export async function saveCodeVersionFileAndPublish(
       // 人工审核模式：立刻写入待审本地队列，避免管理员只能等后端审核任务延迟出现
       upsertPendingCodeVersion({
         codeVersionId: publishedVersionId,
+        codeAssetId: assetId,
         approvalStatus: 'PENDING',
         source: 'publish',
       });
@@ -1838,6 +1911,7 @@ export async function publishCodeWorkspaceDraft(
     if (!isTrainingCodeAutoApproveEnabled()) {
       upsertPendingCodeVersion({
         codeVersionId: publishedVersionId,
+        codeAssetId: assetId,
         approvalStatus: 'PENDING',
         source: 'publish',
       });
@@ -1877,35 +1951,20 @@ function triggerBrowserDownload(blob: Blob, fileName: string) {
 export async function downloadCodeVersionZip(
   codeVersionId: string,
   fileName?: string,
-  options?: { [key: string]: any },
+  options?: {
+    onProgress?: (ratio: number | null) => void;
+    [key: string]: any;
+  },
 ) {
   try {
-    const blob = await downloadV2CodeVersionZip(codeVersionId, {
-      skipErrorHandler: true,
-      ...(options || {}),
+    await downloadAuthFile({
+      url: `/v2/code-versions/${encodeURIComponent(codeVersionId)}/download`,
+      fileName: fileName?.trim() || `${codeVersionId}.zip`,
+      onProgress: options?.onProgress,
     });
-    if (!(blob instanceof Blob)) {
-      throw new Error('下载响应不是文件流');
-    }
-    // 错误时后端可能返回 JSON blob
-    if (blob.type && blob.type.includes('application/json')) {
-      const text = await blob.text();
-      try {
-        const json = JSON.parse(text) as { errorMessage?: string };
-        throw new Error(json.errorMessage || '下载失败');
-      } catch (e: any) {
-        if (e?.message && e.message !== '下载失败') throw e;
-        throw new Error(text || '下载失败');
-      }
-    }
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || `${codeVersionId}.zip`,
-    );
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';
@@ -2425,6 +2484,7 @@ export async function removeAdminCodeWorkspaceFile(
 async function reconcileAdminPublishedVersion(
   publishedVersionId: string,
   options?: { [key: string]: any } & {
+    codeAssetId?: string;
     codeAssetName?: string;
     fileName?: string;
     trainingProfile?: string;
@@ -2432,7 +2492,13 @@ async function reconcileAdminPublishedVersion(
 ) {
   const id = publishedVersionId?.trim();
   if (!id) return;
-  const { codeAssetName, fileName, trainingProfile, ...rest } = options || {};
+  const {
+    codeAssetId,
+    codeAssetName,
+    fileName,
+    trainingProfile,
+    ...rest
+  } = options || {};
   const opts = { skipErrorHandler: true, ...rest, trainingProfile };
   try {
     await autoApproveCodeVersionIfEnabled(id, opts);
@@ -2442,6 +2508,7 @@ async function reconcileAdminPublishedVersion(
   if (!isTrainingCodeAutoApproveEnabled()) {
     upsertPendingCodeVersion({
       codeVersionId: id,
+      codeAssetId,
       codeAssetName,
       fileName,
       trainingProfile,
@@ -2468,7 +2535,7 @@ function isAdminOpenWorkspace(ws?: V2CodeWorkspace): boolean {
   return status === 'OPEN' || status === 'ACTIVE';
 }
 
-/** 优先复用 OPEN 工作区，否则 POST 打开 */
+/** 优先复用 OPEN 工作区，否则 POST 打开；指定 baseVersionId 时不复用其它基线 */
 export async function ensureAdminCodeAssetWorkspace(
   assetId: string,
   options?: { [key: string]: any } & { baseVersionId?: string },
@@ -2477,22 +2544,71 @@ export async function ensureAdminCodeAssetWorkspace(
   if (!id) throw new Error('缺少 assetId');
   const { baseVersionId, ...rest } = options || {};
   const opts = { skipErrorHandler: true, ...rest };
-  const matchBase = (ws: V2CodeWorkspace) =>
-    !baseVersionId?.trim() || ws.baseVersionId === baseVersionId.trim();
+  const wanted = baseVersionId?.trim();
+
+  const pickOpen = (
+    listed: Awaited<ReturnType<typeof listAdminCodeAssetWorkspaces>> | undefined,
+  ) => {
+    const openList = (Array.isArray(listed) ? listed : []).filter(
+      (ws) => isAdminOpenWorkspace(ws) && ws.id,
+    );
+    if (!wanted) {
+      return { matched: openList[0], openList };
+    }
+    const matched = openList.find((ws) => ws.baseVersionId === wanted);
+    return { matched, openList };
+  };
+
+  const conflictError = (openList: V2CodeWorkspace[]) => {
+    const other = openList[0];
+    const label = other?.baseVersionId || other?.id || '未知版本';
+    const err = new Error(
+      `该代码资产已有基于其他版本的编辑工作区（基线 ${label}）。请先打开该工作区并「发布」或「放弃」后，再从当前版本编辑。`,
+    ) as Error & {
+      reasonCode: string;
+      existingWorkspace?: V2CodeWorkspace;
+    };
+    err.reasonCode = 'WORKSPACE_BASE_CONFLICT';
+    err.existingWorkspace = other;
+    return err;
+  };
+
   try {
     const listed = await listAdminCodeAssetWorkspaces(id, opts);
-    const open = (Array.isArray(listed) ? listed : []).find(
-      (ws) => isAdminOpenWorkspace(ws) && matchBase(ws),
-    );
-    if (open?.id) return open;
-  } catch {
+    const { matched, openList } = pickOpen(listed);
+    if (matched?.id) return matched;
+    // 不可复用其它基线的 OPEN 工作区（否则 POST 会 409 WORKSPACE_BASE_CONFLICT）
+    if (wanted && openList.length > 0) {
+      throw conflictError(openList);
+    }
+  } catch (error: any) {
+    if (
+      error?.reasonCode === 'WORKSPACE_BASE_CONFLICT' ||
+      (typeof error?.message === 'string' &&
+        error.message.includes('已有基于其他版本的编辑工作区'))
+    ) {
+      throw error;
+    }
     // 列表失败时继续尝试打开
   }
-  return openAdminCodeAssetWorkspace(
-    id,
-    baseVersionId?.trim() ? { baseVersionId: baseVersionId.trim() } : undefined,
-    opts,
-  );
+
+  try {
+    return await openAdminCodeAssetWorkspace(
+      id,
+      wanted ? { baseVersionId: wanted } : undefined,
+      opts,
+    );
+  } catch (error: any) {
+    const listed = await listAdminCodeAssetWorkspaces(id, opts).catch(
+      () => undefined,
+    );
+    const { matched, openList } = pickOpen(listed);
+    if (matched?.id) return matched;
+    if (wanted && openList.length > 0) {
+      throw conflictError(openList);
+    }
+    throw error;
+  }
 }
 
 /** 管理员在工作区新建包内文件（新 path 不传 contentHash） */
@@ -2879,30 +2995,20 @@ export async function validateCodeVersionExplicit(
 export async function downloadAdminCodeVersionZipById(
   versionId: string,
   fileName?: string,
-  options?: { [key: string]: any },
+  options?: {
+    onProgress?: (ratio: number | null) => void;
+    [key: string]: any;
+  },
 ): Promise<{ success: true }> {
-  const opts = { skipErrorHandler: true, ...(options || {}) };
   try {
-    const blob = await downloadAdminCodeVersionZip(versionId, opts);
-    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
-    if (blob.type && blob.type.includes('application/json')) {
-      const text = await blob.text();
-      try {
-        const json = JSON.parse(text) as { errorMessage?: string };
-        throw new Error(json.errorMessage || '下载失败');
-      } catch (e: any) {
-        if (e?.message && e.message !== '下载失败') throw e;
-        throw new Error(text || '下载失败');
-      }
-    }
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || `${versionId}.zip`,
-    );
+    await downloadAuthFile({
+      url: `/v2/admin/code-versions/${encodeURIComponent(versionId)}/download`,
+      fileName: fileName?.trim() || `${versionId}.zip`,
+      onProgress: options?.onProgress,
+    });
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';

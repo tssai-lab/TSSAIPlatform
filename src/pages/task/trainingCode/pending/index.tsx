@@ -50,11 +50,16 @@ import {
   collectCodeFileTreeExpandedKeys,
 } from '@/utils/codeFileTree';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
+import {
+  formatOwnerUserLabel,
+  resolveOwnerUserIdFilter,
+  useOwnerUsernameMap,
+} from '@/utils/ownerUserLabel';
 import type { PendingCodeVersionRecord } from '@/utils/pendingCodeVersions';
 import {
   listPendingCodeVersions,
   markPendingCodeApproved,
-  markPendingCodeStatus,
+  removePendingCodeVersion,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
 
@@ -99,7 +104,7 @@ function manualRecordToRow(
 ): CodeVersionListItem {
   return {
     codeVersionId: record.codeVersionId,
-    codeAssetId: '',
+    codeAssetId: record.codeAssetId?.trim() || '',
     codeAssetName: record.codeAssetName || '',
     version: '',
     fileName: record.fileName || '',
@@ -112,6 +117,7 @@ function manualRecordToRow(
 
 const TrainingCodePending: React.FC = () => {
   const access = useAccess();
+  const ownerUsernameMap = useOwnerUsernameMap();
   const { initialState } = useModel('@@initialState');
   const actionRef = useRef<ActionType | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -171,9 +177,10 @@ const TrainingCodePending: React.FC = () => {
     let remote: CodeVersionListItem[] = [];
     let total = 0;
     try {
-      const ownerUserIdNum = params.ownerUserId?.trim()
-        ? Number(params.ownerUserId.trim())
-        : undefined;
+      const ownerUserIdNum = resolveOwnerUserIdFilter(
+        params.ownerUserId,
+        ownerUsernameMap,
+      );
       const res = await fetchPendingCodeReviewTasks(
         {
           current,
@@ -181,10 +188,7 @@ const TrainingCodePending: React.FC = () => {
           approvalStatus,
           riskLevel: params.riskLevel?.trim() || undefined,
           keyword: params.keyword?.trim() || undefined,
-          ownerUserId:
-            ownerUserIdNum != null && !Number.isNaN(ownerUserIdNum)
-              ? ownerUserIdNum
-              : undefined,
+          ownerUserId: ownerUserIdNum,
           submittedFrom: params.submittedFrom?.trim() || undefined,
           submittedTo: params.submittedTo?.trim() || undefined,
           sortBy: params.sortBy?.trim() || undefined,
@@ -258,7 +262,8 @@ const TrainingCodePending: React.FC = () => {
         message.error(res?.errorMessage || '拒绝失败');
         return;
       }
-      markPendingCodeStatus(record.codeVersionId, 'REJECTED');
+      // 只清本机登记，勿写入 REJECTED 空壳（否则会混进管理员本人训练代码列表）
+      removePendingCodeVersion(record.codeVersionId);
       message.success('已拒绝该训练代码版本');
       actionRef.current?.reload();
     } catch (error: unknown) {
@@ -288,7 +293,7 @@ const TrainingCodePending: React.FC = () => {
         message.error(res?.errorMessage || '撤销失败');
         return;
       }
-      markPendingCodeStatus(revokeTarget.codeVersionId, 'REVOKED');
+      removePendingCodeVersion(revokeTarget.codeVersionId);
       message.success('已撤销该版本的批准');
       setRevokeOpen(false);
       setRevokeTarget(null);
@@ -468,10 +473,10 @@ const TrainingCodePending: React.FC = () => {
       },
     },
     {
-      title: 'ownerUserId',
+      title: '归属用户',
       dataIndex: 'ownerUserId',
       hideInTable: true,
-      fieldProps: { placeholder: '按 owner 过滤' },
+      fieldProps: { placeholder: '用户名或 ownerUserId' },
     },
     {
       title: '提交起',
@@ -515,6 +520,14 @@ const TrainingCodePending: React.FC = () => {
       ellipsis: false,
       onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
       render: (_, r) => getCodeUserDisplayName(r),
+    },
+    {
+      title: '归属用户',
+      dataIndex: 'ownerUserId',
+      width: 150,
+      hideInSearch: true,
+      ellipsis: true,
+      render: (_, r) => formatOwnerUserLabel(r.ownerUserId, ownerUsernameMap),
     },
     {
       title: '文件名',

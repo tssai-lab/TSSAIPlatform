@@ -1475,8 +1475,8 @@ const TaskDetail: React.FC = () => {
                       type="link"
                       size="small"
                       style={{ paddingInline: 4 }}
+                      aria-label="更多操作"
                     >
-                      更多
                       <MoreOutlined />
                     </Button>
                   </Dropdown>

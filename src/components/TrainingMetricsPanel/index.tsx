@@ -26,7 +26,8 @@ import {
   type ChartStyle,
   extractMetricSummaries,
   formatMetricValue,
-  getAvailableMetricKeys,
+  getScalarMetricKeys,
+  getSeriesMetricKeys,
   isActiveTaskStatus,
   METRIC_LABELS,
   METRICS_POLL_INTERVAL_MS,
@@ -169,7 +170,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   });
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const autoSwitchedToBarRef = useRef(false);
 
   const isActive = isActiveTaskStatus(taskStatus);
   const hasAnyMetricPoints = useMemo(
@@ -184,29 +184,20 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     autoRefresh &&
     (isActive || (isTrainingTerminal(taskStatus) && !hasAnyMetricPoints));
 
-  const availableMetrics = useMemo(
-    () => getAvailableMetricKeys(metricsData),
+  // 过程曲线仅用多 step 序列；终值单点只进上方卡片
+  const seriesMetricKeys = useMemo(
+    () => getSeriesMetricKeys(metricsData),
+    [metricsData],
+  );
+  const scalarMetricKeys = useMemo(
+    () => getScalarMetricKeys(metricsData),
     [metricsData],
   );
 
   const effectiveSelected = useMemo(() => {
-    const picked = selectedMetrics.filter((k) => availableMetrics.includes(k));
-    return picked.length ? picked : availableMetrics;
-  }, [selectedMetrics, availableMetrics]);
-
-  const onlyFinalMetrics = useMemo(
-    () =>
-      effectiveSelected.length > 0 &&
-      effectiveSelected.every((key) => (metricsData[key]?.length ?? 0) <= 1),
-    [effectiveSelected, metricsData],
-  );
-
-  // 仅首次检测到「全是终值」时默认切到柱状图；之后尊重用户手动选择（含分指标）
-  useEffect(() => {
-    if (!onlyFinalMetrics || autoSwitchedToBarRef.current) return;
-    autoSwitchedToBarRef.current = true;
-    setChartStyle('bar-latest');
-  }, [onlyFinalMetrics]);
+    const picked = selectedMetrics.filter((k) => seriesMetricKeys.includes(k));
+    return picked.length ? picked : seriesMetricKeys;
+  }, [selectedMetrics, seriesMetricKeys]);
 
   const useSplitLayout = chartStyle === 'split-line';
 
@@ -232,7 +223,6 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   useEffect(() => {
     if (!runId) {
       setMetricsData({});
-      autoSwitchedToBarRef.current = false;
       return;
     }
     loadMetrics(false);
@@ -258,15 +248,18 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   }, [shouldPoll, isActive, loadMetrics]);
 
   useEffect(() => {
-    if (!availableMetrics.length) return;
+    if (!seriesMetricKeys.length) {
+      setSelectedMetrics([]);
+      return;
+    }
     setSelectedMetrics((prev) => {
-      if (!prev.length) return availableMetrics;
-      const merged = [...new Set([...prev, ...availableMetrics])].filter((k) =>
-        availableMetrics.includes(k),
+      if (!prev.length) return seriesMetricKeys;
+      const merged = [...new Set([...prev, ...seriesMetricKeys])].filter((k) =>
+        seriesMetricKeys.includes(k),
       );
-      return merged.length ? merged : availableMetrics;
+      return merged.length ? merged : seriesMetricKeys;
     });
-  }, [availableMetrics]);
+  }, [seriesMetricKeys]);
 
   const mlflowMetricSummaries = useMemo(
     () =>
@@ -279,7 +272,8 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   }, [chartStyle]);
 
   const metricSummaries = extractMetricSummaries(backendMetrics);
-  const hasCharts = availableMetrics.length > 0;
+  const hasSeriesCharts = seriesMetricKeys.length > 0;
+  const hasScalarOnly = !hasSeriesCharts && scalarMetricKeys.length > 0;
 
   if (!runId) {
     return (
@@ -309,35 +303,39 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   return (
     <div>
       <Space wrap style={{ marginBottom: 16 }} align="center">
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>图表样式</span>
-        <Select
-          value={chartStyle}
-          onChange={setChartStyle}
-          options={CHART_STYLE_OPTIONS}
-          style={{ width: 160 }}
-        />
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>指标</span>
-        <Select
-          mode="multiple"
-          allowClear
-          placeholder="选择要绘制的指标"
-          value={effectiveSelected}
-          onChange={setSelectedMetrics}
-          options={TRAINING_MLFLOW_METRIC_KEYS.map((k) => ({
-            value: k,
-            label: METRIC_LABELS[k] || k,
-            disabled: !availableMetrics.includes(k),
-          }))}
-          style={{ minWidth: 280 }}
-          maxTagCount={4}
-        />
-        <Button
-          size="small"
-          disabled={!availableMetrics.length}
-          onClick={() => setSelectedMetrics([...availableMetrics])}
-        >
-          全选已有
-        </Button>
+        {hasSeriesCharts ? (
+          <>
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>图表样式</span>
+            <Select
+              value={chartStyle}
+              onChange={setChartStyle}
+              options={CHART_STYLE_OPTIONS}
+              style={{ width: 160 }}
+            />
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>过程指标</span>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="选择过程曲线指标"
+              value={effectiveSelected}
+              onChange={setSelectedMetrics}
+              options={TRAINING_MLFLOW_METRIC_KEYS.map((k) => ({
+                value: k,
+                label: METRIC_LABELS[k] || k,
+                disabled: !seriesMetricKeys.includes(k),
+              }))}
+              style={{ minWidth: 280 }}
+              maxTagCount={4}
+            />
+            <Button
+              size="small"
+              disabled={!seriesMetricKeys.length}
+              onClick={() => setSelectedMetrics([...seriesMetricKeys])}
+            >
+              全选过程指标
+            </Button>
+          </>
+        ) : null}
         <Space size={4}>
           <Switch
             size="small"
@@ -367,8 +365,8 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             训练中 · 指标 {METRICS_POLL_INTERVAL_MS / 1000}s 刷新
           </Tag>
         )}
-        {onlyFinalMetrics && hasCharts && (
-          <Tag color="blue">当前 MLflow 多为终值点，折线可能只显示单个点</Tag>
+        {hasScalarOnly && (
+          <Tag color="blue">终值指标以下方卡片展示，不画 Step 曲线</Tag>
         )}
         {typeof progress === 'number' && progress > 0 && isActive ? (
           <Tag>进度 {progress}%</Tag>
@@ -381,13 +379,18 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             type="secondary"
             style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
           >
-            MLflow 指标末值（训练写入后自动更新）
+            MLflow 指标末值
+            {scalarMetricKeys.length > 0 && seriesMetricKeys.length > 0
+              ? '（含终值/常数指标与过程序列末值；常数不进折线）'
+              : scalarMetricKeys.length > 0
+                ? '（当前均为终值或常数，与 Step 过程无关，不画折线）'
+                : '（训练写入后自动更新）'}
           </Typography.Text>
           <MlflowMetricSummaryGrid summaries={mlflowMetricSummaries} />
         </div>
       )}
 
-      {metricsLoading && !hasCharts ? (
+      {metricsLoading && !hasSeriesCharts && !mlflowMetricSummaries.length ? (
         <div
           style={{
             height: 400,
@@ -398,7 +401,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
         >
           <Spin size="large" />
         </div>
-      ) : hasCharts ? (
+      ) : hasSeriesCharts ? (
         useSplitLayout ? (
           <div
             key={`split-${effectiveSelected.join('|')}`}
@@ -425,6 +428,22 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             chartStyle={chartStyle}
           />
         )
+      ) : hasScalarOnly ? (
+        <div
+          style={{
+            padding: '16px 20px',
+            background: '#fafafa',
+            borderRadius: 8,
+            color: '#8c8c8c',
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          当前 MLflow 指标均为终值或常数（单点、同
+          Step，或全程同一数值），已用上方卡片展示，不再绘制 Step
+          过程折线，避免出现水平直线。若指标随 step/epoch
+          有真实变化，刷新后会出现过程曲线。
+        </div>
       ) : (
         <div
           style={{

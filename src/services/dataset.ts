@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 import {
   getV2DatasetList,
   mapV2DatasetToListItem,
@@ -414,6 +415,26 @@ export async function deleteDatasetVersion(id: string, options?: { [key: string]
       ...(options || {}),
     },
   );
+}
+
+/**
+ * GET /api/dataset-versions/{versionId}/download
+ * 带鉴权拉取版本 ZIP；Chromium 安全上下文先弹保存框再流式写入。
+ */
+export async function downloadDatasetVersion(
+  versionId: string,
+  fileName?: string,
+  options?: {
+    onProgress?: (ratio: number | null) => void;
+    [key: string]: any;
+  },
+) {
+  await downloadAuthFile({
+    url: `/dataset-versions/${encodeURIComponent(versionId)}/download`,
+    fileName: fileName?.trim() || `${versionId}.zip`,
+    onProgress: options?.onProgress,
+  });
+  return { success: true };
 }
 
 /** 获取数据集列表页聚合数据，可按 keyword、类型、分页筛选。 */

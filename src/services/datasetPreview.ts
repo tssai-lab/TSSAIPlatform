@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
 import type { TaskType } from './dataset';
 
 /**
@@ -8,7 +9,7 @@ import type { TaskType } from './dataset';
  * 仅用于 CV / NLP；点云仍走 pointcloud.ts。
  */
 
-const PREVIEW_REQUEST_TIMEOUT = 5 * 60 * 1000;
+const PREVIEW_REQUEST_TIMEOUT = FILE_DOWNLOAD_REQUEST_TIMEOUT;
 
 export enum DatasetPreviewFileKind {
   IMAGE = 'IMAGE',

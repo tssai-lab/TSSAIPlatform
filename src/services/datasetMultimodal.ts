@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
 import {
   datasetUploadChunk,
   type DatasetUploadProgress,
@@ -304,6 +305,7 @@ export async function fetchMultimodalDataPreview(
     {
       method: 'GET',
       responseType: 'blob',
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -319,6 +321,7 @@ export async function fetchMultimodalDataDownload(
     {
       method: 'GET',
       responseType: 'blob',
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
@@ -334,6 +337,7 @@ export async function fetchMultimodalAnnotationDownload(
     {
       method: 'GET',
       responseType: 'blob',
+      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
       ...(options || {}),
     },
   );
