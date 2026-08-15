@@ -131,7 +131,8 @@ async function readBodyAsBlob(
     if (value) chunks.push(value);
   }
   onProgress?.(1);
-  return new Blob(chunks);
+  // TS DOM 类型把 Uint8Array.buffer 标成 ArrayBufferLike，与 BlobPart 不兼容，运行时无影响
+  return new Blob(chunks as BlobPart[]);
 }
 
 /**
