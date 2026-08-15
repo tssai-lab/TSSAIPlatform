@@ -927,7 +927,7 @@ const TrainingCodeDetail: React.FC = () => {
           ),
       },
       {
-        title: '创建时间',
+        title: '上传时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
         render: (value?: string) => formatDisplayDateTime(value),
@@ -1137,6 +1137,9 @@ const TrainingCodeDetail: React.FC = () => {
               )}
               <Descriptions.Item label="审核状态">
                 {approvalTag(meta?.approvalStatus)}
+              </Descriptions.Item>
+              <Descriptions.Item label="上传时间">
+                {formatDisplayDateTime(meta?.createdAt || meta?.submittedAt)}
               </Descriptions.Item>
               <Descriptions.Item label="就绪状态">
                 {statusTag(meta?.status)}

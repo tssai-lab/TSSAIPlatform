@@ -544,6 +544,7 @@ export function mapV2CodeVersionToLegacy(detail: V2CodeVersion) {
     sizeBytes: detail.sizeBytes,
     remark: detail.remark,
     createdAt: detail.createdAt || detail.publishedAt,
+    submittedAt: detail.createdAt || detail.publishedAt,
     artifactSha256: detail.artifactSha256,
     entryScript: detail.entryScript,
     validationStatus: detail.validationStatus,

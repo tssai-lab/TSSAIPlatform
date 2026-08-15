@@ -14,7 +14,27 @@ import {
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
 import { resolveOwnerFacingApproval } from '@/utils/codeApprovalDisplay';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
+
+/** 上传时间：createdAt / submittedAt 同源 */
+function getCodeUploadedAt(record: CodeVersionListItem): string {
+  return String(record.createdAt || record.submittedAt || '').trim();
+}
+
+function compareUploadedAtDesc(
+  a: CodeVersionListItem,
+  b: CodeVersionListItem,
+): number {
+  const ta = getCodeUploadedAt(a);
+  const tb = getCodeUploadedAt(b);
+  if (ta && tb) return tb.localeCompare(ta);
+  if (ta) return -1;
+  if (tb) return 1;
+  return String(b.codeVersionId || '').localeCompare(
+    String(a.codeVersionId || ''),
+  );
+}
 
 function approvalTag(
   status?: string,
@@ -70,6 +90,8 @@ const TrainingCodeList: React.FC = () => {
           return name.includes(keyword) || fileName.includes(keyword);
         });
       }
+      // 默认最新上传在前
+      list = [...list].sort(compareUploadedAtDesc);
       return {
         data: list,
         success: true,
@@ -202,6 +224,25 @@ const TrainingCodeList: React.FC = () => {
       render: (_, record) => statusTag(record.status),
     },
     {
+      title: '上传时间',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      width: 170,
+      hideInSearch: true,
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => {
+        const ta = getCodeUploadedAt(a);
+        const tb = getCodeUploadedAt(b);
+        if (ta && tb) return ta.localeCompare(tb);
+        if (ta) return 1;
+        if (tb) return -1;
+        return String(a.codeVersionId || '').localeCompare(
+          String(b.codeVersionId || ''),
+        );
+      },
+      render: (_, record) => formatDisplayDateTime(getCodeUploadedAt(record)),
+    },
+    {
       title: 'codeVersionId',
       dataIndex: 'codeVersionId',
       key: 'codeVersionId',
@@ -303,7 +344,7 @@ const TrainingCodeList: React.FC = () => {
         search={{ labelWidth: 'auto' }}
         pagination={{ pageSize: 10 }}
         // 无 width 的 ellipsis 列在窄屏会被挤成 0 宽（列设置仍显示已勾选）
-        scroll={{ x: 1420 }}
+        scroll={{ x: 1590 }}
       />
     </PageContainer>
   );
