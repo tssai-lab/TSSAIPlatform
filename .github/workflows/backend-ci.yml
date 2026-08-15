@@ -1,4 +1,4 @@
-name: Backend CI and Image
+name: 后端服务自动部署
 
 on:
   pull_request:
