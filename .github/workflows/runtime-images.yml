@@ -1,4 +1,4 @@
-name: Runtime Images
+name: 镜像构建自动部署
 
 on:
   push:
