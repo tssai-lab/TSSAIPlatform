@@ -170,9 +170,32 @@ if bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   exit 1
 fi
 
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/invalid-storage.env"
+sed -i 's/TSS_STORAGE_SMART_POLICY=.*/TSS_STORAGE_SMART_POLICY=skip-all/' \
+  "${workdir}/invalid-storage.env"
+if bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/invalid-storage.env" >/dev/null 2>&1; then
+  echo "Storage configuration must reject an unknown SMART policy." >&2
+  exit 1
+fi
+
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/extended-storage.env"
+sed -i 's/TSS_STORAGE_SMART_POLICY=.*/TSS_STORAGE_SMART_POLICY=extended/' \
+  "${workdir}/extended-storage.env"
+bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/extended-storage.env" >/dev/null
+
+grep -F 'TSS_STORAGE_SMART_POLICY=short-plus-critical-attributes' \
+  "${internal_dir}/config/seu5090-storage.env" >/dev/null
+grep -F "TSS_STORAGE_SMART_POLICY == extended" \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
 grep -F "latest_self_test == *'Extended offline'*" \
   "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
-grep -F 'latest_self_test == *'"'"'Completed without error'"'"'*' \
+grep -F "latest_short_test == *'Completed without error'*" \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'for attribute_id in 5 187 188 197 198 199' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'a SMART self-test is still running' \
   "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
 grep -F 'sgdisk --clear' "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
 grep -F 'leave the remaining disk capacity unallocated' \
