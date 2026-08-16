@@ -329,6 +329,14 @@ grep -F -- '--add-rich-rule="$rule"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'source address="%s/32" destination address="%s/32"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'firewalld_pod_policy=tss-pod-egress' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--add-ingress-zone=ANY' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--add-egress-zone=ANY' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'source address="%s" accept' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'kubernetes-internal-ip' \
   "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
 grep -F 'calico_backend: \"vxlan\"' \
