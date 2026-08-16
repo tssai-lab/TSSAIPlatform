@@ -339,6 +339,14 @@ grep -F 'kubernetes-internal-ip' \
   "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
 grep -F 'calico_backend: \"vxlan\"' \
   "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
+grep -F 'name: FELIX_NFTABLESMODE' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
+grep -F 'value: \"Disabled\"' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
+grep -F 'name: FELIX_IPTABLESBACKEND' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
+grep -F 'value: \"Legacy\"' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
