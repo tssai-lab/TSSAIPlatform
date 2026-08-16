@@ -32,7 +32,12 @@ render_manifest() {
       print next_line
       print "            - name: IP_AUTODETECTION_METHOD"
       print "              value: \"kubernetes-internal-ip\""
+      print "            - name: FELIX_NFTABLESMODE"
+      print "              value: \"Disabled\""
+      print "            - name: FELIX_IPTABLESBACKEND"
+      print "              value: \"Legacy\""
       autodetect++
+      dataplane++
       next
     }
     $0 == "            - name: CALICO_IPV4POOL_IPIP" {
@@ -71,7 +76,8 @@ render_manifest() {
     { print }
     END {
       if (backend != 1 || cluster_type != 1 || autodetect != 1 || ipip != 1 \
-          || vxlan != 1 || pool != 1 || bird_live != 1 || bird_ready != 1) {
+          || dataplane != 1 || vxlan != 1 || pool != 1 \
+          || bird_live != 1 || bird_ready != 1) {
         fail("Calico source structure did not match the pinned manifest")
       }
     }
@@ -104,6 +110,10 @@ EOF
   grep -F 'value: "k8s,kubeadm"' "${temporary_dir}/rendered.yaml" >/dev/null
   grep -F 'name: IP_AUTODETECTION_METHOD' "${temporary_dir}/rendered.yaml" >/dev/null
   grep -F 'value: "kubernetes-internal-ip"' "${temporary_dir}/rendered.yaml" >/dev/null
+  grep -F 'name: FELIX_NFTABLESMODE' "${temporary_dir}/rendered.yaml" >/dev/null
+  grep -F 'value: "Disabled"' "${temporary_dir}/rendered.yaml" >/dev/null
+  grep -F 'name: FELIX_IPTABLESBACKEND' "${temporary_dir}/rendered.yaml" >/dev/null
+  grep -F 'value: "Legacy"' "${temporary_dir}/rendered.yaml" >/dev/null
   grep -F 'value: "10.245.0.0/16"' "${temporary_dir}/rendered.yaml" >/dev/null
   [[ $(grep -Fc 'value: "Always"' "${temporary_dir}/rendered.yaml") -eq 1 ]]
   if grep -F 'CALICO_IPV4POOL_IPIP' "${temporary_dir}/rendered.yaml" >/dev/null \
