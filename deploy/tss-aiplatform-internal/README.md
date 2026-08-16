@@ -99,8 +99,10 @@ When the operator's direct download path is unreliable, the
 `stage-airgap-bundles` task may download the exact successful export run to the
 reviewed `AIRGAP_STAGE_ROOT` on the protected seu4080 Runner. It verifies the
 run SHA, branch, workflow, conclusion, six files, both checksum lists and the
-11-image source lock. This staging task does not use sudo, import images or
-write cluster state.
+11-image source lock. Because the campus artifact path is slow per connection,
+the Runner downloads 16 strict byte ranges in parallel, then requires the
+combined archive to match GitHub's whole-artifact SHA256 before extracting it.
+This staging task does not use sudo, import images or write cluster state.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
