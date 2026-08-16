@@ -1,0 +1,34 @@
+name: tss-AIplatform Internal Cluster Validation
+
+on:
+  pull_request:
+    paths:
+      - "deploy/tss-aiplatform-internal/**"
+      - ".github/workflows/tss-aiplatform-internal-validation.yml"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches:
+      - backend
+      - backend-ops
+    paths:
+      - "deploy/tss-aiplatform-internal/**"
+      - ".github/workflows/tss-aiplatform-internal-validation.yml"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tss-internal-cluster-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate internal cluster copy contract
+        run: bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh

@@ -7,6 +7,7 @@
 /deploy/**/*.yml text eol=lf
 /deploy/**/*.yaml text eol=lf
 /deploy/**/*.example text eol=lf
+/deploy/**/*.env text eol=lf
 /deploy/**/Dockerfile text eol=lf
 /k8s/**/*.yml text eol=lf
 /k8s/**/*.yaml text eol=lf
