@@ -95,6 +95,12 @@ Download the artifact from the exact trusted `backend-ops` run, copy only the
 common files to the control plane and include the NVIDIA files on GPU workers.
 The import command verifies every bundle checksum and requires `sources.lock`
 to byte-match the committed 11-image lock before writing the isolated runtime.
+When the operator's direct download path is unreliable, the
+`stage-airgap-bundles` task may download the exact successful export run to the
+reviewed `AIRGAP_STAGE_ROOT` on the protected seu4080 Runner. It verifies the
+run SHA, branch, workflow, conclusion, six files, both checksum lists and the
+11-image source lock. This staging task does not use sudo, import images or
+write cluster state.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \

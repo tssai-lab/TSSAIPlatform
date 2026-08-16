@@ -144,12 +144,20 @@ grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
+grep -F 'actions: read' "$internal_workflow" >/dev/null
+grep -F 'actions/download-artifact@v4' "$internal_workflow" >/dev/null
+grep -F 'AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}' "$internal_workflow" >/dev/null
+grep -F 'untrusted export workflow metadata' "$internal_workflow" >/dev/null
+grep -F 'test ! -L "$target_dir"' "$internal_workflow" >/dev/null
+grep -F 'sha256sum --check --strict airgap-common.sha256' "$internal_workflow" >/dev/null
+grep -F 'sudo, containerd import and cluster writes: not attempted' "$internal_workflow" >/dev/null
 grep -F 'persist-credentials: false' "$internal_workflow" >/dev/null
 grep -F 'GITHUB_WORKSPACE" == /media/seu/data/tssai-platform/actions-runner/_work/*' "$internal_workflow" >/dev/null
 grep -F 'CONTROL_PLANE_HOST" =~ ^[0-9]' "$internal_workflow" >/dev/null
 grep -F 'SSH authentication, sudo, deployment and host writes: not attempted' "$internal_workflow" >/dev/null
-if grep -F 'secrets:' "$internal_workflow" >/dev/null; then
-  echo "C2 validation and smoke must not consume GitHub Secrets." >&2
+if grep -F '${{ secrets.' "$internal_workflow" >/dev/null; then
+  echo "Internal validation must not consume repository or environment Secrets." >&2
   exit 1
 fi
 if grep -F ':latest' "${internal_dir}/versions.env" >/dev/null; then
