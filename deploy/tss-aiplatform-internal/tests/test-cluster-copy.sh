@@ -58,6 +58,8 @@ EOF
 
 bash "${internal_dir}/scripts/preflight.sh" --config-only "${workdir}/control.env" >/dev/null
 bash "${internal_dir}/scripts/preflight.sh" --config-only "${workdir}/worker.env" >/dev/null
+bash "${internal_dir}/scripts/prepare-node.sh" --config-only "${workdir}/control.env" >/dev/null
+bash "${internal_dir}/scripts/prepare-node.sh" --config-only "${workdir}/worker.env" >/dev/null
 
 bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/control.env" >"${workdir}/containerd-v3.toml"
 grep -F 'version = 3' "${workdir}/containerd-v3.toml" >/dev/null
@@ -103,6 +105,8 @@ done
 bash "${internal_dir}/scripts/render-containerd-unit.sh" "${workdir}/control.env" >"${workdir}/containerd.service"
 grep -F 'RequiresMountsFor=/srv/tss-AIplatform' "${workdir}/containerd.service" >/dev/null
 grep -F '/usr/local/lib/tss-aiplatform-internal/scripts/verify-storage.sh' "${workdir}/containerd.service" >/dev/null
+grep -F 'ExecStartPre=/usr/bin/install -d -m 0755 /run/tss-aiplatform/containerd' \
+  "${workdir}/containerd.service" >/dev/null
 
 cp "${workdir}/worker.env" "${workdir}/invalid.env"
 sed -i 's#TSS_CONTAINERD_ROOT=.*#TSS_CONTAINERD_ROOT=/var/lib/containerd#' "${workdir}/invalid.env"
@@ -211,6 +215,24 @@ grep -F 'fstab verification failed; the original file was restored' \
   "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
 grep -F 'mount failed; the original fstab was restored' \
   "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'configured node address is absent from the host' \
+  "${internal_dir}/scripts/preflight.sh" >/dev/null
+grep -F 'isolated project containerd is reachable' \
+  "${internal_dir}/scripts/preflight.sh" >/dev/null
+grep -F 'unexpected_kubernetes_state=' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'actual_storage_uuid=' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'existing project root is not a real directory' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'systemctl stop kubelet' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'shared system containerd PID changed' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'shared Docker container count changed' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F '$1 ~ /cri/ || $2 ~ /cri/' \
+  "${internal_dir}/scripts/prepare-node.sh" >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
