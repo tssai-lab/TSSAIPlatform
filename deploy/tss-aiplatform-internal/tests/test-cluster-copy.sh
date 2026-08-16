@@ -329,17 +329,11 @@ grep -F -- '--add-rich-rule="$rule"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'source address="%s/32" destination address="%s/32"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F 'firewalld_pod_policy=tss-pod-egress' \
+grep -F -- '--zone=trusted' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F -- '--add-ingress-zone=ANY' \
+grep -F -- '--query-source="$TSS_POD_CIDR"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F -- '--add-egress-zone=ANY' \
-  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F -- '--list-ingress-zones' \
-  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F -- '--list-egress-zones' \
-  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F 'source address="%s" accept' \
+grep -F -- '--add-source="$TSS_POD_CIDR"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'kubernetes-internal-ip' \
   "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
