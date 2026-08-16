@@ -32,7 +32,8 @@ set +a
 for setting in \
   TSS_STORAGE_DEVICE_BY_ID TSS_STORAGE_EXPECTED_MODEL \
   TSS_STORAGE_EXPECTED_SERIAL TSS_STORAGE_EXPECTED_WWN \
-  TSS_STORAGE_EXPECTED_BYTES TSS_STORAGE_PARTITION_GIB \
+  TSS_STORAGE_EXPECTED_BYTES TSS_STORAGE_SMART_POLICY \
+  TSS_STORAGE_PARTITION_GIB \
   TSS_STORAGE_FS_LABEL TSS_STORAGE_MOUNT_POINT; do
   require_var "$setting"
 done
@@ -47,6 +48,9 @@ done
   || die "expected WWN must be a lowercase 64-bit hexadecimal identifier"
 [[ $TSS_STORAGE_EXPECTED_BYTES =~ ^[1-9][0-9]{12,}$ ]] \
   || die "expected byte capacity must be an integer"
+[[ $TSS_STORAGE_SMART_POLICY == extended \
+  || $TSS_STORAGE_SMART_POLICY == short-plus-critical-attributes ]] \
+  || die "SMART policy must be extended or short-plus-critical-attributes"
 [[ $TSS_STORAGE_PARTITION_GIB == 2048 ]] \
   || die "this approval is limited to one 2048 GiB partition"
 [[ $TSS_STORAGE_FS_LABEL == tss-AIplatform ]] \
@@ -120,14 +124,36 @@ blkid_output="$(blkid -p -o export -- "$resolved_device" 2>/dev/null || true)"
 smart_health="$(smartctl -H -- "$resolved_device")"
 grep -F 'SMART overall-health self-assessment test result: PASSED' \
   <<<"$smart_health" >/dev/null || die "SMART overall health is not PASSED"
-latest_self_test="$(smartctl -l selftest -- "$resolved_device" \
-  | awk '/^# *[0-9]+/ {print; exit}')"
-[[ $latest_self_test == *'Extended offline'* \
-  && $latest_self_test == *'Completed without error'* ]] \
-  || die "latest SMART test is not a successful extended test: $latest_self_test"
+self_test_capabilities="$(smartctl -c -- "$resolved_device")"
+if grep -F 'Self-test routine in progress' <<<"$self_test_capabilities" >/dev/null; then
+  die "a SMART self-test is still running; stop or complete it before storage changes"
+fi
+self_test_log="$(smartctl -l selftest -- "$resolved_device")"
+if [[ $TSS_STORAGE_SMART_POLICY == extended ]]; then
+  latest_self_test="$(awk '/^# *[0-9]+/ {print; exit}' <<<"$self_test_log")"
+  [[ $latest_self_test == *'Extended offline'* \
+    && $latest_self_test == *'Completed without error'* ]] \
+    || die "latest SMART test is not a successful extended test: $latest_self_test"
+else
+  latest_short_test="$(awk '/^# *[0-9]+ +Short offline/ {print; exit}' \
+    <<<"$self_test_log")"
+  [[ $latest_short_test == *'Completed without error'* ]] \
+    || die "no successful SMART short test was found: $latest_short_test"
+
+  smart_attributes="$(smartctl -A -- "$resolved_device")"
+  for attribute_id in 5 187 188 197 198 199; do
+    attribute_line="$(awk -v id="$attribute_id" '$1 == id {print; exit}' \
+      <<<"$smart_attributes")"
+    [[ -n $attribute_line ]] \
+      || die "required SMART attribute is missing: id=$attribute_id"
+    attribute_raw="$(awk '{print $10}' <<<"$attribute_line")"
+    [[ $attribute_raw =~ ^0+$ ]] \
+      || die "critical SMART attribute is nonzero: id=$attribute_id raw=$attribute_raw"
+  done
+fi
 
 echo "PASS: exact empty disk identity rechecked"
-echo "PASS: SMART health and latest extended self-test passed"
+echo "PASS: SMART policy passed: ${TSS_STORAGE_SMART_POLICY}"
 echo "PLAN: create one ${TSS_STORAGE_PARTITION_GIB}GiB ext4 partition"
 echo "PLAN: mount by filesystem UUID at ${TSS_STORAGE_MOUNT_POINT}"
 echo "PLAN: leave the remaining disk capacity unallocated"
