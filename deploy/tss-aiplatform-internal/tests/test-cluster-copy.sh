@@ -146,7 +146,8 @@ grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/de
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
-grep -F 'actions/download-artifact@v4' "$internal_workflow" >/dev/null
+grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
+grep -F -- '--workers 16' "$internal_workflow" >/dev/null
 grep -F 'AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}' "$internal_workflow" >/dev/null
 grep -F 'untrusted export workflow metadata' "$internal_workflow" >/dev/null
 grep -F 'test ! -L "$target_dir"' "$internal_workflow" >/dev/null
@@ -167,6 +168,7 @@ fi
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
 bash "${internal_dir}/ci/export-airgap-bundles.sh" --validate-only >/dev/null
+python3 "${internal_dir}/ci/download-airgap-artifact.py" --self-test >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
 

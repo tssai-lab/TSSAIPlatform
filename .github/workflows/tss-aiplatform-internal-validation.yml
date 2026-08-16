@@ -224,13 +224,19 @@ jobs:
               raise SystemExit(f"untrusted export workflow metadata: {mismatches}")
           PY
 
-      - name: Download exact short-lived air-gap artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tss-aiplatform-airgap-${{ inputs.airgap_head_sha }}
-          path: ${{ vars.AIRGAP_STAGE_ROOT }}/${{ inputs.airgap_head_sha }}-${{ inputs.airgap_run_id }}
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.airgap_run_id }}
+      - name: Download exact short-lived air-gap artifact in verified ranges
+        env:
+          AIRGAP_RUN_ID: ${{ inputs.airgap_run_id }}
+          AIRGAP_HEAD_SHA: ${{ inputs.airgap_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$AIRGAP_RUN_ID" \
+            --head-sha "$AIRGAP_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --workers 16
 
       - name: Verify staged bundle before any image import
         env:
