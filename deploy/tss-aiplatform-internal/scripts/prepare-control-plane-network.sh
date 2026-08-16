@@ -48,6 +48,12 @@ fi
 route_to_worker="$(ip -4 route get "$worker_ip")"
 grep -F "src ${TSS_NODE_IP}" <<<"$route_to_worker" >/dev/null \
   || die "the reviewed control-plane address is not used to reach the worker"
+control_interface="$(
+  awk '{for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}' \
+    <<<"$route_to_worker"
+)"
+[[ $control_interface =~ ^[a-zA-Z0-9_.:-]+$ ]] \
+  || die "the control-plane route has no valid network interface"
 LC_ALL=C ufw status | grep -Fx 'Status: active' >/dev/null \
   || die "UFW must already be active; this script will not change firewall policy"
 systemctl is-active --quiet docker \
@@ -56,6 +62,21 @@ systemctl is-active --quiet containerd \
   || die "shared system containerd must be healthy before firewall preparation"
 systemctl is-active --quiet tss-aiplatform-containerd \
   || die "project containerd must be healthy before firewall preparation"
+
+firewalld_active=false
+firewalld_zone=''
+if command -v firewall-cmd >/dev/null 2>&1 \
+  && systemctl is-active --quiet firewalld; then
+  [[ $(firewall-cmd --state) == running ]] \
+    || die "firewalld service is active but its command interface is unavailable"
+  firewalld_zone="$(firewall-cmd --get-zone-of-interface="$control_interface")"
+  if [[ -z $firewalld_zone || $firewalld_zone == 'no zone' ]]; then
+    firewalld_zone="$(firewall-cmd --get-default-zone)"
+  fi
+  [[ $firewalld_zone =~ ^[a-zA-Z0-9_-]+$ ]] \
+    || die "the control-plane interface has no valid firewalld zone"
+  firewalld_active=true
+fi
 
 system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
 docker_container_count="$(docker ps -q | wc -l)"
@@ -102,6 +123,47 @@ pod_route_rule_present() {
   grep -F "$expected" "$ufw_user_rules" >/dev/null
 }
 
+firewalld_rule_for() {
+  local port_protocol="$1"
+  local port="${port_protocol%/*}"
+  local protocol="${port_protocol#*/}"
+  printf 'rule family="ipv4" source address="%s/32" destination address="%s/32" port port="%s" protocol="%s" accept' \
+    "$worker_ip" "$TSS_NODE_IP" "$port" "$protocol"
+}
+
+firewalld_rule_present() {
+  local scope="$1"
+  local rule="$2"
+  local permanent=()
+  [[ $scope == permanent ]] && permanent=(--permanent)
+  firewall-cmd "${permanent[@]}" --zone="$firewalld_zone" \
+    --query-rich-rule="$rule" >/dev/null
+}
+
+ensure_firewalld_rule() {
+  local rule="$1"
+  local added_permanent=false
+  if ! firewalld_rule_present permanent "$rule"; then
+    firewall-cmd --permanent --zone="$firewalld_zone" \
+      --add-rich-rule="$rule" >/dev/null
+    added_permanent=true
+  fi
+  if ! firewalld_rule_present runtime "$rule"; then
+    if ! firewall-cmd --zone="$firewalld_zone" \
+      --add-rich-rule="$rule" >/dev/null; then
+      if [[ $added_permanent == true ]]; then
+        firewall-cmd --permanent --zone="$firewalld_zone" \
+          --remove-rich-rule="$rule" >/dev/null 2>&1 || true
+      fi
+      die "failed to add the scoped firewalld rule"
+    fi
+  fi
+  firewalld_rule_present permanent "$rule" \
+    || die "the permanent firewalld rule is absent after apply"
+  firewalld_rule_present runtime "$rule" \
+    || die "the runtime firewalld rule is absent after apply"
+}
+
 for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
   read -r port_protocol description <<<"$rule"
   if conflicting_rule_present "$port_protocol"; then
@@ -113,6 +175,19 @@ for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
     echo "PLAN: allow ${description} from worker=${worker_ip} to control=${TSS_NODE_IP}"
   fi
 done
+if [[ $firewalld_active == true ]]; then
+  for port_protocol in 6443/tcp 4789/udp; do
+    firewalld_rule="$(firewalld_rule_for "$port_protocol")"
+    if firewalld_rule_present runtime "$firewalld_rule" \
+      && firewalld_rule_present permanent "$firewalld_rule"; then
+      echo "PASS: firewalld zone=${firewalld_zone} has scoped ${port_protocol} worker rule"
+    else
+      echo "PLAN: add scoped ${port_protocol} worker rule to firewalld zone=${firewalld_zone}"
+    fi
+  done
+else
+  echo "PASS: firewalld is inactive; no second firewall rule set is required"
+fi
 if pod_api_rule_present; then
   echo "PASS: Pods from ${TSS_POD_CIDR} may reach only the host Kubernetes API port"
 else
@@ -151,6 +226,11 @@ ufw allow proto tcp from "$TSS_POD_CIDR" to "$TSS_NODE_IP" port 6443 \
 ufw route allow from "$TSS_POD_CIDR" \
   comment 'tss-AIplatform pod routed traffic'
 
+if [[ $firewalld_active == true ]]; then
+  ensure_firewalld_rule "$(firewalld_rule_for 6443/tcp)"
+  ensure_firewalld_rule "$(firewalld_rule_for 4789/udp)"
+fi
+
 rule_present 6443/tcp || die "Kubernetes API firewall rule is absent after apply"
 rule_present 4789/udp || die "Calico VXLAN firewall rule is absent after apply"
 pod_api_rule_present || die "Pod-to-Kubernetes-API firewall rule is absent after apply"
@@ -161,6 +241,10 @@ pod_route_rule_present || die "Pod routed-traffic firewall rule is absent after 
   || die "shared Docker container count changed during firewall preparation"
 systemctl is-active --quiet docker \
   || die "shared Docker is not active after firewall preparation"
+if [[ $firewalld_active == true ]]; then
+  systemctl is-active --quiet firewalld \
+    || die "firewalld is not active after firewall preparation"
+fi
 
 logger -t tss-aiplatform-network \
   "prepare complete node=${TSS_NODE_NAME} worker=${worker_ip} ports=6443/tcp,4789/udp pod-cidr=${TSS_POD_CIDR}" \
