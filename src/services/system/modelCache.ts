@@ -20,6 +20,8 @@ export interface ModelCacheNode {
   usedBytes: number;
   diskFreeBytes: number;
   diskTotalBytes: number;
+  requiredAvailableBytes: number;
+  policyHeadroomBytes: number;
   entries: ModelCacheEntry[];
   error?: string | null;
 }
@@ -28,7 +30,16 @@ export interface ModelCacheOverview {
   enabled: boolean;
   maxBytes: number;
   minFreeBytes: number;
+  runtimeReserveBytes: number;
+  emptyCacheGateBytes: number;
+  policyUpdatedAt?: string | null;
   nodes: ModelCacheNode[];
+}
+
+export interface ModelCachePolicyUpdate {
+  maxBytes: number;
+  minFreeBytes: number;
+  runtimeReserveBytes: number;
 }
 
 export interface ModelCacheClearNodeResult {
@@ -68,6 +79,18 @@ export async function clearModelCache(
   options?: { skipErrorHandler?: boolean },
 ) {
   return request<Result<ModelCacheClearResponse>>('/system/model-cache/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    data: payload,
+    ...(options || {}),
+  });
+}
+
+export async function updateModelCachePolicy(
+  payload: ModelCachePolicyUpdate,
+  options?: { skipErrorHandler?: boolean },
+) {
+  return request<Result<ModelCacheOverview>>('/system/model-cache/policy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: payload,

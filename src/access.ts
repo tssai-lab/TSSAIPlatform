@@ -35,9 +35,10 @@ export default function access(
     canAccessSystemAdmin: isSuperAdmin,
     /** 系统管理-日志管理：超管+普管可见 */
     canAccessSystemLog: isAdmin,
-    /** 模型缓存：管理员可查看，只有超级管理员可清理 */
+    /** 模型缓存：管理员可查看，只有超级管理员可清理或修改磁盘策略 */
     canAccessModelCache: isAdmin,
     canClearModelCache: isSuperAdmin,
+    canManageModelCachePolicy: isSuperAdmin,
 
     /** 系统管理-训练方案管理：仅超管可上传、发布和停用 */
     canAccessTrainingPlans: isSuperAdmin,
