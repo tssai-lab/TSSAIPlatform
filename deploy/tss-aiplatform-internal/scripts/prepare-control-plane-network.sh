@@ -86,6 +86,11 @@ conflicting_rule_present() {
   ' "$ufw_user_rules"
 }
 
+pod_route_rule_present() {
+  local expected="### tuple ### route:allow any any 0.0.0.0/0 any ${TSS_POD_CIDR} in"
+  grep -F "$expected" "$ufw_user_rules" >/dev/null
+}
+
 for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
   read -r port_protocol description <<<"$rule"
   if conflicting_rule_present "$port_protocol"; then
@@ -97,6 +102,11 @@ for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
     echo "PLAN: allow ${description} from worker=${worker_ip} to control=${TSS_NODE_IP}"
   fi
 done
+if pod_route_rule_present; then
+  echo "PASS: Pod traffic from ${TSS_POD_CIDR} is permitted through UFW routing"
+else
+  echo "PLAN: allow routed traffic originating only from Pod CIDR=${TSS_POD_CIDR}"
+fi
 
 if [[ $mode == --check ]]; then
   echo "Control-plane network check passed without writes: node=${TSS_NODE_NAME}"
@@ -112,13 +122,18 @@ ufw --dry-run allow proto tcp from "$worker_ip" to "$TSS_NODE_IP" port 6443 \
   comment 'tss-AIplatform worker kube-api' >/dev/null
 ufw --dry-run allow proto udp from "$worker_ip" to "$TSS_NODE_IP" port 4789 \
   comment 'tss-AIplatform worker calico-vxlan' >/dev/null
+ufw --dry-run route allow from "$TSS_POD_CIDR" \
+  comment 'tss-AIplatform pod routed traffic' >/dev/null
 ufw allow proto tcp from "$worker_ip" to "$TSS_NODE_IP" port 6443 \
   comment 'tss-AIplatform worker kube-api'
 ufw allow proto udp from "$worker_ip" to "$TSS_NODE_IP" port 4789 \
   comment 'tss-AIplatform worker calico-vxlan'
+ufw route allow from "$TSS_POD_CIDR" \
+  comment 'tss-AIplatform pod routed traffic'
 
 rule_present 6443/tcp || die "Kubernetes API firewall rule is absent after apply"
 rule_present 4789/udp || die "Calico VXLAN firewall rule is absent after apply"
+pod_route_rule_present || die "Pod routed-traffic firewall rule is absent after apply"
 [[ $(systemctl show containerd -p MainPID --value) == "$system_containerd_pid" ]] \
   || die "shared system containerd PID changed during firewall preparation"
 [[ $(docker ps -q | wc -l) == "$docker_container_count" ]] \
@@ -127,6 +142,6 @@ systemctl is-active --quiet docker \
   || die "shared Docker is not active after firewall preparation"
 
 logger -t tss-aiplatform-network \
-  "prepare complete node=${TSS_NODE_NAME} worker=${worker_ip} ports=6443/tcp,4789/udp" \
+  "prepare complete node=${TSS_NODE_NAME} worker=${worker_ip} ports=6443/tcp,4789/udp pod-cidr=${TSS_POD_CIDR}" \
   2>/dev/null || true
 echo "Control-plane network preparation complete: node=${TSS_NODE_NAME} worker=${worker_ip}"
