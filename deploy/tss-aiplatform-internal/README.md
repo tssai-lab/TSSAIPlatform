@@ -49,6 +49,11 @@ cluster.
 6. **C5-C8:** deploy empty platform services, prove CPU parity, enable the
    independent second deployment target, and only then add GPU behavior.
 
+The C5 empty-platform Compose, least-privilege Kubernetes credential, locked
+Main-baseline application images and one-command guarded bootstrap are defined
+in [`platform/README.md`](platform/README.md). C5 does not remove the worker's
+staging taint or claim CPU/GPU business parity.
+
 ## Configuration and read-only use
 
 Copy the appropriate example outside Git, replace every `REPLACE_*` value, and
