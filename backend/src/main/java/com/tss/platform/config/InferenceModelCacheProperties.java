@@ -18,9 +18,12 @@ public class InferenceModelCacheProperties {
     /** Root path mounted into the trusted cache initializer. */
     private String mountPath = "/var/cache/tss/models";
 
-    /** Conservative cooperative cache size limit for disk-constrained nodes (8 GiB by default). */
-    private long maxBytes = 8L * 1024 * 1024 * 1024;
+    /** Cooperative cache size limit for disk-constrained nodes (1 GiB by default). */
+    private long maxBytes = 1024L * 1024 * 1024;
 
-    /** Minimum free space retained on the cache filesystem (5 GiB by default). */
-    private long minFreeBytes = 5L * 1024 * 1024 * 1024;
+    /** Minimum free space retained on the cache filesystem (3 GiB by default). */
+    private long minFreeBytes = 3L * 1024 * 1024 * 1024;
+
+    /** Space reserved for runtime image replacement/import peaks (10 GiB by default). */
+    private long runtimeReserveBytes = 10L * 1024 * 1024 * 1024;
 }

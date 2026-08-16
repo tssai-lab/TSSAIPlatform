@@ -3,7 +3,9 @@ package com.tss.platform.training;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.service.JobTtlPolicyService;
+import com.tss.platform.service.ModelCachePolicyService;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
@@ -117,6 +119,11 @@ class KubernetesJobManifestBuilderTest {
         KubernetesJobManifestBuilder builder =
                 new KubernetesJobManifestBuilder(properties, codec, runtimeImageService);
         builder.setModelCacheProperties(cacheProperties);
+        ModelCachePolicyService policyService = mock(ModelCachePolicyService.class);
+        when(policyService.currentPolicy()).thenReturn(
+                new ModelCachePolicy(8192, 256, 1024, null)
+        );
+        builder.setModelCachePolicyService(policyService);
 
         String yaml = builder.buildJobYaml(
                 task, "access", "secret", "models", "kind-worker");
@@ -132,5 +139,7 @@ class KubernetesJobManifestBuilderTest {
         assertTrue(yaml.contains("readOnly: true"));
         assertTrue(yaml.contains("name: MODEL_CACHE_ENABLED"));
         assertTrue(yaml.contains("nodeName: kind-worker"));
+        assertTrue(yaml.contains("name: MODEL_CACHE_MAX_BYTES\n              value: \"8192\""));
+        assertTrue(yaml.contains("name: MODEL_CACHE_MIN_FREE_BYTES\n              value: \"256\""));
     }
 }
