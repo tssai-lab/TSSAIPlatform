@@ -3,8 +3,10 @@ package com.tss.platform.training;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.TrainingExperimentVersion;
+import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
+import com.tss.platform.service.ModelCachePolicyService;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.springframework.stereotype.Component;
@@ -30,6 +32,7 @@ public class KubernetesJobManifestBuilder {
 
     private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
     private JobTtlPolicyService jobTtlPolicyService;
+    private ModelCachePolicyService modelCachePolicyService;
 
     @Value("${inference.kubernetes.worker-image:tss-inference-worker:local}")
     private String cacheWorkerImage = "tss-inference-worker:local";
@@ -55,6 +58,11 @@ public class KubernetesJobManifestBuilder {
     @Autowired
     void setJobTtlPolicyService(JobTtlPolicyService jobTtlPolicyService) {
         this.jobTtlPolicyService = jobTtlPolicyService;
+    }
+
+    @Autowired
+    void setModelCachePolicyService(ModelCachePolicyService modelCachePolicyService) {
+        this.modelCachePolicyService = modelCachePolicyService;
     }
 
 
@@ -202,10 +210,11 @@ public class KubernetesJobManifestBuilder {
                 "inference.kubernetes.model-cache.mount-path",
                 modelCacheProperties.getMountPath()
         );
-        if (modelCacheProperties.getMaxBytes() <= 0) {
+        ModelCachePolicy policy = effectiveModelCachePolicy();
+        if (policy.maxBytes() <= 0) {
             throw new IllegalStateException("inference.kubernetes.model-cache.max-bytes must be positive");
         }
-        if (modelCacheProperties.getMinFreeBytes() < 0) {
+        if (policy.minFreeBytes() < 0) {
             throw new IllegalStateException("inference.kubernetes.model-cache.min-free-bytes must not be negative");
         }
         if (cacheWorkerImage == null || cacheWorkerImage.isBlank()) {
@@ -222,9 +231,9 @@ public class KubernetesJobManifestBuilder {
             LOGGER.warn("Bypass training model cache because RunSpec model metadata is incomplete");
             return ModelCacheSpec.disabled();
         }
-        if (sizeBytes > modelCacheProperties.getMaxBytes()) {
+        if (sizeBytes > policy.maxBytes()) {
             LOGGER.warn("Bypass training model cache because artifact size {} exceeds cache limit {}",
-                    sizeBytes, modelCacheProperties.getMaxBytes());
+                    sizeBytes, policy.maxBytes());
             return ModelCacheSpec.disabled();
         }
 
@@ -245,7 +254,9 @@ public class KubernetesJobManifestBuilder {
                 sizeBytes,
                 objectName,
                 "entries/" + digest + "/data",
-                "locks/" + digest + ".lock"
+                "locks/" + digest + ".lock",
+                policy.maxBytes(),
+                policy.minFreeBytes()
         );
     }
 
@@ -276,8 +287,8 @@ public class KubernetesJobManifestBuilder {
         appendInitEnv(yaml, "MODEL_CACHE_KEY", cache.digest());
         appendInitEnv(yaml, "MODEL_EXPECTED_SHA256", cache.digest());
         appendInitEnv(yaml, "MODEL_EXPECTED_SIZE_BYTES", String.valueOf(cache.sizeBytes()));
-        appendInitEnv(yaml, "MODEL_CACHE_MAX_BYTES", String.valueOf(modelCacheProperties.getMaxBytes()));
-        appendInitEnv(yaml, "MODEL_CACHE_MIN_FREE_BYTES", String.valueOf(modelCacheProperties.getMinFreeBytes()));
+        appendInitEnv(yaml, "MODEL_CACHE_MAX_BYTES", String.valueOf(cache.maxBytes()));
+        appendInitEnv(yaml, "MODEL_CACHE_MIN_FREE_BYTES", String.valueOf(cache.minFreeBytes()));
         appendInitEnv(yaml, "MODEL_STORAGE_PATH", cache.objectName());
         appendInitEnv(yaml, "MINIO_ENDPOINT", properties.getMinioServiceUrl());
         appendInitEnv(yaml, "MINIO_ACCESS_KEY", minioAccessKey);
@@ -322,6 +333,18 @@ public class KubernetesJobManifestBuilder {
         return path;
     }
 
+    private ModelCachePolicy effectiveModelCachePolicy() {
+        if (modelCachePolicyService != null) {
+            return modelCachePolicyService.currentPolicy();
+        }
+        return new ModelCachePolicy(
+                modelCacheProperties.getMaxBytes(),
+                modelCacheProperties.getMinFreeBytes(),
+                modelCacheProperties.getRuntimeReserveBytes(),
+                null
+        );
+    }
+
     private record ModelCacheSpec(
             boolean enabled,
             String mountPath,
@@ -329,10 +352,12 @@ public class KubernetesJobManifestBuilder {
             long sizeBytes,
             String objectName,
             String entrySubPath,
-            String lockSubPath
+            String lockSubPath,
+            long maxBytes,
+            long minFreeBytes
     ) {
         private static ModelCacheSpec disabled() {
-            return new ModelCacheSpec(false, "", "", 0, "", "", "");
+            return new ModelCacheSpec(false, "", "", 0, "", "", "", 0, 0);
         }
     }
 

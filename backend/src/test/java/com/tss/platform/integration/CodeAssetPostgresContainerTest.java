@@ -145,6 +145,7 @@ class CodeAssetPostgresContainerTest {
         expectedVersions.add("58");
         expectedVersions.add("59");
         expectedVersions.add("60");
+        expectedVersions.add("61");
         Collections.sort(expectedVersions, Comparator.comparingInt(Integer::parseInt));
         List<String> installedVersions = queryStrings("""
                 SELECT version
@@ -182,6 +183,28 @@ class CodeAssetPostgresContainerTest {
                 List.of("STANDARD_REVIEW"),
                 queryStrings("""
                         SELECT training_code_review_mode
+                        FROM platform_system_config
+                        WHERE id = 'GLOBAL'
+                        """)
+        );
+        assertEquals(3L, queryLong("""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'platform_system_config'
+                  AND column_name IN (
+                      'model_cache_max_bytes',
+                      'model_cache_min_free_bytes',
+                      'model_cache_runtime_reserve_bytes'
+                  )
+                """));
+        assertEquals(
+                List.of("1073741824,3221225472,10737418240"),
+                queryStrings("""
+                        SELECT CONCAT_WS(',',
+                            model_cache_max_bytes,
+                            model_cache_min_free_bytes,
+                            model_cache_runtime_reserve_bytes)
                         FROM platform_system_config
                         WHERE id = 'GLOBAL'
                         """)

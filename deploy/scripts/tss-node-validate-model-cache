@@ -15,9 +15,11 @@ namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
 service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
 cache_path="${TSS_MODEL_CACHE_HOST_PATH:-/opt/tss-platform/model-cache}"
 cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
-max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
-min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
+max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
+min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
 runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+policy_config_map="${TSS_MODEL_CACHE_POLICY_CONFIG_MAP:-tss-model-cache-policy}"
+policy_from_config_map=false
 pod_name="tss-model-cache-probe-$(date +%s)-$$"
 pod_name="${pod_name:0:63}"
 pod_created=false
@@ -63,16 +65,6 @@ for resource_name in "$namespace" "$service_account"; do
 done
 require_safe_path "Model cache host path" "$cache_path"
 require_safe_path "Model cache mount path" "$cache_mount_path"
-for value in "$max_bytes" "$min_free_bytes" "$runtime_reserve_bytes"; do
-  if [[ ! $value =~ ^[0-9]+$ ]]; then
-    echo "Model cache capacity values must be non-negative integers." >&2
-    exit 1
-  fi
-done
-if (( max_bytes == 0 )); then
-  echo "Model cache maximum must be positive." >&2
-  exit 1
-fi
 if [[ ! -x $kubectl_bin || ! -r $kubeconfig ]]; then
   echo "Cluster-admin kubectl or kubeconfig is unavailable." >&2
   exit 1
@@ -80,6 +72,49 @@ fi
 for command_name in python3 sed; do
   command -v "$command_name" >/dev/null
 done
+
+set +e
+cluster_policy="$($kubectl_bin --kubeconfig "$kubeconfig" get configmap "$policy_config_map" \
+  --namespace "$namespace" \
+  -o 'jsonpath={.data.maxBytes}{" "}{.data.minFreeBytes}{" "}{.data.runtimeReserveBytes}' \
+  2>&1)"
+policy_read_status=$?
+set -e
+if (( policy_read_status != 0 )); then
+  if grep -qiE 'not[[:space:]]*found|notfound' <<<"$cluster_policy"; then
+    cluster_policy=""
+  else
+    echo "Unable to read model cache policy ConfigMap; refusing to validate with stale defaults." >&2
+    printf '%s\n' "$cluster_policy" >&2
+    exit 1
+  fi
+fi
+if [[ -n $cluster_policy ]]; then
+  policy_from_config_map=true
+  read -r max_bytes min_free_bytes runtime_reserve_bytes extra <<<"$cluster_policy"
+  if [[ -n ${extra:-} ]]; then
+    echo "Model cache policy ConfigMap contains an invalid capacity tuple." >&2
+    exit 1
+  fi
+fi
+for value in "$max_bytes" "$min_free_bytes" "$runtime_reserve_bytes"; do
+  if [[ ! $value =~ ^[0-9]+$ ]]; then
+    echo "Model cache capacity values must be non-negative integers." >&2
+    exit 1
+  fi
+done
+if [[ $policy_from_config_map == true ]]; then
+  for value in "$max_bytes" "$min_free_bytes" "$runtime_reserve_bytes"; do
+    if (( value < 1073741824 || value > 1099511627776 || value % 1073741824 != 0 )); then
+      echo "Model cache policy ConfigMap values must be integer GiB between 1 and 1024." >&2
+      exit 1
+    fi
+  done
+fi
+if (( max_bytes == 0 )); then
+  echo "Model cache maximum must be positive." >&2
+  exit 1
+fi
 
 node_ready="$($kubectl_bin --kubeconfig "$kubeconfig" get node "$node_name" \
   -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"

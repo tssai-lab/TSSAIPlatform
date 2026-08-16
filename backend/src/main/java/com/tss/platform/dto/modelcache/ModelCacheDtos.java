@@ -2,6 +2,7 @@ package com.tss.platform.dto.modelcache;
 
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,6 +32,8 @@ public final class ModelCacheDtos {
             long usedBytes,
             long diskFreeBytes,
             long diskTotalBytes,
+            long requiredAvailableBytes,
+            long policyHeadroomBytes,
             List<Entry> entries,
             String error
     ) {
@@ -40,7 +43,17 @@ public final class ModelCacheDtos {
             boolean enabled,
             long maxBytes,
             long minFreeBytes,
+            long runtimeReserveBytes,
+            long emptyCacheGateBytes,
+            Instant policyUpdatedAt,
             List<Node> nodes
+    ) {
+    }
+
+    public record PolicyUpdateRequest(
+            Long maxBytes,
+            Long minFreeBytes,
+            Long runtimeReserveBytes
     ) {
     }
 
