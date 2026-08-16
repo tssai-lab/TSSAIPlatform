@@ -145,6 +145,23 @@ bash deploy/tss-aiplatform-internal/scripts/render-calico-vxlan.sh \
   >/path/to/reviewed-calico-vxlan.yaml
 ```
 
+Join credentials are short lived and must never enter Git, logs or shell
+arguments. Place only the generated bootstrap token and CA hash in a mode-0600
+temporary file on the worker, then render the worker-specific join config. The
+renderer keeps the worker on the isolated CRI socket, reviewed node address and
+project kubelet directory. The worker joins with a `tss.ai/staging=true:NoSchedule`
+taint so ordinary workloads cannot consume a shared laboratory host before its
+Docker, GPU-process and network regression checks pass. Delete both
+credential-bearing files immediately after `kubeadm join` succeeds or expires.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/render-kubeadm-join.sh \
+  /etc/tss-aiplatform/node.env /path/to/bootstrap.env \
+  >/path/to/kubeadm-join.yaml
+
+sudo kubeadm join --config /path/to/kubeadm-join.yaml
+```
+
 The C3 storage command has a separate failure-closed check and apply mode. The
 apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
 configured SMART-policy checks before its first write. It also requires the
