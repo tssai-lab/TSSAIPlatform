@@ -200,37 +200,38 @@ validate_firewalld_pod_policy() {
     || die "the existing firewalld Pod policy has unexpected rich rules"
 }
 
-create_firewalld_pod_policy() {
-  local scope="$1"
-  local permanent=()
+create_permanent_firewalld_pod_policy() {
   local rule
-  [[ $scope == permanent ]] && permanent=(--permanent)
   rule="$(firewalld_pod_forward_rule_for)"
-  firewall-cmd "${permanent[@]}" --new-policy="$firewalld_pod_policy" >/dev/null
-  if ! firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
+  firewall-cmd --permanent --new-policy="$firewalld_pod_policy" >/dev/null
+  if ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
       --set-priority=-10 >/dev/null \
-    || ! firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
+    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
       --add-ingress-zone=ANY >/dev/null \
-    || ! firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
+    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
       --add-egress-zone=ANY >/dev/null \
-    || ! firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
+    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
       --add-rich-rule="$rule" >/dev/null; then
-    firewall-cmd "${permanent[@]}" --delete-policy="$firewalld_pod_policy" \
+    firewall-cmd --permanent --delete-policy="$firewalld_pod_policy" \
       >/dev/null 2>&1 || true
     die "failed to create the scoped firewalld Pod forwarding policy"
   fi
 }
 
 ensure_firewalld_pod_policy() {
-  local scope
-  for scope in permanent runtime; do
-    if firewalld_policy_exists "$scope"; then
-      validate_firewalld_pod_policy "$scope"
-    else
-      create_firewalld_pod_policy "$scope"
-      validate_firewalld_pod_policy "$scope"
-    fi
-  done
+  if firewalld_policy_exists permanent; then
+    validate_firewalld_pod_policy permanent
+  else
+    create_permanent_firewalld_pod_policy
+    validate_firewalld_pod_policy permanent
+  fi
+  if ! firewalld_policy_exists runtime; then
+    # firewalld only creates custom policy objects in permanent configuration.
+    # A regular reload keeps connection state and is required to activate it.
+    firewall-cmd --reload >/dev/null
+  fi
+  validate_firewalld_pod_policy permanent
+  validate_firewalld_pod_policy runtime
 }
 
 for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do

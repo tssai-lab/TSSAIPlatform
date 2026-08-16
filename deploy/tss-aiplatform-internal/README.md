@@ -133,7 +133,9 @@ established shared services remain in place.
 The same layered-firewall handling adds one `tss-pod-egress` firewalld policy.
 It applies only to forwarded traffic whose source is the configured Pod CIDR;
 it uses `ANY` ingress and egress zones so it does not trust the public interface
-or change Docker's own forwarding policy.
+or change Docker's own forwarding policy. firewalld can create custom policies
+only in permanent configuration, so the first apply performs one regular
+state-preserving reload to activate it; it never performs a complete reload.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \

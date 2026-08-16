@@ -339,6 +339,10 @@ grep -F -- '--list-ingress-zones' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F -- '--list-egress-zones' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'firewall-cmd --reload' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'create_permanent_firewalld_pod_policy' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'source address="%s" accept' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'kubernetes-internal-ip' \
