@@ -148,7 +148,11 @@ The pinned stock Calico manifest defaults to IP-in-IP and BGP. Render it into
 the reviewed VXLAN-only form before its first apply. The renderer verifies the
 source checksum from `artifacts.lock`, uses the configured Pod CIDR, selects
 each Kubernetes InternalIP, disables BGP/BIRD, and enables VXLAN `Always`.
-This keeps the node-to-node network requirement to bidirectional UDP 4789.
+It also fixes Felix to the iptables dataplane and legacy backend used by Docker
+on the reviewed shared hosts. This prevents Calico's automatic nftables choice
+from being evaluated separately and then dropped by Docker's legacy FORWARD
+policy. This keeps the node-to-node network requirement to bidirectional UDP
+4789 without changing or restarting shared Docker.
 
 ```bash
 bash deploy/tss-aiplatform-internal/scripts/render-calico-vxlan.sh \
