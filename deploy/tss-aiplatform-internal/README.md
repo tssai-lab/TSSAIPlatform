@@ -130,10 +130,10 @@ permanent configuration of the control-plane interface's active zone. It does
 not reload, restart or disable either firewall, so unrelated rules and
 established shared services remain in place.
 
-The same layered-firewall handling adds one `tss-pod-egress` firewalld policy.
-It applies only to forwarded traffic whose source is the configured Pod CIDR;
-it uses `ANY` ingress and egress zones so it does not trust the public interface
-or change Docker's own forwarding policy.
+For this internal validation cluster, the configured Pod CIDR is added to
+firewalld's trusted zone in runtime and permanent configuration. This is the
+minimal no-reload solution, but it intentionally trusts Pods to reach host and
+forwarded traffic; do not reuse it for untrusted multi-tenant clusters.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \
