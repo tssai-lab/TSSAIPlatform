@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: Safe C2 task to run
+        description: Safe internal-cluster task to run
         required: true
         default: contract
         type: choice
@@ -25,6 +25,7 @@ on:
           - contract
           - runner-smoke
           - resolve-artifact-lock
+          - export-airgap-bundles
 
 permissions:
   contents: read
@@ -117,3 +118,29 @@ jobs:
           path: ${{ runner.temp }}/tss-aiplatform-artifacts.lock
           if-no-files-found: error
           retention-days: 7
+
+  export-airgap-bundles:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-airgap-bundles'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Export digest-locked linux-amd64 image bundles
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/export-airgap-bundles.sh \
+            "$RUNNER_TEMP/tss-aiplatform-airgap"
+
+      - name: Upload short-lived air-gap bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-airgap-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-airgap
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
