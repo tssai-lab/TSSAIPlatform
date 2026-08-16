@@ -120,7 +120,9 @@ Kubernetes API and Calico VXLAN on the control-plane address. The worker host's
 inactive UFW is not enabled or otherwise changed. Because the existing UFW
 policy denies forwarding, it also permits routed traffic only when its source
 is the configured Pod CIDR; without that rule Pods cannot reach the Kubernetes
-API service or external DNS.
+API service or external DNS. Service traffic to the local API is delivered as
+host input after kube-proxy translation, so a separate rule permits the Pod
+CIDR to reach only TCP 6443 on the control-plane address.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \
