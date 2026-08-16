@@ -190,10 +190,10 @@ validate_firewalld_pod_policy() {
     --get-priority) == -10 ]] \
     || die "the existing firewalld Pod policy has an unexpected priority"
   [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --get-ingress-zones) == ANY ]] \
+    --list-ingress-zones) == ANY ]] \
     || die "the existing firewalld Pod policy has unexpected ingress zones"
   [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --get-egress-zones) == ANY ]] \
+    --list-egress-zones) == ANY ]] \
     || die "the existing firewalld Pod policy has unexpected egress zones"
   [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
     --list-rich-rules) == "$expected_rule" ]] \

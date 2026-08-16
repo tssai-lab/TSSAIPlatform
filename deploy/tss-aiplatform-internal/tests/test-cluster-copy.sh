@@ -335,6 +335,10 @@ grep -F -- '--add-ingress-zone=ANY' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F -- '--add-egress-zone=ANY' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--list-ingress-zones' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--list-egress-zones' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'source address="%s" accept' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'kubernetes-internal-ip' \
