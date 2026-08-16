@@ -321,6 +321,14 @@ grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 4789' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'confirmation node does not match the reviewed configuration' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'firewall-cmd --get-zone-of-interface="$control_interface"' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--query-rich-rule="$rule"' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F -- '--add-rich-rule="$rule"' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'source address="%s/32" destination address="%s/32"' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'kubernetes-internal-ip' \
   "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
 grep -F 'calico_backend: \"vxlan\"' \

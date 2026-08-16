@@ -124,6 +124,12 @@ API service or external DNS. Service traffic to the local API is delivered as
 host input after kube-proxy translation, so a separate rule permits the Pod
 CIDR to reach only TCP 6443 on the control-plane address.
 
+If firewalld is active alongside UFW, the command also adds the same
+worker-only `6443/tcp` and `4789/udp` allowances to both the runtime and
+permanent configuration of the control-plane interface's active zone. It does
+not reload, restart or disable either firewall, so unrelated rules and
+established shared services remain in place.
+
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \
   --check /etc/tss-aiplatform/node.env REPLACE_WORKER_IP
