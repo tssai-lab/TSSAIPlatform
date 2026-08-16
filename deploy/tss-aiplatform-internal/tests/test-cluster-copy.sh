@@ -64,6 +64,20 @@ bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
   "${workdir}/control.env" >/dev/null
 bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
   "${workdir}/worker.env" >/dev/null
+bash "${internal_dir}/scripts/prepare-control-plane-network.sh" --config-only \
+  "${workdir}/control.env" 192.0.2.20 >/dev/null
+bash "${internal_dir}/scripts/render-calico-vxlan.sh" --self-test >/dev/null
+
+if bash "${internal_dir}/scripts/prepare-control-plane-network.sh" --config-only \
+  "${workdir}/worker.env" 192.0.2.10 >/dev/null 2>&1; then
+  echo "Worker configuration must not prepare the control-plane firewall." >&2
+  exit 1
+fi
+if bash "${internal_dir}/scripts/prepare-control-plane-network.sh" --config-only \
+  "${workdir}/control.env" 192.0.2.10 >/dev/null 2>&1; then
+  echo "Control-plane and worker addresses must differ." >&2
+  exit 1
+fi
 
 bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/control.env" >"${workdir}/containerd-v3.toml"
 grep -F 'version = 3' "${workdir}/containerd-v3.toml" >/dev/null
@@ -256,6 +270,16 @@ grep -F 'bundle sources do not match the committed artifact lock' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F 'shared system containerd PID changed during image import' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
+grep -F "ufw --dry-run allow proto tcp" \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 4789' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'confirmation node does not match the reviewed configuration' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'kubernetes-internal-ip' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
+grep -F 'calico_backend: \"vxlan\"' \
+  "${internal_dir}/scripts/render-calico-vxlan.sh" >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
