@@ -149,6 +149,45 @@ if grep -F ':latest' "${internal_dir}/versions.env" >/dev/null; then
 fi
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
+bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${internal_dir}/config/seu5090-storage.env" >/dev/null
+
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/invalid-storage.env"
+sed -i 's/TSS_STORAGE_PARTITION_GIB=2048/TSS_STORAGE_PARTITION_GIB=4096/' \
+  "${workdir}/invalid-storage.env"
+if bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/invalid-storage.env" >/dev/null 2>&1; then
+  echo "Storage configuration must reject an unapproved partition size." >&2
+  exit 1
+fi
+
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/invalid-storage.env"
+sed -i 's#TSS_STORAGE_DEVICE_BY_ID=.*#TSS_STORAGE_DEVICE_BY_ID=/dev/sda#' \
+  "${workdir}/invalid-storage.env"
+if bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/invalid-storage.env" >/dev/null 2>&1; then
+  echo "Storage configuration must reject unstable kernel device paths." >&2
+  exit 1
+fi
+
+grep -F "latest_self_test == *'Extended offline'*" \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'latest_self_test == *'"'"'Completed without error'"'"'*' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'sgdisk --clear' "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'leave the remaining disk capacity unallocated' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+storage_lock_line="$(grep -nF 'exec 9>/run/lock/tss-aiplatform-storage.lock' \
+  "${internal_dir}/scripts/prepare-storage.sh" | cut -d: -f1)"
+storage_resolve_line="$(grep -nF 'resolved_device="$(readlink -f' \
+  "${internal_dir}/scripts/prepare-storage.sh" | cut -d: -f1)"
+(( storage_lock_line < storage_resolve_line ))
+grep -F 'mount point directory is not empty' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'fstab verification failed; the original file was restored' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
+grep -F 'mount failed; the original fstab was restored' \
+  "${internal_dir}/scripts/prepare-storage.sh" >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
