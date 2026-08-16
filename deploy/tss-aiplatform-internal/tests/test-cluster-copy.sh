@@ -60,7 +60,7 @@ bash "${internal_dir}/scripts/preflight.sh" --config-only "${workdir}/worker.env
 bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/control.env" >"${workdir}/containerd-v3.toml"
 grep -F 'version = 3' "${workdir}/containerd-v3.toml" >/dev/null
 grep -F "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]" "${workdir}/containerd-v3.toml" >/dev/null
-grep -F "sandbox = 'registry.k8s.io/pause:3.10.2'" "${workdir}/containerd-v3.toml" >/dev/null
+grep -F "sandbox = 'registry.k8s.io/pause:3.10.1'" "${workdir}/containerd-v3.toml" >/dev/null
 if grep -F 'runtimes.nvidia' "${workdir}/containerd-v3.toml" >/dev/null; then
   echo "Control-plane runtime must remain CPU-only." >&2
   exit 1
@@ -130,12 +130,25 @@ grep -F "needs.verify-and-build.outputs.deploy_main == 'true'" "$backend_workflo
 grep -F "steps.scope.outputs.deploy_main == 'true'" "$backend_workflow" >/dev/null
 grep -F 'github.event_name }}" == "workflow_dispatch"' "$backend_workflow" >/dev/null
 grep -F 'bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh' "$internal_workflow" >/dev/null
-if grep -Eq '^    environment:|secrets:' "$internal_workflow"; then
-  echo "C1 validation must not bind a deployment environment or secrets." >&2
+grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
+grep -F 'persist-credentials: false' "$internal_workflow" >/dev/null
+grep -F 'GITHUB_WORKSPACE" == /media/seu/data/tssai-platform/actions-runner/_work/*' "$internal_workflow" >/dev/null
+grep -F 'CONTROL_PLANE_HOST" =~ ^[0-9]' "$internal_workflow" >/dev/null
+grep -F 'SSH authentication, sudo, deployment and host writes: not attempted' "$internal_workflow" >/dev/null
+if grep -F 'secrets:' "$internal_workflow" >/dev/null; then
+  echo "C2 validation and smoke must not consume GitHub Secrets." >&2
   exit 1
 fi
 if grep -F ':latest' "${internal_dir}/versions.env" >/dev/null; then
   echo "Internal cluster versions must not use latest tags." >&2
+  exit 1
+fi
+bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
+grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
+if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
+  echo "Core images must not use latest tags." >&2
   exit 1
 fi
 
