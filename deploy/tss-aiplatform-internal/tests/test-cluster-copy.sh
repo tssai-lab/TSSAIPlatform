@@ -120,6 +120,39 @@ for expected in \
   grep -F "$expected" "${workdir}/kubeadm.yaml" >/dev/null
 done
 
+cat >"${workdir}/bootstrap.env" <<'EOF'
+TSS_BOOTSTRAP_TOKEN=abcdef.0123456789abcdef
+TSS_CA_CERT_HASH=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+EOF
+chmod 0600 "${workdir}/bootstrap.env"
+bash "${internal_dir}/scripts/render-kubeadm-join.sh" \
+  "${workdir}/worker.env" "${workdir}/bootstrap.env" >"${workdir}/kubeadm-join.yaml"
+for expected in \
+  'apiVersion: kubeadm.k8s.io/v1beta4' \
+  'apiServerEndpoint: 192.0.2.10:6443' \
+  'token: abcdef.0123456789abcdef' \
+  'name: tss-ai-worker-01' \
+  'criSocket: unix:///run/tss-aiplatform/containerd/containerd.sock' \
+  'key: tss.ai/staging' \
+  'effect: NoSchedule' \
+  'value: 192.0.2.20' \
+  'value: /media/seu/data/tss-AIplatform/kubelet'; do
+  grep -F "$expected" "${workdir}/kubeadm-join.yaml" >/dev/null
+done
+chmod 0644 "${workdir}/bootstrap.env"
+if bash "${internal_dir}/scripts/render-kubeadm-join.sh" \
+  "${workdir}/worker.env" "${workdir}/bootstrap.env" >/dev/null 2>&1; then
+  echo "World-readable bootstrap material must be rejected." >&2
+  exit 1
+fi
+chmod 0600 "${workdir}/bootstrap.env"
+sed -i 's/abcdef\.0123456789abcdef/invalid-token/' "${workdir}/bootstrap.env"
+if bash "${internal_dir}/scripts/render-kubeadm-join.sh" \
+  "${workdir}/worker.env" "${workdir}/bootstrap.env" >/dev/null 2>&1; then
+  echo "Malformed bootstrap tokens must be rejected." >&2
+  exit 1
+fi
+
 bash "${internal_dir}/scripts/render-containerd-unit.sh" "${workdir}/control.env" >"${workdir}/containerd.service"
 grep -F 'RequiresMountsFor=/srv/tss-AIplatform' "${workdir}/containerd.service" >/dev/null
 grep -F '/usr/local/lib/tss-aiplatform-internal/scripts/verify-storage.sh' "${workdir}/containerd.service" >/dev/null
