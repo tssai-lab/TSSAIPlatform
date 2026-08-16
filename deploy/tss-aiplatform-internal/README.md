@@ -82,6 +82,20 @@ file is not authorization to install it.
 - Runtime and Kubernetes image tags are fixed in `versions.env`; C2 must still
   record and verify their immutable digests before installation.
 
+## C2 Runner and artifact lock
+
+The existing `seu4080-platform-deploy` Runner is reused only for a manually
+dispatched, no-Secrets smoke from the protected `backend-ops` branch. It checks
+out the exact SHA, repeats the GitHub data path, and checks TCP/22 reachability
+to the configured control-plane address. It deliberately does not attempt SSH
+authentication, sudo, deployment or host writes.
+
+The same workflow can resolve a candidate artifact lock on a GitHub-hosted
+Runner. This avoids relying on the campus hosts' currently unreliable redirect
+from `registry.k8s.io` to Google Artifact Registry. The resulting artifact is a
+candidate only: review and commit its manifest checksums and multi-architecture
+image digests before C4.
+
 ## Rollback rule
 
 Every environment keeps its own last-known-good SHA. If one target fails, keep
