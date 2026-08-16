@@ -113,6 +113,33 @@ sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
   --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
 ```
 
+After the exact image import succeeds, prepare only the active control-plane
+UFW instance. The command leaves UFW enabled and preserves its defaults and
+unrelated rules. It permits the reviewed worker address to reach only the
+Kubernetes API and Calico VXLAN on the control-plane address. The worker host's
+inactive UFW is not enabled or otherwise changed.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \
+  --check /etc/tss-aiplatform/node.env REPLACE_WORKER_IP
+
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \
+  --apply /etc/tss-aiplatform/node.env REPLACE_WORKER_IP \
+  --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
+```
+
+The pinned stock Calico manifest defaults to IP-in-IP and BGP. Render it into
+the reviewed VXLAN-only form before its first apply. The renderer verifies the
+source checksum from `artifacts.lock`, uses the configured Pod CIDR, selects
+each Kubernetes InternalIP, disables BGP/BIRD, and enables VXLAN `Always`.
+This keeps the node-to-node network requirement to bidirectional UDP 4789.
+
+```bash
+bash deploy/tss-aiplatform-internal/scripts/render-calico-vxlan.sh \
+  /etc/tss-aiplatform/node.env /path/to/pinned-calico.yaml \
+  >/path/to/reviewed-calico-vxlan.yaml
+```
+
 The C3 storage command has a separate failure-closed check and apply mode. The
 apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
 configured SMART-policy checks before its first write. It also requires the
