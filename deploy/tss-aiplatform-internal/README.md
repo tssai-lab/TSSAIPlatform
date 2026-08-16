@@ -117,7 +117,10 @@ After the exact image import succeeds, prepare only the active control-plane
 UFW instance. The command leaves UFW enabled and preserves its defaults and
 unrelated rules. It permits the reviewed worker address to reach only the
 Kubernetes API and Calico VXLAN on the control-plane address. The worker host's
-inactive UFW is not enabled or otherwise changed.
+inactive UFW is not enabled or otherwise changed. Because the existing UFW
+policy denies forwarding, it also permits routed traffic only when its source
+is the configured Pod CIDR; without that rule Pods cannot reach the Kubernetes
+API service or external DNS.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-control-plane-network.sh \

@@ -276,6 +276,10 @@ grep -F 'ufw_user_rules=/etc/ufw/user.rules' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F '### tuple ### allow ${protocol} ${port}' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F '### tuple ### route:allow any any 0.0.0.0/0 any ${TSS_POD_CIDR} in' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'ufw --dry-run route allow from "$TSS_POD_CIDR"' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 4789' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'confirmation node does not match the reviewed configuration' \
