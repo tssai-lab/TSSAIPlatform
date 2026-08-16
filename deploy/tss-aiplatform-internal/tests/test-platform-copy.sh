@@ -3,8 +3,13 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 platform_root="${repo_root}/deploy/tss-aiplatform-internal/platform"
+reproducible_root="${repo_root}/deploy/tss-aiplatform-internal/reproducible"
 compose="${platform_root}/compose.yml"
 lock="${platform_root}/platform-images.lock"
+runtime_lock="${reproducible_root}/runtime-images.lock"
+dependency_inventory="${reproducible_root}/main-dependency-inventory.tsv"
+frontend_lock="${reproducible_root}/frontend-source.lock"
+frontend_nginx="${reproducible_root}/nginx/frontend.conf.template"
 rbac="${platform_root}/k8s/backend-access.yaml"
 workflow="${repo_root}/.github/workflows/tss-aiplatform-internal-validation.yml"
 classifier="${repo_root}/deploy/tss-aiplatform-internal/ci/classify-backend-deploy-scope.sh"
@@ -23,7 +28,9 @@ for file in \
   "$platform_root/scripts/verify-platform.sh" \
   "$platform_root/scripts/smoke-platform-api.sh" \
   "$platform_root/scripts/bootstrap-platform.sh" \
-  "$platform_root/scripts/verify-internal-kubeadm.sh"; do
+  "$platform_root/scripts/verify-internal-kubeadm.sh" \
+  "$reproducible_root/README.md" \
+  "$runtime_lock" "$dependency_inventory" "$frontend_lock" "$frontend_nginx"; do
   [[ -f $file ]] || { echo "missing C5 file: $file" >&2; exit 1; }
 done
 
@@ -32,19 +39,52 @@ while IFS= read -r script; do
 done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)
 
 [[ $(grep -Ev '^(#|$)' "$lock" | wc -l) -eq 4 ]]
-[[ $(cut -d'|' -f2 "$lock" | grep -c '^tss-aiplatform-internal/') -eq 4 ]]
-! cut -d'|' -f2 "$lock" | grep -F ':latest' >/dev/null
-[[ $(cut -d'|' -f3 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
-[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f3 | sort -u | wc -l) -eq 4 ]] \
+[[ $(cut -d'|' -f3 "$lock" | grep -c '^tss-aiplatform-internal/') -eq 4 ]]
+! cut -d'|' -f1 "$lock" | grep -F ':latest' >/dev/null
+[[ $(cut -d'|' -f2 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(cut -d'|' -f4 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f2 | sort -u | wc -l) -eq 4 ]] \
+  || { echo "image lock contains a duplicate source manifest digest" >&2; exit 1; }
+[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f4 | sort -u | wc -l) -eq 4 ]] \
   || { echo "image lock contains a duplicate image ID" >&2; exit 1; }
 lock_entry_count=0
-while IFS='|' read -r source_ref _project_ref _expected_id expected_size; do
+while IFS='|' read -r source_ref source_digest _project_ref expected_id budget_bytes; do
   [[ -n $source_ref && $source_ref != \#* ]] || continue
-  [[ $expected_size =~ ^[1-9][0-9]*$ ]] \
-    || { echo "image lock contains a non-numeric size" >&2; exit 1; }
+  [[ $source_digest =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $expected_id =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $budget_bytes =~ ^[1-9][0-9]*$ ]] \
+    || { echo "image lock contains a non-numeric budget" >&2; exit 1; }
   lock_entry_count=$((lock_entry_count + 1))
 done <"$lock"
 [[ $lock_entry_count -eq 4 ]] || { echo "image lock parser did not produce four entries" >&2; exit 1; }
+bash "$platform_root/scripts/export-platform-images.sh" --validate-only >/dev/null
+
+[[ $(grep -Ev '^(#|$)' "$runtime_lock" | wc -l) -eq 4 ]]
+! cut -d'|' -f1 "$runtime_lock" | grep -F ':latest' >/dev/null
+[[ $(cut -d'|' -f2 "$runtime_lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(cut -d'|' -f3 "$runtime_lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(cut -d'|' -f5 "$runtime_lock" | grep -Ec '^[1-9][0-9]*$') -eq 4 ]]
+
+[[ $(awk -F '\t' 'NF && NF != 5 {bad++} END {print bad + 0}' "$dependency_inventory") -eq 0 ]]
+grep -F $'platform-secrets\t' "$dependency_inventory" | grep -F $'\tSECRET_REGENERATE' >/dev/null
+grep -F $'database-and-object-data\t' "$dependency_inventory" | grep -F $'\tBUSINESS_DATA_EXCLUDED' >/dev/null
+grep -Fx 'branch=frontend-dev' "$frontend_lock" >/dev/null
+grep -E '^commit=[0-9a-f]{40}$' "$frontend_lock" >/dev/null
+grep -E '^main_deployment_run=[1-9][0-9]*$' "$frontend_lock" >/dev/null
+for placeholder in \
+  REPLACE_LISTEN_ADDRESS REPLACE_SERVER_NAME REPLACE_FRONTEND_ROOT \
+  REPLACE_BACKEND_ORIGIN REPLACE_MLFLOW_ORIGIN; do
+  grep -F "$placeholder" "$frontend_nginx" >/dev/null
+done
+! grep -F '47.111.225.144' "$frontend_nginx" >/dev/null
+
+for image_variable in \
+  TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
+  image_ref="$(sed -n "s/^${image_variable}=//p" "$platform_root/platform.env.example")"
+  [[ -n $image_ref ]]
+  grep -F "|${image_ref}|" "$lock" >/dev/null \
+    || { echo "platform environment image is absent from the lock: $image_variable" >&2; exit 1; }
+done
 
 grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
 grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null
@@ -69,10 +109,14 @@ grep -F 'resources: ["pods/log"]' "$rbac" >/dev/null
 classification="$(printf '%s\n' \
   'deploy/tss-aiplatform-internal/platform/compose.yml' \
   'deploy/tss-aiplatform-internal/platform/scripts/bootstrap-platform.sh' \
+  'deploy/tss-aiplatform-internal/reproducible/main-dependency-inventory.tsv' \
   | bash "$classifier")"
 [[ $classification == 'deploy_main=false' ]] \
   || { echo "internal platform-only changes would deploy Main" >&2; exit 1; }
 grep -F 'bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh' "$workflow" >/dev/null
+grep -F -- '- export-platform-images' "$workflow" >/dev/null
+grep -F "inputs.task == 'export-platform-images'" "$workflow" >/dev/null
+grep -F 'bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh' "$workflow" >/dev/null
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
