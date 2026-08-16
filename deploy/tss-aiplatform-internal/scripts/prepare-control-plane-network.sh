@@ -65,7 +65,6 @@ systemctl is-active --quiet tss-aiplatform-containerd \
 
 firewalld_active=false
 firewalld_zone=''
-firewalld_pod_policy=tss-pod-egress
 if command -v firewall-cmd >/dev/null 2>&1 \
   && systemctl is-active --quiet firewalld; then
   [[ $(firewall-cmd --state) == running ]] \
@@ -132,10 +131,6 @@ firewalld_rule_for() {
     "$worker_ip" "$TSS_NODE_IP" "$port" "$protocol"
 }
 
-firewalld_pod_forward_rule_for() {
-  printf 'rule family="ipv4" source address="%s" accept' "$TSS_POD_CIDR"
-}
-
 firewalld_rule_present() {
   local scope="$1"
   local rule="$2"
@@ -169,69 +164,27 @@ ensure_firewalld_rule() {
     || die "the runtime firewalld rule is absent after apply"
 }
 
-firewalld_policy_exists() {
+firewalld_trusted_source_present() {
   local scope="$1"
   local permanent=()
   [[ $scope == permanent ]] && permanent=(--permanent)
-  firewall-cmd "${permanent[@]}" --get-policies \
-    | tr ' ' '\n' | grep -Fx "$firewalld_pod_policy" >/dev/null
+  firewall-cmd "${permanent[@]}" --zone=trusted \
+    --query-source="$TSS_POD_CIDR" >/dev/null
 }
 
-validate_firewalld_pod_policy() {
-  local scope="$1"
+ensure_firewalld_trusted_source() {
+  local scope
   local permanent=()
-  local expected_rule
-  [[ $scope == permanent ]] && permanent=(--permanent)
-  expected_rule="$(firewalld_pod_forward_rule_for)"
-  [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --get-target) == CONTINUE ]] \
-    || die "the existing firewalld Pod policy has an unexpected target"
-  [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --get-priority) == -10 ]] \
-    || die "the existing firewalld Pod policy has an unexpected priority"
-  [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --list-ingress-zones) == ANY ]] \
-    || die "the existing firewalld Pod policy has unexpected ingress zones"
-  [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --list-egress-zones) == ANY ]] \
-    || die "the existing firewalld Pod policy has unexpected egress zones"
-  [[ $(firewall-cmd "${permanent[@]}" --policy="$firewalld_pod_policy" \
-    --list-rich-rules) == "$expected_rule" ]] \
-    || die "the existing firewalld Pod policy has unexpected rich rules"
-}
-
-create_permanent_firewalld_pod_policy() {
-  local rule
-  rule="$(firewalld_pod_forward_rule_for)"
-  firewall-cmd --permanent --new-policy="$firewalld_pod_policy" >/dev/null
-  if ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
-      --set-priority=-10 >/dev/null \
-    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
-      --add-ingress-zone=ANY >/dev/null \
-    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
-      --add-egress-zone=ANY >/dev/null \
-    || ! firewall-cmd --permanent --policy="$firewalld_pod_policy" \
-      --add-rich-rule="$rule" >/dev/null; then
-    firewall-cmd --permanent --delete-policy="$firewalld_pod_policy" \
-      >/dev/null 2>&1 || true
-    die "failed to create the scoped firewalld Pod forwarding policy"
-  fi
-}
-
-ensure_firewalld_pod_policy() {
-  if firewalld_policy_exists permanent; then
-    validate_firewalld_pod_policy permanent
-  else
-    create_permanent_firewalld_pod_policy
-    validate_firewalld_pod_policy permanent
-  fi
-  if ! firewalld_policy_exists runtime; then
-    # firewalld only creates custom policy objects in permanent configuration.
-    # A regular reload keeps connection state and is required to activate it.
-    firewall-cmd --reload >/dev/null
-  fi
-  validate_firewalld_pod_policy permanent
-  validate_firewalld_pod_policy runtime
+  for scope in permanent runtime; do
+    permanent=()
+    [[ $scope == permanent ]] && permanent=(--permanent)
+    if ! firewalld_trusted_source_present "$scope"; then
+      firewall-cmd "${permanent[@]}" --zone=trusted \
+        --add-source="$TSS_POD_CIDR" >/dev/null
+    fi
+    firewalld_trusted_source_present "$scope" \
+      || die "the firewalld trusted Pod CIDR is absent after apply"
+  done
 }
 
 for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
@@ -255,16 +208,11 @@ if [[ $firewalld_active == true ]]; then
       echo "PLAN: add scoped ${port_protocol} worker rule to firewalld zone=${firewalld_zone}"
     fi
   done
-  for scope in permanent runtime; do
-    if firewalld_policy_exists "$scope"; then
-      validate_firewalld_pod_policy "$scope"
-    fi
-  done
-  if firewalld_policy_exists permanent \
-    && firewalld_policy_exists runtime; then
-    echo "PASS: firewalld has the scoped Pod forwarding policy"
+  if firewalld_trusted_source_present permanent \
+    && firewalld_trusted_source_present runtime; then
+    echo "PASS: firewalld trusts the configured Pod CIDR"
   else
-    echo "PLAN: add the scoped firewalld Pod forwarding policy"
+    echo "PLAN: add Pod CIDR=${TSS_POD_CIDR} to the firewalld trusted zone"
   fi
 else
   echo "PASS: firewalld is inactive; no second firewall rule set is required"
@@ -310,7 +258,7 @@ ufw route allow from "$TSS_POD_CIDR" \
 if [[ $firewalld_active == true ]]; then
   ensure_firewalld_rule "$(firewalld_rule_for 6443/tcp)"
   ensure_firewalld_rule "$(firewalld_rule_for 4789/udp)"
-  ensure_firewalld_pod_policy
+  ensure_firewalld_trusted_source
 fi
 
 rule_present 6443/tcp || die "Kubernetes API firewall rule is absent after apply"
