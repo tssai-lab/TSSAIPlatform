@@ -29,6 +29,39 @@ make every clone permanently larger. The branch therefore contains immutable
 manifest digests and exporters, while GHCR/Docker Hub contain the image layers.
 An exported tar is a disposable delivery artifact, not source code.
 
+## Generate and download the platform bundle
+
+After this workflow task is present on the reviewed integration branch, an
+operator with repository access can generate the bundle without contacting
+Main:
+
+```bash
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-ops \
+  -f task=export-platform-images
+
+gh run list \
+  --workflow tss-aiplatform-internal-validation.yml \
+  --branch backend-ops \
+  --event workflow_dispatch
+```
+
+Use the successful run ID and its exact commit SHA shown by GitHub:
+
+```bash
+gh run download REPLACE_RUN_ID \
+  --name tss-aiplatform-platform-images-REPLACE_40_CHARACTER_SHA \
+  --dir /path/to/new-empty-directory
+
+cd /path/to/new-empty-directory
+sha256sum --check --strict platform-images.sha256
+docker load --input platform-images-amd64.tar
+```
+
+The Actions artifact is intentionally retained for seven days to avoid using
+GitHub as a permanent binary backup. The committed lock and exporter do not
+expire; rerun the workflow to recreate the same bundle from the same digests.
+
 ## Minimal clean-server flow
 
 1. Check out the reviewed deployment branch/SHA.
