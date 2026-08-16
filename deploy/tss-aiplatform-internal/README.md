@@ -87,6 +87,24 @@ sudo bash deploy/tss-aiplatform-internal/scripts/prepare-node.sh \
   --apply /path/to/node.env --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
 ```
 
+The campus hosts can reach `registry.k8s.io` itself but time out after it
+redirects to Google Artifact Registry. C4 therefore uses the no-Secrets
+`export-airgap-bundles` workflow task on a GitHub-hosted Runner. It pulls the
+already locked linux/amd64 image digests and emits three short-lived bundles.
+Download the artifact from the exact trusted `backend-ops` run, copy only the
+common files to the control plane and include the NVIDIA files on GPU workers.
+The import command verifies every bundle checksum and requires `sources.lock`
+to byte-match the committed 11-image lock before writing the isolated runtime.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
+  --check /etc/tss-aiplatform/node.env /path/to/bundles
+
+sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
+  --apply /etc/tss-aiplatform/node.env /path/to/bundles \
+  --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
+```
+
 The C3 storage command has a separate failure-closed check and apply mode. The
 apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
 configured SMART-policy checks before its first write. It also requires the

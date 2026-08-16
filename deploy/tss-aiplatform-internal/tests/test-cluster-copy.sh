@@ -60,6 +60,10 @@ bash "${internal_dir}/scripts/preflight.sh" --config-only "${workdir}/control.en
 bash "${internal_dir}/scripts/preflight.sh" --config-only "${workdir}/worker.env" >/dev/null
 bash "${internal_dir}/scripts/prepare-node.sh" --config-only "${workdir}/control.env" >/dev/null
 bash "${internal_dir}/scripts/prepare-node.sh" --config-only "${workdir}/worker.env" >/dev/null
+bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
+  "${workdir}/control.env" >/dev/null
+bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
+  "${workdir}/worker.env" >/dev/null
 
 bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/control.env" >"${workdir}/containerd-v3.toml"
 grep -F 'version = 3' "${workdir}/containerd-v3.toml" >/dev/null
@@ -139,6 +143,7 @@ grep -F 'bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh' "$inter
 grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'persist-credentials: false' "$internal_workflow" >/dev/null
 grep -F 'GITHUB_WORKSPACE" == /media/seu/data/tssai-platform/actions-runner/_work/*' "$internal_workflow" >/dev/null
 grep -F 'CONTROL_PLANE_HOST" =~ ^[0-9]' "$internal_workflow" >/dev/null
@@ -153,6 +158,7 @@ if grep -F ':latest' "${internal_dir}/versions.env" >/dev/null; then
 fi
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
+bash "${internal_dir}/ci/export-airgap-bundles.sh" --validate-only >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
 
@@ -233,6 +239,13 @@ grep -F 'shared Docker container count changed' \
   "${internal_dir}/scripts/prepare-node.sh" >/dev/null
 grep -F '$1 ~ /cri/ || $2 ~ /cri/' \
   "${internal_dir}/scripts/prepare-node.sh" >/dev/null
+grep -F 'compression-level: 0' "$internal_workflow" >/dev/null
+grep -F 'expected 7 Kubernetes core images' \
+  "${internal_dir}/ci/export-airgap-bundles.sh" >/dev/null
+grep -F 'bundle sources do not match the committed artifact lock' \
+  "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
+grep -F 'shared system containerd PID changed during image import' \
+  "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
