@@ -15,7 +15,7 @@ command -v docker >/dev/null || die "docker is required"
 
 missing_bytes=0
 while IFS='|' read -r _source_ref project_ref expected_id expected_size; do
-  [[ -n $project_ref && $project_ref != \#* ]] || continue
+  [[ -n $_source_ref && $_source_ref != \#* ]] || continue
   actual_id="$(docker image inspect --format '{{.Id}}' "$project_ref" 2>/dev/null || true)"
   if [[ -n $actual_id ]]; then
     [[ $actual_id == "$expected_id" ]] || die "existing project alias has an unexpected image ID: $project_ref"
