@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 internal_dir="${root_dir}/deploy/tss-aiplatform-internal"
+# shellcheck disable=SC1091
+source "${internal_dir}/versions.env"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
@@ -152,6 +154,31 @@ if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
   exit 1
 fi
+
+artifact_lock="${internal_dir}/artifacts.lock"
+[[ -f $artifact_lock ]]
+[[ $(grep -c '^manifest ' "$artifact_lock") -eq 2 ]]
+[[ $(grep -c '^image ' "$artifact_lock") -eq 11 ]]
+if grep -Ev '^(#.*|manifest https://[^ ]+ sha256:[0-9a-f]{64}|image [^ ]+:[^ ]+ sha256:[0-9a-f]{64})$' \
+  "$artifact_lock" >/dev/null; then
+  echo "Artifact lock contains an invalid line." >&2
+  exit 1
+fi
+if grep -F ':latest ' "$artifact_lock" >/dev/null; then
+  echo "Artifact lock must not use latest tags." >&2
+  exit 1
+fi
+[[ $(awk '$1 == "image" {print $2}' "$artifact_lock" | sort | uniq -d | wc -l) -eq 0 ]]
+while IFS= read -r core_image; do
+  grep -E "^image ${core_image//./\\.} sha256:[0-9a-f]{64}$" "$artifact_lock" >/dev/null
+done < <(grep -Ev '^(#|$)' "${internal_dir}/core-images.txt")
+for required_image in \
+  "quay.io/calico/cni:${TSS_CALICO_VERSION}" \
+  "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}" \
+  "quay.io/calico/node:${TSS_CALICO_VERSION}" \
+  "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"; do
+  grep -E "^image ${required_image//./\\.} sha256:[0-9a-f]{64}$" "$artifact_lock" >/dev/null
+done
 
 find "${internal_dir}" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 echo "Internal cluster copy contract tests passed."
