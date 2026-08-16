@@ -28,7 +28,9 @@ gate. Business data stays on the dedicated 2 TiB project filesystem.
 1. Check out the reviewed `backend-ops` SHA into
    `/srv/tss-AIplatform/repository`. Keep the worktree clean.
 2. Copy `platform.env.example` to `/etc/tss-aiplatform/platform.env`, replace
-   both IP placeholders, and verify the five ports are unused on seu5090.
+   the physical control-plane hostname and both IP placeholders, and verify the
+   five ports are unused on seu5090. The physical hostname may intentionally
+   differ from the Kubernetes logical node name.
 3. Run `check-platform-image-budget.sh` on seu5090, then export the four image
    IDs from Main with `export-platform-images.sh` and
    load that stream into seu5090 Docker. The exporter uses temporary

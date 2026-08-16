@@ -42,7 +42,8 @@ load_platform_config() {
   local name
   for name in \
     TSS_PLATFORM_ENVIRONMENT TSS_PLATFORM_ROOT TSS_REPOSITORY_ROOT \
-    TSS_PLATFORM_BIND_IP TSS_PLATFORM_WORKER_IP TSS_PLATFORM_WORKER_NODE \
+    TSS_PLATFORM_HOSTNAME TSS_PLATFORM_BIND_IP TSS_PLATFORM_WORKER_IP \
+    TSS_PLATFORM_WORKER_NODE \
     TSS_BACKEND_PORT TSS_POSTGRES_PORT TSS_MINIO_API_PORT \
     TSS_MINIO_CONSOLE_PORT TSS_MLFLOW_PORT \
     TSS_CORS_ALLOWED_ORIGIN_PATTERNS TSS_KUBECTL_PATH \
@@ -58,6 +59,7 @@ load_platform_config() {
     || die "refusing platform environment: $TSS_PLATFORM_ENVIRONMENT"
   [[ $TSS_PLATFORM_BIND_IP == "$TSS_NODE_IP" ]] \
     || die "platform bind IP must equal the reviewed control-plane node IP"
+  validate_dns_label TSS_PLATFORM_HOSTNAME
   validate_ipv4 TSS_PLATFORM_BIND_IP
   validate_ipv4 TSS_PLATFORM_WORKER_IP
   [[ $TSS_PLATFORM_WORKER_IP != "$TSS_PLATFORM_BIND_IP" ]] \
@@ -130,8 +132,8 @@ load_platform_secrets() {
 }
 
 require_control_plane_identity() {
-  [[ $(hostname -s) == "$TSS_NODE_NAME" ]] \
-    || die "current host is not the reviewed control-plane node"
+  [[ $(hostname -s) == "$TSS_PLATFORM_HOSTNAME" ]] \
+    || die "current host does not match the reviewed physical control-plane hostname"
   local actual_ip
   actual_ip="$(ip -4 -o addr show scope global | awk -v wanted="$TSS_NODE_IP" '$4 ~ ("^" wanted "/") {print wanted; exit}')"
   [[ $actual_ip == "$TSS_NODE_IP" ]] \
