@@ -66,6 +66,13 @@ if [[ $TSS_ADDRESS_STABILITY_CONFIRMED == true ]]; then
 else
   not_ready "node address is DHCP-derived; reserve it before kubeadm init"
 fi
+actual_node_ips="$(ip -4 -o addr show scope global \
+  | awk '{split($4, address, "/"); print address[1]}')"
+if grep -Fx "$TSS_NODE_IP" <<<"$actual_node_ips" >/dev/null; then
+  pass "configured node address is present on the host"
+else
+  fail "configured node address is absent from the host: $TSS_NODE_IP"
+fi
 
 route_cidrs="$(ip -4 route show | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+$/ {print $1}')"
 if ! TSS_EXISTING_ROUTE_CIDRS="$route_cidrs" python3 - "$TSS_POD_CIDR" "$TSS_SERVICE_CIDR" <<'PY'
@@ -119,9 +126,18 @@ if mountpoint -q "$TSS_STORAGE_MOUNT_POINT"; then
 fi
 
 if [[ -S $TSS_CONTAINERD_SOCKET ]]; then
-  not_ready "project containerd socket already exists; inspect ownership before continuing"
+  if [[ $mode == ready ]] \
+    && ctr --address "$TSS_CONTAINERD_SOCKET" version >/dev/null 2>&1; then
+    pass "isolated project containerd is reachable"
+  else
+    not_ready "project containerd socket already exists; inspect ownership before continuing"
+  fi
 else
-  pass "project containerd socket is isolated and currently absent"
+  if [[ $mode == ready ]]; then
+    fail "isolated project containerd is not running"
+  else
+    pass "project containerd socket is isolated and currently absent"
+  fi
 fi
 
 if systemctl is-active --quiet docker; then
