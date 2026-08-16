@@ -19,6 +19,20 @@ extract_digest() {
   awk '$1 == "Digest:" && digest == "" {digest = $2} END {print digest}'
 }
 
+extract_images() {
+  awk '
+    {
+      for (field = 1; field < NF; field++) {
+        if ($field == "image:") {
+          image = $(field + 1)
+          gsub(/["'\'' ]/, "", image)
+          print image
+        }
+      }
+    }
+  '
+}
+
 [[ -f $core_images ]] || die "core image list is absent"
 grep -Fx "$TSS_CONTAINERD_PAUSE_IMAGE" "$core_images" >/dev/null \
   || die "containerd pause image must match kubeadm's exact image list"
@@ -47,6 +61,15 @@ if [[ $mode == --self-test ]]; then
   )"
   [[ $digest == sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] \
     || die "digest parser self-test failed"
+  mapfile -t self_test_images < <(
+    printf '%s\n' \
+      'image: registry.example/standalone:v1' \
+      '- image: registry.example/list-item:v2' \
+      | extract_images
+  )
+  [[ ${self_test_images[*]} == \
+    'registry.example/standalone:v1 registry.example/list-item:v2' ]] \
+    || die "image parser self-test failed"
   echo "Artifact lock digest parser self-test passed."
   exit 0
 fi
@@ -78,11 +101,23 @@ nvidia_sha="$(sha256sum "${workdir}/nvidia-device-plugin.yaml" | awk '{print $1}
 mapfile -t images < <(
   {
     grep -Ev '^(#|$)' "$core_images"
-    awk '$1 == "image:" {gsub(/["'\'' ]/, "", $2); print $2}' \
-      "${workdir}/calico.yaml" "${workdir}/nvidia-device-plugin.yaml"
+    extract_images < <(
+      cat "${workdir}/calico.yaml" "${workdir}/nvidia-device-plugin.yaml"
+    )
   } | sort -u
 )
 (( ${#images[@]} >= 9 )) || die "resolved image set is unexpectedly small"
+
+required_manifest_images=(
+  "quay.io/calico/cni:${TSS_CALICO_VERSION}"
+  "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}"
+  "quay.io/calico/node:${TSS_CALICO_VERSION}"
+  "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"
+)
+for required_image in "${required_manifest_images[@]}"; do
+  printf '%s\n' "${images[@]}" | grep -Fx "$required_image" >/dev/null \
+    || die "required manifest image is absent: $required_image"
+done
 
 printf '# tss-AIplatform internal artifact lock candidate\n'
 printf '# Commit this output only after independent review.\n'
