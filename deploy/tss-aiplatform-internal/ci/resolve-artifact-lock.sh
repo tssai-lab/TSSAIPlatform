@@ -15,6 +15,10 @@ die() {
   exit 1
 }
 
+extract_digest() {
+  awk '$1 == "Digest:" && digest == "" {digest = $2} END {print digest}'
+}
+
 [[ -f $core_images ]] || die "core image list is absent"
 grep -Fx "$TSS_CONTAINERD_PAUSE_IMAGE" "$core_images" >/dev/null \
   || die "containerd pause image must match kubeadm's exact image list"
@@ -33,7 +37,20 @@ if [[ $mode == --validate-only ]]; then
   echo "Artifact lock input contract passed."
   exit 0
 fi
-[[ $mode == resolve ]] || die "usage: $0 [--validate-only]"
+if [[ $mode == --self-test ]]; then
+  digest="$(
+    printf '%s\n' \
+      'Name: example.invalid/test:v1' \
+      'Digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      'MediaType: application/vnd.oci.image.index.v1+json' \
+      | extract_digest
+  )"
+  [[ $digest == sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]] \
+    || die "digest parser self-test failed"
+  echo "Artifact lock digest parser self-test passed."
+  exit 0
+fi
+[[ $mode == resolve ]] || die "usage: $0 [--validate-only|--self-test]"
 
 for command_name in curl docker sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 \
@@ -77,7 +94,7 @@ for image in "${images[@]}"; do
   echo "Resolving ${image}" >&2
   digest="$(
     docker buildx imagetools inspect "$image" \
-      | awk '$1 == "Digest:" {print $2; exit}'
+      | extract_digest
   )"
   [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] \
     || die "invalid digest for $image: $digest"

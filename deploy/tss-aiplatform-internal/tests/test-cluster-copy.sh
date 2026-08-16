@@ -146,6 +146,7 @@ if grep -F ':latest' "${internal_dir}/versions.env" >/dev/null; then
   exit 1
 fi
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
+bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
 grep -Fx 'registry.k8s.io/pause:3.10.1' "${internal_dir}/core-images.txt" >/dev/null
 if grep -F ':latest' "${internal_dir}/core-images.txt" >/dev/null; then
   echo "Core images must not use latest tags." >&2
