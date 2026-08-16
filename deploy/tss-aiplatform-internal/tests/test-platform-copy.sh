@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+platform_root="${repo_root}/deploy/tss-aiplatform-internal/platform"
+compose="${platform_root}/compose.yml"
+lock="${platform_root}/platform-images.lock"
+rbac="${platform_root}/k8s/backend-access.yaml"
+workflow="${repo_root}/.github/workflows/tss-aiplatform-internal-validation.yml"
+classifier="${repo_root}/deploy/tss-aiplatform-internal/ci/classify-backend-deploy-scope.sh"
+
+for file in \
+  "$compose" "$lock" "$rbac" \
+  "$platform_root/platform.env.example" \
+  "$platform_root/scripts/lib-platform.sh" \
+  "$platform_root/scripts/generate-platform-secrets.sh" \
+  "$platform_root/scripts/export-platform-images.sh" \
+  "$platform_root/scripts/check-platform-image-budget.sh" \
+  "$platform_root/scripts/verify-platform-images.sh" \
+  "$platform_root/scripts/bootstrap-platform-kubernetes.sh" \
+  "$platform_root/scripts/prepare-platform-network.sh" \
+  "$platform_root/scripts/prepare-platform.sh" \
+  "$platform_root/scripts/verify-platform.sh" \
+  "$platform_root/scripts/smoke-platform-api.sh" \
+  "$platform_root/scripts/bootstrap-platform.sh" \
+  "$platform_root/scripts/verify-internal-kubeadm.sh"; do
+  [[ -f $file ]] || { echo "missing C5 file: $file" >&2; exit 1; }
+done
+
+while IFS= read -r script; do
+  bash -n "$script"
+done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)
+
+[[ $(grep -Ev '^(#|$)' "$lock" | wc -l) -eq 4 ]]
+[[ $(cut -d'|' -f2 "$lock" | grep -c '^tss-aiplatform-internal/') -eq 4 ]]
+! cut -d'|' -f2 "$lock" | grep -F ':latest' >/dev/null
+[[ $(cut -d'|' -f3 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f3 | sort -u | wc -l) -eq 4 ]] \
+  || { echo "image lock contains a duplicate image ID" >&2; exit 1; }
+
+grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
+grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null
+grep -F 'network_mode: host' "$compose" >/dev/null
+grep -F 'TRAINING_K8S_AUTO_CREATE: "false"' "$compose" >/dev/null
+grep -F 'TRAINING_K8S_FALLBACK_TO_LOCAL: "false"' "$compose" >/dev/null
+grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"' "$compose" >/dev/null
+grep -F 'module1-schema-postgresql.sql:/docker-entrypoint-initdb.d/001-module1.sql:ro' "$compose" >/dev/null
+! grep -E 'container_name: tss-(backend|postgres|minio|mlflow)$' "$compose" >/dev/null
+! grep -F '/opt/tss-platform/postgres-data' "$compose" >/dev/null
+! grep -E 'image:.*:latest' "$compose" >/dev/null
+
+grep -F 'automountServiceAccountToken: false' "$rbac" >/dev/null
+grep -F 'resources: ["resourcequotas"]' "$rbac" >/dev/null
+grep -F 'resources: ["configmaps"]' "$rbac" >/dev/null
+grep -F 'resources: ["nodes/proxy"]' "$rbac" >/dev/null
+grep -F 'resources: ["pods/log"]' "$rbac" >/dev/null
+! grep -F 'resources: ["secrets"]' "$rbac" >/dev/null
+! grep -F 'verbs: ["*"]' "$rbac" >/dev/null
+! grep -F 'cluster-admin' "$rbac" >/dev/null
+
+classification="$(printf '%s\n' \
+  'deploy/tss-aiplatform-internal/platform/compose.yml' \
+  'deploy/tss-aiplatform-internal/platform/scripts/bootstrap-platform.sh' \
+  | bash "$classifier")"
+[[ $classification == 'deploy_main=false' ]] \
+  || { echo "internal platform-only changes would deploy Main" >&2; exit 1; }
+grep -F 'bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh' "$workflow" >/dev/null
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+sed \
+  -e 's|REPLACE_CONTROL_PLANE_IP|10.201.96.68|g' \
+  -e 's|REPLACE_WORKER_IP|10.201.81.142|g' \
+  "$platform_root/platform.env.example" >"$tmp_dir/platform.env"
+sed \
+  -e 's|REPLACE_CONTROL_PLANE_IP|10.201.96.68|g' \
+  -e 's|REPLACE_AFTER_APPROVED_DISK_PREPARATION|3a669b7d-6d65-4dfd-87a6-fa9246b9a194|g' \
+  -e 's|TSS_ADDRESS_STABILITY_CONFIRMED=false|TSS_ADDRESS_STABILITY_CONFIRMED=true|g' \
+  "$repo_root/deploy/tss-aiplatform-internal/config/control-plane.env.example" >"$tmp_dir/node.env"
+bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
+  "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" "$tmp_dir/platform.env"
+sed -i 's/TSS_MLFLOW_PORT=15000/TSS_MLFLOW_PORT=18080/' "$tmp_dir/platform.env"
+if bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
+  "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" "$tmp_dir/platform.env" \
+  >/dev/null 2>&1; then
+  echo "duplicate platform ports were accepted" >&2
+  exit 1
+fi
+
+echo "PASS: C5 empty-platform copy contract"
