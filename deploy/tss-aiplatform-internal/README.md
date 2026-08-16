@@ -90,11 +90,12 @@ out the exact SHA, repeats the GitHub data path, and checks TCP/22 reachability
 to the configured control-plane address. It deliberately does not attempt SSH
 authentication, sudo, deployment or host writes.
 
-The same workflow can resolve a candidate artifact lock on a GitHub-hosted
-Runner. This avoids relying on the campus hosts' currently unreliable redirect
-from `registry.k8s.io` to Google Artifact Registry. The resulting artifact is a
-candidate only: review and commit its manifest checksums and multi-architecture
-image digests before C4.
+The same workflow resolves an artifact lock on a GitHub-hosted Runner. This
+avoids relying on the campus hosts' currently unreliable redirect from
+`registry.k8s.io` to Google Artifact Registry. The reviewed result is committed
+as `artifacts.lock`: its two manifest checksums and all 11 multi-architecture
+image digests were independently checked against the source registries. C4
+must reject a missing or mismatched artifact instead of silently using a tag.
 
 ## Rollback rule
 
