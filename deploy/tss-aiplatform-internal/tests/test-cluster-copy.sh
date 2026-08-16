@@ -272,6 +272,10 @@ grep -F 'shared system containerd PID changed during image import' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F "ufw --dry-run allow proto tcp" \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'ufw_user_rules=/etc/ufw/user.rules' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F '### tuple ### allow ${protocol} ${port}' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 4789' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'confirmation node does not match the reviewed configuration' \
