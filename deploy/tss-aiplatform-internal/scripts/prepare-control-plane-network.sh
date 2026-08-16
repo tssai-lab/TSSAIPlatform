@@ -77,13 +77,24 @@ conflicting_rule_present() {
   local port_protocol="$1"
   local port="${port_protocol%/*}"
   local protocol="${port_protocol#*/}"
-  local expected="### tuple ### allow ${protocol} ${port} ${TSS_NODE_IP} any ${worker_ip} in"
-  awk -v port="$port" -v protocol="$protocol" -v expected="$expected" '
+  local expected_worker="### tuple ### allow ${protocol} ${port} ${TSS_NODE_IP} any ${worker_ip} in"
+  local expected_pod=''
+  if [[ $port_protocol == 6443/tcp ]]; then
+    expected_pod="### tuple ### allow tcp 6443 ${TSS_NODE_IP} any ${TSS_POD_CIDR} in"
+  fi
+  awk -v port="$port" -v protocol="$protocol" -v expected_worker="$expected_worker" \
+    -v expected_pod="$expected_pod" '
     $1 == "###" && $2 == "tuple" && $3 == "###" && $4 == "allow" \
       && ($5 == protocol || $5 == "any") && $6 == port \
-      && index($0, expected) != 1 {found=1}
+      && index($0, expected_worker) != 1 \
+      && (expected_pod == "" || index($0, expected_pod) != 1) {found=1}
     END {exit !found}
   ' "$ufw_user_rules"
+}
+
+pod_api_rule_present() {
+  local expected="### tuple ### allow tcp 6443 ${TSS_NODE_IP} any ${TSS_POD_CIDR} in"
+  grep -F "$expected" "$ufw_user_rules" >/dev/null
 }
 
 pod_route_rule_present() {
@@ -102,6 +113,11 @@ for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
     echo "PLAN: allow ${description} from worker=${worker_ip} to control=${TSS_NODE_IP}"
   fi
 done
+if pod_api_rule_present; then
+  echo "PASS: Pods from ${TSS_POD_CIDR} may reach only the host Kubernetes API port"
+else
+  echo "PLAN: allow Pod CIDR=${TSS_POD_CIDR} to control=${TSS_NODE_IP} TCP 6443"
+fi
 if pod_route_rule_present; then
   echo "PASS: Pod traffic from ${TSS_POD_CIDR} is permitted through UFW routing"
 else
@@ -124,15 +140,20 @@ ufw --dry-run allow proto udp from "$worker_ip" to "$TSS_NODE_IP" port 4789 \
   comment 'tss-AIplatform worker calico-vxlan' >/dev/null
 ufw --dry-run route allow from "$TSS_POD_CIDR" \
   comment 'tss-AIplatform pod routed traffic' >/dev/null
+ufw --dry-run allow proto tcp from "$TSS_POD_CIDR" to "$TSS_NODE_IP" port 6443 \
+  comment 'tss-AIplatform pod kube-api' >/dev/null
 ufw allow proto tcp from "$worker_ip" to "$TSS_NODE_IP" port 6443 \
   comment 'tss-AIplatform worker kube-api'
 ufw allow proto udp from "$worker_ip" to "$TSS_NODE_IP" port 4789 \
   comment 'tss-AIplatform worker calico-vxlan'
+ufw allow proto tcp from "$TSS_POD_CIDR" to "$TSS_NODE_IP" port 6443 \
+  comment 'tss-AIplatform pod kube-api'
 ufw route allow from "$TSS_POD_CIDR" \
   comment 'tss-AIplatform pod routed traffic'
 
 rule_present 6443/tcp || die "Kubernetes API firewall rule is absent after apply"
 rule_present 4789/udp || die "Calico VXLAN firewall rule is absent after apply"
+pod_api_rule_present || die "Pod-to-Kubernetes-API firewall rule is absent after apply"
 pod_route_rule_present || die "Pod routed-traffic firewall rule is absent after apply"
 [[ $(systemctl show containerd -p MainPID --value) == "$system_containerd_pid" ]] \
   || die "shared system containerd PID changed during firewall preparation"
