@@ -69,6 +69,7 @@ grep -F 'bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh' "$work
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 sed \
+  -e 's|REPLACE_CONTROL_PLANE_HOSTNAME|user-rtx5090|g' \
   -e 's|REPLACE_CONTROL_PLANE_IP|10.201.96.68|g' \
   -e 's|REPLACE_WORKER_IP|10.201.81.142|g' \
   "$platform_root/platform.env.example" >"$tmp_dir/platform.env"
@@ -79,6 +80,32 @@ sed \
   "$repo_root/deploy/tss-aiplatform-internal/config/control-plane.env.example" >"$tmp_dir/node.env"
 bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
   "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" "$tmp_dir/platform.env"
+bash -c '
+  source "$1"
+  TSS_PLATFORM_HOSTNAME=user-rtx5090
+  TSS_NODE_NAME=tss-ai-control-01
+  TSS_NODE_IP=10.201.96.68
+  TSS_STORAGE_MOUNT_POINT=/srv/tss-AIplatform
+  TSS_EXPECTED_STORAGE_UUID=3a669b7d-6d65-4dfd-87a6-fa9246b9a194
+  hostname() { printf "%s\n" user-rtx5090; }
+  ip() { printf "%s\n" "2: eth0 inet 10.201.96.68/16 scope global eth0"; }
+  findmnt() { printf "%s\n" 3a669b7d-6d65-4dfd-87a6-fa9246b9a194; }
+  require_control_plane_identity
+' _ "$platform_root/scripts/lib-platform.sh"
+if bash -c '
+  source "$1"
+  TSS_PLATFORM_HOSTNAME=some-other-host
+  TSS_NODE_IP=10.201.96.68
+  TSS_STORAGE_MOUNT_POINT=/srv/tss-AIplatform
+  TSS_EXPECTED_STORAGE_UUID=3a669b7d-6d65-4dfd-87a6-fa9246b9a194
+  hostname() { printf "%s\n" user-rtx5090; }
+  ip() { printf "%s\n" "2: eth0 inet 10.201.96.68/16 scope global eth0"; }
+  findmnt() { printf "%s\n" 3a669b7d-6d65-4dfd-87a6-fa9246b9a194; }
+  require_control_plane_identity
+' _ "$platform_root/scripts/lib-platform.sh" >/dev/null 2>&1; then
+  echo "wrong physical hostname was accepted" >&2
+  exit 1
+fi
 sed -i 's/TSS_MLFLOW_PORT=15000/TSS_MLFLOW_PORT=18080/' "$tmp_dir/platform.env"
 if bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
   "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" "$tmp_dir/platform.env" \
