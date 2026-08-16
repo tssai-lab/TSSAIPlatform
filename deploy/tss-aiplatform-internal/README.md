@@ -37,8 +37,10 @@ cluster.
 3. **C2 delivery isolation:** validate a dedicated GitHub Environment and
    Runner without Main credentials. Record exact image digests.
 4. **C3 storage gate:** partitioning or formatting seu5090 `/dev/sda` requires a
-   separate explicit approval after device identity and backup evidence are
-   rechecked. The existing seu4080 filesystem is never repartitioned.
+   separate explicit approval after device identity and SMART evidence are
+   rechecked. The existing seu4080 filesystem is never repartitioned. The
+   approved operation uses the stable ATA by-id path, creates only one 2048 GiB
+   ext4 partition, and leaves the remaining capacity unallocated.
 5. **C4 cluster:** install the isolated runtime, run kubeadm, then network and
    node probes. Main/Second is checked before and after.
 6. **C5-C8:** deploy empty platform services, prove CPU parity, enable the
@@ -66,6 +68,21 @@ bash deploy/tss-aiplatform-internal/scripts/render-kubeadm-init.sh /tmp/control.
 The default host preflight is observational: missing future prerequisites are
 warnings. `--ready` turns them into failures and is the C4 gate. A generated
 file is not authorization to install it.
+
+The C3 storage command has a separate failure-closed check and apply mode. The
+apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
+completed extended SMART-test checks before its first write. It also requires
+the reviewed serial on the command line. Do not run it until the C3 approval
+and extended test are recorded in the SOP.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-storage.sh \
+  --check deploy/tss-aiplatform-internal/config/seu5090-storage.env
+
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-storage.sh \
+  --apply deploy/tss-aiplatform-internal/config/seu5090-storage.env \
+  --confirm-serial REPLACE_WITH_REVIEWED_SERIAL
+```
 
 ## Known prerequisites not yet satisfied
 
