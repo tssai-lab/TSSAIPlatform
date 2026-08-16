@@ -37,6 +37,14 @@ done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)
 [[ $(cut -d'|' -f3 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
 [[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f3 | sort -u | wc -l) -eq 4 ]] \
   || { echo "image lock contains a duplicate image ID" >&2; exit 1; }
+lock_entry_count=0
+while IFS='|' read -r source_ref _project_ref _expected_id expected_size; do
+  [[ -n $source_ref && $source_ref != \#* ]] || continue
+  [[ $expected_size =~ ^[1-9][0-9]*$ ]] \
+    || { echo "image lock contains a non-numeric size" >&2; exit 1; }
+  lock_entry_count=$((lock_entry_count + 1))
+done <"$lock"
+[[ $lock_entry_count -eq 4 ]] || { echo "image lock parser did not produce four entries" >&2; exit 1; }
 
 grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
 grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null
