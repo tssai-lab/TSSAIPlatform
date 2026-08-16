@@ -61,19 +61,29 @@ system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
 docker_container_count="$(docker ps -q | wc -l)"
 [[ $system_containerd_pid =~ ^[1-9][0-9]*$ ]] \
   || die "shared system containerd PID is invalid"
+ufw_user_rules=/etc/ufw/user.rules
+[[ -f $ufw_user_rules && ! -L $ufw_user_rules ]] \
+  || die "UFW user rules file is absent or symbolic"
 
 rule_present() {
   local port_protocol="$1"
-  LC_ALL=C ufw status \
-    | awk -v peer="$worker_ip" -v port_protocol="$port_protocol" \
-        'index($0, peer) && index($0, port_protocol) && index($0, "ALLOW IN") {found=1} END {exit !found}'
+  local port="${port_protocol%/*}"
+  local protocol="${port_protocol#*/}"
+  local expected="### tuple ### allow ${protocol} ${port} ${TSS_NODE_IP} any ${worker_ip} in"
+  grep -F "$expected" "$ufw_user_rules" >/dev/null
 }
 
 conflicting_rule_present() {
   local port_protocol="$1"
-  LC_ALL=C ufw status \
-    | awk -v peer="$worker_ip" -v port_protocol="$port_protocol" \
-        'index($0, port_protocol) && index($0, "ALLOW IN") && !index($0, peer) {found=1} END {exit !found}'
+  local port="${port_protocol%/*}"
+  local protocol="${port_protocol#*/}"
+  local expected="### tuple ### allow ${protocol} ${port} ${TSS_NODE_IP} any ${worker_ip} in"
+  awk -v port="$port" -v protocol="$protocol" -v expected="$expected" '
+    $1 == "###" && $2 == "tuple" && $3 == "###" && $4 == "allow" \
+      && ($5 == protocol || $5 == "any") && $6 == port \
+      && index($0, expected) != 1 {found=1}
+    END {exit !found}
+  ' "$ufw_user_rules"
 }
 
 for rule in '6443/tcp Kubernetes API' '4789/udp Calico VXLAN'; do
