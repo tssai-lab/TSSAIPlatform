@@ -72,6 +72,21 @@ The default host preflight is observational: missing future prerequisites are
 warnings. `--ready` turns them into failures and is the C4 gate. A generated
 file is not authorization to install it.
 
+The first C4 host step is deliberately narrower than cluster creation. It
+installs only the reviewed project directory, root-owned node configuration,
+isolated containerd unit, project directories and the Kubernetes bridge
+sysctls. It stops an unconfigured kubelet but does not modify UFW, pull images,
+run kubeadm or apply a CNI. The check and explicit node confirmation are
+mandatory.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-node.sh \
+  --check /path/to/node.env
+
+sudo bash deploy/tss-aiplatform-internal/scripts/prepare-node.sh \
+  --apply /path/to/node.env --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
+```
+
 The C3 storage command has a separate failure-closed check and apply mode. The
 apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
 configured SMART-policy checks before its first write. It also requires the

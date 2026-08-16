@@ -18,6 +18,7 @@ RequiresMountsFor=${TSS_STORAGE_MOUNT_POINT}
 Type=notify
 EnvironmentFile=/etc/tss-aiplatform/node.env
 ExecStartPre=/bin/bash /usr/local/lib/tss-aiplatform-internal/scripts/verify-storage.sh /etc/tss-aiplatform/node.env
+ExecStartPre=/usr/bin/install -d -m 0755 ${TSS_CONTAINERD_STATE_DIR}
 ExecStart=/usr/bin/containerd --config /etc/tss-aiplatform/containerd.toml
 Restart=always
 RestartSec=5
