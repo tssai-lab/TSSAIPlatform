@@ -339,9 +339,15 @@ if [[ $cache_enabled == true ]]; then
   cache_mount_path="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH)"
   cache_max_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES)"
   cache_min_free_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES)"
+  cache_runtime_reserve_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES)"
+  if [[ -z $cache_runtime_reserve_bytes ]]; then
+    cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+  fi
   require_safe_path "model cache node path" "$cache_node_path"
   require_safe_path "model cache mount path" "$cache_mount_path"
-  if [[ ! $cache_max_bytes =~ ^[1-9][0-9]*$ || ! $cache_min_free_bytes =~ ^[0-9]+$ ]]; then
+  if [[ ! $cache_max_bytes =~ ^[1-9][0-9]*$ \
+    || ! $cache_min_free_bytes =~ ^[0-9]+$ \
+    || ! $cache_runtime_reserve_bytes =~ ^[0-9]+$ ]]; then
     echo "Enabled model cache has invalid capacity settings." >&2
     exit 1
   fi
@@ -357,6 +363,7 @@ if [[ $cache_enabled == true ]]; then
   TSS_MODEL_CACHE_MOUNT_PATH="$cache_mount_path" \
   TSS_MODEL_CACHE_MAX_BYTES="$cache_max_bytes" \
   TSS_MODEL_CACHE_MIN_FREE_BYTES="$cache_min_free_bytes" \
+  TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="$cache_runtime_reserve_bytes" \
     /usr/local/sbin/tss-node-validate-model-cache \
       "$smoke_node" "$inference_image" --probe-only
 elif [[ $cache_enabled != false ]]; then

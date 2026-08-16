@@ -6,8 +6,10 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
+import com.tss.platform.service.ModelCachePolicyService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +30,7 @@ public class KubernetesInferenceJobManifestBuilder {
     private final TrainingKubernetesProperties properties;
     private final InferenceModelCacheProperties modelCacheProperties;
     private JobTtlPolicyService jobTtlPolicyService;
+    private ModelCachePolicyService modelCachePolicyService;
 
     @Value("${inference.kubernetes.worker-image:tss-inference-worker:local}")
     private String workerImage;
@@ -64,6 +67,11 @@ public class KubernetesInferenceJobManifestBuilder {
     @Autowired
     void setJobTtlPolicyService(JobTtlPolicyService jobTtlPolicyService) {
         this.jobTtlPolicyService = jobTtlPolicyService;
+    }
+
+    @Autowired
+    void setModelCachePolicyService(ModelCachePolicyService modelCachePolicyService) {
+        this.modelCachePolicyService = modelCachePolicyService;
     }
     public String buildJobYaml(
             InferenceTask task,
@@ -267,10 +275,11 @@ public class KubernetesInferenceJobManifestBuilder {
                 "inference.kubernetes.model-cache.mount-path",
                 modelCacheProperties.getMountPath()
         );
-        if (modelCacheProperties.getMaxBytes() <= 0) {
+        ModelCachePolicy policy = effectiveModelCachePolicy();
+        if (policy.maxBytes() <= 0) {
             throw new IllegalStateException("inference.kubernetes.model-cache.max-bytes must be positive");
         }
-        if (modelCacheProperties.getMinFreeBytes() < 0) {
+        if (policy.minFreeBytes() < 0) {
             throw new IllegalStateException("inference.kubernetes.model-cache.min-free-bytes must not be negative");
         }
 
@@ -285,12 +294,12 @@ public class KubernetesInferenceJobManifestBuilder {
             );
             return ModelCacheSpec.disabled();
         }
-        if (sizeBytes > modelCacheProperties.getMaxBytes()) {
+        if (sizeBytes > policy.maxBytes()) {
             LOGGER.warn(
                     "Bypass model cache for model version {} because artifact size {} exceeds cache limit {}",
                     modelVersion.getId(),
                     sizeBytes,
-                    modelCacheProperties.getMaxBytes()
+                    policy.maxBytes()
             );
             return ModelCacheSpec.disabled();
         }
@@ -326,9 +335,9 @@ public class KubernetesInferenceJobManifestBuilder {
                 "            - name: MODEL_EXPECTED_SIZE_BYTES",
                 "              value: \"" + sizeBytes + "\"",
                 "            - name: MODEL_CACHE_MAX_BYTES",
-                "              value: \"" + modelCacheProperties.getMaxBytes() + "\"",
+                "              value: \"" + policy.maxBytes() + "\"",
                 "            - name: MODEL_CACHE_MIN_FREE_BYTES",
-                "              value: \"" + modelCacheProperties.getMinFreeBytes() + "\"",
+                "              value: \"" + policy.minFreeBytes() + "\"",
                 "            - name: MODEL_STORAGE_PATH",
                 "              value: \"" + escapeYaml(modelVersion.getStoragePath()) + "\"",
                 "            - name: MINIO_ENDPOINT",
@@ -368,6 +377,18 @@ public class KubernetesInferenceJobManifestBuilder {
                 initContainerYaml,
                 mainVolumeMountYaml,
                 mainEnvYaml
+        );
+    }
+
+    private ModelCachePolicy effectiveModelCachePolicy() {
+        if (modelCachePolicyService != null) {
+            return modelCachePolicyService.currentPolicy();
+        }
+        return new ModelCachePolicy(
+                modelCacheProperties.getMaxBytes(),
+                modelCacheProperties.getMinFreeBytes(),
+                modelCacheProperties.getRuntimeReserveBytes(),
+                null
         );
     }
 

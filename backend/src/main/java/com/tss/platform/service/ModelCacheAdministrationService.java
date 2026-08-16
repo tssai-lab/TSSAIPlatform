@@ -6,6 +6,7 @@ import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.modelcache.ModelCacheDtos;
 import com.tss.platform.entity.ComputeServer;
+import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.module1.common.AuditActionType;
 import com.tss.platform.module1.common.AuditObjectType;
@@ -72,6 +73,15 @@ public class ModelCacheAdministrationService {
     }
 
     public ModelCacheDtos.Overview overview() {
+        return overview(new ModelCachePolicy(
+                cacheProperties.getMaxBytes(),
+                cacheProperties.getMinFreeBytes(),
+                cacheProperties.getRuntimeReserveBytes(),
+                null
+        ));
+    }
+
+    public ModelCacheDtos.Overview overview(ModelCachePolicy policy) {
         requireAdministrator();
         List<ComputeServer> servers = serverRepository.findByDeletedFalse().stream()
                 .sorted(Comparator.comparing(ComputeServer::getServerIp))
@@ -89,12 +99,30 @@ public class ModelCacheAdministrationService {
                 nodes.add(inspectNode(server));
             }
         }
+        List<ModelCacheDtos.Node> calculated = nodes.stream()
+                .map(node -> withPolicyCapacity(node, policy))
+                .toList();
         return new ModelCacheDtos.Overview(
                 cacheProperties.isEnabled(),
-                cacheProperties.getMaxBytes(),
-                cacheProperties.getMinFreeBytes(),
-                List.copyOf(nodes)
+                policy.maxBytes(),
+                policy.minFreeBytes(),
+                policy.runtimeReserveBytes(),
+                policy.emptyCacheGateBytes(),
+                policy.updatedAt(),
+                calculated
         );
+    }
+
+    List<ModelCacheDtos.Node> inspectPolicyNodes() {
+        if (!cacheProperties.isEnabled()) {
+            return List.of();
+        }
+        return serverRepository.findByDeletedFalse().stream()
+                .filter(server -> Boolean.TRUE.equals(server.getEnabled()))
+                .filter(this::cacheReady)
+                .sorted(Comparator.comparing(ComputeServer::getServerIp))
+                .map(this::inspectNode)
+                .toList();
     }
 
     public ModelCacheDtos.ClearResponse clear(ModelCacheDtos.ClearRequest request) {
@@ -152,6 +180,8 @@ public class ModelCacheAdministrationService {
                     result.path("usedBytes").asLong(),
                     result.path("diskFreeBytes").asLong(),
                     result.path("diskTotalBytes").asLong(),
+                    0,
+                    0,
                     List.copyOf(entries), null
             );
         } catch (Exception exception) {
@@ -365,7 +395,31 @@ public class ModelCacheAdministrationService {
     private ModelCacheDtos.Node emptyNode(ComputeServer server, boolean ready, String error) {
         return new ModelCacheDtos.Node(
                 server.getServerIp(), server.getHostname(), nodeName(server), ready,
-                0, 0, 0, List.of(), error);
+                0, 0, 0, 0, 0, List.of(), error);
+    }
+
+    private ModelCacheDtos.Node withPolicyCapacity(
+            ModelCacheDtos.Node node,
+            ModelCachePolicy policy
+    ) {
+        if (node.error() != null || !node.cacheReady()) {
+            return node;
+        }
+        long required;
+        try {
+            required = policy.requiredAvailableBytes(node.usedBytes());
+        } catch (IllegalArgumentException exception) {
+            return new ModelCacheDtos.Node(
+                    node.serverIp(), node.hostname(), node.k8sNodeName(), node.cacheReady(),
+                    node.usedBytes(), node.diskFreeBytes(), node.diskTotalBytes(),
+                    0, 0, node.entries(), exception.getMessage()
+            );
+        }
+        return new ModelCacheDtos.Node(
+                node.serverIp(), node.hostname(), node.k8sNodeName(), node.cacheReady(),
+                node.usedBytes(), node.diskFreeBytes(), node.diskTotalBytes(),
+                required, node.diskFreeBytes() - required, node.entries(), node.error()
+        );
     }
 
     private String nodeName(ComputeServer server) {

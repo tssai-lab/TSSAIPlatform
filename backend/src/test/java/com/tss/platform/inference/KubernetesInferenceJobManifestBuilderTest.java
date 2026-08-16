@@ -7,7 +7,9 @@ import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.service.JobTtlPolicyService;
+import com.tss.platform.service.ModelCachePolicyService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -79,6 +81,11 @@ class KubernetesInferenceJobManifestBuilderTest {
         cacheProperties.setMinFreeBytes(128);
         KubernetesInferenceJobManifestBuilder builder =
                 new KubernetesInferenceJobManifestBuilder(properties, cacheProperties);
+        ModelCachePolicyService policyService = mock(ModelCachePolicyService.class);
+        when(policyService.currentPolicy()).thenReturn(
+                new ModelCachePolicy(2048, 256, 1024, null)
+        );
+        builder.setModelCachePolicyService(policyService);
 
         InferenceTask task = new InferenceTask();
         task.setId("infer-cache-1");
@@ -125,6 +132,8 @@ class KubernetesInferenceJobManifestBuilderTest {
         assertTrue(yaml.contains("readOnly: true"));
         assertTrue(yaml.contains("name: MODEL_CACHE_ENABLED"));
         assertTrue(yaml.contains("nodeName: \"worker-2\""));
+        assertTrue(yaml.contains("name: MODEL_CACHE_MAX_BYTES\n              value: \"2048\""));
+        assertTrue(yaml.contains("name: MODEL_CACHE_MIN_FREE_BYTES\n              value: \"256\""));
 
         JsonNode podSpec = YAMLMapper.builder().build().readTree(yaml)
                 .path("spec").path("template").path("spec");

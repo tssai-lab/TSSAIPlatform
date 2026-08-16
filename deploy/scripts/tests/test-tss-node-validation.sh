@@ -77,12 +77,18 @@ grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/de
 grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
+grep -F 'max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"' "$cache_preparer" >/dev/null
+grep -F 'min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"' "$cache_preparer" >/dev/null
 grep -F 'setpriv --reuid="$cache_uid"' "$cache_preparer" >/dev/null
 grep -F 'tss.ai/model-cache-ready=true --overwrite' "$cache_validator" >/dev/null
 grep -F 'kind: PersistentVolume' "$cache_validator" >/dev/null
 grep -F 'kind: PersistentVolumeClaim' "$cache_validator" >/dev/null
 grep -F 'persistentVolumeReclaimPolicy: Retain' "$cache_validator" >/dev/null
 grep -F 'persistentVolumeClaim:' "$cache_validator" >/dev/null
+grep -F 'get configmap "$policy_config_map"' "$cache_validator" >/dev/null
+grep -F 'refusing to validate with stale defaults' "$cache_validator" >/dev/null
+grep -F 'ConfigMap values must be integer GiB between 1 and 1024' "$cache_validator" >/dev/null
+grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="$cache_runtime_reserve_bytes"' "$validator" >/dev/null
 if grep -F 'hostPath:' "$cache_validator" >/dev/null; then
   echo "Restricted cache probe must mount the node-local cache through a bound PVC." >&2
   exit 1

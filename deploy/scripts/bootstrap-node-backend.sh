@@ -66,8 +66,8 @@ fi
 model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
 model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/opt/tss-platform/model-cache}"
 model_cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
-model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-8589934592}"
-model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-5368709120}"
+model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
+model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
 model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
 
 if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
@@ -184,6 +184,7 @@ INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH=${model_cache_node_path}
 INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH=${model_cache_mount_path}
 INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES=${model_cache_max_bytes}
 INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES=${model_cache_min_free_bytes}
+INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES=${model_cache_runtime_reserve_bytes}
 EOF
 chmod 600 "$runtime_env"
 
