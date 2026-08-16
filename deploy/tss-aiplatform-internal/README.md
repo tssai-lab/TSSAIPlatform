@@ -40,7 +40,10 @@ cluster.
    separate explicit approval after device identity and SMART evidence are
    rechecked. The existing seu4080 filesystem is never repartitioned. The
    approved operation uses the stable ATA by-id path, creates only one 2048 GiB
-   ext4 partition, and leaves the remaining capacity unallocated.
+   ext4 partition, and leaves the remaining capacity unallocated. The disk
+   reports 8090 power-on hours. The reviewed disk-specific configuration records
+   the user's explicit decision to replace the extended-test gate with overall
+   health, a successful short test and zero critical SMART counters.
 5. **C4 cluster:** install the isolated runtime, run kubeadm, then network and
    node probes. Main/Second is checked before and after.
 6. **C5-C8:** deploy empty platform services, prove CPU parity, enable the
@@ -71,9 +74,11 @@ file is not authorization to install it.
 
 The C3 storage command has a separate failure-closed check and apply mode. The
 apply mode re-runs the same exact model, serial, WWN, capacity, empty-disk and
-completed extended SMART-test checks before its first write. It also requires
-the reviewed serial on the command line. Do not run it until the C3 approval
-and extended test are recorded in the SOP.
+configured SMART-policy checks before its first write. It also requires the
+reviewed serial on the command line. The normal policy remains a completed
+extended test; a weaker disk-specific policy must be explicit in the reviewed
+configuration and SOP. No policy permits a running self-test, failed overall
+health, failed short test or nonzero critical counters.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/prepare-storage.sh \
@@ -86,18 +91,21 @@ sudo bash deploy/tss-aiplatform-internal/scripts/prepare-storage.sh \
 
 ## Known prerequisites not yet satisfied
 
-- The current addresses are DHCP-derived. Their reservation or a stable DNS
-  endpoint must be confirmed before kubeadm initialization.
+- The current addresses are DHCP-derived. The user accepted their observed
+  stability for this internal validation environment only. Preflight must still
+  compare the configured and actual addresses; this is not a permanent-address
+  guarantee.
 - seu5090 has active UFW default-deny rules; reviewed node-to-node Kubernetes
   and Calico VXLAN rules are required before C4.
 - `br_netfilter` is not currently loaded on either host.
-- seu5090 `/dev/sda` is raw and unmounted. It has not been partitioned,
-  formatted or accepted by SMART/extended health testing.
+- seu5090 `/dev/sda` is raw and unmounted. Initial SMART health and the short
+  test passed; the user accepted the documented weaker policy instead of
+  waiting for the extended test. It has not been partitioned or formatted.
 - seu4080 kubelet currently loops because `/var/lib/kubelet/config.yaml` is
   absent. That pre-existing service noise must be stopped only inside the
   approved C4 maintenance step.
-- Runtime and Kubernetes image tags are fixed in `versions.env`; C2 must still
-  record and verify their immutable digests before installation.
+- Runtime and Kubernetes image tags are fixed in `versions.env`; their C2
+  immutable digest lock has been independently verified and published.
 
 ## C2 Runner and artifact lock
 
