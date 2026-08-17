@@ -91,6 +91,38 @@ const modelConstraints = [
   },
 ];
 
+/** 系统为每位用户预置的默认资产说明 */
+const defaultAssets = [
+  {
+    key: 'dataset',
+    asset: '数据集',
+    name: '示例数据集',
+    type: 'CV 图像分类（ImageFolder）',
+    usage: '训练输入，含 train / validation / test 分类图片',
+  },
+  {
+    key: 'model',
+    asset: '模型',
+    name: '示例模型',
+    type: 'MobileNetV2 图像分类',
+    usage: '训练基础权重',
+  },
+  {
+    key: 'code',
+    asset: '训练代码',
+    name: '示例代码',
+    type: '图像分类训练代码',
+    usage: '训练脚本（已审核通过）',
+  },
+  {
+    key: 'script',
+    asset: '推理脚本',
+    name: '示例推理脚本',
+    type: 'Python 推理脚本',
+    usage: '用训练产出模型做图像分类推理',
+  },
+];
+
 const datasetConstraints = [
   {
     key: 'maxSize',
@@ -332,6 +364,49 @@ const UserManual: React.FC = () => {
                   个人操作日志与审计追溯
                 </Descriptions.Item>
               </Descriptions>
+            </Card>
+          </div>
+
+          <Divider />
+
+          {/* ========== 默认资产说明 ========== */}
+          <div id="default-assets" style={sectionStyle}>
+            <Title level={2}>
+              <SafetyCertificateOutlined
+                style={{ marginRight: 8, color: '#1890ff' }}
+              />
+              默认资产说明
+            </Title>
+            <Card style={cardStyle}>
+              <Paragraph>
+                平台为每位用户预置了一套
+                <Text strong>默认资产</Text>
+                ，登录后即可直接用于训练与推理，无需自己准备数据。 默认资产对
+                <Text strong>所有用户可见但只读</Text>
+                （不可删除、改名、上传新版本），由管理员统一维护。
+              </Paragraph>
+              <Table
+                size="small"
+                rowKey="key"
+                pagination={false}
+                dataSource={defaultAssets}
+                columns={[
+                  { title: '资产', dataIndex: 'asset', key: 'asset' },
+                  { title: '名称', dataIndex: 'name', key: 'name' },
+                  { title: '类型', dataIndex: 'type', key: 'type' },
+                  { title: '用途', dataIndex: 'usage', key: 'usage' },
+                ]}
+              />
+              <Paragraph style={{ marginTop: 16 }}>
+                <Text strong>训练时</Text>：进入「发起训练」，选择 「HuggingFace
+                image
+                classification」方案，基础模型、训练数据集、训练代码可直接选用上面的默认资产，
+                提交后即可真实训练；训练代码已通过审核，无需再审批。
+              </Paragraph>
+              <Paragraph style={{ marginBottom: 0 }}>
+                <Text strong>推理时</Text>
+                ：训练产出模型后，在「推理工作台」选择该模型与默认推理脚本，即可发起推理。
+              </Paragraph>
             </Card>
           </div>
 
@@ -1209,6 +1284,11 @@ event({"type": "progress", "progress": 100})
                 offsetTop={96}
                 items={[
                   { key: 'overview', href: '#overview', title: '平台概述' },
+                  {
+                    key: 'default-assets',
+                    href: '#default-assets',
+                    title: '默认资产说明',
+                  },
                   { key: 'model', href: '#model', title: '模型管理' },
                   { key: 'dataset', href: '#dataset', title: '数据集管理' },
                   { key: 'training', href: '#training', title: '训练调度' },

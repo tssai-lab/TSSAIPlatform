@@ -11,10 +11,12 @@ import {
   Progress,
   Select,
   Space,
+  Tour,
   Upload,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
+import { usePageTour } from '@/components/Guide/usePageTour';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import {
   fetchModelAssetDetail,
@@ -60,6 +62,9 @@ const ModelUpload: React.FC = () => {
     remark: string;
     artifactSpecId?: string;
   }>();
+
+  // 引导段 S2：模型上传讲解
+  const tourProps = usePageTour(2, { ready: !prefillLoading });
 
   const assetId = searchParams.get('assetId') ?? undefined;
   const isNewVersionUpload = !!assetId;
@@ -361,7 +366,7 @@ const ModelUpload: React.FC = () => {
             label="模型名称"
             rules={[{ required: true, message: '请输入模型名称' }]}
           >
-            <Input placeholder="请输入模型名称" />
+            <Input placeholder="请输入模型名称" data-tour="model-name" />
           </Form.Item>
         )}
         <Form.Item
@@ -385,6 +390,7 @@ const ModelUpload: React.FC = () => {
               extra="类别只用于管理和检索；是否能训练，由文件内容识别结果和训练方案共同决定。"
             >
               <Select
+                data-tour="model-type"
                 placeholder="请选择目录类别"
                 options={MODEL_UPLOAD_CATEGORY_OPTIONS.map((option) => ({
                   value: option.value,
@@ -422,6 +428,7 @@ const ModelUpload: React.FC = () => {
                 placeholder="例如：ImageNet 预训练权重，供视觉任务使用"
                 maxLength={200}
                 showCount
+                data-tour="model-remark"
               />
             </Form.Item>
           </>
@@ -450,6 +457,7 @@ const ModelUpload: React.FC = () => {
             placeholder="例如：v1 基线权重；或 fix: 调整学习率后重训"
             maxLength={1024}
             showCount
+            data-tour="model-commit"
           />
         </Form.Item>
         <Form.Item
@@ -539,12 +547,14 @@ const ModelUpload: React.FC = () => {
               htmlType="submit"
               loading={uploading || prefillLoading}
               disabled={isNewVersionUpload && !inheritedIdentity}
+              data-tour="model-submit"
             >
               提交
             </Button>
           </Space>
         </Form.Item>
       </Form>
+      <Tour {...tourProps} />
     </PageContainer>
   );
 };

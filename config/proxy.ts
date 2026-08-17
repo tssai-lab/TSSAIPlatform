@@ -17,7 +17,8 @@ const SERVERS: Record<string, { api: string; mlflow: string }> = {
     mlflow: 'http://47.114.84.133:5000',
   },
   master: {
-    api: 'http://47.111.225.144:8080',
+    // 后端只监听 127.0.0.1:8080，公网需经 nginx:80 代理（/api 与 /v3/api-docs 均已转发）
+    api: 'http://47.111.225.144',
     mlflow: 'http://47.111.225.144:5000',
   },
 };

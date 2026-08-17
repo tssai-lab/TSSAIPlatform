@@ -13,9 +13,11 @@ import {
   Progress,
   Select,
   Space,
+  Tour,
   Upload,
 } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
+import { usePageTour } from '@/components/Guide/usePageTour';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import type { DatasetType, MultimodalSampleGrouping } from '@/services/dataset';
 import {
@@ -104,6 +106,9 @@ const DatasetUpload: React.FC = () => {
     directory: DatasetDirectory;
     artifactSpecId?: string;
   }>();
+
+  // 引导段 S1：数据集上传讲解
+  const tourProps = usePageTour(1, { ready: !prefillLoading });
 
   const assetId = searchParams.get('assetId') ?? undefined;
   const isNewVersionUpload = !!assetId;
@@ -553,7 +558,7 @@ const DatasetUpload: React.FC = () => {
             label="数据集名称"
             rules={[{ required: true, message: '请输入数据集名称' }]}
           >
-            <Input placeholder="请输入数据集名称" />
+            <Input placeholder="请输入数据集名称" data-tour="ds-name" />
           </Form.Item>
         )}
         <Form.Item
@@ -562,7 +567,11 @@ const DatasetUpload: React.FC = () => {
           rules={versionRules}
           extra={DATASET_VERSION_FORMAT_HINT}
         >
-          <Input placeholder="例如 v1.0.0" disabled={prefillLoading} />
+          <Input
+            placeholder="例如 v1.0.0"
+            disabled={prefillLoading}
+            data-tour="ds-version"
+          />
         </Form.Item>
         {!isNewVersionUpload && (
           <Form.Item
@@ -572,6 +581,7 @@ const DatasetUpload: React.FC = () => {
             extra="类别只用于管理和检索；真正能否训练，由文件内容识别结果和训练方案决定。"
           >
             <Select
+              data-tour="ds-category"
               options={DATASET_DIRECTORY_OPTIONS.map((item) => ({
                 value: item.value,
                 label: item.label,
@@ -753,7 +763,7 @@ const DatasetUpload: React.FC = () => {
               form.setFieldValue('files', fileList);
             }}
           >
-            <Button icon={<UploadOutlined />}>
+            <Button icon={<UploadOutlined />} data-tour="ds-upload">
               {datasetType === 'POINT_CLOUD'
                 ? '选择点云文件（.ply / .pcd / .zip）'
                 : datasetType === 'MULTIMODAL'
@@ -836,6 +846,7 @@ const DatasetUpload: React.FC = () => {
           </Space>
         </Form.Item>
       </Form>
+      <Tour {...tourProps} />
     </PageContainer>
   );
 };

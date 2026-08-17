@@ -83,4 +83,6 @@ export const STORAGE_KEYS = {
   USER_INFO: 'USER_INFO',
   /** 训练代码管理员审核开关（与系统配置同步的前端缓存） */
   TRAINING_CODE_REVIEW_CONFIG: 'TRAINING_CODE_REVIEW_CONFIG',
+  /** 教学引导是否已看过（弹一次，跳过/关闭即写入） */
+  TOUR_SEEN: 'tour_seen',
 };

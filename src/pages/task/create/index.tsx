@@ -14,11 +14,13 @@ import {
   Space,
   Steps,
   Tag,
+  Tour,
   Typography,
   Upload,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { usePageTour } from '@/components/Guide/usePageTour';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import type { DatasetType } from '@/services/dataset';
 import {
@@ -255,6 +257,8 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
 };
 
 const TaskCreate: React.FC = () => {
+  // 引导段 S3：发起训练讲解（讲解 + 用户自点向导）
+  const tourProps = usePageTour(3);
   const [searchParams] = useSearchParams();
   const experimentId = searchParams.get('experimentId')?.trim() || '';
   const fromVersionId = searchParams.get('fromVersionId')?.trim() || '';
@@ -1319,9 +1323,13 @@ const TaskCreate: React.FC = () => {
           current={currentStep}
           items={stepItems}
           style={{ marginBottom: 24 }}
+          data-tour="train-steps"
         />
 
-        <div style={{ minHeight: 280, marginBottom: 24 }}>
+        <div
+          style={{ minHeight: 280, marginBottom: 24 }}
+          data-tour="train-panel"
+        >
           {currentStep === 0 && (
             <>
               <Form.Item
@@ -1863,7 +1871,7 @@ const TaskCreate: React.FC = () => {
           )}
         </div>
 
-        <Space>
+        <Space data-tour="train-actions">
           {currentStep > 0 && (
             <Button htmlType="button" onClick={handlePrev}>
               上一步
@@ -1890,6 +1898,7 @@ const TaskCreate: React.FC = () => {
           )}
         </Space>
       </Form>
+      <Tour {...tourProps} />
     </PageContainer>
   );
 };

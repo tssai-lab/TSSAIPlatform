@@ -26,11 +26,13 @@ import {
   Select,
   Space,
   Tag,
+  Tour,
   Typography,
   Upload,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { usePageTour } from '@/components/Guide/usePageTour';
 import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import InferenceResultVisual from '@/components/inference/ResultVisual';
 import {
@@ -145,6 +147,8 @@ const InferenceWorkbench: React.FC = () => {
     [],
   );
   const [loadingAssets, setLoadingAssets] = useState(false);
+  // 引导段 S4：推理工作台讲解
+  const tourProps = usePageTour(4, { ready: !loadingAssets });
   const [creating, setCreating] = useState(false);
   const [retryingTaskId, setRetryingTaskId] = useState<string>();
   const [scriptUploading, setScriptUploading] = useState(false);
@@ -645,6 +649,7 @@ const InferenceWorkbench: React.FC = () => {
             title="创建推理任务"
             colSpan={{ xs: 24, md: 9 }}
             style={{ minHeight: 620 }}
+            data-tour="inf-create"
           >
             {sourceTrainingId && (
               <Alert
@@ -684,6 +689,7 @@ const InferenceWorkbench: React.FC = () => {
                 rules={[{ required: true, message: '请选择模型' }]}
               >
                 <Select
+                  data-tour="inf-model"
                   showSearch
                   loading={loadingAssets}
                   options={modelSelectOptions}
@@ -697,6 +703,7 @@ const InferenceWorkbench: React.FC = () => {
                 rules={[{ required: true, message: '请选择推理脚本' }]}
               >
                 <Select
+                  data-tour="inf-script"
                   showSearch
                   loading={loadingAssets}
                   options={scriptSelectOptions}
@@ -718,7 +725,11 @@ const InferenceWorkbench: React.FC = () => {
                 />
               </Form.Item>
               <Form.Item name="inputMode" label="输入方式">
-                <Radio.Group optionType="button" buttonStyle="solid">
+                <Radio.Group
+                  optionType="button"
+                  buttonStyle="solid"
+                  data-tour="inf-mode"
+                >
                   <Radio.Button value="SINGLE_OBJECT">单文件</Radio.Button>
                   <Radio.Button value="DATASET_VERSION">数据集</Radio.Button>
                 </Radio.Group>
@@ -775,6 +786,7 @@ const InferenceWorkbench: React.FC = () => {
                 icon={<PlayCircleOutlined />}
                 loading={creating}
                 onClick={handleCreateTask}
+                data-tour="inf-submit"
               >
                 创建并执行
               </Button>
@@ -1108,6 +1120,7 @@ const InferenceWorkbench: React.FC = () => {
           </Space>
         )}
       </Drawer>
+      <Tour {...tourProps} />
     </PageContainer>
   );
 };
