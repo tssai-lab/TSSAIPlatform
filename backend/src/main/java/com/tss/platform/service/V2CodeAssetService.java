@@ -118,6 +118,16 @@ public class V2CodeAssetService {
     }
 
     private V2CodeAssetDto get(String assetId, CodeAccessScope scope) {
+        if (scope != CodeAccessScope.ADMIN) {
+            // 演示代码（is_demo=true）对所有用户只读可见
+            CodeAsset demoAsset = assetRepository.findByIdAndDeletedFalse(assetId).orElse(null);
+            if (demoAsset != null && Boolean.TRUE.equals(demoAsset.getIsDemo())) {
+                return toDto(
+                        demoAsset,
+                        workspaceRepository.findOpenByAssetId(demoAsset.getId()).isPresent()
+                );
+            }
+        }
         CodeAsset asset = requireAsset(assetId, false, scope);
         return toDto(asset, workspaceRepository.findOpenByAssetId(asset.getId()).isPresent());
     }
