@@ -789,7 +789,8 @@ class V2CodeAssetControllerTest {
                 revision,
                 now,
                 now,
-                open
+                open,
+                false
         );
     }
 
