@@ -15,6 +15,8 @@ public record V2CodeAssetDto(
         long assetRevision,
         Instant createdAt,
         Instant updatedAt,
-        boolean hasOpenWorkspace
+        boolean hasOpenWorkspace,
+        /** 演示资产：全局共享、只读 */
+        Boolean isDemo
 ) {
 }
