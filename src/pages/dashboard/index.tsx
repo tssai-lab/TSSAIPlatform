@@ -12,8 +12,12 @@ import {
   Spin,
   Statistic,
   Tag,
+  Tour,
 } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
+import { useGuide } from '@/components/Guide/GuideContext';
+import GuideEntryCard from '@/components/Guide/GuideEntryCard';
+import { usePageTour } from '@/components/Guide/usePageTour';
 import { TASK_STATUS } from '@/constants/platform';
 import {
   fetchDatasetList,
@@ -94,7 +98,20 @@ const Dashboard: React.FC = () => {
   const userName =
     initialState?.currentUser?.name || initialState?.currentUser?.username;
 
+  const { segment, tourSeen, start } = useGuide();
   const [loading, setLoading] = useState(true);
+  const tourWelcome = usePageTour(0, { ready: !loading });
+  const tourComplete = usePageTour(5, { ready: !loading });
+
+  // 首登自动弹：无已看标记、当前无进行中的引导 → 延迟启动一次
+  useEffect(() => {
+    if (tourSeen || segment !== null) return;
+    const timer = window.setTimeout(() => {
+      start();
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [tourSeen, segment, start]);
+
   const [stats, setStats] = useState<DashboardStats>({
     modelTotal: 0,
     datasetTotal: 0,
@@ -204,7 +221,8 @@ const Dashboard: React.FC = () => {
       subTitle={userName ? `欢迎回来，${userName}` : undefined}
     >
       <Spin spinning={loading}>
-        <Row gutter={[12, 12]}>
+        <GuideEntryCard />
+        <Row gutter={[12, 12]} data-tour="home-stats">
           <Col xs={12} sm={12} md={6}>
             <Card size="small" styles={cardStyles}>
               <Statistic
@@ -404,6 +422,8 @@ const Dashboard: React.FC = () => {
           )}
         </Card>
       </Spin>
+      <Tour {...tourWelcome} />
+      <Tour {...tourComplete} />
     </PageContainer>
   );
 };

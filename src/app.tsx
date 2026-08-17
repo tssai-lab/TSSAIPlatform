@@ -6,6 +6,7 @@ import { history, Link } from '@umijs/max';
 import { App, message, notification } from 'antd';
 import React from 'react';
 import { AvatarDropdown, AvatarName, Question } from '@/components';
+import { GuideProvider } from '@/components/Guide/GuideContext';
 import { syncTrainingCodeReviewConfigFromServer } from '@/constants/trainingCode';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
 import { redirectToLogin } from '@/utils/loginRedirect';
@@ -155,7 +156,7 @@ export const layout: RunTimeLayoutConfig = ({
     childrenRender: (children) => {
       // if (initialState?.loading) return <PageLoading />;
       return (
-        <>
+        <GuideProvider>
           {children}
           {isDev && (
             <SettingDrawer
@@ -170,7 +171,7 @@ export const layout: RunTimeLayoutConfig = ({
               }}
             />
           )}
-        </>
+        </GuideProvider>
       );
     },
     ...initialState?.settings,
