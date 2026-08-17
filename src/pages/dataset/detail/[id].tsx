@@ -38,6 +38,7 @@ import {
   createOrOpenDatasetWorkspace,
   deleteDataset,
   deleteDatasetVersion,
+  downloadDatasetVersion,
   extractActiveImportJobId,
   fetchDatasetDetail,
   getDatasetVersionAllocation,
@@ -61,6 +62,7 @@ import {
   supportsDatasetWorkspaceEdit,
   type WorkspaceEditableDatasetType,
 } from '@/utils/datasetWorkspace';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { loadImportJobId, saveImportJobId } from '@/utils/importJobStorage';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
@@ -436,9 +438,9 @@ const DatasetDetail: React.FC = () => {
           return defaultVersionId;
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(
-        error?.info?.message || error?.message || '加载数据集详情失败',
+        getApiErrorMessage(error, '未找到该数据集，或不属于当前账号。'),
       );
       setDatasetInfo(null);
       setPreviewVersionId(undefined);
@@ -467,12 +469,26 @@ const DatasetDetail: React.FC = () => {
     }
   };
 
-  const handleDownload = (versionId?: string, storagePath?: string) => {
+  const handleDownload = async (
+    versionId?: string,
+    storagePath?: string,
+    fileName?: string,
+  ) => {
     if (versionId) {
-      window.open(
-        `/api/dataset-versions/${encodeURIComponent(versionId)}/download`,
-        '_blank',
-      );
+      const progress = beginDownloadProgress();
+      try {
+        await downloadDatasetVersion(versionId, fileName, {
+          skipErrorHandler: true,
+          onProgress: progress.update,
+        });
+        progress.close();
+        message.success('下载完成');
+      } catch (error: unknown) {
+        progress.close();
+        const tip = getApiErrorMessage(error, '下载失败');
+        if (tip === '已取消下载') return;
+        message.error(tip);
+      }
       return;
     }
     if (!storagePath) {
@@ -952,6 +968,7 @@ const DatasetDetail: React.FC = () => {
   const supportsInlinePreview =
     datasetInfo?.type === 'CV' ||
     datasetInfo?.type === 'NLP' ||
+    datasetInfo?.type === 'ROBOT' ||
     datasetInfo?.type === 'LEROBOT';
   /** 有活动 V2 工作区即展示面板（不依赖预览是否切到 target DRAFT 行） */
   const showWorkspacePanel = !!activeWorkspace && !!workspaceDatasetType;
@@ -1051,6 +1068,7 @@ const DatasetDetail: React.FC = () => {
                     )
                   : undefined,
                 datasetInfo.latestVersion?.storagePath,
+                datasetInfo.latestVersion?.fileName,
               )
             }
           >
@@ -1218,7 +1236,11 @@ const DatasetDetail: React.FC = () => {
               key: 'readme',
               label: 'README',
               children: (
-                <ZipReadmePanel source="dataset" versionId={previewVersionId} />
+                <ZipReadmePanel
+                  source="dataset"
+                  versionId={previewVersionId}
+                  datasetType={datasetInfo?.type}
+                />
               ),
             },
             {
@@ -1592,6 +1614,7 @@ const DatasetDetail: React.FC = () => {
                                       datasetInfo.id,
                                     ),
                                     record.storagePath,
+                                    record.fileName,
                                   )
                                 }
                               >

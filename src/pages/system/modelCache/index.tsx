@@ -6,8 +6,10 @@ import {
   Button,
   Card,
   Empty,
-  message,
+  Form,
+  InputNumber,
   Modal,
+  message,
   Progress,
   Space,
   Table,
@@ -23,7 +25,18 @@ import {
   type ModelCacheEntry,
   type ModelCacheNode,
   type ModelCacheOverview,
+  updateModelCachePolicy,
 } from '@/services/system/modelCache';
+
+const GIB = 1024 ** 3;
+const MIN_POLICY_GIB = 1;
+const MAX_POLICY_GIB = 1024;
+
+interface ModelCachePolicyForm {
+  maxGiB: number;
+  minFreeGiB: number;
+  runtimeReserveGiB: number;
+}
 
 function formatBytes(value?: number): string {
   const bytes = Number(value || 0);
@@ -41,11 +54,25 @@ function formatEpoch(value?: number): string {
   return new Date(value * 1000).toLocaleString();
 }
 
+function formatUpdatedAt(value?: string | null): string {
+  if (!value) return '尚未通过页面修改';
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? '-' : timestamp.toLocaleString();
+}
+
+function formatSignedBytes(value?: number): string {
+  const bytes = Number(value || 0);
+  if (bytes === 0) return '0 B';
+  return `${bytes < 0 ? '-' : '+'}${formatBytes(Math.abs(bytes))}`;
+}
+
 const ModelCachePage: React.FC = () => {
   const access = useAccess();
   const [overview, setOverview] = useState<ModelCacheOverview>();
   const [loading, setLoading] = useState(false);
   const [clearingNode, setClearingNode] = useState<string>();
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policyForm] = Form.useForm<ModelCachePolicyForm>();
   const [selectedByNode, setSelectedByNode] = useState<
     Record<string, React.Key[]>
   >({});
@@ -59,11 +86,18 @@ const ModelCachePage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetchModelCacheOverview({ skipErrorHandler: true });
+      const response = await fetchModelCacheOverview({
+        skipErrorHandler: true,
+      });
       if (response.code !== 200 || !response.data) {
         throw new Error(response.message || '模型缓存查询失败');
       }
       setOverview(response.data);
+      policyForm.setFieldsValue({
+        maxGiB: response.data.maxBytes / GIB,
+        minFreeGiB: response.data.minFreeBytes / GIB,
+        runtimeReserveGiB: response.data.runtimeReserveBytes / GIB,
+      });
       setSelectedByNode({});
     } catch (error) {
       message.error(
@@ -72,7 +106,7 @@ const ModelCachePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [policyForm]);
 
   useEffect(() => {
     if (access.canAccessModelCache) {
@@ -128,7 +162,9 @@ const ModelCachePage: React.FC = () => {
     (node: ModelCacheNode, clearAll: boolean) => {
       const count = (selectedByNode[node.serverIp] || []).length;
       Modal.confirm({
-        title: clearAll ? '清空该节点的模型缓存？' : `清理选中的 ${count} 项缓存？`,
+        title: clearAll
+          ? '清空该节点的模型缓存？'
+          : `清理选中的 ${count} 项缓存？`,
         content:
           '这里只删除可重新下载的缓存副本，不删除对象存储中的原始模型。正在被训练或推理使用的权重会自动跳过。',
         okText: clearAll ? '确认清空' : '确认清理',
@@ -139,6 +175,71 @@ const ModelCachePage: React.FC = () => {
     },
     [executeClear, selectedByNode],
   );
+
+  const savePolicy = useCallback(
+    async (values: ModelCachePolicyForm) => {
+      setSavingPolicy(true);
+      try {
+        const response = await updateModelCachePolicy(
+          {
+            maxBytes: values.maxGiB * GIB,
+            minFreeBytes: values.minFreeGiB * GIB,
+            runtimeReserveBytes: values.runtimeReserveGiB * GIB,
+          },
+          { skipErrorHandler: true },
+        );
+        if (response.code !== 200 || !response.data) {
+          throw new Error(response.message || '缓存保护策略保存失败');
+        }
+        setOverview(response.data);
+        policyForm.setFieldsValue({
+          maxGiB: response.data.maxBytes / GIB,
+          minFreeGiB: response.data.minFreeBytes / GIB,
+          runtimeReserveGiB: response.data.runtimeReserveBytes / GIB,
+        });
+        message.success(response.message || '缓存保护策略保存成功');
+      } catch (error) {
+        message.error(
+          `${error instanceof Error ? error.message : '缓存保护策略保存失败'}；已重新读取服务器实际值`,
+        );
+        await load();
+      } finally {
+        setSavingPolicy(false);
+      }
+    },
+    [load, policyForm],
+  );
+
+  const confirmPolicyUpdate = useCallback(async () => {
+    let values: ModelCachePolicyForm;
+    try {
+      values = await policyForm.validateFields();
+    } catch {
+      return;
+    }
+    const current = overview
+      ? {
+          maxGiB: overview.maxBytes / GIB,
+          minFreeGiB: overview.minFreeBytes / GIB,
+          runtimeReserveGiB: overview.runtimeReserveBytes / GIB,
+        }
+      : undefined;
+    const lowering = Boolean(
+      current &&
+        (values.maxGiB < current.maxGiB ||
+          values.minFreeGiB < current.minFreeGiB ||
+          values.runtimeReserveGiB < current.runtimeReserveGiB),
+    );
+    const total = values.maxGiB + values.minFreeGiB + values.runtimeReserveGiB;
+    Modal.confirm({
+      title: lowering ? '确认降低缓存磁盘保护门？' : '确认更新缓存磁盘保护门？',
+      content: `空缓存节点至少需要 ${total} GiB 可用空间。保存前会检查所有缓存就绪节点；不满足条件则拒绝保存。运行中的任务不会被修改，新建任务和后续部署验收使用新值。`,
+      okText: lowering ? '确认降低' : '确认更新',
+      okButtonProps: lowering ? { danger: true } : undefined,
+      cancelText: '取消',
+      onOk: () => savePolicy(values),
+    });
+  }, [overview, policyForm, savePolicy]);
 
   const columns = useMemo<ColumnsType<ModelCacheEntry>>(
     () => [
@@ -215,13 +316,124 @@ const ModelCachePage: React.FC = () => {
         showIcon
         type="info"
         message="内存与磁盘保护"
-        description={`权重以流式方式下载和校验，不会整体读入内存；节点缓存上限 ${formatBytes(
+        description={`权重以流式方式下载和校验，不会整体读入内存；缓存上限 ${formatBytes(
           overview?.maxBytes,
         )}，至少保留 ${formatBytes(
           overview?.minFreeBytes,
-        )} 磁盘空间。清理时不会中断正在运行的任务。`}
+        )} 空闲空间，并为运行镜像预留 ${formatBytes(
+          overview?.runtimeReserveBytes,
+        )}。空缓存节点保护门合计 ${formatBytes(
+          overview?.emptyCacheGateBytes,
+        )}；清理不会中断正在运行的任务。`}
         style={{ marginBottom: 16 }}
       />
+
+      {access.canManageModelCachePolicy ? (
+        <Card
+          title="缓存磁盘保护门"
+          style={{ marginBottom: 16 }}
+          loading={loading}
+        >
+          <Alert
+            showIcon
+            type="warning"
+            message="保存时按真实节点磁盘情况做安全校验"
+            description="三个数值均按整数 GiB 设置。任何缓存就绪节点空间不足、检查失败，或当前缓存已超过新上限时，后端都会拒绝保存，不会套用前端临时值。"
+            style={{ marginBottom: 16 }}
+          />
+          <Form<ModelCachePolicyForm>
+            form={policyForm}
+            layout="vertical"
+            disabled={loading || savingPolicy || !overview}
+          >
+            <Space size={24} wrap align="start">
+              <Form.Item
+                name="maxGiB"
+                label="缓存最多使用"
+                rules={[
+                  { required: true, message: '请输入缓存上限' },
+                  {
+                    type: 'number',
+                    min: MIN_POLICY_GIB,
+                    max: MAX_POLICY_GIB,
+                    message: '请输入 1～1024 之间的整数',
+                  },
+                ]}
+              >
+                <InputNumber
+                  min={MIN_POLICY_GIB}
+                  max={MAX_POLICY_GIB}
+                  precision={0}
+                  addonAfter="GiB"
+                  style={{ width: 220 }}
+                />
+              </Form.Item>
+              <Form.Item
+                name="minFreeGiB"
+                label="最低空闲空间"
+                rules={[
+                  { required: true, message: '请输入最低空闲空间' },
+                  {
+                    type: 'number',
+                    min: MIN_POLICY_GIB,
+                    max: MAX_POLICY_GIB,
+                    message: '请输入 1～1024 之间的整数',
+                  },
+                ]}
+              >
+                <InputNumber
+                  min={MIN_POLICY_GIB}
+                  max={MAX_POLICY_GIB}
+                  precision={0}
+                  addonAfter="GiB"
+                  style={{ width: 220 }}
+                />
+              </Form.Item>
+              <Form.Item
+                name="runtimeReserveGiB"
+                label="运行镜像预留"
+                rules={[
+                  { required: true, message: '请输入运行镜像预留' },
+                  {
+                    type: 'number',
+                    min: MIN_POLICY_GIB,
+                    max: MAX_POLICY_GIB,
+                    message: '请输入 1～1024 之间的整数',
+                  },
+                ]}
+              >
+                <InputNumber
+                  min={MIN_POLICY_GIB}
+                  max={MAX_POLICY_GIB}
+                  precision={0}
+                  addonAfter="GiB"
+                  style={{ width: 220 }}
+                />
+              </Form.Item>
+            </Space>
+            <Typography.Paragraph type="secondary">
+              当前空缓存保护门：{formatBytes(overview?.emptyCacheGateBytes)}
+              ；最近更新：
+              {formatUpdatedAt(overview?.policyUpdatedAt)}
+            </Typography.Paragraph>
+            <Space>
+              <Button
+                type="primary"
+                loading={savingPolicy}
+                onClick={() => void confirmPolicyUpdate()}
+              >
+                保存保护门
+              </Button>
+              <Button
+                disabled={loading || savingPolicy}
+                onClick={() => void load()}
+              >
+                恢复服务器当前值
+              </Button>
+            </Space>
+          </Form>
+        </Card>
+      ) : null}
 
       {!overview?.nodes?.length ? (
         <Card loading={loading}>
@@ -231,7 +443,10 @@ const ModelCachePage: React.FC = () => {
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           {overview.nodes.map((node) => {
             const percent = overview.maxBytes
-              ? Math.min(100, Math.round((node.usedBytes / overview.maxBytes) * 100))
+              ? Math.min(
+                  100,
+                  Math.round((node.usedBytes / overview.maxBytes) * 100),
+                )
               : 0;
             const selected = selectedByNode[node.serverIp] || [];
             const clearing = clearingNode === node.serverIp;
@@ -290,7 +505,21 @@ const ModelCachePage: React.FC = () => {
                     {formatBytes(overview.maxBytes)}；磁盘可用{' '}
                     {formatBytes(node.diskFreeBytes)}
                   </Typography.Text>
-                  <Progress percent={percent} status={percent >= 90 ? 'exception' : 'normal'} />
+                  {node.cacheReady && !node.error ? (
+                    <Typography.Text
+                      type={
+                        node.policyHeadroomBytes < 0 ? 'danger' : 'secondary'
+                      }
+                    >
+                      当前保护门要求可用{' '}
+                      {formatBytes(node.requiredAvailableBytes)}；安全余量{' '}
+                      {formatSignedBytes(node.policyHeadroomBytes)}
+                    </Typography.Text>
+                  ) : null}
+                  <Progress
+                    percent={percent}
+                    status={percent >= 90 ? 'exception' : 'normal'}
+                  />
                   <Table<ModelCacheEntry>
                     rowKey="sha256"
                     size="small"
@@ -301,7 +530,9 @@ const ModelCachePage: React.FC = () => {
                       access.canClearModelCache
                         ? {
                             selectedRowKeys: selected,
-                            getCheckboxProps: (entry) => ({ disabled: entry.inUse }),
+                            getCheckboxProps: (entry) => ({
+                              disabled: entry.inUse,
+                            }),
                             onChange: (keys) =>
                               setSelectedByNode((current) => ({
                                 ...current,

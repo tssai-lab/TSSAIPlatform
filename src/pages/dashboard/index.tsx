@@ -7,6 +7,7 @@ import {
   Descriptions,
   Empty,
   Progress,
+  Result,
   Row,
   Spin,
   Statistic,
@@ -17,7 +18,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useGuide } from '@/components/Guide/GuideContext';
 import GuideEntryCard from '@/components/Guide/GuideEntryCard';
 import { usePageTour } from '@/components/Guide/usePageTour';
-import { MOCK_DATASETS, MOCK_MODELS, MOCK_TASKS } from '@/constants/mockData';
 import { TASK_STATUS } from '@/constants/platform';
 import {
   fetchDatasetList,
@@ -121,33 +121,33 @@ const Dashboard: React.FC = () => {
   const [resourceSummary, setResourceSummary] =
     useState<ResourceSummary | null>(null);
   const [latestTask, setLatestTask] = useState<API.TaskItem | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
+    setDashboardError(null);
     try {
       const [modelRes, datasetRes, taskRes, runningRes, summaryRes] =
         await Promise.all([
-          fetchModelList({ current: 1, pageSize: 1 }).catch(() => ({
-            data: MOCK_MODELS,
-            total: MOCK_MODELS.length,
-          })),
-          fetchDatasetList({ current: 1, pageSize: 1 }).catch(() => ({
-            data: MOCK_DATASETS,
-            total: MOCK_DATASETS.length,
-          })),
-          fetchTaskList({ current: 1, pageSize: 100 }).catch(() => ({
-            data: { data: MOCK_TASKS, total: MOCK_TASKS.length },
-          })),
-          fetchTaskList({ current: 1, pageSize: 100, status: 'running' }).catch(
-            () => ({
-              data: {
-                data: MOCK_TASKS.filter((t) => t.status === 'running'),
-                total: MOCK_TASKS.filter((t) => t.status === 'running').length,
-              },
-            }),
-          ),
-          fetchResourceMonitorSummary().catch(() => null),
+          fetchModelList({ current: 1, pageSize: 1 }),
+          fetchDatasetList({ current: 1, pageSize: 1 }),
+          fetchTaskList({ current: 1, pageSize: 100 }),
+          fetchTaskList({ current: 1, pageSize: 100, status: 'running' }),
+          fetchResourceMonitorSummary(),
         ]);
+
+      if (!summaryRes?.success || !summaryRes.data) {
+        throw new Error(
+          summaryRes?.errorMessage || '服务器资源汇总接口返回失败',
+        );
+      }
+      if (taskRes?.success === false || runningRes?.success === false) {
+        throw new Error(
+          taskRes?.errorMessage ||
+            runningRes?.errorMessage ||
+            '训练任务统计接口返回失败',
+        );
+      }
 
       const allTasks = parseTaskList(taskRes);
       const runningTasks = parseTaskList(runningRes);
@@ -161,11 +161,7 @@ const Dashboard: React.FC = () => {
           )[0]
         : null;
 
-      if (summaryRes?.success && summaryRes.data) {
-        setResourceSummary(summaryRes.data);
-      } else {
-        setResourceSummary(null);
-      }
+      setResourceSummary(summaryRes.data);
 
       setStats({
         modelTotal: modelRes?.total ?? modelRes?.data?.length ?? 0,
@@ -176,6 +172,20 @@ const Dashboard: React.FC = () => {
           : countTasksByStatus(allTasks, 'running'),
       });
       setLatestTask(enrichedLatest);
+    } catch (error) {
+      setStats({
+        modelTotal: 0,
+        datasetTotal: 0,
+        taskTotal: 0,
+        runningTotal: 0,
+      });
+      setResourceSummary(null);
+      setLatestTask(null);
+      setDashboardError(
+        error instanceof Error && error.message
+          ? error.message
+          : '无法从后端获取首页统计数据',
+      );
     } finally {
       setLoading(false);
     }
@@ -184,6 +194,26 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
+
+  if (dashboardError && !loading) {
+    return (
+      <PageContainer
+        title="首页"
+        subTitle={userName ? `欢迎回来，${userName}` : undefined}
+      >
+        <Result
+          status="error"
+          title="首页数据加载失败"
+          subTitle={`无法从后端获取真实统计数据，页面没有使用演示数据替代。${dashboardError ? ` 原因：${dashboardError}` : ''}`}
+          extra={
+            <Button type="primary" onClick={() => void loadDashboard()}>
+              重新加载
+            </Button>
+          }
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer
@@ -258,7 +288,7 @@ const Dashboard: React.FC = () => {
             <Row gutter={[12, 0]} wrap={false}>
               <Col flex="1 1 0">
                 <Statistic
-                  title="GPU 服务器"
+                  title="计算节点"
                   value={resourceSummary.total}
                   suffix="台"
                   {...statProps}

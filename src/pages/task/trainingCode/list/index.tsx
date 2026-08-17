@@ -2,27 +2,69 @@ import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
 import { Button, message, Popconfirm, Space, Tag, Typography } from 'antd';
-import React, { useRef } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
+import ResizableTitle from '@/pages/dataset/components/ResizableTitle';
 import type { CodeVersionListItem } from '@/services/code';
 import {
-  approveCodeVersion,
   deleteCodeAsset,
   downloadCodeVersionZip,
-  fetchCodeVersionList,
+  fetchOwnerCodeVersionInventory,
   getCodeUserDisplayName,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
-import { removePendingCodeVersion } from '@/utils/pendingCodeVersions';
+import { resolveOwnerFacingApproval } from '@/utils/codeApprovalDisplay';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
-function approvalTag(status?: string) {
-  if (status === 'APPROVED') {
-    return <Tag color="success">APPROVED</Tag>;
-  }
-  if (status === 'PENDING') {
-    return <Tag color="warning">PENDING</Tag>;
-  }
-  return <Tag>{status || '-'}</Tag>;
+const FIXED_COLUMNS_SCROLL_X = 930;
+
+type ResizableColumnKey = 'codeAssetName' | 'fileName' | 'trainingProfile';
+
+const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnKey, number> = {
+  codeAssetName: 160,
+  fileName: 180,
+  trainingProfile: 220,
+};
+
+/** 上传时间：createdAt / submittedAt 同源 */
+function getCodeUploadedAt(record: CodeVersionListItem): string {
+  return String(record.createdAt || record.submittedAt || '').trim();
+}
+
+function compareUploadedAtDesc(
+  a: CodeVersionListItem,
+  b: CodeVersionListItem,
+): number {
+  const ta = getCodeUploadedAt(a);
+  const tb = getCodeUploadedAt(b);
+  if (ta && tb) return tb.localeCompare(ta);
+  if (ta) return -1;
+  if (tb) return 1;
+  return String(b.codeVersionId || '').localeCompare(
+    String(a.codeVersionId || ''),
+  );
+}
+
+function approvalTag(
+  status?: string,
+  reviewDisposition?: string,
+  adminReviewMode?: boolean,
+) {
+  const facing = resolveOwnerFacingApproval({
+    approvalStatus: status,
+    reviewDisposition,
+    adminReviewMode,
+  });
+  const color =
+    facing.tone === 'success'
+      ? 'success'
+      : facing.tone === 'error'
+        ? 'error'
+        : facing.tone === 'warning'
+          ? 'warning'
+          : 'default';
+  return <Tag color={color}>{facing.label}</Tag>;
 }
 
 function statusTag(status?: string) {
@@ -35,6 +77,25 @@ function statusTag(status?: string) {
 const TrainingCodeList: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType | null>(null);
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+
+  const handleColumnResize = useCallback(
+    (key: ResizableColumnKey) => (width: number) => {
+      setColumnWidths((prev) =>
+        prev[key] === width ? prev : { ...prev, [key]: width },
+      );
+    },
+    [],
+  );
+
+  const tableScrollX = useMemo(
+    () =>
+      FIXED_COLUMNS_SCROLL_X +
+      columnWidths.codeAssetName +
+      columnWidths.fileName +
+      columnWidths.trainingProfile,
+    [columnWidths],
+  );
 
   const requestList = async (params: {
     codeAssetName?: string;
@@ -42,14 +103,9 @@ const TrainingCodeList: React.FC = () => {
     pageSize?: number;
   }) => {
     try {
-      const res = await fetchCodeVersionList(
-        {
-          ...(params.codeAssetName?.trim()
-            ? { codeName: params.codeAssetName.trim() }
-            : {}),
-        },
-        { skipErrorHandler: true },
-      );
+      const res = await fetchOwnerCodeVersionInventory({
+        skipErrorHandler: true,
+      });
       if (res?.success === false) {
         message.error(res?.errorMessage || '训练代码列表加载失败');
         return { data: [], success: false, total: 0 };
@@ -57,10 +113,14 @@ const TrainingCodeList: React.FC = () => {
       let list = Array.isArray(res?.data) ? res.data : [];
       const keyword = params.codeAssetName?.trim()?.toLowerCase();
       if (keyword) {
-        list = list.filter((item) =>
-          item.codeAssetName?.toLowerCase().includes(keyword),
-        );
+        list = list.filter((item) => {
+          const name = getCodeUserDisplayName(item).toLowerCase();
+          const fileName = String(item.fileName || '').toLowerCase();
+          return name.includes(keyword) || fileName.includes(keyword);
+        });
       }
+      // 默认最新上传在前
+      list = [...list].sort(compareUploadedAtDesc);
       return {
         data: list,
         success: true,
@@ -72,32 +132,17 @@ const TrainingCodeList: React.FC = () => {
     }
   };
 
-  const handleApprove = async (codeVersionId: string) => {
-    try {
-      const res = await approveCodeVersion(codeVersionId, {
-        skipErrorHandler: true,
-      });
-      if (res?.success === false) {
-        message.error(res?.errorMessage || '审核失败');
-        return;
-      }
-      message.success('训练代码版本已审核通过');
-      actionRef.current?.reload();
-    } catch (error: any) {
-      message.error(getApiErrorMessage(error, '审核失败'));
-    }
-  };
-
   const handleDelete = async (record: CodeVersionListItem) => {
-    const assetId = record.codeAssetId?.trim();
-    if (!assetId) {
-      message.error('缺少 codeAssetId，无法删除');
-      return;
-    }
     try {
-      await deleteCodeAsset(assetId, { skipErrorHandler: true });
-      removePendingCodeVersion(record.codeVersionId);
-      message.success('已删除训练代码资产');
+      const res = await deleteCodeAsset(record.codeAssetId, {
+        skipErrorHandler: true,
+        codeVersionId: record.codeVersionId,
+      });
+      if (res?.data?.localOnly) {
+        message.success('已从列表移除（本地待审记录，服务端无对应资产）');
+      } else {
+        message.success('已删除训练代码资产');
+      }
       actionRef.current?.reload();
     } catch (error: any) {
       message.error(getApiErrorMessage(error, '删除训练代码失败'));
@@ -105,155 +150,194 @@ const TrainingCodeList: React.FC = () => {
   };
 
   const handleDownload = async (record: CodeVersionListItem) => {
+    const progress = beginDownloadProgress();
     try {
       await downloadCodeVersionZip(
         record.codeVersionId,
         record.fileName || `${record.codeVersionId}.zip`,
-        { skipErrorHandler: true },
+        { skipErrorHandler: true, onProgress: progress.update },
       );
-      message.success('开始下载');
+      progress.close();
+      message.success('下载完成');
     } catch (error: any) {
-      message.error(getApiErrorMessage(error, '下载失败'));
+      progress.close();
+      const tip = getApiErrorMessage(error, '下载失败');
+      if (tip === '已取消下载') return;
+      message.error(tip);
     }
   };
 
-  const columns: ProColumns<CodeVersionListItem>[] = [
-    {
-      title: '代码名称',
-      dataIndex: 'codeAssetName',
-      key: 'codeAssetName',
-      width: 160,
-      ellipsis: true,
-      sorter: (a, b) =>
-        getCodeUserDisplayName(a).localeCompare(getCodeUserDisplayName(b)),
-      render: (_, record) => getCodeUserDisplayName(record),
-    },
-    {
-      title: '文件名',
-      dataIndex: 'fileName',
-      key: 'fileName',
-      width: 180,
-      ellipsis: true,
-      hideInSearch: true,
-      sorter: (a, b) =>
-        String(a.fileName || '').localeCompare(String(b.fileName || '')),
-      render: (_, record) => record.fileName?.trim() || '-',
-    },
-    {
-      title: '训练方案',
-      dataIndex: 'trainingProfile',
-      key: 'trainingProfile',
-      ellipsis: true,
-      hideInSearch: true,
-      width: 220,
-      sorter: (a, b) =>
-        String(a.trainingProfile || '').localeCompare(
-          String(b.trainingProfile || ''),
+  const columns: ProColumns<CodeVersionListItem>[] = useMemo(
+    () => [
+      {
+        title: '代码名称',
+        dataIndex: 'codeAssetName',
+        key: 'codeAssetName',
+        width: columnWidths.codeAssetName,
+        ellipsis: true,
+        sorter: (a, b) =>
+          getCodeUserDisplayName(a).localeCompare(getCodeUserDisplayName(b)),
+        onHeaderCell: () => ({
+          width: columnWidths.codeAssetName,
+          minWidth: 96,
+          onResize: handleColumnResize('codeAssetName'),
+        }),
+        render: (_, record) => getCodeUserDisplayName(record),
+      },
+      {
+        title: '文件名',
+        dataIndex: 'fileName',
+        key: 'fileName',
+        width: columnWidths.fileName,
+        ellipsis: true,
+        hideInSearch: true,
+        sorter: (a, b) =>
+          String(a.fileName || '').localeCompare(String(b.fileName || '')),
+        onHeaderCell: () => ({
+          width: columnWidths.fileName,
+          minWidth: 96,
+          onResize: handleColumnResize('fileName'),
+        }),
+        render: (_, record) => record.fileName?.trim() || '-',
+      },
+      {
+        title: '训练方案',
+        dataIndex: 'trainingProfile',
+        key: 'trainingProfile',
+        ellipsis: true,
+        hideInSearch: true,
+        width: columnWidths.trainingProfile,
+        sorter: (a, b) =>
+          String(a.trainingProfile || '').localeCompare(
+            String(b.trainingProfile || ''),
+          ),
+        onHeaderCell: () => ({
+          width: columnWidths.trainingProfile,
+          minWidth: 120,
+          onResize: handleColumnResize('trainingProfile'),
+        }),
+      },
+      {
+        title: '审核状态',
+        dataIndex: 'approvalStatus',
+        key: 'approvalStatus',
+        width: 110,
+        hideInSearch: true,
+        sorter: (a, b) =>
+          String(a.approvalStatus || '').localeCompare(
+            String(b.approvalStatus || ''),
+          ),
+        render: (_, record) =>
+          approvalTag(
+            record.approvalStatus,
+            record.reviewDisposition,
+            !access.isAdmin || !isTrainingCodeAutoApproveEnabled(),
+          ),
+      },
+      {
+        title: '校验状态',
+        dataIndex: 'validationStatus',
+        key: 'validationStatus',
+        width: 110,
+        hideInSearch: true,
+        render: (_, record) => record.validationStatus || '-',
+      },
+      {
+        title: '风险等级',
+        dataIndex: 'riskLevel',
+        key: 'riskLevel',
+        width: 100,
+        hideInSearch: true,
+        render: (_, record) => record.riskLevel || '-',
+      },
+      {
+        title: '就绪状态',
+        dataIndex: 'status',
+        key: 'status',
+        width: 100,
+        hideInSearch: true,
+        render: (_, record) => statusTag(record.status),
+      },
+      {
+        title: '上传时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        width: 170,
+        hideInSearch: true,
+        defaultSortOrder: 'descend',
+        sorter: (a, b) => {
+          const ta = getCodeUploadedAt(a);
+          const tb = getCodeUploadedAt(b);
+          if (ta && tb) return ta.localeCompare(tb);
+          if (ta) return 1;
+          if (tb) return -1;
+          return String(a.codeVersionId || '').localeCompare(
+            String(b.codeVersionId || ''),
+          );
+        },
+        render: (_, record) => formatDisplayDateTime(getCodeUploadedAt(record)),
+      },
+      {
+        title: 'codeVersionId',
+        dataIndex: 'codeVersionId',
+        key: 'codeVersionId',
+        hideInSearch: true,
+        ellipsis: true,
+        width: 180,
+        render: (_, record) => (
+          <Typography.Text copyable code style={{ fontSize: 12 }}>
+            {record.codeVersionId}
+          </Typography.Text>
         ),
-    },
-    {
-      title: '审核状态',
-      dataIndex: 'approvalStatus',
-      key: 'approvalStatus',
-      width: 110,
-      hideInSearch: true,
-      sorter: (a, b) =>
-        String(a.approvalStatus || '').localeCompare(
-          String(b.approvalStatus || ''),
-        ),
-      render: (_, record) => approvalTag(record.approvalStatus),
-    },
-    {
-      title: '校验状态',
-      dataIndex: 'validationStatus',
-      key: 'validationStatus',
-      width: 110,
-      hideInSearch: true,
-      render: (_, record) => record.validationStatus || '-',
-    },
-    {
-      title: '风险等级',
-      dataIndex: 'riskLevel',
-      key: 'riskLevel',
-      width: 100,
-      hideInSearch: true,
-      render: (_, record) => record.riskLevel || '-',
-    },
-    {
-      title: '就绪状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      hideInSearch: true,
-      render: (_, record) => statusTag(record.status),
-    },
-    {
-      title: 'codeVersionId',
-      dataIndex: 'codeVersionId',
-      key: 'codeVersionId',
-      hideInSearch: true,
-      ellipsis: true,
-      width: 180,
-      render: (_, record) => (
-        <Typography.Text copyable code style={{ fontSize: 12 }}>
-          {record.codeVersionId}
-        </Typography.Text>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 260,
-      hideInSearch: true,
-      render: (_, record) => (
-        <Space size={0} wrap>
-          <Button
-            type="link"
-            style={{ paddingLeft: 0 }}
-            onClick={() =>
-              history.push(
-                `/task/code/detail/${encodeURIComponent(record.codeVersionId)}`,
-                { record, from: 'list' },
-              )
-            }
-          >
-            查看
-          </Button>
-          <Button type="link" onClick={() => handleDownload(record)}>
-            下载
-          </Button>
-          {access.isAdmin && record.approvalStatus !== 'APPROVED' && (
+      },
+      {
+        title: '操作',
+        key: 'action',
+        width: 180,
+        hideInSearch: true,
+        render: (_, record) => (
+          <Space size={0} wrap>
             <Button
               type="link"
-              onClick={() => handleApprove(record.codeVersionId)}
+              style={{ paddingLeft: 0 }}
+              onClick={() =>
+                history.push(
+                  `/task/code/detail/${encodeURIComponent(record.codeVersionId)}`,
+                  { record, from: 'list' },
+                )
+              }
             >
-              审核通过
+              查看
             </Button>
-          )}
-          <Popconfirm
-            title="删除训练代码资产？"
-            description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
-            okText="删除"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => handleDelete(record)}
-          >
-            <Button type="link" danger>
-              删除
+            <Button type="link" onClick={() => handleDownload(record)}>
+              下载
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+            <Popconfirm
+              title="删除训练代码资产？"
+              description="将软删除整个代码资产（含其下版本）。若已被训练引用或存在打开工作区，删除会失败。"
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => handleDelete(record)}
+            >
+              <Button type="link" danger>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
+      },
+    ],
+    [access.isAdmin, columnWidths, handleColumnResize],
+  );
 
   return (
     <PageContainer
       title="训练代码"
       subTitle={
         isTrainingCodeAutoApproveEnabled()
-          ? '当前为自动审核：上传/发布后默认通过，可直接用于发起训练（READY + APPROVED）'
-          : '训练页仅可使用 READY + APPROVED 的代码版本；详情页补充展示校验、风险与消费清单字段'
+          ? '当前为自动审核：上传/发布后可由系统直接通过或拒绝'
+          : '上传后即产生列表记录。系统无法自动通过时显示 PENDING，由管理员决定 APPROVED / REJECTED；仅 APPROVED 版本可用于发起训练'
       }
       extra={[
         access.isAdmin && !isTrainingCodeAutoApproveEnabled() ? (
@@ -284,12 +368,17 @@ const TrainingCodeList: React.FC = () => {
       <ProTable<CodeVersionListItem>
         actionRef={actionRef}
         columns={columns}
+        components={{
+          header: {
+            cell: ResizableTitle,
+          },
+        }}
         request={requestList}
         rowKey="codeVersionId"
         search={{ labelWidth: 'auto' }}
         pagination={{ pageSize: 10 }}
         // 无 width 的 ellipsis 列在窄屏会被挤成 0 宽（列设置仍显示已勾选）
-        scroll={{ x: 1420 }}
+        scroll={{ x: tableScrollX }}
       />
     </PageContainer>
   );

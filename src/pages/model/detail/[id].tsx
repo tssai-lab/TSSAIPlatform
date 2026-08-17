@@ -28,7 +28,11 @@ import type { Key } from 'react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import CodePreview from '@/components/CodePreview';
 import ZipReadmePanel from '@/components/ZipReadmePanel';
-import { MODEL_TYPE_COLORS, MODEL_TYPE_OPTIONS } from '@/constants/model';
+import {
+  MODEL_BACKEND_TYPE_OPTIONS,
+  MODEL_TYPE_COLORS,
+  MODEL_TYPE_VALUE_ENUM,
+} from '@/constants/model';
 import { resolveModelVersionId } from '@/services/model';
 import {
   deleteModelAsset,
@@ -43,11 +47,30 @@ import {
   switchModelCurrentVersion,
   updateModelAsset,
 } from '@/services/platform';
+import { getApiErrorMessage } from '@/utils/apiError';
 import {
   buildCodeFileTreeData,
   collectCodeFileTreeExpandedKeys,
 } from '@/utils/codeFileTree';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
+
+const EMPTY_CODE_FILES: API.ModelCodeFile[] = [];
+
+function sameKeyList(left: Key[], right: Key[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((key, index) => key === right[index]);
+}
+
+const ONE_MIB = 1024 * 1024;
+
+function formatArtifactSize(sizeBytes: number): string {
+  if (sizeBytes < ONE_MIB) {
+    return `${sizeBytes} 字节`;
+  }
+  return `${(sizeBytes / ONE_MIB).toFixed(2)} MB`;
+}
 
 const ModelDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -105,9 +128,9 @@ const ModelDetail: React.FC = () => {
           .map((v) => resolveModelVersionId(v, assetId))
           .find(Boolean);
       setSelectedVersionId(defaultVersionId);
-    } catch (error: any) {
+    } catch (error: unknown) {
       message.error(
-        error?.info?.message || error?.message || '加载模型详情失败',
+        getApiErrorMessage(error, '未找到该模型，或不属于当前账号。'),
       );
       setAssetInfo(null);
     } finally {
@@ -142,7 +165,7 @@ const ModelDetail: React.FC = () => {
       .finally(() => setCodeLoading(false));
   }, [selectedVersionId]);
 
-  const codeFiles = versionCode?.codeFiles ?? [];
+  const codeFiles = versionCode?.codeFiles ?? EMPTY_CODE_FILES;
   const readmeFilePaths = useMemo(
     () =>
       codeFiles
@@ -158,9 +181,15 @@ const ModelDetail: React.FC = () => {
     () => collectCodeFileTreeExpandedKeys(fileTreeData),
     [fileTreeData],
   );
+  const selectedFileKeys = useMemo(
+    () => (selectedCodePath ? [selectedCodePath] : []),
+    [selectedCodePath],
+  );
 
   useEffect(() => {
-    setExpandedFileKeys(defaultExpandedKeys);
+    setExpandedFileKeys((prev) =>
+      sameKeyList(prev, defaultExpandedKeys) ? prev : defaultExpandedKeys,
+    );
   }, [defaultExpandedKeys]);
 
   useEffect(() => {
@@ -185,7 +214,6 @@ const ModelDetail: React.FC = () => {
   const handleSelectCodeFile = async (path: string) => {
     if (!selectedVersionId || !path) return;
     if (path === selectedCodePath && versionCode?.codeContent) {
-      setSelectedCodePath(path);
       return;
     }
     setSelectedCodePath(path);
@@ -229,13 +257,19 @@ const ModelDetail: React.FC = () => {
       message.warning('当前版本没有可下载文件');
       return;
     }
+    const progress = beginDownloadProgress();
     try {
       await downloadModelVersion(versionId, record.fileName, {
         skipErrorHandler: true,
+        onProgress: progress.update,
       });
-      message.success('开始下载');
+      progress.close();
+      message.success('下载完成');
     } catch (error: any) {
-      message.error(error?.info?.message || error?.message || '下载失败');
+      progress.close();
+      const tip = error?.info?.message || error?.message || '下载失败';
+      if (tip === '已取消下载') return;
+      message.error(tip);
     }
   };
 
@@ -260,7 +294,7 @@ const ModelDetail: React.FC = () => {
     if (!assetInfo) return;
     assetForm.setFieldsValue({
       name: assetInfo.name,
-      type: assetInfo.type,
+      type: assetInfo.type === 'OTHER' ? undefined : assetInfo.type,
       remark: assetInfo.remark,
     });
     setAssetModalOpen(true);
@@ -412,7 +446,7 @@ const ModelDetail: React.FC = () => {
           </Descriptions.Item>
           <Descriptions.Item label="类型">
             <Tag color={MODEL_TYPE_COLORS[assetInfo.type] ?? 'default'}>
-              {assetInfo.type}
+              {MODEL_TYPE_VALUE_ENUM[assetInfo.type]?.text ?? assetInfo.type}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="资产 ID">
@@ -496,11 +530,13 @@ const ModelDetail: React.FC = () => {
                           >
                             <Tree.DirectoryTree
                               treeData={fileTreeData}
-                              selectedKeys={
-                                selectedCodePath ? [selectedCodePath] : []
-                              }
+                              selectedKeys={selectedFileKeys}
                               expandedKeys={expandedFileKeys}
-                              onExpand={(keys) => setExpandedFileKeys(keys)}
+                              onExpand={(keys) => {
+                                setExpandedFileKeys((prev) =>
+                                  sameKeyList(prev, keys) ? prev : keys,
+                                );
+                              }}
                               expandAction="click"
                               onSelect={(keys, info) => {
                                 if (!info.node.isLeaf) return;
@@ -793,9 +829,21 @@ const ModelDetail: React.FC = () => {
                           </Typography.Text>
                         </Descriptions.Item>
                         <Descriptions.Item label="制品大小" span={2}>
-                          {consumerManifest?.sizeBytes
-                            ? `${(consumerManifest.sizeBytes / 1024 / 1024).toFixed(2)} MB · ${consumerManifest.fileName}`
-                            : selectedVersion.fileName || '-'}
+                          {(() => {
+                            const sizeBytes =
+                              consumerManifest?.sizeBytes ??
+                              selectedVersion.sizeBytes;
+                            const fileName =
+                              consumerManifest?.fileName ||
+                              selectedVersion.fileName;
+                            if (sizeBytes == null || Number.isNaN(sizeBytes)) {
+                              return fileName || '-';
+                            }
+                            const sizeLabel = formatArtifactSize(sizeBytes);
+                            return fileName
+                              ? `${sizeLabel} · ${fileName}`
+                              : sizeLabel;
+                          })()}
                         </Descriptions.Item>
                         <Descriptions.Item label="超参" span={2}>
                           {(() => {
@@ -853,6 +901,15 @@ const ModelDetail: React.FC = () => {
         destroyOnClose
       >
         <Form form={assetForm} layout="vertical">
+          {assetInfo?.type === 'OTHER' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="历史类型 OTHER"
+              description="后端仅支持 CV、NLP、点云、ROBOT；保存前请改选正式类型。"
+            />
+          )}
           <Form.Item
             name="name"
             label="模型名称"
@@ -865,7 +922,7 @@ const ModelDetail: React.FC = () => {
             label="类型"
             rules={[{ required: true, message: '请选择类型' }]}
           >
-            <Select options={[...MODEL_TYPE_OPTIONS]} />
+            <Select options={[...MODEL_BACKEND_TYPE_OPTIONS]} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={3} />

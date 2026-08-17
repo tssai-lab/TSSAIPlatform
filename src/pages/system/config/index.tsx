@@ -83,6 +83,8 @@ function writeLocalSystemConfig(config: SystemConfig) {
   setTrainingCodeReviewLocalConfig({
     enableTrainingCodeAdminReview:
       config.enableTrainingCodeAdminReview ?? false,
+    trainingCodeReviewMode: config.trainingCodeReviewMode,
+    syncedFromServer: true,
   });
 }
 
@@ -296,7 +298,7 @@ const SystemConfigPage: React.FC = () => {
               name="enableTrainingCodeAdminReview"
               label="训练代码管理员审核"
               valuePropName="checked"
-              extra="关闭（默认）：上传/发布新版本后自动审核通过，可直接用于训练。开启：需管理员在「待审核」中人工通过或拒绝。"
+              extra="关闭：校验通过后由系统直接批准，可直接用于训练。开启：进入标准审核，中高风险需管理员在「待审核」中通过；低风险（LOW）仍可能被策略自动通过，不一定出现在待审列表。"
             >
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>

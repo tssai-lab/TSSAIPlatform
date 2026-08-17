@@ -60,6 +60,25 @@ function pickBizMessage(err: any, data: any): string | undefined {
   return trimmed || undefined;
 }
 
+/** 用户可见文案里不要带回资产/版本 ID（越权 404 时后端常把 ID 拼进 message） */
+const RESOURCE_ID_IN_TEXT =
+  /\b(?:model|dataset|code)[-_](?:asset|ver|version)[-_][a-zA-Z0-9]+\b/gi;
+
+export function stripResourceIdsFromUserText(text: string): string {
+  return text
+    .replace(RESOURCE_ID_IN_TEXT, '')
+    .replace(/\s*[:：]\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function mapNotFoundOrForbiddenMessage(raw: string): string | undefined {
+  if (/not found or no permission/i.test(raw)) {
+    return '未找到该资源，或不属于当前账号。';
+  }
+  return undefined;
+}
+
 /** 将 MANIFEST / 工作区 userError.details 格式化为短文案 */
 export function formatUserErrorDetails(details: unknown): string | undefined {
   if (details == null) return undefined;
@@ -107,24 +126,50 @@ export function getApiErrorMessage(err: any, fallback = '请求失败'): string 
   const status = err?.response?.status;
   const data = err?.response?.data;
   const errorCode = pickErrorCode(err, data);
+  const reasonCodeRaw =
+    data?.details?.reasonCode ??
+    err?.info?.details?.reasonCode ??
+    err?.reasonCode;
+  const reasonCode =
+    typeof reasonCodeRaw === 'string' && reasonCodeRaw.trim()
+      ? reasonCodeRaw.trim()
+      : undefined;
   const bizMessage = pickBizMessage(err, data);
   const detailsText = formatUserErrorDetails(
     data?.details ?? err?.info?.details,
   );
 
-  if (errorCode && WORKSPACE_ERROR_HINTS[errorCode]) {
-    const hint = WORKSPACE_ERROR_HINTS[errorCode];
+  // 优先用更细的 reasonCode（如 CODE_ASSET_CONFLICT + WORKSPACE_BASE_CONFLICT）
+  const hintCode =
+    (reasonCode && WORKSPACE_ERROR_HINTS[reasonCode]
+      ? reasonCode
+      : undefined) ||
+    (errorCode && WORKSPACE_ERROR_HINTS[errorCode] ? errorCode : undefined);
+
+  if (hintCode && WORKSPACE_ERROR_HINTS[hintCode]) {
+    const hint = WORKSPACE_ERROR_HINTS[hintCode];
     if (detailsText && !hint.includes(detailsText)) {
       return `${hint}（${detailsText}）`;
     }
     return hint;
   }
 
+  // 前端主动抛出的基线冲突（无 HTTP response）
+  if (
+    typeof err?.message === 'string' &&
+    err.message.includes('已有基于其他版本的编辑工作区')
+  ) {
+    return err.message;
+  }
+
   if (bizMessage) {
-    if (detailsText && !bizMessage.includes(detailsText)) {
-      return `${bizMessage}（${detailsText}）`;
+    const mapped = mapNotFoundOrForbiddenMessage(bizMessage);
+    if (mapped) return mapped;
+    const safeMessage = stripResourceIdsFromUserText(bizMessage);
+    if (detailsText && !safeMessage.includes(detailsText)) {
+      return `${safeMessage}（${stripResourceIdsFromUserText(detailsText)}）`;
     }
-    return bizMessage;
+    return safeMessage;
   }
 
   if (status === 404) {

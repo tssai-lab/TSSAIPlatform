@@ -5,11 +5,14 @@ import { Button, message, Popconfirm, Space, Tag } from 'antd';
 import React from 'react';
 import {
   deleteDataset,
+  downloadDatasetVersion,
   fetchDatasetList as fetchDatasetListService,
   getDownloadUrl,
   V2_DISPLAY_STATUS_LABEL,
   type V2DatasetDisplayStatus,
 } from '@/services/platform';
+import { getApiErrorMessage } from '@/utils/apiError';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 
 function resolveDetailHref(record: API.DatasetItem): string {
   const assetId = record.assetId || record.id;
@@ -155,12 +158,26 @@ const DatasetList: React.FC = () => {
     }
   };
 
-  const handleDownload = (versionId?: string, storagePath?: string) => {
+  const handleDownload = async (
+    versionId?: string,
+    storagePath?: string,
+    fileName?: string,
+  ) => {
     if (versionId) {
-      window.open(
-        `/api/dataset-versions/${encodeURIComponent(versionId)}/download`,
-        '_blank',
-      );
+      const progress = beginDownloadProgress();
+      try {
+        await downloadDatasetVersion(versionId, fileName, {
+          skipErrorHandler: true,
+          onProgress: progress.update,
+        });
+        progress.close();
+        message.success('下载完成');
+      } catch (error: unknown) {
+        progress.close();
+        const tip = getApiErrorMessage(error, '下载失败');
+        if (tip === '已取消下载') return;
+        message.error(tip);
+      }
       return;
     }
     if (!storagePath) {
@@ -242,7 +259,13 @@ const DatasetList: React.FC = () => {
           <Button
             type="link"
             style={{ paddingInline: 4 }}
-            onClick={() => handleDownload(record.versionId, record.storagePath)}
+            onClick={() =>
+              handleDownload(
+                record.versionId,
+                record.storagePath,
+                record.fileName,
+              )
+            }
           >
             下载
           </Button>

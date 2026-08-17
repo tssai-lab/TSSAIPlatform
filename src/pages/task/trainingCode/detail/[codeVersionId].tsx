@@ -73,6 +73,7 @@ import {
   collectCodeFileTreeExpandedKeys,
 } from '@/utils/codeFileTree';
 import { showValidationResultModal } from '@/utils/codeValidationUi';
+import { beginDownloadProgress } from '@/utils/downloadProgressToast';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import {
   removePendingCodeVersion,
@@ -124,12 +125,17 @@ const TrainingCodeDetail: React.FC = () => {
   const { codeVersionId = '' } = useParams<{ codeVersionId: string }>();
   const location = useLocation();
   const locationState = location.state as
-    | { record?: CodeVersionListItem; from?: 'pending' | 'list' }
+    | { record?: CodeVersionListItem; from?: 'pending' | 'list' | 'upload' }
     | undefined;
   const listRecord = locationState?.record;
   const fromPending = locationState?.from === 'pending';
+  const fromUpload = locationState?.from === 'upload';
   const adminReviewMode = fromPending && access.isAdmin;
-  const backPath = fromPending ? '/task/code/pending' : '/task/code/list';
+  const backPath = fromPending
+    ? '/task/code/pending'
+    : fromUpload
+      ? '/task/code/upload'
+      : '/task/code/list';
 
   const [meta, setMeta] = useState<CodeVersionDetail | null>(
     listRecord ? { ...listRecord } : null,
@@ -454,6 +460,7 @@ const TrainingCodeDetail: React.FC = () => {
             if (!isTrainingCodeAutoApproveEnabled()) {
               upsertPendingCodeVersion({
                 codeVersionId: newId,
+                codeAssetId: meta?.codeAssetId || assetId,
                 codeAssetName: getCodeUserDisplayName(meta ?? undefined),
                 fileName: meta?.fileName,
                 trainingProfile: meta?.trainingProfile,
@@ -509,15 +516,21 @@ const TrainingCodeDetail: React.FC = () => {
   const handleDownloadZip = useCallback(async () => {
     if (!codeVersionId) return;
     setDownloading(true);
+    const progress = beginDownloadProgress();
     try {
       await downloadCodeVersionZip(
         codeVersionId,
         meta?.fileName || `${codeVersionId}.zip`,
-        { skipErrorHandler: true },
+        { skipErrorHandler: true, onProgress: progress.update },
       );
-      message.success('开始下载');
+      progress.close();
+      message.success('下载完成');
     } catch (error: any) {
-      message.error(getApiErrorMessage(error, '下载失败'));
+      progress.close();
+      const tip = getApiErrorMessage(error, '下载失败');
+      if (tip !== '已取消下载') {
+        message.error(tip);
+      }
     } finally {
       setDownloading(false);
     }
@@ -704,16 +717,17 @@ const TrainingCodeDetail: React.FC = () => {
   ]);
 
   const handleDeleteAsset = useCallback(async () => {
-    const assetId = meta?.codeAssetId?.trim();
-    if (!assetId) {
-      message.error('缺少 codeAssetId，无法删除');
-      return;
-    }
     setDeleting(true);
     try {
-      await deleteCodeAsset(assetId, { skipErrorHandler: true });
-      removePendingCodeVersion(codeVersionId);
-      message.success('已删除训练代码资产');
+      const res = await deleteCodeAsset(meta?.codeAssetId, {
+        skipErrorHandler: true,
+        codeVersionId,
+      });
+      if (res?.data?.localOnly) {
+        message.success('已从列表移除（本地待审记录，服务端无对应资产）');
+      } else {
+        message.success('已删除训练代码资产');
+      }
       history.push(backPath);
     } catch (error: any) {
       message.error(getApiErrorMessage(error, '删除训练代码失败'));
@@ -922,7 +936,7 @@ const TrainingCodeDetail: React.FC = () => {
           ),
       },
       {
-        title: '创建时间',
+        title: '上传时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
         render: (value?: string) => formatDisplayDateTime(value),
@@ -1132,6 +1146,9 @@ const TrainingCodeDetail: React.FC = () => {
               )}
               <Descriptions.Item label="审核状态">
                 {approvalTag(meta?.approvalStatus)}
+              </Descriptions.Item>
+              <Descriptions.Item label="上传时间">
+                {formatDisplayDateTime(meta?.createdAt || meta?.submittedAt)}
               </Descriptions.Item>
               <Descriptions.Item label="就绪状态">
                 {statusTag(meta?.status)}

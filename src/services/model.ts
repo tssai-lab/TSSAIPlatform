@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 import { collectPaginatedCandidates } from './paginatedCandidates.mjs';
 
 export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
@@ -623,43 +624,16 @@ export async function switchModelCurrentVersion(
 export async function downloadModelVersion(
   versionId: string,
   fileName?: string,
-  options?: { [key: string]: unknown },
+  options?: {
+    onProgress?: (ratio: number | null) => void;
+    [key: string]: unknown;
+  },
 ) {
-  const blob = await request<Blob>(
-    `/v2/model-versions/${encodeURIComponent(versionId)}/download`,
-    {
-      method: 'GET',
-      responseType: 'blob',
-      skipErrorHandler: true,
-      // 大文件下载可能超过全局 10s 超时，下载不设超时
-      timeout: 0,
-      ...(options || {}),
-    },
-  );
-  if (!(blob instanceof Blob)) {
-    throw new Error('下载响应不是文件流');
-  }
-  if (blob.type && blob.type.includes('application/json')) {
-    const text = await blob.text();
-    try {
-      const json = JSON.parse(text) as {
-        errorMessage?: string;
-        message?: string;
-      };
-      throw new Error(json.errorMessage || json.message || '下载失败');
-    } catch (e: any) {
-      if (e?.message && e.message !== '下载失败') throw e;
-      throw new Error(text || '下载失败');
-    }
-  }
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName?.trim() || `${versionId}.zip`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
+  await downloadAuthFile({
+    url: `/v2/model-versions/${encodeURIComponent(versionId)}/download`,
+    fileName: fileName?.trim() || `${versionId}.zip`,
+    onProgress: options?.onProgress,
+  });
   return { success: true };
 }
 

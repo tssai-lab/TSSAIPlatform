@@ -17,6 +17,7 @@ import {
 import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useState } from 'react';
 import { usePageTour } from '@/components/Guide/usePageTour';
+import { MODEL_TYPE_VALUE_ENUM } from '@/constants/model';
 import { UPLOAD_CONFIG } from '@/constants/platform';
 import {
   fetchModelAssetDetail,
@@ -328,7 +329,8 @@ const ModelUpload: React.FC = () => {
             {inheritedIdentity.name}
           </Descriptions.Item>
           <Descriptions.Item label="目录类别">
-            {inheritedIdentity.type}
+            {MODEL_TYPE_VALUE_ENUM[inheritedIdentity.type]?.text ??
+              inheritedIdentity.type}
           </Descriptions.Item>
           <Descriptions.Item label="最近已识别训练规格">
             {inheritedIdentity.artifactSpecId ??
@@ -398,13 +400,22 @@ const ModelUpload: React.FC = () => {
                 }))}
               />
             </Form.Item>
-            {selectedType === 'OTHER' && (
+            {selectedType === 'POINT_CLOUD' && (
               <Alert
-                type="warning"
+                type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="OTHER 只表示暂未归类"
-                description="平台仍会检查文件类型、大小和压缩包安全；上传成功后不会自动进入 CV/NLP 训练候选。"
+                message="点云模型"
+                description="请上传 zip 权重包（包内仅允许白名单扩展名，不含 .py 脚本）。类别用于管理与 legacy 训练类型匹配；详情页可预览包内代码/文本文件。"
+              />
+            )}
+            {selectedType === 'ROBOT' && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="ROBOT（预留）"
+                description="机器人模型目录类型；上传规则与 CV/NLP 相同。legacy 训练需匹配 ROBOT 数据集类型。"
               />
             )}
             <Form.Item

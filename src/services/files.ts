@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
 
 /**
  * 通用文件对象服务。
@@ -59,8 +60,7 @@ export async function downloadObject(objectName: string, options?: { [key: strin
     params: { objectName },
     responseType: 'blob',
     skipErrorHandler: true,
-    // 大文件下载可能超过全局 10s 超时，下载不设超时
-    timeout: 0,
+    timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
     ...(options || {}),
   });
 }

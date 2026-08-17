@@ -22,13 +22,18 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
+import {
+  hasSyncedTrainingCodeReviewConfig,
+  isTrainingCodeAdminReviewEnabled,
+  syncTrainingCodeReviewConfigFromServer,
+} from '@/constants/trainingCode';
 import {
   approveCodeVersion,
   autoApproveCodeVersionIfEnabled,
   CONSISTENCY_TRAINING_PROFILE,
   checkCodeVersionForTraining,
   getCodeVersionDetail,
+  normalizeCodeApprovalStatus,
   uploadCodeZip,
 } from '@/services/platform';
 import {
@@ -36,8 +41,10 @@ import {
   type TrainingPlan,
 } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { resolveOwnerFacingApproval } from '@/utils/codeApprovalDisplay';
 import {
   markPendingCodeApproved,
+  markPendingCodeStatus,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
 
@@ -51,6 +58,8 @@ type UploadResultState = {
   artifactSha256?: string;
   fileName?: string;
   trainingProfile?: string;
+  reviewDisposition?: string;
+  riskLevel?: string;
 };
 
 const TrainingCodeUpload: React.FC = () => {
@@ -64,24 +73,58 @@ const TrainingCodeUpload: React.FC = () => {
   const [uploadResult, setUploadResult] = useState<UploadResultState | null>(
     null,
   );
+  const [adminReviewEnabled, setAdminReviewEnabled] = useState(() =>
+    isTrainingCodeAdminReviewEnabled(),
+  );
+  const [reviewConfigSynced, setReviewConfigSynced] = useState(() =>
+    hasSyncedTrainingCodeReviewConfig(),
+  );
   const announcedApprovedRef = useRef<string | null>(null);
+  const announcedRejectedRef = useRef<string | null>(null);
   const selectedPlanId = Form.useWatch('trainingProfile', form);
   const selectedPlan = useMemo(
     () => trainingPlans.find((plan) => plan.id === selectedPlanId),
     [selectedPlanId, trainingPlans],
   );
 
-  const isApproved =
-    String(uploadResult?.approvalStatus || '').toUpperCase() === 'APPROVED';
+  const approvalStatus = String(
+    uploadResult?.approvalStatus || 'PENDING',
+  ).toUpperCase();
+  /** 普通用户读不到系统配置：展示侧一律按管理员审核链路处理 */
+  const ownerAdminReviewMode = !access.isAdmin || adminReviewEnabled;
+  const facing = resolveOwnerFacingApproval({
+    approvalStatus,
+    reviewDisposition: uploadResult?.reviewDisposition,
+    adminReviewMode: ownerAdminReviewMode,
+  });
+  const isApproved = facing.status === 'APPROVED';
+  const isRejected = facing.status === 'REJECTED';
+  const isRevoked = facing.status === 'REVOKED';
+  const isSettled = isApproved || isRejected || isRevoked;
 
   const applyDetailToUploadResult = useCallback(
     (codeVersionId: string, detail: Record<string, any>) => {
-      const approvalStatus = String(detail.approvalStatus || '').toUpperCase();
+      const rawStatus =
+        normalizeCodeApprovalStatus(detail.approvalStatus) ||
+        String(detail.approvalStatus || '')
+          .trim()
+          .toUpperCase();
+      const reviewDisposition = String(
+        detail.reviewDisposition || detail.riskAssessment?.disposition || '',
+      ).toUpperCase();
+      const facingStatus = resolveOwnerFacingApproval({
+        approvalStatus: rawStatus,
+        reviewDisposition,
+        // 上传页普通用户始终按管理员审核展示；管理员以开关为准
+        adminReviewMode: !access.isAdmin || adminReviewEnabled,
+      }).status;
+
       setUploadResult((prev) => {
         if (!prev || prev.codeVersionId !== codeVersionId) return prev;
         return {
           ...prev,
-          approvalStatus: approvalStatus || prev.approvalStatus,
+          // 展示与本地登记用归一后的状态；系统 BLOCK 在管理员审核下记为 PENDING
+          approvalStatus: facingStatus || rawStatus || prev.approvalStatus,
           status: detail.status || prev.status,
           validationStatus: detail.validationStatus || prev.validationStatus,
           validationPolicyVersion:
@@ -89,18 +132,36 @@ const TrainingCodeUpload: React.FC = () => {
           artifactSha256: detail.artifactSha256 || prev.artifactSha256,
           fileName: detail.fileName || prev.fileName,
           trainingProfile: detail.trainingProfile || prev.trainingProfile,
+          reviewDisposition: reviewDisposition || prev.reviewDisposition,
+          riskLevel: detail.riskLevel || prev.riskLevel,
         };
       });
-      if (approvalStatus === 'APPROVED') {
+      if (facingStatus === 'PENDING' || rawStatus === 'PENDING') {
+        setAdminReviewEnabled(true);
+      }
+      if (facingStatus === 'APPROVED') {
         markPendingCodeApproved(codeVersionId);
         if (announcedApprovedRef.current !== codeVersionId) {
           announcedApprovedRef.current = codeVersionId;
           message.success('训练代码已审核通过，可发起训练');
         }
       }
-      return approvalStatus;
+      if (facingStatus === 'REJECTED') {
+        markPendingCodeStatus(codeVersionId, 'REJECTED');
+        if (announcedRejectedRef.current !== codeVersionId) {
+          announcedRejectedRef.current = codeVersionId;
+          message.error('该训练代码版本未通过审核，不能用于发起训练');
+        }
+      } else if (facingStatus === 'PENDING' && rawStatus === 'REJECTED') {
+        // 系统 BLOCK 等：按审核中登记，不提示「已拒绝」
+        markPendingCodeStatus(codeVersionId, 'PENDING');
+      }
+      if (facingStatus === 'REVOKED') {
+        markPendingCodeStatus(codeVersionId, 'REVOKED');
+      }
+      return facingStatus;
     },
-    [],
+    [access.isAdmin, adminReviewEnabled],
   );
 
   const refreshUploadStatus = useCallback(
@@ -133,10 +194,10 @@ const TrainingCodeUpload: React.FC = () => {
     [applyDetailToUploadResult],
   );
 
-  // PENDING 时自动轮询最新审批状态（后端已通过或管理员刚审完时无需手动刷新）
+  // 未终态时轮询审批状态（通过 / 拒绝 / 撤销后停止）
   useEffect(() => {
     const id = uploadResult?.codeVersionId?.trim();
-    if (!id || isApproved) return;
+    if (!id || isSettled) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -158,7 +219,25 @@ const TrainingCodeUpload: React.FC = () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [uploadResult?.codeVersionId, isApproved, refreshUploadStatus]);
+  }, [uploadResult?.codeVersionId, isSettled, refreshUploadStatus]);
+
+  useEffect(() => {
+    let active = true;
+    void syncTrainingCodeReviewConfigFromServer()
+      .then((cfg) => {
+        if (!active) return;
+        const synced = cfg.syncedFromServer === true;
+        setReviewConfigSynced(synced);
+        // 未同步成功（普通用户常 403）时按需审核展示，禁止误报「已关闭」
+        setAdminReviewEnabled(
+          synced ? !!cfg.enableTrainingCodeAdminReview : true,
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -208,6 +287,7 @@ const TrainingCodeUpload: React.FC = () => {
 
     setUploading(true);
     announcedApprovedRef.current = null;
+    announcedRejectedRef.current = null;
     try {
       const trainingProfile =
         values.trainingProfile || CONSISTENCY_TRAINING_PROFILE;
@@ -229,25 +309,53 @@ const TrainingCodeUpload: React.FC = () => {
         message.error('上传成功但未返回 codeVersionId');
         return;
       }
+      const reviewDisposition = String(
+        (data as { reviewDisposition?: string }).reviewDisposition || '',
+      ).toUpperCase();
+      const rawStatus =
+        normalizeCodeApprovalStatus(data.approvalStatus) ||
+        String(data.approvalStatus || 'PENDING').toUpperCase();
+      const ownerAdminReviewMode = !access.isAdmin || adminReviewEnabled;
+      const initialFacing = resolveOwnerFacingApproval({
+        approvalStatus: rawStatus,
+        reviewDisposition,
+        adminReviewMode: ownerAdminReviewMode,
+      });
+      const initialStatus = initialFacing.status;
+
       setUploadResult({
         codeVersionId: data.codeVersionId,
-        approvalStatus: data.approvalStatus,
+        approvalStatus: initialStatus,
         status: data.status,
         validationStatus: (data as { validationStatus?: string })
           .validationStatus,
         fileName: data.fileName,
         trainingProfile: data.trainingProfile || trainingProfile,
+        reviewDisposition:
+          (data as { reviewDisposition?: string }).reviewDisposition ||
+          undefined,
+        riskLevel: (data as { riskLevel?: string }).riskLevel,
       });
 
       // 上传接口已返回 APPROVED（后端侧自动通过）时，直接成功，勿再调审批接口
-      if (data.approvalStatus === 'APPROVED') {
+      if (initialStatus === 'APPROVED') {
         markPendingCodeApproved(data.codeVersionId);
         announcedApprovedRef.current = data.codeVersionId;
-        message.success(`训练代码已上传并审核通过：${data.codeVersionId}`);
+        message.success(
+          reviewConfigSynced && adminReviewEnabled
+            ? `训练代码已上传，低风险已由策略自动通过：${data.codeVersionId}`
+            : `训练代码已上传并审核通过：${data.codeVersionId}`,
+        );
         return;
       }
 
-      if (isTrainingCodeAutoApproveEnabled()) {
+      if (initialStatus === 'PENDING') {
+        setAdminReviewEnabled(true);
+      }
+
+      // 普通用户没有审批权限，不要调 approve（否则会弹出「代码版本审批失败」）
+      // 仅管理员且已确认关闭人工审核时，才走前端自动审批旁路
+      if (access.isAdmin && reviewConfigSynced && !adminReviewEnabled) {
         try {
           const approved = await autoApproveCodeVersionIfEnabled(
             data.codeVersionId,
@@ -270,50 +378,34 @@ const TrainingCodeUpload: React.FC = () => {
             `训练代码已上传并自动审核通过：${data.codeVersionId}`,
           );
           return;
-        } catch (approveError: any) {
-          // 自动审核接口失败时先保留 PENDING，由轮询对账真实状态
-          if (access.isAdmin) {
-            upsertPendingCodeVersion({
-              codeVersionId: data.codeVersionId,
-              codeAssetName: values.codeName.trim(),
-              fileName: data.fileName,
-              trainingProfile: data.trainingProfile || trainingProfile,
-              approvalStatus: data.approvalStatus || 'PENDING',
-              sizeBytes: data.sizeBytes,
-              source: 'upload',
-            });
-          }
-          // 立即拉一次详情，很多情况下上传侧已是 APPROVED
+        } catch {
+          // 不向用户展示审批接口错误，改为对账真实状态
           const latest = await refreshUploadStatus(data.codeVersionId, {
             silent: true,
           });
           if (latest === 'APPROVED') {
             return;
           }
-          message.warning(
-            getApiErrorMessage(
-              approveError,
-              access.isAdmin
-                ? '上传成功，但自动审核失败，请到待审核页处理或稍后点「刷新状态」'
-                : '上传成功，正在确认审核状态…若列表已通过，本页将自动更新',
-            ),
-          );
-          return;
         }
       }
 
-      if (data.approvalStatus !== 'APPROVED') {
+      if (initialStatus !== 'APPROVED') {
         upsertPendingCodeVersion({
           codeVersionId: data.codeVersionId,
+          codeAssetId: data.codeAssetId,
           codeAssetName: values.codeName.trim(),
           fileName: data.fileName,
           trainingProfile: data.trainingProfile || trainingProfile,
-          approvalStatus: data.approvalStatus || 'PENDING',
+          approvalStatus: initialStatus || 'PENDING',
           sizeBytes: data.sizeBytes,
           source: 'upload',
         });
       }
-      message.success(`训练代码已上传：${data.codeVersionId}`);
+      message.success(
+        initialStatus === 'REJECTED'
+          ? `训练代码已上传：${data.codeVersionId}，状态 REJECTED`
+          : `训练代码已上传：${data.codeVersionId}，状态 PENDING`,
+      );
       // 人工审核模式下也立即对账一次（后端可能已默认通过）
       void refreshUploadStatus(data.codeVersionId, { silent: true });
     } catch (error: any) {
@@ -423,14 +515,34 @@ const TrainingCodeUpload: React.FC = () => {
         style={{ marginBottom: 16 }}
         message="上传说明"
         description={
-          isTrainingCodeAutoApproveEnabled() ? (
+          !access.isAdmin || !reviewConfigSynced ? (
             <span>
               zip 须包含入口脚本{' '}
               <Typography.Text code>
                 {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
               </Typography.Text>
-              。当前为<strong>自动审核</strong>
-              ：上传成功后会自动审核通过，可直接在训练代码列表中使用。管理员审核入口仍保留，需要时可改回人工审核。
+              。上传成功后会在训练代码列表产生记录。低风险可能自动通过；系统无法自动通过的版本状态为
+              PENDING，等待管理员处理。请以列表中的审核状态为准。
+            </span>
+          ) : adminReviewEnabled ? (
+            <span>
+              zip 须包含入口脚本{' '}
+              <Typography.Text code>
+                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
+              </Typography.Text>
+              。当前已开启<strong>管理员审核</strong>
+              （STANDARD_REVIEW）：
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                <li>
+                  低风险可由策略自动通过（
+                  <Typography.Text code>AUTO_POLICY</Typography.Text>）
+                </li>
+                <li>
+                  系统无法自动通过的版本保持
+                  PENDING，由管理员决定通过（APPROVED）或拒绝（REJECTED）；前端不会把系统自动拒绝展示成
+                  REJECTED 终态
+                </li>
+              </ul>
             </span>
           ) : (
             <span>
@@ -438,12 +550,9 @@ const TrainingCodeUpload: React.FC = () => {
               <Typography.Text code>
                 {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
               </Typography.Text>
-              。上传接口使用 multipart 表单字段{' '}
-              <Typography.Text code>
-                file / codeName / version / trainingProfile / remark
-              </Typography.Text>
-              。上传后一般为 <Typography.Text code>PENDING</Typography.Text>
-              ，需管理员审核通过后才会出现在训练代码列表。
+              。当前为自动审核（
+              <Typography.Text code>DIRECT_PASS</Typography.Text>
+              ）：不跑人工待审；结构校验通过后由系统直接批准，系统也可直接拒绝。
             </span>
           )
         }
@@ -451,21 +560,31 @@ const TrainingCodeUpload: React.FC = () => {
 
       {uploadResult ? (
         <>
-          {!isApproved && (
+          {isRejected && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="该训练代码版本未通过审核"
+              description="审核状态为 REJECTED，不能用于发起训练。可到训练代码列表查看该记录。"
+            />
+          )}
+          {isRevoked && (
             <Alert
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
-              message={
-                isTrainingCodeAutoApproveEnabled()
-                  ? '仍为 PENDING：正在自动确认审核状态…'
-                  : '当前为 PENDING，训练代码列表暂时看不到是正常的'
-              }
-              description={
-                isTrainingCodeAutoApproveEnabled()
-                  ? '若后端已自动通过，本页会自动刷新为 APPROVED 并高亮「用于发起训练」。也可手动点「刷新状态」。'
-                  : '请等待管理员审核；通过后本页会自动更新。管理员也可在本页点「审核通过」。'
-              }
+              message="该版本的批准已被撤销"
+              description="审核状态为 REVOKED，不能用于发起训练。"
+            />
+          )}
+          {!isSettled && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="当前为 PENDING，等待审核结果"
+              description="可先返回训练代码列表继续其他操作；列表中已有本条记录。管理员通过后变为 APPROVED，拒绝后变为 REJECTED。"
             />
           )}
           {isApproved && (
@@ -489,8 +608,18 @@ const TrainingCodeUpload: React.FC = () => {
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label="审核状态">
-              <Tag color={isApproved ? 'success' : 'warning'}>
-                {uploadResult.approvalStatus || 'PENDING'}
+              <Tag
+                color={
+                  facing.tone === 'success'
+                    ? 'success'
+                    : facing.tone === 'error'
+                      ? 'error'
+                      : facing.tone === 'warning'
+                        ? 'warning'
+                        : 'default'
+                }
+              >
+                {facing.label}
               </Tag>
               {statusRefreshing ? (
                 <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
@@ -545,7 +674,7 @@ const TrainingCodeUpload: React.FC = () => {
             )}
           </Descriptions>
           <Space wrap>
-            {access.isAdmin && !isApproved && (
+            {access.isAdmin && facing.status === 'PENDING' && (
               <Button
                 type="primary"
                 loading={approving}
@@ -554,21 +683,29 @@ const TrainingCodeUpload: React.FC = () => {
                 审核通过
               </Button>
             )}
-            {access.isAdmin && !isApproved && (
+            {access.isAdmin && (
               <Button onClick={() => history.push('/task/code/pending')}>
                 打开待审核页
               </Button>
             )}
-            {!isApproved && (
-              <Button
-                loading={statusRefreshing}
-                onClick={() =>
-                  void refreshUploadStatus(uploadResult.codeVersionId)
-                }
-              >
-                刷新状态
-              </Button>
-            )}
+            <Button
+              loading={statusRefreshing}
+              onClick={() =>
+                void refreshUploadStatus(uploadResult.codeVersionId)
+              }
+            >
+              刷新状态
+            </Button>
+            <Button
+              onClick={() =>
+                history.push(
+                  `/task/code/detail/${encodeURIComponent(uploadResult.codeVersionId)}`,
+                  { from: 'upload' },
+                )
+              }
+            >
+              查看详情
+            </Button>
             <Button onClick={() => history.push('/task/code/list')}>
               返回列表
             </Button>
@@ -587,6 +724,7 @@ const TrainingCodeUpload: React.FC = () => {
               onClick={() => {
                 setUploadResult(null);
                 announcedApprovedRef.current = null;
+                announcedRejectedRef.current = null;
                 form.resetFields();
               }}
             >
