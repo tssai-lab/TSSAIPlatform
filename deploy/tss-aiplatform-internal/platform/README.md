@@ -97,10 +97,11 @@ training/inference and C8 GPU work remain separate stages.
 ## C7 restricted backend deployment
 
 C7 keeps the existing Main deployment unchanged and adds an independent,
-manual-only internal backend target. The seu4080 Runner remains an unprivileged
-`seu` process. Its project deployment key is stored only in the Runner's
-root-owned project disk; the private key is not uploaded to GitHub. On seu5090,
-the matching public key is restricted by `authorized_keys` to
+manual-only internal backend target. The selected internal Runner remains an
+unprivileged local process. Its project deployment key is stored only in the
+Runner's root-owned project disk; the private key is not uploaded to GitHub. On
+the configured control plane, the matching public key is restricted by
+`authorized_keys` to
 `internal-runner-gateway.sh`. That gateway permits only `probe`, an exact
 protected-branch fast-forward, a bounded backend bundle stream and one fixed
 root deployment command. It can also read only the fixed C7 deployment-state
@@ -113,24 +114,34 @@ Install the gateway only after reviewing the Runner public key and the exact
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-internal-runner-gateway.sh \
-  /path/to/reviewed/tss-aiplatform-internal-deploy.pub
+  --public-key /path/to/reviewed/tss-aiplatform-internal-deploy.pub \
+  --node-config /etc/tss-aiplatform/node.env \
+  --platform-config /etc/tss-aiplatform/platform.env \
+  --deployment-user REPLACE_DEPLOYMENT_USER \
+  --confirm-node REPLACE_CONTROL_PLANE_NODE_NAME
 ```
 
-The `tss-aiplatform-internal` GitHub Environment then needs three non-secret
-variables: `CONTROL_PLANE_HOST`, `CONTROL_PLANE_SSH_KEY` and
-`CONTROL_PLANE_KNOWN_HOSTS`. The latter two are absolute paths on the isolated
-Runner. The workflow never accepts a private key value from GitHub.
+The installer writes only paths and the local account name to the root-owned
+`/etc/tss-aiplatform-deploy/backend.env`; credentials stay outside that file.
+The `tss-aiplatform-internal` GitHub Environment then needs the non-secret
+variables `CONTROL_PLANE_HOST`, `CONTROL_PLANE_DEPLOYMENT_USER`,
+`CONTROL_PLANE_SSH_KEY`, `CONTROL_PLANE_KNOWN_HOSTS`, `RUNNER_WORK_ROOT` and
+`AIRGAP_STAGE_ROOT`. Path values are absolute paths on the isolated Runner. The
+Runner needs the logical labels `tss-aiplatform-internal` and `deploy`; no
+physical hostname is part of the workflow. The workflow never accepts a private
+key value from GitHub.
 
 For a reviewed `backend-ops` SHA, first dispatch `export-backend-image`, then
 dispatch `deploy-backend` with that successful run ID and the same exact SHA.
 The deployment downloads only the locked backend image, verifies the GitHub
-run metadata, artifact checksum and source lock, synchronizes seu5090 only by
+run metadata, artifact checksum and source lock, synchronizes only the configured
+control-plane repository by
 fast-forward, and streams a bounded three-file bundle through the forced
 gateway. The root helper rechecks the lock, runtime fingerprint, disk gates,
 host identity and all four platform images before Compose may act. It snapshots
 the three non-backend platform containers, changes only the backend, runs the
-full platform verifier and writes
-`/srv/tss-AIplatform/platform/state/c7-backend-deployment.env`. Failed switches
+full platform verifier and writes the state file below the configured
+`TSS_PLATFORM_ROOT`. Failed switches
 restore the previous backend configuration. Successful switches keep only the
 current project backend image; no global prune is used.
 
@@ -141,3 +152,23 @@ revoke the channel, remove only the authorized-key line ending in
 `/etc/sudoers.d/tss-aiplatform-internal-deploy` and the two exact
 `/usr/local/sbin/tss-aiplatform-internal-*` gateway files. Revocation does not
 stop the currently accepted backend or delete platform data.
+
+## C7 fixed CPU runtime deployment
+
+Install the runtime deployer on the configured worker only after the node file
+has been installed as a root-owned configuration:
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/install-cpu-runtime-deployer.sh \
+  --node-config /etc/tss-aiplatform/node.env \
+  --deployment-user REPLACE_DEPLOYMENT_USER \
+  --confirm-node REPLACE_WORKER_NODE_NAME
+```
+
+The installer makes the complete project helper tree root-owned and grants the
+deployment user only the fixed runtime command, not a general root shell. After
+`stage-cpu-runtime-images` has verified and staged an exact successful export,
+dispatch `deploy-cpu-runtime-images` with the same run ID and source SHA. The
+root helper freezes the staged directory, repeats the immutable lock and image
+checks, imports only into the configured project containerd, and records an
+independent result below the configured project audit directory.

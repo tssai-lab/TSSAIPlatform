@@ -2,10 +2,7 @@
 set -Eeuo pipefail
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-repository_root=/srv/tss-AIplatform/repository
-stage_root=/srv/tss-AIplatform/staging/internal-deploy
-bundle_path=${stage_root}/backend.bundle
-expected_user=user
+deployment_config=/etc/tss-aiplatform-deploy/backend.env
 origin_pattern='^(https://github\.com/|git@github\.com:|ssh://git@ssh\.github\.com:443/)tssai-lab/TSSAIPlatform(\.git)?$'
 
 die() {
@@ -13,16 +10,47 @@ die() {
   exit 1
 }
 
+[[ -f $deployment_config && ! -L $deployment_config ]] \
+  || die "backend deployment target configuration is absent or symbolic"
+[[ $(stat -c '%U:%G:%a' "$deployment_config") == root:root:644 ]] \
+  || die "backend deployment target configuration metadata differs"
+# This root-owned file contains paths and a local account name only, never credentials.
+# shellcheck disable=SC1090
+source "$deployment_config"
+for name in TSS_DEPLOYMENT_USER TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
+  TSS_REPOSITORY_ROOT TSS_DEPLOY_STAGE_ROOT TSS_DEPLOY_STATE_FILE; do
+  [[ -n ${!name:-} ]] || die "backend deployment target setting is empty: $name"
+done
+[[ $TSS_DEPLOYMENT_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+  || die "backend deployment user is invalid"
+for path in "$TSS_PROJECT_ROOT" "$TSS_PLATFORM_ROOT" "$TSS_REPOSITORY_ROOT" \
+  "$TSS_DEPLOY_STAGE_ROOT" "$TSS_DEPLOY_STATE_FILE"; do
+  [[ $path =~ ^/[A-Za-z0-9._/-]+$ && $path != / && $path != *//* \
+    && $path != */../* && $path != */.. ]] \
+    || die "backend deployment target contains an unsafe path: $path"
+done
+[[ $TSS_PLATFORM_ROOT == "${TSS_PROJECT_ROOT}/platform" \
+  && $TSS_REPOSITORY_ROOT == "$TSS_PROJECT_ROOT"/* \
+  && $TSS_DEPLOY_STAGE_ROOT == "${TSS_PROJECT_ROOT}/staging/internal-deploy" \
+  && $TSS_DEPLOY_STATE_FILE == "${TSS_PLATFORM_ROOT}/state/c7-backend-deployment.env" ]] \
+  || die "backend deployment target paths cross their reviewed project boundaries"
+
+expected_user=$TSS_DEPLOYMENT_USER
+repository_root=$TSS_REPOSITORY_ROOT
+stage_root=$TSS_DEPLOY_STAGE_ROOT
+bundle_path=${stage_root}/backend.bundle
+state_file=$TSS_DEPLOY_STATE_FILE
+expected_group=$(id -gn "$expected_user" 2>/dev/null || true)
+[[ -n $expected_group ]] || die "backend deployment group is absent"
 [[ $(id -un) == "$expected_user" ]] || die "internal Runner gateway has an unexpected local user"
 [[ -d $repository_root/.git && -d $stage_root && ! -L $stage_root ]] \
   || die "internal deployment paths are absent or unsafe"
-[[ $(stat -c '%U:%G:%a' "$stage_root") == user:user:700 ]] \
+[[ $(stat -c '%U:%G:%a' "$stage_root") == "${expected_user}:${expected_group}:700" ]] \
   || die "internal deployment staging metadata differs"
 
 command_text=${SSH_ORIGINAL_COMMAND:-}
 case "$command_text" in
   probe)
-    state_file=/srv/tss-AIplatform/platform/state/c7-backend-deployment.env
     state_content=$(sudo -n /usr/bin/cat "$state_file" 2>/dev/null || true)
     if [[ -n $state_content ]]; then
       grep -E '^TSS_(APPLICATION_SOURCE_SHA|INFRASTRUCTURE_SHA|BACKEND_IMAGE|CONSECUTIVE_SUCCESS_COUNT|DEPLOYED_AT_UTC)=' \
@@ -50,7 +78,7 @@ case "$command_text" in
     ;;
   stage-backend)
     [[ ! -e $bundle_path || ( -f $bundle_path && ! -L $bundle_path \
-      && $(stat -c '%U:%G:%a' "$bundle_path") == user:user:600 ) ]] \
+      && $(stat -c '%U:%G:%a' "$bundle_path") == "${expected_user}:${expected_group}:600" ) ]] \
       || die "pending backend deployment bundle metadata differs"
     pending=$(mktemp "${stage_root}/.backend.bundle.XXXXXX")
     trap 'rm -f "$pending"' EXIT
