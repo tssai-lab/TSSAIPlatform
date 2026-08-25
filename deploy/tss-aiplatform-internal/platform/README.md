@@ -16,9 +16,17 @@ kubeconfig, and it does not modify or join the Main/Second cluster.
   revoked, but cannot read Secrets, create namespaces or act as cluster-admin;
 - exact high-port and worker/Pod firewall rules, with PostgreSQL and the MinIO
   console remaining loopback-only;
-- exact application image IDs resolved from immutable registry manifests.
-  Compose never pulls `latest` and never builds a replacement image on the
-  server. A bundle is generated from GitHub/registries without reading Main.
+- immutable registry manifests, original linux/amd64 image IDs and
+  execution-relevant runtime-content fingerprints. Compose never pulls
+  `latest` and never builds a replacement image on the server. A bundle is
+  generated from GitHub/registries without reading Main.
+
+Docker 29's containerd image store may assign a different local ID after
+`docker load`. The verifier does not ignore that difference: it compares the
+locked OS/architecture, filesystem layers, user, entrypoint, command,
+environment, ports, health check and other runtime fields. A metadata-only
+local ID rewrite is reported as information; any executable-content difference
+still fails closed.
 
 The C5 image set consumes about 1.58 GB before layer sharing. The scripts refuse
 to proceed if the system root would violate the existing 20 GiB free-space

@@ -58,6 +58,12 @@ sha256sum --check --strict platform-images.sha256
 docker load --input platform-images-amd64.tar
 ```
 
+After import, the platform verifier checks both the immutable source baseline
+and a canonical runtime-content fingerprint. This is required because Docker
+29 with the containerd image store can rewrite a local image ID while retaining
+the same filesystem and execution configuration; content changes are still
+rejected.
+
 The Actions artifact is intentionally retained for seven days to avoid using
 GitHub as a permanent binary backup. The committed lock and exporter do not
 expire; rerun the workflow to recreate the same bundle from the same digests.
