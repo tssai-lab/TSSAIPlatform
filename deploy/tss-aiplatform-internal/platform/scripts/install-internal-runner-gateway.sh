@@ -10,6 +10,7 @@ public_key=$(<"$public_key_file")
 [[ $public_key =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+\ tss-aiplatform-internal-deploy$ ]] \
   || { echo 'ERROR: Runner public key format or comment differs' >&2; exit 1; }
 getent passwd user >/dev/null || { echo 'ERROR: control-plane deployment user is absent' >&2; exit 1; }
+[[ -x /usr/bin/cat ]] || { echo 'ERROR: fixed state reader is absent' >&2; exit 1; }
 ssh_dir=/home/user/.ssh
 authorized_keys=${ssh_dir}/authorized_keys
 [[ ! -e $ssh_dir || ( -d $ssh_dir && ! -L $ssh_dir ) ]] \
@@ -27,6 +28,8 @@ sudoers_pending=$(mktemp /etc/sudoers.d/.tss-aiplatform-internal-deploy.XXXXXX)
 trap 'rm -f "$sudoers_pending"' EXIT
 printf 'user ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-backend\n' \
   >"$sudoers_pending"
+printf 'user ALL=(root) NOPASSWD: /usr/bin/cat /srv/tss-AIplatform/platform/state/c7-backend-deployment.env\n' \
+  >>"$sudoers_pending"
 chown root:root "$sudoers_pending"
 chmod 0440 "$sudoers_pending"
 visudo -cf "$sudoers_pending" >/dev/null
