@@ -62,6 +62,30 @@ class ModelArtifactIntegrityServiceTest {
     }
 
     @Test
+    void inspectRecognizesNlpBertClassificationContractWhileHashingTheSameStream()
+            throws Exception {
+        byte[] artifact = zip(
+                new Entry("model.yaml", "format: bert-sequence-classification\n".getBytes()),
+                new Entry("config.json", "{}".getBytes()),
+                new Entry("vocab.txt", "[PAD]\n[UNK]\n".getBytes()),
+                new Entry("pytorch_model.bin", new byte[]{1, 2, 3})
+        );
+        String objectName = "users/7/models/minirbt.zip";
+        MinioService minio = minio(objectName, artifact);
+        ModelArtifactIntegrityService service = new ModelArtifactIntegrityService(minio);
+
+        ModelArtifactIntegrityService.Inspection inspection =
+                service.inspect(objectName, (long) artifact.length, "NLP");
+
+        assertEquals(
+                "model.nlp.bert-sequence-classification/v1",
+                inspection.artifactSpecId()
+        );
+        assertEquals(sha256(artifact), inspection.sha256());
+        verify(minio, times(1)).downloadStream(objectName);
+    }
+
+    @Test
     void inspectRecognizesDirectYoloWeightWithoutASecondObjectRead() throws Exception {
         byte[] artifact = "opaque-yolo-weight".getBytes();
         String objectName = "users/7/models/yolo11n.pt";

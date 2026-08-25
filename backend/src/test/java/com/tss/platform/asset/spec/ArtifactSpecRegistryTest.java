@@ -17,6 +17,12 @@ class ArtifactSpecRegistryTest {
 
         assertTrue(registry.require("model.cv.yolo-weight/v1").canBeAcceptedByTrainingPlan());
         assertTrue(registry.require("dataset.cv.imagefolder/v1").canBeAcceptedByTrainingPlan());
+        assertTrue(registry.require(
+                "model.nlp.bert-sequence-classification/v1"
+        ).canBeAcceptedByTrainingPlan());
+        assertTrue(registry.require(
+                "dataset.nlp.text-classification-jsonl/v1"
+        ).canBeAcceptedByTrainingPlan());
         assertFalse(registry.require("dataset.pointcloud.ply-pcd/v1").canBeAcceptedByTrainingPlan());
         assertEquals(AssetDirectoryCategory.ROBOT,
                 registry.require("dataset.robot.lerobot/v1").category());

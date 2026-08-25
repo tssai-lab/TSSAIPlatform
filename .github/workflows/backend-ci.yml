@@ -7,6 +7,7 @@ on:
       - "deploy/**"
       - "!deploy/tss-aiplatform-internal/**"
       - "k8s/**"
+      - "examples/acceptance/minirbt_text_classification/**"
       - ".github/workflows/**"
   push:
     branches:
@@ -73,6 +74,12 @@ jobs:
       - name: Run inference worker unit tests
         run: |
           python3 -m unittest discover -s k8s/inference-worker -p 'test_*.py' -v
+
+      - name: Run MiniRBT acceptance contract tests
+        run: |
+          python3 -m unittest discover \
+            -s examples/acceptance/minirbt_text_classification \
+            -p 'test_*.py' -v
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
