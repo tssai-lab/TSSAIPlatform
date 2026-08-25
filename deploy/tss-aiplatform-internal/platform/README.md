@@ -28,9 +28,12 @@ environment, ports, health check and other runtime fields. A metadata-only
 local ID rewrite is reported as information; any executable-content difference
 still fails closed.
 
-The C5 image set consumes about 1.58 GB before layer sharing. The scripts refuse
-to proceed if the system root would violate the existing 20 GiB free-space
-gate. Business data stays on the dedicated 2 TiB project filesystem.
+The C5 image set consumes about 1.58 GB before layer sharing. The scripts keep a
+10 GiB system-root survival floor for the shared Docker engine and a separate
+100 GiB floor on the dedicated 2 TiB project filesystem. These deployment
+floors are not the model-cache policy: model caching remains disabled in this
+environment until its node-local storage is prepared and accepted. Business
+data stays on the dedicated project filesystem.
 
 ## Minimal operator flow
 

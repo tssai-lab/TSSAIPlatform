@@ -164,6 +164,18 @@ sed \
   "$repo_root/deploy/tss-aiplatform-internal/config/control-plane.env.example" >"$tmp_dir/node.env"
 bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
   "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" "$tmp_dir/platform.env"
+grep -Fx 'TSS_MIN_ROOT_FREE_GIB=10' "$tmp_dir/platform.env" >/dev/null
+cp "$tmp_dir/platform.env" "$tmp_dir/platform-root-nine.env"
+sed -i 's/TSS_MIN_ROOT_FREE_GIB=10/TSS_MIN_ROOT_FREE_GIB=9/' \
+  "$tmp_dir/platform-root-nine.env"
+if bash -c 'source "$1"; load_platform_config "$2" "$3"' _ \
+  "$platform_root/scripts/lib-platform.sh" "$tmp_dir/node.env" \
+  "$tmp_dir/platform-root-nine.env" >/dev/null 2>&1; then
+  echo "platform root survival floor below 10 GiB was accepted" >&2
+  exit 1
+fi
+grep -Fx 'TSS_MIN_PLATFORM_FREE_GIB=100' "$tmp_dir/platform.env" >/dev/null
+grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"' "$compose" >/dev/null
 bash -c '
   source "$1"
   TSS_PLATFORM_HOSTNAME=user-rtx5090
