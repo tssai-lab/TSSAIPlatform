@@ -34,6 +34,7 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { usePageTour } from '@/components/Guide/usePageTour';
 import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
+import InferenceOriginalInput from '@/components/inference/InferenceOriginalInput';
 import InferenceResultVisual from '@/components/inference/ResultVisual';
 import {
   createInferenceTask,
@@ -1029,6 +1030,16 @@ const InferenceWorkbench: React.FC = () => {
                 </Typography.Text>
               </Descriptions.Item>
             </Descriptions>
+            <InferenceOriginalInput
+              inputMode={selectedTask.inputMode}
+              inputObjectName={selectedTask.inputObjectName}
+              datasetVersionId={selectedTask.datasetVersionId}
+              datasetDisplayName={optionLabel(
+                datasetSelectOptions,
+                selectedTask.datasetVersionId,
+              )}
+              onDownloadObject={downloadByObjectName}
+            />
             <Space wrap>
               {selectedTask.status === 'failed' &&
                 selectedTask.retryable === true && (
