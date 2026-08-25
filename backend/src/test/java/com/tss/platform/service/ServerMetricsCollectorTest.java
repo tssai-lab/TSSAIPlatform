@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,6 +27,35 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ServerMetricsCollectorTest {
+
+    @Test
+    void discoversKubernetesNodesWhenMetricsServerIsUnavailable() {
+        Map<String, double[]> capacities = new LinkedHashMap<>();
+        capacities.put("tss-ai-control-01", new double[]{16, 64, 0, 100});
+        capacities.put("tss-ai-worker-01", new double[]{32, 128, 2, 500});
+
+        assertThat(ServerMetricsCollector.discoveredNodeNames(
+                capacities,
+                Map.of(),
+                Map.of(),
+                Map.of()
+        )).containsExactly("tss-ai-control-01", "tss-ai-worker-01");
+    }
+
+    @Test
+    void mergesPartialNodeDiscoveryWithoutDuplicatesOrBlankNames() {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("tss-ai-worker-01", "{}");
+        labels.put("", "{}");
+
+        assertThat(ServerMetricsCollector.discoveredNodeNames(
+                Map.of("tss-ai-control-01", new double[]{16, 64}),
+                Map.of("tss-ai-worker-01", "Ubuntu"),
+                labels,
+                Map.of("tss-ai-control-01", new ServerMetricsCollector.TopData(
+                        0.1, 1024, 0, 0, 0))
+        )).containsExactly("tss-ai-control-01", "tss-ai-worker-01");
+    }
 
     @Test
     void oneInvalidNodeMetricDoesNotDiscardHealthyNodes() {
