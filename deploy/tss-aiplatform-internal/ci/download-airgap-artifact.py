@@ -59,6 +59,20 @@ PROFILES = {
         # equally narrow while accepting the measured 9.67 GB bundle.
         "max_bytes": 10 * 1024**3,
     },
+    "platform": {
+        "artifact_prefix": "tss-aiplatform-platform-images",
+        "expected_files": {
+            "platform-images-amd64.tar",
+            "platform-images.sha256",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "platform-images.sha256": ["platform-images-amd64.tar", "sources.lock"],
+        },
+        # The four lock entries have a combined conservative budget below
+        # 2 GiB. Reject anything larger before creating a partial directory.
+        "max_bytes": 2 * 1024**3,
+    },
 }
 USER_AGENT = "tss-aiplatform-artifact/1.1"
 
@@ -404,6 +418,11 @@ def self_test() -> None:
             "sources.lock": b"ghcr.io/example/runtime:v1|sha256:" + b"0" * 64 + b"\n",
         }
         self_test_profile(root, "cpu-runtime", cpu_content)
+        platform_content = {
+            "platform-images-amd64.tar": b"platform-images",
+            "sources.lock": b"ghcr.io/example/backend:v1|sha256:" + b"0" * 64 + b"\n",
+        }
+        self_test_profile(root, "platform", platform_content)
     print("Parallel artifact downloader self-test passed.")
 
 
