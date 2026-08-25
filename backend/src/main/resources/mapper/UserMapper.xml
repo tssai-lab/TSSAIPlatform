@@ -20,6 +20,9 @@
         <if test="query.status != null">
             AND u.status = #{query.status}
         </if>
+        <if test="requiredRoleId != null">
+            AND u.role_id = #{requiredRoleId}
+        </if>
         ORDER BY u.created_at DESC
     </select>
 

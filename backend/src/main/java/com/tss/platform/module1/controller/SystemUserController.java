@@ -1,14 +1,14 @@
 package com.tss.platform.module1.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tss.platform.module1.common.AuditActionType;
 import com.tss.platform.module1.common.AuditObjectType;
 import com.tss.platform.module1.common.Result;
-import com.tss.platform.module1.entity.OperationLog;
 import com.tss.platform.module1.entity.User;
+import com.tss.platform.module1.security.UserAdministrationForbiddenException;
+import com.tss.platform.module1.security.UserAdministrationPolicy;
+import com.tss.platform.module1.security.UserSessionInvalidator;
 import com.tss.platform.module1.service.AuditRecordService;
-import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.DesensitizationUtil;
 import com.tss.platform.module1.util.UserRoleUtil;
@@ -30,20 +30,27 @@ import java.util.Objects;
 public class SystemUserController {
 
     private static final Logger SYSTEM_LOG = LoggerFactory.getLogger("SYSTEM_LOG");
-    private static final Logger USER_LOG = LoggerFactory.getLogger("USER_LOG");
-
     @Resource
     private UserService userService;
 
     @Resource
-    private OperationLogService operationLogService;
+    private AuditRecordService auditRecordService;
 
     @Resource
-    private AuditRecordService auditRecordService;
+    private UserAdministrationPolicy userAdministrationPolicy;
+
+    @Resource
+    private UserSessionInvalidator userSessionInvalidator;
 
     @GetMapping("/list")
     public Result<Map<String, Object>> getUserList() {
-        List<Map<String, Object>> list = userService.getUserListWithRole();
+        final List<Map<String, Object>> list;
+        try {
+            list = userService.getUserListWithRole(
+                    userAdministrationPolicy.requiredVisibleRoleId());
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        }
         
         // 转换数据格式，确保与前端一致
         for (Map<String, Object> item : list) {
@@ -105,16 +112,10 @@ public class SystemUserController {
                 return Result.fail("手机号不能为空");
             }
 
-            Integer currentRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
-            if (currentRoleId == null) {
-                return Result.fail("未获取到当前用户角色");
-            }
-
-            Integer roleId = UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role")));
-            Result<?> roleCheck = validateRoleAssignment(currentRoleId, roleId, null);
-            if (roleCheck != null) {
-                return roleCheck;
-            }
+            Integer roleId = userAdministrationPolicy.requireAssignableRole(
+                    UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role"))),
+                    null
+            );
 
             LambdaQueryWrapper<User> checkWrapper = new LambdaQueryWrapper<>();
             checkWrapper.eq(User::getUsername, username);
@@ -136,6 +137,7 @@ public class SystemUserController {
             deletedByUsernameWrapper.isNotNull(User::getDeletedAt);
             User deletedUser = userService.getOne(deletedByUsernameWrapper);
             if (deletedUser != null) {
+                userAdministrationPolicy.requireCanRestore(deletedUser);
                 Result<?> mobileConflict = checkMobileAvailable(mobile, deletedUser.getId());
                 if (mobileConflict != null) {
                     return mobileConflict;
@@ -149,6 +151,7 @@ public class SystemUserController {
             deletedByMobileWrapper.isNotNull(User::getDeletedAt);
             User deletedByMobile = userService.getOne(deletedByMobileWrapper);
             if (deletedByMobile != null) {
+                userAdministrationPolicy.requireCanRestore(deletedByMobile);
                 LambdaQueryWrapper<User> usernameActiveWrapper = new LambdaQueryWrapper<>();
                 usernameActiveWrapper.eq(User::getUsername, username);
                 usernameActiveWrapper.isNull(User::getDeletedAt);
@@ -174,6 +177,8 @@ public class SystemUserController {
                 return Result.success(null, "新增用户成功");
             }
             return Result.fail("新增失败");
+        } catch (UserAdministrationForbiddenException e) {
+            return Result.noAuth(e.getMessage());
         } catch (Exception e) {
             SYSTEM_LOG.error("管理员新增用户异常: error={}", e.getMessage());
             String errMsg = e.getMessage() != null ? e.getMessage() : "";
@@ -218,18 +223,8 @@ public class SystemUserController {
                 throw new IllegalArgumentException("用户不存在");
             }
 
-            Integer currentRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
             Integer targetRoleId = user.getRoleId();
-
-            if (currentRoleId == null) {
-                return Result.fail("未获取到当前用户角色");
-            }
-
-            if (currentRoleId.equals(2) && targetRoleId != 3) {
-                SYSTEM_LOG.warn("普通管理员尝试编辑非普通用户: currentUserId={}, targetUserId={}, targetRoleId={}",
-                        StpUtil.getLoginIdAsInt(), userId, targetRoleId);
-                return Result.fail("普通管理员只能编辑普通用户");
-            }
+            userAdministrationPolicy.requireCanManage(user);
 
             String newUsername = UserRoleUtil.safeString(params.get("username"));
             if (newUsername != null) {
@@ -255,11 +250,10 @@ public class SystemUserController {
             Boolean newStatus = null;
 
             if (params.get("role") != null) {
-                newRoleId = UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role")));
-                Result<?> roleCheck = validateRoleAssignment(currentRoleId, newRoleId, targetRoleId);
-                if (roleCheck != null) {
-                    return roleCheck;
-                }
+                newRoleId = userAdministrationPolicy.requireAssignableRole(
+                        UserRoleUtil.parseRoleId(UserRoleUtil.safeString(params.get("role"))),
+                        targetRoleId
+                );
                 roleChanged = !Objects.equals(newRoleId, targetRoleId);
                 user.setRoleId(newRoleId);
             }
@@ -274,6 +268,7 @@ public class SystemUserController {
 
             boolean success = userService.updateById(user);
             if (success) {
+                userSessionInvalidator.invalidateNow(userId);
                 SYSTEM_LOG.info("管理员编辑用户成功: userId={}", userId);
                 if (roleChanged) {
                     auditRecordService.recordSuccess(
@@ -296,6 +291,8 @@ public class SystemUserController {
                 SYSTEM_LOG.error("管理员编辑用户失败: userId={}", userId);
                 return Result.fail("更新失败");
             }
+        } catch (UserAdministrationForbiddenException e) {
+            return Result.noAuth(e.getMessage());
         } catch (IllegalArgumentException e) {
             return Result.fail(e.getMessage());
         } catch (Exception e) {
@@ -314,27 +311,11 @@ public class SystemUserController {
                 return Result.fail("用户不存在");
             }
 
-            int currentUserId = StpUtil.getLoginIdAsInt();
+            int currentUserId = userAdministrationPolicy.currentUserId();
             if (currentUserId == id) {
                 return Result.fail("不能删除当前登录账号");
             }
-
-            Integer currentRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
-            Integer targetRoleId = targetUser.getRoleId();
-
-            if (currentRoleId == null) {
-                return Result.fail("未获取到当前用户角色");
-            }
-
-            if (currentRoleId.equals(2) && targetRoleId != 3) {
-                SYSTEM_LOG.warn("普通管理员尝试删除非普通用户: currentUserId={}, targetUserId={}, targetRoleId={}",
-                        currentUserId, id, targetRoleId);
-                return Result.fail("普通管理员只能删除普通用户");
-            }
-
-            if (!currentRoleId.equals(1) && targetRoleId != null && targetRoleId != 3) {
-                return Result.fail("仅超级管理员可删除管理员账号");
-            }
+            userAdministrationPolicy.requireCanManage(targetUser);
 
             boolean success = userService.softDeleteUser(id);
             if (success) {
@@ -357,6 +338,8 @@ public class SystemUserController {
                 );
                 return Result.fail("删除失败");
             }
+        } catch (UserAdministrationForbiddenException e) {
+            return Result.noAuth(e.getMessage());
         } catch (Exception e) {
             SYSTEM_LOG.error("管理员删除用户异常: userId={}, error={}", id, e.getMessage());
             auditRecordService.recordFailed(
@@ -387,18 +370,7 @@ public class SystemUserController {
                 throw new IllegalArgumentException("用户不存在");
             }
 
-            Integer currentRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
-            Integer targetRoleId = user.getRoleId();
-
-            if (currentRoleId == null) {
-                return Result.fail("未获取到当前用户角色");
-            }
-
-            if (currentRoleId.equals(2) && targetRoleId != 3) {
-                SYSTEM_LOG.warn("普通管理员尝试切换非普通用户状态: currentUserId={}, targetUserId={}, targetRoleId={}",
-                        StpUtil.getLoginIdAsInt(), userId, targetRoleId);
-                return Result.fail("普通管理员只能切换普通用户状态");
-            }
+            userAdministrationPolicy.requireCanManage(user);
 
             boolean status = UserRoleUtil.isEnabledStatus(statusStr);
             user.setStatus(status);
@@ -406,6 +378,7 @@ public class SystemUserController {
             
             boolean success = userService.updateById(user);
             if (success) {
+                userSessionInvalidator.invalidateNow(userId);
                 SYSTEM_LOG.info("管理员切换用户状态成功: userId={}", userId);
                 auditRecordService.recordSuccess(
                         AuditActionType.PERMISSION_CHANGE,
@@ -424,6 +397,8 @@ public class SystemUserController {
                 );
                 return Result.fail("状态更新失败");
             }
+        } catch (UserAdministrationForbiddenException e) {
+            return Result.noAuth(e.getMessage());
         } catch (IllegalArgumentException e) {
             auditRecordService.recordFailed(
                     AuditActionType.PERMISSION_CHANGE,
@@ -464,26 +439,6 @@ public class SystemUserController {
         return Result.success(result, "查询成功");
     }
 
-    /** 校验角色分配权限；通过返回 null */
-    private Result<?> validateRoleAssignment(Integer currentRoleId, Integer newRoleId, Integer targetRoleId) {
-        if (newRoleId == null) {
-            newRoleId = 3;
-        }
-        if (currentRoleId.equals(2)) {
-            if (newRoleId != 3) {
-                return Result.fail("普通管理员只能创建或编辑普通用户");
-            }
-            return null;
-        }
-        if (!currentRoleId.equals(1)) {
-            return Result.fail("无权限分配该角色");
-        }
-        if (newRoleId == 1 && !Integer.valueOf(1).equals(targetRoleId)) {
-            return Result.fail("不支持创建或提升为超级管理员");
-        }
-        return null;
-    }
-
     private Result<?> checkUsernameAvailable(String username, Integer excludeUserId) {
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(User::getUsername, username);
@@ -519,17 +474,4 @@ public class SystemUserController {
         return null;
     }
 
-    private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("X-Real-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        if (ip != null && ip.contains(",")) {
-            ip = ip.split(",")[0].trim();
-        }
-        return ip;
-    }
 }

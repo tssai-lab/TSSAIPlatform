@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.tss.platform.module1.dto.*;
 import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.mapper.UserMapper;
+import com.tss.platform.module1.security.UserSessionInvalidator;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.SmsCodeUtil;
 import com.tss.platform.module1.util.DesensitizationUtil;
@@ -35,6 +36,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Resource
     private SmsCodeUtil smsCodeUtil;
 
+    @Resource
+    private UserSessionInvalidator userSessionInvalidator;
+
     @Override
     public boolean addUser(User user) {
         String encryptedPwd = BCrypt.hashpw(user.getPassword(), BCrypt.gensalt());
@@ -56,12 +60,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         user.setPassword(BCrypt.hashpw(newPassword, BCrypt.gensalt()));
         user.setUpdatedAt(LocalDateTime.now());
-        return updateById(user);
+        boolean updated = updateById(user);
+        if (updated) {
+            userSessionInvalidator.invalidateAfterCommit(userId);
+        }
+        return updated;
     }
 
     @Override
-    public List<Map<String, Object>> getUserListWithRole() {
-        return baseMapper.selectUserWithRole();
+    public List<Map<String, Object>> getUserListWithRole(Integer requiredRoleId) {
+        return baseMapper.selectUserWithRole(requiredRoleId);
     }
 
     @Override
@@ -72,7 +80,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         user.setDeletedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
-        return updateById(user);
+        boolean updated = updateById(user);
+        if (updated) {
+            userSessionInvalidator.invalidateAfterCommit(userId);
+        }
+        return updated;
     }
 
     @Override
@@ -91,18 +103,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 .set(User::getPassword, passwordHash)
                 .set(User::getEmail, email)
                 .set(User::getUpdatedAt, LocalDateTime.now());
-        return update(updateWrapper);
+        boolean updated = update(updateWrapper);
+        if (updated) {
+            userSessionInvalidator.invalidateAfterCommit(user.getId());
+        }
+        return updated;
     }
 
     @Override
-    public IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO) {
+    public IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO, Integer requiredRoleId) {
         Page<Map<String, Object>> page = new Page<>(queryDTO.getPage(), queryDTO.getSize());
-        return baseMapper.selectUserPage(page, queryDTO);
+        return baseMapper.selectUserPage(page, queryDTO, requiredRoleId);
     }
 
     @Override
-    public Map<String, Object> getUserDetail(Integer userId) {
-        return baseMapper.selectUserDetail(userId);
+    public Map<String, Object> getUserDetail(Integer userId, Integer requiredRoleId) {
+        return baseMapper.selectUserDetail(userId, requiredRoleId);
     }
 
     @Override
@@ -129,7 +145,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         user.setUpdatedAt(LocalDateTime.now());
         
-        return updateById(user);
+        boolean updated = updateById(user);
+        if (updated) {
+            userSessionInvalidator.invalidateAfterCommit(updateDTO.getUserId());
+        }
+        return updated;
     }
 
     @Override
@@ -140,7 +160,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         user.setStatus(status);
         user.setUpdatedAt(LocalDateTime.now());
-        return updateById(user);
+        boolean updated = updateById(user);
+        if (updated) {
+            userSessionInvalidator.invalidateAfterCommit(userId);
+        }
+        return updated;
     }
 
     @Override
@@ -340,6 +364,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             boolean result = this.update(updateWrapper);
             if (result) {
                 smsCodeUtil.consume(mobile);
+                userSessionInvalidator.invalidateAfterCommit(user.getId());
                 SYSTEM_LOG.info("密码重置成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
                 USER_LOG.info("密码重置成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
             }
@@ -371,6 +396,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         user.setUpdatedAt(LocalDateTime.now());
         boolean ok = updateById(user);
         if (ok) {
+            userSessionInvalidator.invalidateAfterCommit(targetUserId);
             USER_LOG.info("已设为普通管理员: userId={}", targetUserId);
         }
         return ok;

@@ -37,7 +37,7 @@ public class SystemConfigController {
         try {
             return Result.success(toFrontendMap(service.getForAdministration()), "查询成功");
         } catch (CodeApprovalForbiddenException exception) {
-            return Result.noAuth("无权限访问，仅管理员可操作");
+            return Result.noAuth("无权限访问，仅超级管理员可操作");
         }
     }
 
@@ -48,7 +48,7 @@ public class SystemConfigController {
         try {
             return Result.success(toFrontendMap(service.updateForAdministration(request)), "保存成功");
         } catch (CodeApprovalForbiddenException exception) {
-            return Result.noAuth("无权限访问，仅管理员可操作");
+            return Result.noAuth("无权限访问，仅超级管理员可操作");
         } catch (IllegalArgumentException exception) {
             return Result.fail(exception.getMessage());
         }
