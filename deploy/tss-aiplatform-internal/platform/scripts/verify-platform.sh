@@ -62,7 +62,10 @@ curl --silent --show-error --fail --max-time 5 \
 curl --silent --show-error --fail --max-time 5 \
   "http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT}/" \
   | grep -F '"message": "ok"' >/dev/null
-curl --silent --show-error --fail --max-time 5 "$backend_url/api/files/health" >/dev/null
+files_health_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --max-time 5 "$backend_url/api/files/health")"
+[[ $files_health_status == 401 ]] \
+  || die "protected file-service health endpoint did not reject an anonymous request"
 
 roles="$(docker exec tss-aiplatform-internal-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from roles"')"
