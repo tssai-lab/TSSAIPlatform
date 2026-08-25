@@ -38,7 +38,7 @@ model.yaml
 config.json
 pytorch_model.bin
 vocab.txt
-LICENSE
+LICENSE.txt
 UPSTREAM_README.md
 ```
 

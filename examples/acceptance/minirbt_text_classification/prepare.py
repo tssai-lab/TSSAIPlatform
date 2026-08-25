@@ -202,7 +202,9 @@ def build_model_zip(output: Path, cache: Path) -> None:
     deterministic_zip(
         output,
         {
-            "LICENSE": cache / "LICENSE",
+            # 模型包校验器要求每个文件都有白名单扩展名；保留许可证内容，
+            # 仅将归档内的标准 LICENSE 文件命名为 LICENSE.txt。
+            "LICENSE.txt": cache / "LICENSE",
             "UPSTREAM_README.md": cache / "README.md",
             "config.json": cache / "config.json",
             "model.yaml": model_manifest,
