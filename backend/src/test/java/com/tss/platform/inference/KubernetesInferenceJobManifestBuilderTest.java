@@ -3,6 +3,7 @@ package com.tss.platform.inference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.tss.platform.config.InferenceModelCacheProperties;
+import com.tss.platform.config.InferenceKubernetesResourceProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
@@ -22,12 +23,63 @@ import static org.mockito.Mockito.when;
 class KubernetesInferenceJobManifestBuilderTest {
 
     @Test
+    void manifestUsesTheTaskResourceProfileLimits() throws Exception {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        properties.setInternalCallbackToken("internal-token");
+        InferenceKubernetesResourceProperties resourceProperties =
+                new InferenceKubernetesResourceProperties();
+        resourceProperties.setCpuRequest("750m");
+        resourceProperties.setCpuLimit("3");
+        resourceProperties.setMemoryRequest("1Gi");
+        resourceProperties.setMemoryLimit("5Gi");
+        resourceProperties.setEphemeralStorageRequest("3Gi");
+        resourceProperties.setEphemeralStorageLimit("9Gi");
+        KubernetesInferenceJobManifestBuilder builder =
+                new KubernetesInferenceJobManifestBuilder(
+                        properties,
+                        new InferenceModelCacheProperties(),
+                        new InferenceResourceProfileService(resourceProperties)
+                );
+
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-resource-1");
+        task.setCurrentAttempt(1);
+        task.setResourceProfileId("cpu-small");
+        task.setModelVersionId("model-ver-1");
+        task.setScriptVersionId("script-ver-1");
+        task.setInputMode("SINGLE_OBJECT");
+        task.setParamsJson("{}");
+
+        ModelVersion modelVersion = new ModelVersion();
+        modelVersion.setStoragePath("users/7/models/model.zip");
+        InferenceScriptVersion scriptVersion = new InferenceScriptVersion();
+        scriptVersion.setStoragePath("users/7/scripts/script.zip");
+        scriptVersion.setEntryFile("infer.py");
+
+        String yaml = builder.buildJobYaml(
+                task, modelVersion, scriptVersion, null, "access", "secret", "models"
+        );
+        JsonNode resources = YAMLMapper.builder().build().readTree(yaml)
+                .path("spec").path("template").path("spec")
+                .path("containers").path(0).path("resources");
+
+        assertEquals("750m", resources.path("requests").path("cpu").asText());
+        assertEquals("1Gi", resources.path("requests").path("memory").asText());
+        assertEquals("3Gi", resources.path("requests").path("ephemeral-storage").asText());
+        assertEquals("3", resources.path("limits").path("cpu").asText());
+        assertEquals("5Gi", resources.path("limits").path("memory").asText());
+        assertEquals("9Gi", resources.path("limits").path("ephemeral-storage").asText());
+    }
+
+    @Test
     void manifestUsesAttemptScopedJobCallbackAndOutputPrefix() {
         TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
         properties.setInternalCallbackToken("internal-token");
         KubernetesInferenceJobManifestBuilder builder =
                 new KubernetesInferenceJobManifestBuilder(
-                        properties, new InferenceModelCacheProperties());
+                        properties,
+                        new InferenceModelCacheProperties(),
+                        resourceProfileService());
         JobTtlPolicyService ttlPolicyService = mock(JobTtlPolicyService.class);
         when(ttlPolicyService.currentJobTtlSecondsAfterFinished()).thenReturn(180);
         builder.setJobTtlPolicyService(ttlPolicyService);
@@ -80,7 +132,8 @@ class KubernetesInferenceJobManifestBuilderTest {
         cacheProperties.setMaxBytes(1024);
         cacheProperties.setMinFreeBytes(128);
         KubernetesInferenceJobManifestBuilder builder =
-                new KubernetesInferenceJobManifestBuilder(properties, cacheProperties);
+                new KubernetesInferenceJobManifestBuilder(
+                        properties, cacheProperties, resourceProfileService());
         ModelCachePolicyService policyService = mock(ModelCachePolicyService.class);
         when(policyService.currentPolicy()).thenReturn(
                 new ModelCachePolicy(2048, 256, 1024, null)
@@ -169,7 +222,8 @@ class KubernetesInferenceJobManifestBuilderTest {
         cacheProperties.setEnabled(true);
         cacheProperties.setNodePath("/var/lib/../etc");
         KubernetesInferenceJobManifestBuilder builder =
-                new KubernetesInferenceJobManifestBuilder(properties, cacheProperties);
+                new KubernetesInferenceJobManifestBuilder(
+                        properties, cacheProperties, resourceProfileService());
 
         InferenceTask task = new InferenceTask();
         task.setId("infer-cache-invalid");
@@ -193,5 +247,9 @@ class KubernetesInferenceJobManifestBuilderTest {
                 () -> builder.buildJobYaml(
                         task, modelVersion, scriptVersion, null, "access", "secret", "models")
         );
+    }
+
+    private static InferenceResourceProfileService resourceProfileService() {
+        return new InferenceResourceProfileService(new InferenceKubernetesResourceProperties());
     }
 }

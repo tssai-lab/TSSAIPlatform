@@ -10,6 +10,7 @@ public class CreateInferenceTaskRequest {
     private String inputMode;
     private String datasetVersionId;
     private String inputObjectName;
+    private String resourceProfileId;
     private Object params;
     private String remark;
 }
