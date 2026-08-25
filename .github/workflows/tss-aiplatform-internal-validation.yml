@@ -378,6 +378,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: true
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify trusted CPU runtime export and isolated staging path
@@ -389,9 +390,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
-          [[ "$GITHUB_SHA" == "$RUNTIME_HEAD_SHA" ]]
           [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"
           [[ "$AIRGAP_STAGE_ROOT" == /* ]]
           test -d "$AIRGAP_STAGE_ROOT"
           test ! -L "$AIRGAP_STAGE_ROOT"
@@ -466,6 +467,10 @@ jobs:
             cd "$target_dir"
             test "$(awk '{print $2}' cpu-runtime.sha256)" = $'cpu-runtime-amd64.tar\nsources.lock'
             sha256sum --check --strict cpu-runtime.sha256
+            git -C "$GITHUB_WORKSPACE" show \
+              "${RUNTIME_HEAD_SHA}:deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
+              > "$RUNNER_TEMP/exported-cpu-runtime-images.lock"
+            cmp "$RUNNER_TEMP/exported-cpu-runtime-images.lock" sources.lock
             cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
               sources.lock
             test "$(grep -Evc '^(#|$)' sources.lock)" -eq 2
