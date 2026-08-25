@@ -19,6 +19,7 @@ for file in \
   "$platform_root/platform.env.example" \
   "$platform_root/scripts/lib-platform.sh" \
   "$platform_root/scripts/generate-platform-secrets.sh" \
+  "$platform_root/scripts/image-runtime-fingerprint.py" \
   "$platform_root/scripts/export-platform-images.sh" \
   "$platform_root/scripts/check-platform-image-budget.sh" \
   "$platform_root/scripts/verify-platform-images.sh" \
@@ -43,15 +44,17 @@ done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)
 ! cut -d'|' -f1 "$lock" | grep -F ':latest' >/dev/null
 [[ $(cut -d'|' -f2 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
 [[ $(cut -d'|' -f4 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
+[[ $(cut -d'|' -f5 "$lock" | grep -Ec '^[0-9a-f]{64}$') -eq 4 ]]
 [[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f2 | sort -u | wc -l) -eq 4 ]] \
   || { echo "image lock contains a duplicate source manifest digest" >&2; exit 1; }
 [[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f4 | sort -u | wc -l) -eq 4 ]] \
   || { echo "image lock contains a duplicate image ID" >&2; exit 1; }
 lock_entry_count=0
-while IFS='|' read -r source_ref source_digest _project_ref expected_id budget_bytes; do
+while IFS='|' read -r source_ref source_digest _project_ref expected_id expected_fingerprint budget_bytes; do
   [[ -n $source_ref && $source_ref != \#* ]] || continue
   [[ $source_digest =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ $expected_id =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $expected_fingerprint =~ ^[0-9a-f]{64}$ ]]
   [[ $budget_bytes =~ ^[1-9][0-9]*$ ]] \
     || { echo "image lock contains a non-numeric budget" >&2; exit 1; }
   lock_entry_count=$((lock_entry_count + 1))
@@ -61,6 +64,23 @@ bash "$platform_root/scripts/export-platform-images.sh" --validate-only >/dev/nu
 grep -F '[[ -n $_source_ref && $_source_ref != \#* ]] || continue' \
   "$platform_root/scripts/verify-platform-images.sh" >/dev/null \
   || { echo "platform image verifier does not skip the commented lock header" >&2; exit 1; }
+
+oci_fingerprint="$(python3 "$platform_root/scripts/image-runtime-fingerprint.py" <<'JSON'
+{"architecture":"amd64","os":"linux","config":{"Cmd":["run"],"Env":["A=1"],"OnBuild":null},"rootfs":{"type":"layers","diff_ids":["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}}
+JSON
+)"
+docker_fingerprint="$(python3 "$platform_root/scripts/image-runtime-fingerprint.py" <<'JSON'
+[{"Architecture":"amd64","Os":"linux","Config":{"Env":["A=1"],"Cmd":["run"]},"RootFS":{"Type":"layers","Layers":["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]},"Created":"ignored"}]
+JSON
+)"
+[[ $oci_fingerprint == "$docker_fingerprint" ]] \
+  || { echo "OCI config and equivalent Docker inspect JSON have different runtime fingerprints" >&2; exit 1; }
+changed_fingerprint="$(python3 "$platform_root/scripts/image-runtime-fingerprint.py" <<'JSON'
+{"architecture":"amd64","os":"linux","config":{"Cmd":["different"],"Env":["A=1"]},"rootfs":{"type":"layers","diff_ids":["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}}
+JSON
+)"
+[[ $changed_fingerprint != "$oci_fingerprint" ]] \
+  || { echo "runtime fingerprint did not detect a changed command" >&2; exit 1; }
 
 [[ $(grep -Ev '^(#|$)' "$runtime_lock" | wc -l) -eq 4 ]]
 ! cut -d'|' -f1 "$runtime_lock" | grep -F ':latest' >/dev/null

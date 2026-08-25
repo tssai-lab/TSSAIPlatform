@@ -12,13 +12,19 @@ load_platform_config "$node_config" "$platform_config"
 require_control_plane_identity
 require_space_gates
 command -v docker >/dev/null || die "docker is required"
+command -v python3 >/dev/null || die "python3 is required"
 
 missing_bytes=0
-while IFS='|' read -r _source_ref _source_digest project_ref expected_id budget_bytes; do
+while IFS='|' read -r _source_ref _source_digest project_ref _expected_id expected_fingerprint budget_bytes; do
   [[ -n $_source_ref && $_source_ref != \#* ]] || continue
   actual_id="$(docker image inspect --format '{{.Id}}' "$project_ref" 2>/dev/null || true)"
   if [[ -n $actual_id ]]; then
-    [[ $actual_id == "$expected_id" ]] || die "existing project alias has an unexpected image ID: $project_ref"
+    actual_fingerprint="$(
+      docker image inspect "$project_ref" \
+        | python3 "${script_dir}/image-runtime-fingerprint.py"
+    )"
+    [[ $actual_fingerprint == "$expected_fingerprint" ]] \
+      || die "existing project alias has unexpected runtime content: $project_ref"
   else
     missing_bytes=$((missing_bytes + budget_bytes))
   fi
