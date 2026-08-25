@@ -154,7 +154,9 @@ grep -F "inputs.task == 'export-platform-images'" "$workflow" >/dev/null
 grep -F 'bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh' "$workflow" >/dev/null
 grep -F -- '- deploy-backend' "$workflow" >/dev/null
 grep -F "inputs.task == 'deploy-backend'" "$workflow" >/dev/null
-grep -F 'runs-on: [self-hosted, Linux, X64, seu4080, deploy]' "$workflow" >/dev/null
+grep -F 'runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]' "$workflow" >/dev/null
+grep -F 'CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}' \
+  "$workflow" >/dev/null
 grep -F 'CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}' "$workflow" >/dev/null
 grep -F 'CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}' "$workflow" >/dev/null
 grep -F -- '--profile backend-image' "$workflow" >/dev/null
@@ -171,13 +173,27 @@ grep -F 'command_text=${SSH_ORIGINAL_COMMAND:-}' "$gateway" >/dev/null
 grep -F 'exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-backend' "$gateway" >/dev/null
 grep -F 'command is not permitted by the internal Runner gateway' "$gateway" >/dev/null
 grep -F 'restrict,command="/usr/local/sbin/tss-aiplatform-internal-runner-gateway"' "$installer" >/dev/null
-grep -F 'user ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-backend\n' \
+grep -F "printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-backend\\n'" \
   "$installer" >/dev/null
-grep -F 'user ALL=(root) NOPASSWD: /usr/bin/cat /srv/tss-AIplatform/platform/state/c7-backend-deployment.env\n' \
+grep -F "printf '%s ALL=(root) NOPASSWD: /usr/bin/cat %s\\n'" \
   "$installer" >/dev/null
 grep -F 'state_content=$(sudo -n /usr/bin/cat "$state_file" 2>/dev/null || true)' \
   "$gateway" >/dev/null
 ! grep -F 'NOPASSWD: ALL' "$installer" >/dev/null
+grep -F 'deployment_config=/etc/tss-aiplatform-deploy/backend.env' "$gateway" >/dev/null
+grep -F 'deployment_config=/etc/tss-aiplatform-deploy/backend.env' "$deployer" >/dev/null
+grep -F 'TSS_INSTALL_ROOT_TO_HARDEN=$install_root harden_project_install_tree' \
+  "$installer" >/dev/null
+if grep -REn 'seu4080|seu5090|/media/seu|/home/user|expected_user=user' \
+  "$platform_root/scripts" >/dev/null; then
+  echo 'platform deployment logic contains a physical environment identity or path' >&2
+  exit 1
+fi
+if grep -En 'seu4080|seu5090|/media/seu|/home/user|"user@\$\{CONTROL_PLANE_HOST\}' \
+  "$workflow" >/dev/null; then
+  echo 'internal workflow contains a physical Runner, user or work-root binding' >&2
+  exit 1
+fi
 grep -F 'sha256sum --check --strict backend-image.sha256' "$deployer" >/dev/null
 grep -F 'staged backend source lock differs from protected repository' "$deployer" >/dev/null
 grep -F 'runtime content differs' "$deployer" >/dev/null

@@ -31,7 +31,7 @@ fi
 
 [[ $EUID -eq 0 ]] || die "node inspection and preparation must run as root"
 for command_name in \
-  awk cat chmod containerd cp ctr docker find findmnt flock grep install ip \
+  awk cat chmod chown containerd cp ctr docker find findmnt flock grep install ip \
   mktemp modprobe mountpoint rm sleep systemctl sysctl wc; do
   command -v "$command_name" >/dev/null 2>&1 \
     || die "required command is missing: $command_name"
@@ -138,6 +138,7 @@ bash "${script_dir}/render-containerd-unit.sh" "$config_file" \
 apply_phase=install-files
 install -d -m 0755 -o root -g root "$install_root"
 cp -a "${internal_root}/." "$install_root/"
+TSS_INSTALL_ROOT_TO_HARDEN="$install_root" harden_project_install_tree "$install_root"
 install -d -m 0700 -o root -g root "$config_root"
 install -m 0600 -o root -g root "$config_file" "${config_root}/node.env"
 install -m 0644 -o root -g root "${temporary_dir}/containerd.toml" \

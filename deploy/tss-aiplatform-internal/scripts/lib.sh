@@ -74,6 +74,34 @@ validate_path() {
     || die "$name must be a normalized absolute non-root path: $value"
 }
 
+harden_project_install_tree() {
+  local install_root="${1:-}"
+  [[ $EUID -eq 0 ]] || die "project install-tree hardening must run as root"
+  validate_path TSS_INSTALL_ROOT_TO_HARDEN
+  [[ $install_root == "${TSS_INSTALL_ROOT_TO_HARDEN:-}" ]] \
+    || die "project install-tree argument differs"
+  [[ -d $install_root && ! -L $install_root ]] \
+    || die "project install tree is absent or symbolic: $install_root"
+  [[ -z $(find "$install_root" -type l -print -quit) ]] \
+    || die "project install tree must not contain symbolic links"
+
+  chown -R root:root "$install_root"
+  find "$install_root" -type d -exec chmod 0755 {} +
+  find "$install_root" -type f -name '*.sh' -exec chmod 0755 {} +
+  find "$install_root" -type f ! -name '*.sh' -exec chmod 0644 {} +
+
+  [[ $(stat -c '%U:%G:%a' "$install_root") == root:root:755 ]] \
+    || die "project install-tree root metadata differs after hardening"
+  [[ -z $(find "$install_root" \( ! -user root -o ! -group root \) -print -quit) ]] \
+    || die "project install tree still contains non-root-owned entries"
+  [[ -z $(find "$install_root" -type d ! -perm 0755 -print -quit) ]] \
+    || die "project install tree still contains an unexpected directory mode"
+  [[ -z $(find "$install_root" -type f -name '*.sh' ! -perm 0755 -print -quit) ]] \
+    || die "project install tree still contains a non-executable shell script"
+  [[ -z $(find "$install_root" -type f ! -name '*.sh' ! -perm 0644 -print -quit) ]] \
+    || die "project install tree still contains an unexpected file mode"
+}
+
 has_role() {
   local wanted="$1"
   [[ ",${TSS_NODE_ROLES}," == *",${wanted},"* ]]
