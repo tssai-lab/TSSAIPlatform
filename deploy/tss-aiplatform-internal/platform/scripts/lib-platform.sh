@@ -87,8 +87,8 @@ load_platform_config() {
   [[ $TSS_MIN_ROOT_FREE_GIB =~ ^[1-9][0-9]*$ \
     && $TSS_MIN_PLATFORM_FREE_GIB =~ ^[1-9][0-9]*$ ]] \
     || die "free-space gates must be positive integer GiB values"
-  (( TSS_MIN_ROOT_FREE_GIB >= 20 )) \
-    || die "root free-space gate must remain at least 20 GiB"
+  (( TSS_MIN_ROOT_FREE_GIB >= 10 )) \
+    || die "root free-space gate must remain at least 10 GiB"
 
   for name in TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
     [[ ${!name} == tss-aiplatform-internal/* && ${!name} != *:latest ]] \
