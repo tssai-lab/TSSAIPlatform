@@ -197,10 +197,14 @@ grep -F 'inputs.task == '\''export-platform-images'\''' "$internal_workflow" >/d
 grep -F 'inputs.task == '\''export-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
+grep -F 'fetch-depth: 0' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
 grep -F 'packages: read' "$internal_workflow" >/dev/null
 grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
 grep -F -- '--profile cpu-runtime' "$internal_workflow" >/dev/null
+grep -F 'git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"' \
+  "$internal_workflow" >/dev/null
+grep -F 'exported-cpu-runtime-images.lock' "$internal_workflow" >/dev/null
 grep -F -- '--workers 16' "$internal_workflow" >/dev/null
 grep -F 'AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}' "$internal_workflow" >/dev/null
 grep -F 'untrusted export workflow metadata' "$internal_workflow" >/dev/null
