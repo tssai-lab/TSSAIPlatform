@@ -11,7 +11,8 @@ offline bundle is needed.
 |---|---|---|
 | Kubernetes, Calico and NVIDIA bootstrap | `../versions.env`, `../artifacts.lock` and repository scripts | Run the existing `export-airgap-bundles` workflow task, or pull the locked digests directly. |
 | PostgreSQL, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
-| CPU training and inference images | `runtime-images.lock` | Pull the exact GHCR digests. The same commit can rebuild them with `runtime-images.yml`. |
+| Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
+| Minimal C6 CPU training and inference images | `cpu-runtime-images.lock` | Export and stage only the two locked images with the internal validation workflow. |
 | Frontend source | `frontend-source.lock` | Check out the exact `frontend-dev` commit and build from its lock file. Do not copy `/var/www` from Main. |
 | Public Nginx routes | `nginx/frontend.conf.template` | Replace the five `REPLACE_*` values, review, run `nginx -t`, then install it for that environment. |
 | Node and platform configuration | `../config/*.example` and `../platform/platform.env.example` | Create environment-owned files outside Git. |
@@ -67,6 +68,44 @@ rejected.
 The Actions artifact is intentionally retained for seven days to avoid using
 GitHub as a permanent binary backup. The committed lock and exporter do not
 expire; rerun the workflow to recreate the same bundle from the same digests.
+
+## Stage the minimal C6 CPU runtime bundle
+
+C6 does not import all four historical runtime images. It locks and exports
+only the currently exercised CV/CPU training image and CPU inference image in
+`cpu-runtime-images.lock`. The lock also records the exact names that Kubernetes
+must resolve after import. This prevents a worker from silently pulling a
+different image and avoids using the laboratory's shared Docker image store.
+
+```bash
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-ops \
+  -f task=export-cpu-runtime-images
+
+# After the export succeeds, use its run ID and exact backend-ops SHA.
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-ops \
+  -f task=stage-cpu-runtime-images \
+  -f runtime_run_id=REPLACE_RUN_ID \
+  -f runtime_head_sha=REPLACE_40_CHARACTER_SHA
+```
+
+The staging job only downloads and verifies files under the isolated Runner
+staging directory. It does not use sudo or import images. On the reviewed
+worker, first run the no-write check and then the explicit node-confirmed
+import:
+
+```bash
+sudo /srv/tss-AIplatform/repository/deploy/tss-aiplatform-internal/scripts/import-cpu-runtime-images.sh \
+  --check /etc/tss-aiplatform-internal/node.env /absolute/staged/bundle
+sudo /srv/tss-AIplatform/repository/deploy/tss-aiplatform-internal/scripts/import-cpu-runtime-images.sh \
+  --apply /etc/tss-aiplatform-internal/node.env /absolute/staged/bundle \
+  --confirm-node tss-ai-worker-01
+```
+
+The importer verifies checksums, the committed two-image lock, source manifest
+digests, linux/amd64 image IDs and Kubernetes runtime aliases. It also verifies
+that the shared Docker container count and shared containerd PID do not change.
 
 ## Minimal clean-server flow
 
