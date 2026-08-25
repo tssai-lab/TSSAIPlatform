@@ -10,7 +10,7 @@ import java.util.Map;
 public interface UserService extends IService<User> {
     boolean addUser(User user);
     boolean resetPassword(Integer userId, String newPassword);
-    List<Map<String, Object>> getUserListWithRole();
+    List<Map<String, Object>> getUserListWithRole(Integer requiredRoleId);
     boolean softDeleteUser(Integer userId);
 
     /** 恢复软删用户（须显式将 deleted_at 置空，updateById 默认跳过 null 字段） */
@@ -21,8 +21,8 @@ public interface UserService extends IService<User> {
     Map<String, Object> login(LoginDTO dto);
     boolean promoteToNormalAdmin(Integer targetUserId);
 
-    IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO);
-    Map<String, Object> getUserDetail(Integer userId);
+    IPage<Map<String, Object>> getUserPage(UserQueryDTO queryDTO, Integer requiredRoleId);
+    Map<String, Object> getUserDetail(Integer userId, Integer requiredRoleId);
     boolean updateUser(UserUpdateDTO updateDTO);
     boolean toggleUserStatus(Integer userId, Boolean status);
 }

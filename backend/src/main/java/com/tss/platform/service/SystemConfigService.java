@@ -62,14 +62,14 @@ public class SystemConfigService {
 
     @Transactional(readOnly = true)
     public SystemConfigDto getForAdministration() {
-        requireAdministratorAuthority();
+        requireSuperAdministratorAuthority();
         PlatformSystemConfig config = repository.findById(PlatformSystemConfig.GLOBAL_ID).orElse(null);
         return toDto(config);
     }
 
     @Transactional
     public SystemConfigDto updateForAdministration(SystemConfigUpdateRequest request) {
-        requireAdministratorAuthority();
+        requireSuperAdministratorAuthority();
         Integer operatorUserId = authContext.currentUserId();
         Instant now = Instant.now();
         PlatformSystemConfig config = repository
@@ -174,9 +174,9 @@ public class SystemConfigService {
         log.info("Trimmed user operation logs by storage limit: userId={}, keepLimitBytes={}", userId, limitBytes);
     }
 
-    private void requireAdministratorAuthority() {
+    private void requireSuperAdministratorAuthority() {
         try {
-            if (authContext.isAdmin()) {
+            if (authContext.isSuperAdmin()) {
                 return;
             }
         } catch (RuntimeException ignored) {

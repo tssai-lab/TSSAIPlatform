@@ -9,6 +9,8 @@ import com.tss.platform.module1.common.Result;
 import com.tss.platform.module1.dto.*;
 import com.tss.platform.module1.entity.OperationLog;
 import com.tss.platform.module1.entity.User;
+import com.tss.platform.module1.security.UserAdministrationForbiddenException;
+import com.tss.platform.module1.security.UserAdministrationPolicy;
 import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
@@ -46,12 +48,22 @@ public class UserController {
     @Resource
     private AuditRecordService auditRecordService;
 
+    @Resource
+    private UserAdministrationPolicy userAdministrationPolicy;
+
     /** 开发环境将验证码写入日志并在接口中返回（生产环境请设为 false） */
     @Value("${sms.expose-code:true}")
     private boolean smsExposeCode;
 
     @PostMapping("/add")
     public Result<?> addUser(@RequestBody User user, HttpServletRequest request) {
+        try {
+            user.setRoleId(userAdministrationPolicy.requireAssignableRole(user.getRoleId(), null));
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
+        }
         SYSTEM_LOG.info("管理员新增用户请求: username={}", DesensitizationUtil.maskUsername(user.getUsername()));
         
         String ip = getClientIp(request);
@@ -90,6 +102,13 @@ public class UserController {
             SYSTEM_LOG.warn("管理员重置密码请求: userId为空");
             return Result.fail("用户ID不能为空");
         }
+        try {
+            userAdministrationPolicy.requireCanManage(userService.getById(dto.getUserId()));
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
+        }
         
         SYSTEM_LOG.info("管理员重置密码请求: userId={}", dto.getUserId());
         
@@ -124,8 +143,13 @@ public class UserController {
 
     @GetMapping("/list")
     public Result<List<Map<String, Object>>> getUserListWithRole() {
-        List<Map<String, Object>> list = userService.getUserListWithRole();
-        return Result.success(list, "查询成功");
+        try {
+            List<Map<String, Object>> list = userService.getUserListWithRole(
+                    userAdministrationPolicy.requiredVisibleRoleId());
+            return Result.success(list, "查询成功");
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        }
     }
 
     @PostMapping("/page")
@@ -137,7 +161,15 @@ public class UserController {
             queryDTO.setSize(10);
         }
         
-        IPage<Map<String, Object>> pageResult = userService.getUserPage(queryDTO);
+        final IPage<Map<String, Object>> pageResult;
+        try {
+            pageResult = userService.getUserPage(
+                    queryDTO,
+                    userAdministrationPolicy.requiredVisibleRoleId()
+            );
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        }
         
         PageResultDTO<Map<String, Object>> result = new PageResultDTO<>(
             pageResult.getRecords(),
@@ -151,7 +183,15 @@ public class UserController {
 
     @GetMapping("/detail/{userId}")
     public Result<Map<String, Object>> getUserDetail(@PathVariable Integer userId) {
-        Map<String, Object> userDetail = userService.getUserDetail(userId);
+        final Map<String, Object> userDetail;
+        try {
+            userDetail = userService.getUserDetail(
+                    userId,
+                    userAdministrationPolicy.requiredVisibleRoleId()
+            );
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        }
         if (userDetail == null) {
             return Result.fail("用户不存在");
         }
@@ -162,6 +202,20 @@ public class UserController {
     public Result<?> updateUser(@RequestBody UserUpdateDTO updateDTO, HttpServletRequest request) {
         if (updateDTO.getUserId() == null) {
             return Result.fail("用户ID不能为空");
+        }
+        try {
+            User targetUser = userService.getById(updateDTO.getUserId());
+            userAdministrationPolicy.requireCanManage(targetUser);
+            if (updateDTO.getRoleId() != null) {
+                updateDTO.setRoleId(userAdministrationPolicy.requireAssignableRole(
+                        updateDTO.getRoleId(),
+                        targetUser.getRoleId()
+                ));
+            }
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
         }
         
         SYSTEM_LOG.info("管理员编辑用户请求: userId={}", updateDTO.getUserId());
@@ -199,6 +253,13 @@ public class UserController {
 
     @PutMapping("/status/{userId}")
     public Result<?> toggleUserStatus(@PathVariable Integer userId, @RequestParam Boolean status, HttpServletRequest request) {
+        try {
+            userAdministrationPolicy.requireCanManage(userService.getById(userId));
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
+        }
         SYSTEM_LOG.info("管理员切换用户状态请求: userId={}, status={}", userId, status);
         
         String ip = getClientIp(request);
@@ -259,6 +320,16 @@ public class UserController {
 
     @DeleteMapping("/delete/{userId}")
     public Result<?> softDeleteUser(@PathVariable Integer userId, HttpServletRequest request) {
+        try {
+            userAdministrationPolicy.requireCanManage(userService.getById(userId));
+            if (userId.equals(userAdministrationPolicy.currentUserId())) {
+                return Result.fail("不能删除当前登录账号");
+            }
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return Result.fail(exception.getMessage());
+        }
         SYSTEM_LOG.info("管理员删除用户请求: userId={}", userId);
         
         String ip = getClientIp(request);
@@ -475,9 +546,10 @@ public class UserController {
      */
     @PostMapping("/promote-to-admin")
     public Result<?> promoteToNormalAdmin(@RequestBody Map<String, Integer> body) {
-        Integer operatorRoleId = (Integer) StpUtil.getTokenSession().get("roleId");
-        if (operatorRoleId == null || operatorRoleId != 1) {
-            return Result.fail("仅超级管理员可操作");
+        try {
+            userAdministrationPolicy.requireSuperAdministrator();
+        } catch (UserAdministrationForbiddenException exception) {
+            return Result.noAuth(exception.getMessage());
         }
         Integer userId = body != null ? body.get("userId") : null;
         if (userId == null) {

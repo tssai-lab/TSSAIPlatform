@@ -25,8 +25,8 @@ public class OperationLogController {
 
     @PostMapping("/record")
     public Result<?> recordLog(@RequestBody OperationLog log) {
-        boolean success = logService.recordLog(log);
-        return success ? Result.success(null) : Result.fail("记录日志失败");
+        // 审计记录只能由服务端业务流程产生，不能信任客户端提交的操作者、IP 或结果。
+        return Result.noAuth("操作日志仅允许由系统内部记录");
     }
 
     @GetMapping("/list")

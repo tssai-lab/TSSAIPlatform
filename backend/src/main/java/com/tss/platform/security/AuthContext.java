@@ -26,26 +26,23 @@ public class AuthContext {
     }
 
     public boolean isAdmin() {
-        Object roleValue = StpUtil.getTokenSession().get("roleId");
-        if (roleValue instanceof Integer roleId) {
-            return roleId == 1 || roleId == 2;
-        }
-        if (roleValue instanceof Number number) {
-            int roleId = number.intValue();
-            return roleId == 1 || roleId == 2;
-        }
-        return false;
+        Integer roleId = currentRoleId();
+        return roleId != null && (roleId == 1 || roleId == 2);
     }
 
     public boolean isSuperAdmin() {
+        return Integer.valueOf(1).equals(currentRoleId());
+    }
+
+    public Integer currentRoleId() {
         Object roleValue = StpUtil.getTokenSession().get("roleId");
         if (roleValue instanceof Integer roleId) {
-            return roleId == 1;
+            return roleId;
         }
         if (roleValue instanceof Number number) {
-            return number.intValue() == 1;
+            return number.intValue();
         }
-        return false;
+        return null;
     }
 
     public boolean canAccessOwner(Integer ownerUserId) {

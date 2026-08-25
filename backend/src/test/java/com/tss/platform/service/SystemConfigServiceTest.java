@@ -35,7 +35,7 @@ class SystemConfigServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(authContext.isAdmin()).thenReturn(true);
+        when(authContext.isSuperAdmin()).thenReturn(true);
         when(authContext.currentUserId()).thenReturn(9);
         when(repository.saveAndFlush(any(PlatformSystemConfig.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -66,7 +66,7 @@ class SystemConfigServiceTest {
     }
 
     @Test
-    void administratorCanSwitchBetweenTheTwoPublicModes() {
+    void superAdministratorCanSwitchBetweenTheTwoPublicModes() {
         PlatformSystemConfig config = config(
                 TrainingCodeReviewMode.STANDARD_REVIEW.name()
         );
@@ -86,7 +86,7 @@ class SystemConfigServiceTest {
     }
 
     @Test
-    void invalidModeAndNonAdministratorCannotMutateConfiguration() {
+    void invalidModeAndNonSuperAdministratorCannotMutateConfiguration() {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> service.updateForAdministration(
@@ -95,7 +95,7 @@ class SystemConfigServiceTest {
         );
         verify(repository, never()).saveAndFlush(any());
 
-        when(authContext.isAdmin()).thenReturn(false);
+        when(authContext.isSuperAdmin()).thenReturn(false);
         assertThrows(
                 CodeApprovalForbiddenException.class,
                 service::getForAdministration

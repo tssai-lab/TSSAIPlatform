@@ -4,8 +4,6 @@ import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.resource.*;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.service.ResourceMonitorService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -15,8 +13,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/resource-monitor")
 public class ResourceMonitorController {
-
-    private static final Logger LOG = LoggerFactory.getLogger(ResourceMonitorController.class);
 
     private final ResourceMonitorService monitorService;
     private final AuthContext authContext;
@@ -37,26 +33,34 @@ public class ResourceMonitorController {
     public ApiResponse<List<ServerItem>> servers(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false, defaultValue = "all") String status) {
-        return ApiResponse.ok(monitorService.listServers(keyword, status));
+        List<ServerItem> items = monitorService.listServers(keyword, status);
+        if (!authContext.isSuperAdmin()) {
+            items.forEach(this::removeTaskDetails);
+        }
+        return ApiResponse.ok(items);
     }
 
     // ── 5.3 POST /servers ──
     @PostMapping("/servers")
     public ApiResponse<ServerItem> addServer(@RequestBody AddServerRequest req) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.addServer(req));
     }
 
     // ── 5.4 GET /servers/{serverIp} ──
     @GetMapping("/servers/{serverIp}")
     public ApiResponse<ServerItem> serverDetail(@PathVariable String serverIp) {
-        return ApiResponse.ok(monitorService.getServerDetail(serverIp));
+        ServerItem item = monitorService.getServerDetail(serverIp);
+        if (!authContext.isSuperAdmin()) {
+            removeTaskDetails(item);
+        }
+        return ApiResponse.ok(item);
     }
 
     // ── 5.5 DELETE /servers/{serverIp} ──
     @DeleteMapping("/servers/{serverIp}")
     public ApiResponse<Void> deleteServer(@PathVariable String serverIp) {
-        requireAdmin();
+        requireSuperAdmin();
         monitorService.deleteServer(serverIp);
         return ApiResponse.ok(null);
     }
@@ -66,7 +70,7 @@ public class ResourceMonitorController {
     public ApiResponse<ServerItem> updateServerEnabled(
             @PathVariable String serverIp,
             @RequestBody UpdateServerEnabledRequest req) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.updateServerEnabled(serverIp, req));
     }
 
@@ -83,7 +87,7 @@ public class ResourceMonitorController {
     public ApiResponse<ServerItem> reorderQueue(
             @PathVariable String serverIp,
             @RequestBody ReorderRequest req) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.reorderQueue(serverIp, req));
     }
 
@@ -92,7 +96,7 @@ public class ResourceMonitorController {
     public ApiResponse<ServerItem> updatePriority(
             @PathVariable String serverIp,
             @RequestBody PriorityRequest req) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.updatePriority(serverIp, req));
     }
 
@@ -101,13 +105,14 @@ public class ResourceMonitorController {
     public ApiResponse<ServerItem> cancelQueue(
             @PathVariable String serverIp,
             @PathVariable String taskId) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.cancelQueueTask(serverIp, taskId));
     }
 
     // ── 5.10 GET /queue（全局排队，按资源池分组）──
     @GetMapping("/queue")
     public ApiResponse<List<GlobalQueuedTask>> globalQueue() {
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.listGlobalQueued());
     }
 
@@ -121,29 +126,31 @@ public class ResourceMonitorController {
     // ── 5.11 PUT /queue/reorder（全局排队同池内调整）──
     @PutMapping("/queue/reorder")
     public ApiResponse<List<GlobalQueuedTask>> reorderGlobalQueue(@RequestBody ReorderRequest req) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.reorderGlobalQueue(req));
     }
 
     // ── 5.12 DELETE /queue/{taskId}（取消全局排队）──
     @DeleteMapping("/queue/{taskId}")
     public ApiResponse<List<GlobalQueuedTask>> cancelGlobalQueue(@PathVariable String taskId) {
-        requireAdmin();
+        requireSuperAdmin();
         return ApiResponse.ok(monitorService.cancelGlobalQueueTask(taskId));
-    }
-
-    private void requireAdmin() {
-        if (!authContext.isAdmin()) {
-            throw new IllegalArgumentException("仅管理员可执行此操作");
-        }
     }
 
     private void requireSuperAdmin() {
         if (!authContext.isSuperAdmin()) {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
-                    "仅超级管理员可查看 Kubernetes 诊断详情"
+                    "仅超级管理员可执行此操作"
             );
         }
+    }
+
+    private void removeTaskDetails(ServerItem item) {
+        if (item == null) {
+            return;
+        }
+        item.setRunningTasks(List.of());
+        item.setQueuedTasks(List.of());
     }
 }
