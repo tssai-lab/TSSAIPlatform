@@ -93,3 +93,49 @@ containers in the `tss-aiplatform-internal` Compose project and correct the
 classified local cause. Do not run a global Docker prune, delete volumes, reset
 Kubernetes, loosen Main, or remove any 4080/5090 non-project service. C6 CPU
 training/inference and C8 GPU work remain separate stages.
+
+## C7 restricted backend deployment
+
+C7 keeps the existing Main deployment unchanged and adds an independent,
+manual-only internal backend target. The seu4080 Runner remains an unprivileged
+`seu` process. Its project deployment key is stored only in the Runner's
+root-owned project disk; the private key is not uploaded to GitHub. On seu5090,
+the matching public key is restricted by `authorized_keys` to
+`internal-runner-gateway.sh`. That gateway permits only `probe`, an exact
+protected-branch fast-forward, a bounded backend bundle stream and one fixed
+root deployment command. Port, agent and X11 forwarding and arbitrary shells
+remain disabled.
+
+Install the gateway only after reviewing the Runner public key and the exact
+`backend-ops` source:
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-internal-runner-gateway.sh \
+  /path/to/reviewed/tss-aiplatform-internal-deploy.pub
+```
+
+The `tss-aiplatform-internal` GitHub Environment then needs three non-secret
+variables: `CONTROL_PLANE_HOST`, `CONTROL_PLANE_SSH_KEY` and
+`CONTROL_PLANE_KNOWN_HOSTS`. The latter two are absolute paths on the isolated
+Runner. The workflow never accepts a private key value from GitHub.
+
+For a reviewed `backend-ops` SHA, first dispatch `export-backend-image`, then
+dispatch `deploy-backend` with that successful run ID and the same exact SHA.
+The deployment downloads only the locked backend image, verifies the GitHub
+run metadata, artifact checksum and source lock, synchronizes seu5090 only by
+fast-forward, and streams a bounded three-file bundle through the forced
+gateway. The root helper rechecks the lock, runtime fingerprint, disk gates,
+host identity and all four platform images before Compose may act. It snapshots
+the three non-backend platform containers, changes only the backend, runs the
+full platform verifier and writes
+`/srv/tss-AIplatform/platform/state/c7-backend-deployment.env`. Failed switches
+restore the previous backend configuration. Successful switches keep only the
+current project backend image; no global prune is used.
+
+Automatic push consumption remains disabled until the same infrastructure SHA
+and backend image have completed three consecutive manual deployments. To
+revoke the channel, remove only the authorized-key line ending in
+`tss-aiplatform-internal-deploy`,
+`/etc/sudoers.d/tss-aiplatform-internal-deploy` and the two exact
+`/usr/local/sbin/tss-aiplatform-internal-*` gateway files. Revocation does not
+stop the currently accepted backend or delete platform data.

@@ -27,6 +27,9 @@ for file in \
   "$platform_root/scripts/prepare-platform-network.sh" \
   "$platform_root/scripts/prepare-platform.sh" \
   "$platform_root/scripts/verify-platform.sh" \
+  "$platform_root/scripts/internal-runner-gateway.sh" \
+  "$platform_root/scripts/deploy-internal-backend.sh" \
+  "$platform_root/scripts/install-internal-runner-gateway.sh" \
   "$platform_root/scripts/smoke-platform-api.sh" \
   "$platform_root/scripts/bootstrap-platform.sh" \
   "$platform_root/scripts/verify-internal-kubeadm.sh" \
@@ -149,6 +152,39 @@ grep -F 'bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh' "$work
 grep -F -- '- export-platform-images' "$workflow" >/dev/null
 grep -F "inputs.task == 'export-platform-images'" "$workflow" >/dev/null
 grep -F 'bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh' "$workflow" >/dev/null
+grep -F -- '- deploy-backend' "$workflow" >/dev/null
+grep -F "inputs.task == 'deploy-backend'" "$workflow" >/dev/null
+grep -F 'runs-on: [self-hosted, Linux, X64, seu4080, deploy]' "$workflow" >/dev/null
+grep -F 'CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}' "$workflow" >/dev/null
+grep -F 'CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}' "$workflow" >/dev/null
+grep -F -- '--profile backend-image' "$workflow" >/dev/null
+grep -F -- '-o BatchMode=yes' "$workflow" >/dev/null
+grep -F -- '-o IdentitiesOnly=yes' "$workflow" >/dev/null
+grep -F -- '-o StrictHostKeyChecking=yes' "$workflow" >/dev/null
+grep -F 'stage-backend' "$workflow" >/dev/null
+grep -F 'deploy-backend' "$workflow" >/dev/null
+
+gateway="$platform_root/scripts/internal-runner-gateway.sh"
+deployer="$platform_root/scripts/deploy-internal-backend.sh"
+installer="$platform_root/scripts/install-internal-runner-gateway.sh"
+grep -F 'command_text=${SSH_ORIGINAL_COMMAND:-}' "$gateway" >/dev/null
+grep -F 'exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-backend' "$gateway" >/dev/null
+grep -F 'command is not permitted by the internal Runner gateway' "$gateway" >/dev/null
+grep -F 'restrict,command="/usr/local/sbin/tss-aiplatform-internal-runner-gateway"' "$installer" >/dev/null
+grep -F 'user ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-backend\n' \
+  "$installer" >/dev/null
+! grep -F 'NOPASSWD: ALL' "$installer" >/dev/null
+grep -F 'sha256sum --check --strict backend-image.sha256' "$deployer" >/dev/null
+grep -F 'staged backend source lock differs from protected repository' "$deployer" >/dev/null
+grep -F 'runtime content differs' "$deployer" >/dev/null
+grep -F 'docker compose -f "$compose_file" up -d backend' "$deployer" >/dev/null
+grep -F 'a non-backend platform container changed during backend deployment' "$deployer" >/dev/null
+grep -F 'TSS_CONSECUTIVE_SUCCESS_COUNT=' "$deployer" >/dev/null
+! grep -E 'docker (system|image|container|volume) prune' "$deployer" >/dev/null
+if grep -F '${{ secrets.' "$workflow" >/dev/null; then
+  echo 'internal workflow unexpectedly depends on a GitHub secret' >&2
+  exit 1
+fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
