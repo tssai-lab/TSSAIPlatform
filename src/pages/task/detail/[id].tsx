@@ -12,6 +12,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Drawer,
   Dropdown,
   Form,
   Input,
@@ -31,6 +32,7 @@ import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import TrainingStatusBanner from '@/components/TrainingStatusBanner';
+import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import { getModelDetail } from '@/services/model';
 import {
   downloadObject,
@@ -462,6 +464,7 @@ const TaskDetail: React.FC = () => {
   const [versionHistoryPage, setVersionHistoryPage] = useState(1);
   const [versionHistoryPageSize, setVersionHistoryPageSize] = useState(10);
   const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
 
   const renderCodeVersionCell = useCallback(
     (codeVersionId?: string) => {
@@ -995,6 +998,7 @@ const TaskDetail: React.FC = () => {
           {isTracingHistorical && (
             <Button onClick={handleJumpToLatestVersion}>回到最新版本</Button>
           )}
+          <Button onClick={() => setLogDrawerOpen(true)}>查看训练日志</Button>
           <Button onClick={() => history.push(listBackPath)}>返回列表</Button>
         </Space>
       }
@@ -1640,6 +1644,25 @@ const TaskDetail: React.FC = () => {
           onPublished={() => loadTaskDetail(false)}
         />
       </Card>
+      <Drawer
+        title={`训练日志${taskInfo.name ? ` · ${taskInfo.name}` : ''}`}
+        open={logDrawerOpen}
+        width={860}
+        destroyOnClose
+        onClose={() => setLogDrawerOpen(false)}
+        extra={
+          <Tag color={statusColor(taskInfo.status)}>
+            {statusText(taskInfo.status)}
+          </Tag>
+        }
+      >
+        <InferenceLogPanel
+          logPath={taskInfo.logPath}
+          status={taskInfo.status}
+          title="训练日志"
+          description="日志文件保存在对象存储中，不依赖 Pod 或 Job 是否仍存在；训练进行中会自动刷新，任务结束后仍可滚动查看和复制。"
+        />
+      </Drawer>
     </PageContainer>
   );
 };

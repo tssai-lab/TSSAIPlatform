@@ -19,12 +19,14 @@ export type InferenceLogPanelProps = {
   status?: string;
   /** 运行中轮询间隔，默认与任务状态轮询一致 */
   pollIntervalMs?: number;
+  title?: string;
+  description?: string;
 };
 
 async function readLogBlob(
   blob: Blob,
 ): Promise<{ content: string; sizeBytes: number }> {
-  if (blob.type && blob.type.includes('application/json')) {
+  if (blob.type?.includes('application/json')) {
     const text = await blob.text();
     let msg = text;
     try {
@@ -54,13 +56,14 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
   logPath,
   status,
   pollIntervalMs = VISUALIZATION_CONFIG.TASK_STATUS_POLL_INTERVAL_MS,
+  title = '运行日志',
+  description = '终端内展示本任务的完整推理运行日志，可滚动查看；也可使用上方「下载日志」保存文件。',
 }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const contentRef = useRef('');
   const followRef = useRef(true);
-  const fetchingRef = useRef(false);
 
   const [uiStatus, setUiStatus] = useState<UiStatus>('idle');
   const [emptyMessage, setEmptyMessage] = useState('');
@@ -152,6 +155,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let fetching = false;
 
     contentRef.current = '';
     termRef.current?.reset();
@@ -174,8 +178,8 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         return;
       }
 
-      if (fetchingRef.current) return;
-      fetchingRef.current = true;
+      if (fetching) return;
+      fetching = true;
       if (!opts?.silent && !contentRef.current) {
         setUiStatus('loading');
       }
@@ -218,7 +222,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         }
         setLive(false);
       } finally {
-        fetchingRef.current = false;
+        fetching = false;
       }
     };
 
@@ -260,7 +264,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
         <div>
           <Space align="center" size={8}>
             <Typography.Title level={5} style={{ margin: 0 }}>
-              运行日志
+              {title}
             </Typography.Title>
             {live && (
               <Typography.Text type="success" style={{ fontSize: 12 }}>
@@ -272,7 +276,7 @@ const InferenceLogPanel: React.FC<InferenceLogPanelProps> = ({
             type="secondary"
             style={{ margin: '4px 0 0', fontSize: 13 }}
           >
-            终端内展示本任务的完整推理运行日志，可滚动查看；也可使用上方「下载日志」保存文件。
+            {description}
           </Typography.Paragraph>
         </div>
         <Space size={4} style={{ flexShrink: 0 }}>
