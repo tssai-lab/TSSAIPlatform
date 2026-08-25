@@ -72,7 +72,7 @@ roles="$(docker exec tss-aiplatform-internal-postgres sh -c \
 flyway="$(docker exec tss-aiplatform-internal-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select coalesce(max(installed_rank),0) from flyway_schema_history"')"
 [[ $roles == 3 ]] || die "module-one role initialization is incomplete"
-[[ $flyway == 61 ]] || die "Flyway schema is not at the expected application baseline: $flyway"
+[[ $flyway == 62 ]] || die "Flyway schema is not at the expected application baseline: $flyway"
 if [[ $fresh == true ]]; then
   users="$(docker exec tss-aiplatform-internal-postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from users"')"
