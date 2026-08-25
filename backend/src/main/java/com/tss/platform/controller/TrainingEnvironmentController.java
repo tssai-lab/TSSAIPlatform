@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
+import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingEnvironmentService;
 import com.tss.platform.training.TrainingEnvironmentStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,9 +16,14 @@ import java.util.Map;
 public class TrainingEnvironmentController {
 
     private final TrainingEnvironmentService environmentService;
+    private final AuthContext authContext;
 
-    public TrainingEnvironmentController(TrainingEnvironmentService environmentService) {
+    public TrainingEnvironmentController(
+            TrainingEnvironmentService environmentService,
+            AuthContext authContext
+    ) {
         this.environmentService = environmentService;
+        this.authContext = authContext;
     }
 
     @GetMapping("/status")
@@ -28,13 +34,15 @@ public class TrainingEnvironmentController {
         body.put("kubernetesEnabled", status.isKubernetesEnabled());
         body.put("kubernetesReady", status.isKubernetesReady());
         body.put("fallbackToLocal", status.isFallbackToLocal());
-        body.put("clusterName", status.getClusterName());
-        body.put("namespace", status.getNamespace());
-        body.put("workerImage", status.getWorkerImage());
-        body.put("kubeconfig", status.getKubeconfig());
         body.put("message", status.getMessage());
-        body.put("lastError", status.getLastError());
         body.put("checkedAt", status.getCheckedAt());
+        if (authContext.isSuperAdmin()) {
+            body.put("clusterName", status.getClusterName());
+            body.put("namespace", status.getNamespace());
+            body.put("workerImage", status.getWorkerImage());
+            body.put("kubeconfig", status.getKubeconfig());
+            body.put("lastError", status.getLastError());
+        }
         return ApiResponse.ok(body);
     }
 }

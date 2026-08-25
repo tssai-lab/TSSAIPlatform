@@ -14,11 +14,42 @@ import java.util.Map;
 
 @Mapper
 public interface UserMapper extends BaseMapper<User> {
-    @Select("SELECT u.*, COALESCE(r.role_name, '普通用户') as role_name FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.deleted_at IS NULL ORDER BY u.created_at DESC, u.id DESC")
-    List<Map<String, Object>> selectUserWithRole();
+    @Select("""
+            <script>
+            SELECT u.id, u.username, u.mobile, u.email, u.role_id, u.status,
+                   u.created_at, u.updated_at,
+                   COALESCE(r.role_name, '普通用户') AS role_name
+            FROM users u
+            LEFT JOIN roles r ON u.role_id = r.id
+            WHERE u.deleted_at IS NULL
+            <if test="requiredRoleId != null">
+              AND u.role_id = #{requiredRoleId}
+            </if>
+            ORDER BY u.created_at DESC, u.id DESC
+            </script>
+            """)
+    List<Map<String, Object>> selectUserWithRole(@Param("requiredRoleId") Integer requiredRoleId);
 
-    IPage<Map<String, Object>> selectUserPage(Page<Map<String, Object>> page, @Param("query") UserQueryDTO queryDTO);
+    IPage<Map<String, Object>> selectUserPage(
+            Page<Map<String, Object>> page,
+            @Param("query") UserQueryDTO queryDTO,
+            @Param("requiredRoleId") Integer requiredRoleId
+    );
 
-    @Select("SELECT u.*, r.role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = #{userId} AND u.deleted_at IS NULL")
-    Map<String, Object> selectUserDetail(@Param("userId") Integer userId);
+    @Select("""
+            <script>
+            SELECT u.id, u.username, u.mobile, u.email, u.role_id, u.status,
+                   u.created_at, u.updated_at, r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            WHERE u.id = #{userId} AND u.deleted_at IS NULL
+            <if test="requiredRoleId != null">
+              AND u.role_id = #{requiredRoleId}
+            </if>
+            </script>
+            """)
+    Map<String, Object> selectUserDetail(
+            @Param("userId") Integer userId,
+            @Param("requiredRoleId") Integer requiredRoleId
+    );
 }
