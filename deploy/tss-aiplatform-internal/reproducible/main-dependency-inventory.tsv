@@ -1,5 +1,5 @@
 item	main_observation	portable_source	new_environment_action	classification
-backend-image	Main runs backend commit 2e96544b	platform/platform-images.lock	pull exact GHCR digest or generate platform bundle	VERSIONED
+backend-image	Main runs backend-ops commit a5dc1d99	platform/platform-images.lock	pull exact GHCR digest or generate platform bundle	VERSIONED
 mlflow-image	Main tag was local-only	deploy/main/mlflow-lite plus locked GHCR digest	use CI-built locked image; do not copy Main image	VERSIONED_REPLACEMENT
 postgres-image	Main local image reports PostgreSQL 16.13 on Debian trixie	locked official postgres:16.13-trixie manifest	pull/export exact registry digest; existing Main bytes are not required	VERSIONED_REPLACEMENT
 minio-image	Main used a moving latest tag	locked historical Docker Hub manifest matching Main image ID	pull/export exact registry digest	VERSIONED

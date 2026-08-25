@@ -1,7 +1,7 @@
 # Frontend is maintained on a separate branch in the same repository.
 branch=frontend-dev
-commit=efbe8d9f14939071e84955aef70361e4cf26a618
-main_deployment_run=31917382361
+commit=c9413705f00b278730150fe968ab8183e1bc49e4
+main_deployment_run=32024345053
 node_major=20
 install_command=npm_ci
 build_command=npm_run_build
