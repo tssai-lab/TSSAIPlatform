@@ -10,7 +10,7 @@ mode="${1:-export}"
   || { echo "ERROR: usage: $0 [--validate-only]; export streams a Docker archive to stdout" >&2; exit 1; }
 
 entry_count=0
-while IFS='|' read -r source_ref source_digest project_ref expected_id budget_bytes; do
+while IFS='|' read -r source_ref source_digest project_ref expected_id expected_fingerprint budget_bytes; do
   [[ -n $source_ref && $source_ref != \#* ]] || continue
   [[ $source_ref != *:latest && $source_ref != *@* ]] \
     || { echo "ERROR: source image must use a non-latest tag without an inline digest: $source_ref" >&2; exit 1; }
@@ -20,6 +20,8 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id budget_by
     || { echo "ERROR: unsafe project image alias: $project_ref" >&2; exit 1; }
   [[ $expected_id =~ ^sha256:[0-9a-f]{64}$ ]] \
     || { echo "ERROR: invalid linux/amd64 image ID: $project_ref" >&2; exit 1; }
+  [[ $expected_fingerprint =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "ERROR: invalid runtime fingerprint: $project_ref" >&2; exit 1; }
   [[ $budget_bytes =~ ^[1-9][0-9]*$ ]] \
     || { echo "ERROR: invalid conservative image budget: $project_ref" >&2; exit 1; }
   entry_count=$((entry_count + 1))
@@ -32,6 +34,7 @@ if [[ $mode == --validate-only ]]; then
 fi
 
 command -v docker >/dev/null || { echo "ERROR: docker is required" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "ERROR: python3 is required" >&2; exit 1; }
 
 declare -a temporary_tags=()
 declare -a temporary_sources=()
@@ -47,7 +50,7 @@ cleanup() {
 trap cleanup EXIT
 
 declare -a project_refs=()
-while IFS='|' read -r source_ref source_digest project_ref expected_id budget_bytes; do
+while IFS='|' read -r source_ref source_digest project_ref expected_id expected_fingerprint budget_bytes; do
   [[ -n $source_ref && $source_ref != \#* ]] || continue
   immutable_ref="${source_ref}@${source_digest}"
   if ! docker image inspect "$immutable_ref" >/dev/null 2>&1; then
@@ -57,8 +60,15 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id budget_by
   actual_id="$(docker image inspect --format '{{.Id}}' "$immutable_ref")"
   actual_size="$(docker image inspect --format '{{.Size}}' "$immutable_ref")"
   actual_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$immutable_ref")"
-  [[ $actual_id == "$expected_id" ]] \
-    || { echo "ERROR: registry image differs from locked linux/amd64 ID: $source_ref" >&2; exit 1; }
+  actual_fingerprint="$(
+    docker image inspect "$immutable_ref" \
+      | python3 "${script_dir}/image-runtime-fingerprint.py"
+  )"
+  [[ $actual_fingerprint == "$expected_fingerprint" ]] \
+    || { echo "ERROR: registry image runtime content differs from lock: $source_ref" >&2; exit 1; }
+  if [[ $actual_id != "$expected_id" ]]; then
+    echo "INFO: local image ID was rewritten, but locked registry/runtime content matches: $source_ref" >&2
+  fi
   [[ $actual_platform == linux/amd64 ]] \
     || { echo "ERROR: registry image is not linux/amd64: $source_ref" >&2; exit 1; }
   (( actual_size <= budget_bytes )) \
