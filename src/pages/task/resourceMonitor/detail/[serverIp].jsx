@@ -437,7 +437,7 @@ const ServerDetail = () => {
           <Card>
             <Statistic
               title="待启动任务"
-              value={queuedTasks.length}
+              value={server.waitTask}
               suffix="个"
             />
           </Card>
@@ -490,36 +490,47 @@ const ServerDetail = () => {
         />
       </Card>
 
-      <Card
-        title={`正在运行的任务（${server.runningTasks?.length ?? 0}）`}
-        style={{ marginBottom: 16 }}
-      >
-        <Table
-          rowKey="id"
-          columns={runningColumns}
-          dataSource={server.runningTasks}
-          pagination={false}
-          locale={{ emptyText: '当前无运行中任务' }}
-          scroll={{ x: 1100 }}
-        />
-      </Card>
+      {canManageResourceQueue ? (
+        <>
+          <Card
+            title={`正在运行的任务（${server.runningTasks?.length ?? 0}）`}
+            style={{ marginBottom: 16 }}
+          >
+            <Table
+              rowKey="id"
+              columns={runningColumns}
+              dataSource={server.runningTasks}
+              pagination={false}
+              locale={{ emptyText: '当前无运行中任务' }}
+              scroll={{ x: 1100 }}
+            />
+          </Card>
 
-      <Card
-        title={`已调度待启动的任务（${queuedTasks.length}）`}
-        extra={
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            已绑定节点、等待启动；启动顺序由调度器按优先级与提交时间决定
-          </Text>
-        }
-      >
-        <Table
-          rowKey="id"
-          columns={queuedColumns}
-          dataSource={queuedTasks}
-          pagination={false}
-          locale={{ emptyText: '当前无待启动任务' }}
+          <Card
+            title={`已调度待启动的任务（${queuedTasks.length}）`}
+            extra={
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                已绑定节点、等待启动；启动顺序由调度器按优先级与提交时间决定
+              </Text>
+            }
+          >
+            <Table
+              rowKey="id"
+              columns={queuedColumns}
+              dataSource={queuedTasks}
+              pagination={false}
+              locale={{ emptyText: '当前无待启动任务' }}
+            />
+          </Card>
+        </>
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="任务明细仅超级管理员可查看"
+          description="当前账号仍可查看节点状态、资源指标和任务数量汇总，但不会显示其他用户的任务名称、模型或数据集。"
         />
-      </Card>
+      )}
     </PageContainer>
   );
 };

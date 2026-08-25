@@ -259,7 +259,8 @@ const ResourceMonitor = () => {
         !searchText ||
         s.serverIp.includes(searchText) ||
         s.hostname.includes(searchText) ||
-        s.runningTasks?.some((t) => t.name.includes(searchText));
+        (canManageResourceNodes &&
+          s.runningTasks?.some((t) => t.name.includes(searchText)));
       const matchStatus =
         statusFilter === 'all' ||
         (statusFilter === 'disabled'
@@ -267,7 +268,7 @@ const ResourceMonitor = () => {
           : s.status === statusFilter);
       return matchSearch && matchStatus;
     });
-  }, [servers, searchText, statusFilter]);
+  }, [canManageResourceNodes, servers, searchText, statusFilter]);
 
   const unreliableMetricsCount = useMemo(
     () => servers.filter((server) => server.metricsStatus !== 'fresh').length,
@@ -400,7 +401,11 @@ const ResourceMonitor = () => {
               </Button>
             )}
             <Search
-              placeholder="搜索 IP / 主机名 / 任务名"
+              placeholder={
+                canManageResourceNodes
+                  ? '搜索 IP / 主机名 / 任务名'
+                  : '搜索 IP / 主机名'
+              }
               allowClear
               style={{ width: 220 }}
               onSearch={setSearchText}
