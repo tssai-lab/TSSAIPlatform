@@ -53,7 +53,11 @@ PROFILES = {
         "checksum_files": {
             "cpu-runtime.sha256": ["cpu-runtime-amd64.tar", "sources.lock"],
         },
-        "max_bytes": 8 * 1024**3,
+        # The locked CV image contains CPU ML libraries whose Docker archive is
+        # larger than the compressed registry size. GitHub's artifact service
+        # already enforces a 10 GB per-artifact limit; keep the local ceiling
+        # equally narrow while accepting the measured 9.67 GB bundle.
+        "max_bytes": 10 * 1024**3,
     },
 }
 USER_AGENT = "tss-aiplatform-artifact/1.1"
@@ -287,7 +291,6 @@ def run_download(args: argparse.Namespace) -> None:
     for path in (target_dir, partial_dir):
         if path.exists() or path.is_symlink():
             fail(f"staging path already exists: {path}")
-    partial_dir.mkdir(mode=0o700)
 
     artifact_id, metadata_size, expected_digest = trusted_artifact(
         args.repository, args.run_id, args.head_sha, token, args.profile
@@ -298,6 +301,7 @@ def run_download(args: argparse.Namespace) -> None:
         fail(
             f"artifact size differs between metadata and storage: {metadata_size} != {archive_size}"
         )
+    partial_dir.mkdir(mode=0o700)
 
     part_count = min(args.workers, archive_size)
     part_size = math.ceil(archive_size / part_count)
