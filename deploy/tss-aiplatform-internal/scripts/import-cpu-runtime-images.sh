@@ -98,10 +98,14 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
       | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])'
   )"
   [[ $actual_image_id == "$image_id" ]] || die "imported image ID differs from lock: $source_ref"
-  ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images tag \
-    "$source_ref" "$runtime_ref" >/dev/null
   runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
     | awk -v ref="$runtime_ref" '$1 == ref {print}')"
+  if [[ -z $runtime_line ]]; then
+    ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images tag \
+      "$source_ref" "$runtime_ref" >/dev/null
+    runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
+      | awk -v ref="$runtime_ref" '$1 == ref {print}')"
+  fi
   [[ -n $runtime_line ]] || die "runtime image alias is absent after import: $runtime_ref"
   [[ $(awk '{print $3}' <<<"$runtime_line") == "$actual_manifest" ]] \
     || die "runtime image alias points to unexpected content: $runtime_ref"
