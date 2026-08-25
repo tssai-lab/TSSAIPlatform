@@ -32,6 +32,7 @@ on:
           - stage-airgap-bundles
           - stage-platform-images
           - stage-cpu-runtime-images
+          - deploy-backend
       airgap_run_id:
         description: Successful export workflow run ID (staging task only)
         required: false
@@ -54,6 +55,14 @@ on:
         type: string
       platform_head_sha:
         description: Exact backend-ops SHA used by the platform-image export run
+        required: false
+        type: string
+      backend_run_id:
+        description: Successful backend-image export workflow run ID
+        required: false
+        type: string
+      backend_head_sha:
+        description: Exact backend-ops SHA used by the backend-image export run
         required: false
         type: string
 
@@ -671,4 +680,145 @@ jobs:
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${PLATFORM_HEAD_SHA}-${PLATFORM_RUN_ID}\`"
             echo "- Checksums and four-source lock: passed"
             echo "- sudo, Docker import and platform restart: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-backend:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'deploy-backend'
+    runs-on: [self-hosted, Linux, X64, seu4080, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact backend export and restricted control channel
+        env:
+          BACKEND_RUN_ID: ${{ inputs.backend_run_id }}
+          BACKEND_HEAD_SHA: ${{ inputs.backend_head_sha }}
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_SHA" == "$BACKEND_HEAD_SHA" ]]
+          [[ "$BACKEND_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKEND_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTROL_PLANE_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+          [[ "$CONTROL_PLANE_SSH_KEY" == /* && "$CONTROL_PLANE_KNOWN_HOSTS" == /* ]]
+          test -f "$CONTROL_PLANE_SSH_KEY"
+          test ! -L "$CONTROL_PLANE_SSH_KEY"
+          test "$(stat -c %U "$CONTROL_PLANE_SSH_KEY")" = "$(id -un)"
+          test "$(stat -c %a "$CONTROL_PLANE_SSH_KEY")" = 600
+          test -f "$CONTROL_PLANE_KNOWN_HOSTS"
+          test ! -L "$CONTROL_PLANE_KNOWN_HOSTS"
+          test "$(stat -c %U "$CONTROL_PLANE_KNOWN_HOSTS")" = "$(id -un)"
+          known_hosts_mode="$(stat -c %a "$CONTROL_PLANE_KNOWN_HOSTS")"
+          (( (8#$known_hosts_mode & 0022) == 0 ))
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${BACKEND_RUN_ID}" \
+            --output "$RUNNER_TEMP/backend-export-run.json"
+          python3 - "$RUNNER_TEMP/backend-export-run.json" "$BACKEND_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-ops",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted backend-image export metadata: {mismatches}")
+          PY
+
+      - name: Download and verify exact backend-image artifact
+        env:
+          BACKEND_RUN_ID: ${{ inputs.backend_run_id }}
+          BACKEND_HEAD_SHA: ${{ inputs.backend_head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          download_root="$RUNNER_TEMP/internal-backend-download"
+          install -d -m 0700 "$download_root"
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$BACKEND_RUN_ID" \
+            --head-sha "$BACKEND_HEAD_SHA" \
+            --stage-root "$download_root" \
+            --profile backend-image \
+            --workers 16
+          target_dir="${download_root}/${BACKEND_HEAD_SHA}-${BACKEND_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' backend-image.sha256)" = $'backend-image-amd64.tar\nsources.lock'
+            sha256sum --check --strict backend-image.sha256
+            grep '^ghcr.io/tssai-lab/tssai-backend:' \
+              "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/platform-images.lock" \
+              > "$RUNNER_TEMP/current-backend.lock"
+            test "$(wc -l < "$RUNNER_TEMP/current-backend.lock")" -eq 1
+            cmp "$RUNNER_TEMP/current-backend.lock" sources.lock
+          )
+          printf 'BACKEND_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+
+      - name: Synchronize, stage and deploy through the restricted gateway
+        env:
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          ssh_options=(
+            -i "$CONTROL_PLANE_SSH_KEY"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
+            -o ConnectTimeout=10
+          )
+          ssh "${ssh_options[@]}" "user@${CONTROL_PLANE_HOST}" probe
+          ssh "${ssh_options[@]}" "user@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
+          tar -C "$BACKEND_TARGET_DIR" -cf - \
+            backend-image-amd64.tar backend-image.sha256 sources.lock \
+            | ssh "${ssh_options[@]}" "user@${CONTROL_PLANE_HOST}" stage-backend
+          ssh "${ssh_options[@]}" "user@${CONTROL_PLANE_HOST}" deploy-backend
+          ssh "${ssh_options[@]}" "user@${CONTROL_PLANE_HOST}" probe \
+            | tee "$RUNNER_TEMP/internal-backend-deployment-state.txt"
+          grep -Fx "TSS_INFRASTRUCTURE_SHA=${GITHUB_SHA}" \
+            "$RUNNER_TEMP/internal-backend-deployment-state.txt"
+
+      - name: Record internal backend deployment result
+        run: |
+          {
+            echo "### Internal backend deployment"
+            echo "- Infrastructure SHA: \`${GITHUB_SHA}\`"
+            echo "- Backend export run: \`${{ inputs.backend_run_id }}\`"
+            echo "- Artifact SHA: \`${{ inputs.backend_head_sha }}\`"
+            echo "- Restricted SSH gateway: passed"
+            echo "- Platform verification and independent release record: passed"
           } >> "$GITHUB_STEP_SUMMARY"
