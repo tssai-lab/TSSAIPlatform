@@ -61,6 +61,7 @@ while IFS='|' read -r source_ref source_digest _project_ref expected_id expected
 done <"$lock"
 [[ $lock_entry_count -eq 4 ]] || { echo "image lock parser did not produce four entries" >&2; exit 1; }
 bash "$platform_root/scripts/export-platform-images.sh" --validate-only >/dev/null
+grep -F -- '--backend-only' "$platform_root/scripts/export-platform-images.sh" >/dev/null
 grep -F '[[ -n $_source_ref && $_source_ref != \#* ]] || continue' \
   "$platform_root/scripts/verify-platform-images.sh" >/dev/null \
   || { echo "platform image verifier does not skip the commented lock header" >&2; exit 1; }
