@@ -14,7 +14,7 @@ lock_file="${script_dir}/../platform-images.lock"
 
 count=0
 while IFS='|' read -r _source_ref _source_digest project_ref expected_id budget_bytes; do
-  [[ -n $project_ref && $project_ref != \#* ]] || continue
+  [[ -n $_source_ref && $_source_ref != \#* ]] || continue
   actual_id="$(docker image inspect --format '{{.Id}}' "$project_ref" 2>/dev/null || true)"
   actual_size="$(docker image inspect --format '{{.Size}}' "$project_ref" 2>/dev/null || true)"
   actual_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$project_ref" 2>/dev/null || true)"
