@@ -6,8 +6,8 @@ lock_file="${script_dir}/../platform-images.lock"
 [[ -f $lock_file ]] || { echo "ERROR: image lock is missing" >&2; exit 1; }
 
 mode="${1:-export}"
-[[ $# -le 1 && ( $mode == export || $mode == --validate-only ) ]] \
-  || { echo "ERROR: usage: $0 [--validate-only]; export streams a Docker archive to stdout" >&2; exit 1; }
+[[ $# -le 1 && ( $mode == export || $mode == --validate-only || $mode == --backend-only ) ]] \
+  || { echo "ERROR: usage: $0 [--validate-only|--backend-only]; export streams a Docker archive to stdout" >&2; exit 1; }
 
 entry_count=0
 while IFS='|' read -r source_ref source_digest project_ref expected_id expected_fingerprint budget_bytes; do
@@ -52,6 +52,9 @@ trap cleanup EXIT
 declare -a project_refs=()
 while IFS='|' read -r source_ref source_digest project_ref expected_id expected_fingerprint budget_bytes; do
   [[ -n $source_ref && $source_ref != \#* ]] || continue
+  if [[ $mode == --backend-only && $source_ref != ghcr.io/tssai-lab/tssai-backend:* ]]; then
+    continue
+  fi
   immutable_ref="${source_ref}@${source_digest}"
   if ! docker image inspect "$immutable_ref" >/dev/null 2>&1; then
     docker pull --quiet --platform linux/amd64 "$immutable_ref" >/dev/null
@@ -81,7 +84,10 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id expected_
   temporary_tags+=("$project_ref")
   project_refs+=("$project_ref")
 done <"$lock_file"
-[[ ${#project_refs[@]} -eq 4 ]] || { echo "ERROR: expected four platform images" >&2; exit 1; }
+expected_exports=4
+[[ $mode == --backend-only ]] && expected_exports=1
+[[ ${#project_refs[@]} -eq $expected_exports ]] \
+  || { echo "ERROR: expected ${expected_exports} platform image export(s)" >&2; exit 1; }
 
-echo "PASS: exporting four registry-locked application images; temporary pull references and aliases will be removed" >&2
+echo "PASS: exporting ${expected_exports} registry-locked application image(s); temporary pull references and aliases will be removed" >&2
 docker save "${project_refs[@]}"
