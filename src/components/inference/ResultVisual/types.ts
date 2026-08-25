@@ -47,7 +47,7 @@ export const INFERENCE_VIEW_META: Record<
   text_classification: {
     label: '文本分类',
     color: 'processing',
-    implemented: false,
+    implemented: true,
   },
   text_spans: { label: 'NER / 抽取', color: 'processing', implemented: false },
   text_generation: {

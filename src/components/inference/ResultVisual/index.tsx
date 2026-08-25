@@ -4,6 +4,7 @@ import ClassificationView from './ClassificationView';
 import DetectionView from './DetectionView';
 import { isPlainObject, resolveView } from './resolveView';
 import TabularView from './TabularView';
+import TextClassificationView from './TextClassificationView';
 import {
   INFERENCE_VIEW_META,
   type InferenceView,
@@ -69,6 +70,8 @@ function renderByView(
       return <ClassificationView result={result} />;
     case 'table_classification':
       return <TabularView result={result} />;
+    case 'text_classification':
+      return <TextClassificationView result={result} />;
     case 'unknown':
       return (
         <Alert
