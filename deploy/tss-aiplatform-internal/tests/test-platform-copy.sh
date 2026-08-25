@@ -173,6 +173,10 @@ grep -F 'command is not permitted by the internal Runner gateway' "$gateway" >/d
 grep -F 'restrict,command="/usr/local/sbin/tss-aiplatform-internal-runner-gateway"' "$installer" >/dev/null
 grep -F 'user ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-backend\n' \
   "$installer" >/dev/null
+grep -F 'user ALL=(root) NOPASSWD: /usr/bin/cat /srv/tss-AIplatform/platform/state/c7-backend-deployment.env\n' \
+  "$installer" >/dev/null
+grep -F 'state_content=$(sudo -n /usr/bin/cat "$state_file" 2>/dev/null || true)' \
+  "$gateway" >/dev/null
 ! grep -F 'NOPASSWD: ALL' "$installer" >/dev/null
 grep -F 'sha256sum --check --strict backend-image.sha256' "$deployer" >/dev/null
 grep -F 'staged backend source lock differs from protected repository' "$deployer" >/dev/null
