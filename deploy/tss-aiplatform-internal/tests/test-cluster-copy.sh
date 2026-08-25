@@ -64,6 +64,8 @@ bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
   "${workdir}/control.env" >/dev/null
 bash "${internal_dir}/scripts/import-airgap-bundles.sh" --config-only \
   "${workdir}/worker.env" >/dev/null
+bash "${internal_dir}/scripts/import-cpu-runtime-images.sh" --config-only \
+  "${workdir}/worker.env" >/dev/null
 bash "${internal_dir}/scripts/prepare-control-plane-network.sh" --config-only \
   "${workdir}/control.env" 192.0.2.20 >/dev/null
 bash "${internal_dir}/scripts/render-calico-vxlan.sh" --self-test >/dev/null
@@ -192,10 +194,13 @@ grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-platform-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''export-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''stage-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
 grep -F 'packages: read' "$internal_workflow" >/dev/null
 grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
+grep -F -- '--profile cpu-runtime' "$internal_workflow" >/dev/null
 grep -F -- '--workers 16' "$internal_workflow" >/dev/null
 grep -F 'AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}' "$internal_workflow" >/dev/null
 grep -F 'untrusted export workflow metadata' "$internal_workflow" >/dev/null
@@ -217,6 +222,7 @@ fi
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
 bash "${internal_dir}/ci/export-airgap-bundles.sh" --validate-only >/dev/null
+bash "${internal_dir}/ci/export-cpu-runtime-images.sh" --validate-only >/dev/null
 python3 "${internal_dir}/ci/download-airgap-artifact.py" --self-test >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
@@ -305,6 +311,24 @@ grep -F 'bundle sources do not match the committed artifact lock' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F 'shared system containerd PID changed during image import' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
+grep -F 'CPU runtime bundle sources do not match the committed lock' \
+  "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
+grep -F 'shared Docker container count changed during CPU runtime import' \
+  "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
+
+cpu_runtime_lock="${internal_dir}/reproducible/cpu-runtime-images.lock"
+[[ $(grep -Evc '^(#|$)' "$cpu_runtime_lock") -eq 2 ]]
+[[ $(awk -F'|' '!/^#/ {print $5}' "$cpu_runtime_lock" | sort) == $'cpu-inference\ncv-training' ]]
+if grep -F ':latest' "$cpu_runtime_lock" >/dev/null; then
+  echo "CPU runtime image lock must not use latest tags." >&2
+  exit 1
+fi
+while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose producer_run; do
+  [[ $source_ref =~ ^ghcr\.io/tssai-lab/[a-z0-9-]+:[0-9a-f]{40}$ ]]
+  [[ $manifest_digest =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ -n $runtime_ref && -n $purpose && $producer_run =~ ^[1-9][0-9]*$ ]]
+done < <(grep -Ev '^(#|$)' "$cpu_runtime_lock")
 grep -F "ufw --dry-run allow proto tcp" \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'ufw_user_rules=/etc/ufw/user.rules' \
