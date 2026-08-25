@@ -27,13 +27,23 @@ on:
           - resolve-artifact-lock
           - export-airgap-bundles
           - export-platform-images
+          - export-cpu-runtime-images
           - stage-airgap-bundles
+          - stage-cpu-runtime-images
       airgap_run_id:
         description: Successful export workflow run ID (staging task only)
         required: false
         type: string
       airgap_head_sha:
         description: Exact backend-ops SHA used by the export run (staging task only)
+        required: false
+        type: string
+      runtime_run_id:
+        description: Successful CPU runtime export workflow run ID (runtime staging only)
+        required: false
+        type: string
+      runtime_head_sha:
+        description: Exact backend-ops SHA used by the CPU runtime export run
         required: false
         type: string
 
@@ -203,6 +213,39 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  export-cpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-cpu-runtime-images'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export only the C6 CPU training and inference images
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/export-cpu-runtime-images.sh \
+            "$RUNNER_TEMP/tss-aiplatform-cpu-runtime"
+
+      - name: Upload short-lived CPU runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-cpu-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-cpu-runtime
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   stage-airgap-bundles:
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -321,4 +364,124 @@ jobs:
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}\`"
             echo "- Checksums and 11-source lock: passed"
             echo "- sudo, containerd import and cluster writes: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stage-cpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'stage-cpu-runtime-images'
+    runs-on: [self-hosted, Linux, X64, seu4080, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Verify trusted CPU runtime export and isolated staging path
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_SHA" == "$RUNTIME_HEAD_SHA" ]]
+          [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AIRGAP_STAGE_ROOT" == /* ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          test "$(stat -c %U "$AIRGAP_STAGE_ROOT")" = "$(id -un)"
+          stage_mode="$(stat -c %a "$AIRGAP_STAGE_ROOT")"
+          (( (8#$stage_mode & 0022) == 0 ))
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}"
+          test ! -e "$target_dir"
+          test ! -L "$target_dir"
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
+            --output "$RUNNER_TEMP/runtime-export-run.json"
+          python3 - "$RUNNER_TEMP/runtime-export-run.json" \
+            "$RUNTIME_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-ops",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted CPU runtime export metadata: {mismatches}")
+          PY
+
+      - name: Download exact CPU runtime artifact in verified ranges
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$RUNTIME_RUN_ID" \
+            --head-sha "$RUNTIME_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --profile cpu-runtime \
+            --workers 16
+
+      - name: Verify staged CPU runtime bundle before import
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          target_dir="${AIRGAP_STAGE_ROOT}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' cpu-runtime.sha256)" = $'cpu-runtime-amd64.tar\nsources.lock'
+            sha256sum --check --strict cpu-runtime.sha256
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
+              sources.lock
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 2
+          )
+
+      - name: Record staged CPU runtime result
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          {
+            echo "### Internal CPU runtime staging"
+            echo "- Export run: \`${RUNTIME_RUN_ID}\`"
+            echo "- Source SHA: \`${RUNTIME_HEAD_SHA}\`"
+            echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}\`"
+            echo "- Checksums and two-source lock: passed"
+            echo "- sudo, containerd import and workload scheduling: not attempted"
           } >> "$GITHUB_STEP_SUMMARY"
