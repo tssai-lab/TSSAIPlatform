@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -110,6 +111,36 @@ class DatasetContractTest(unittest.TestCase):
                     for line in archive.read("data/train.jsonl").decode("utf-8").splitlines()
                 ]
                 self.assertEqual({"负面", "正面"}, {row["label"] for row in train_rows[:2]})
+
+    def test_generated_model_archive_uses_platform_accepted_file_names(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cache = root / "cache"
+            output = root / "model.zip"
+
+            def fake_download(_url, target, _expected_sha256):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"acceptance-fixture")
+
+            with mock.patch.object(prepare, "download_verified", side_effect=fake_download):
+                prepare.build_model_zip(output, cache)
+
+            import zipfile
+
+            with zipfile.ZipFile(output) as archive:
+                names = set(archive.namelist())
+            self.assertEqual(
+                {
+                    "LICENSE.txt",
+                    "UPSTREAM_README.md",
+                    "config.json",
+                    "model.yaml",
+                    "pytorch_model.bin",
+                    "vocab.txt",
+                },
+                names,
+            )
+            self.assertTrue(all(Path(name).suffix for name in names))
 
     def test_rejects_invalid_training_and_inference_limits(self):
         with self.assertRaisesRegex(ValueError, "batchSize"):
