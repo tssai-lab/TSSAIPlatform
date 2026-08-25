@@ -16,8 +16,9 @@ kubeconfig, and it does not modify or join the Main/Second cluster.
   revoked, but cannot read Secrets, create namespaces or act as cluster-admin;
 - exact high-port and worker/Pod firewall rules, with PostgreSQL and the MinIO
   console remaining loopback-only;
-- exact application image IDs copied from the current Main baseline. Compose
-  never pulls `latest` and never builds a replacement image on the server.
+- exact application image IDs resolved from immutable registry manifests.
+  Compose never pulls `latest` and never builds a replacement image on the
+  server. A bundle is generated from GitHub/registries without reading Main.
 
 The C5 image set consumes about 1.58 GB before layer sharing. The scripts refuse
 to proceed if the system root would violate the existing 20 GiB free-space
@@ -31,11 +32,12 @@ gate. Business data stays on the dedicated 2 TiB project filesystem.
    the physical control-plane hostname and both IP placeholders, and verify the
    five ports are unused on seu5090. The physical hostname may intentionally
    differ from the Kubernetes logical node name.
-3. Run `check-platform-image-budget.sh` on seu5090, then export the four image
-   IDs from Main with `export-platform-images.sh` and
-   load that stream into seu5090 Docker. The exporter uses temporary
-   `tss-aiplatform-internal/*` aliases and removes them from Main even on error;
-   it does not export any container, volume or application data.
+3. Run `check-platform-image-budget.sh` on seu5090, then use the
+   `export-platform-images` GitHub Actions task to generate the four-image
+   bundle from immutable registry digests. Load the verified stream into
+   seu5090 Docker. The same exporter may run on any registry-connected Docker
+   host; Main is neither a source nor a required hop. Temporary
+   `tss-aiplatform-internal/*` aliases and pull references are removed on exit.
 4. Run the single guarded bootstrap command on seu5090:
 
 ```bash
@@ -69,6 +71,9 @@ username registration creates only a normal user, as the existing code
 requires. Selecting and promoting the first internal super-administrator is a
 permission decision and is therefore a separate, recorded C5 acceptance step;
 the bootstrap does not guess an account or copy Main users.
+
+The complete no-Main-copy inventory, frontend source lock and parameterized
+Nginx route are indexed in [`../reproducible/README.md`](../reproducible/README.md).
 
 ## Failure and rollback
 

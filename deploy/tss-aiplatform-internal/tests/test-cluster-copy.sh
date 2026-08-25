@@ -191,8 +191,10 @@ grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''export-platform-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
+grep -F 'packages: read' "$internal_workflow" >/dev/null
 grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
 grep -F -- '--workers 16' "$internal_workflow" >/dev/null
 grep -F 'AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}' "$internal_workflow" >/dev/null

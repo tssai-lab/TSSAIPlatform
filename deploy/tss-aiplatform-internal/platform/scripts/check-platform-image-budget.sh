@@ -14,13 +14,13 @@ require_space_gates
 command -v docker >/dev/null || die "docker is required"
 
 missing_bytes=0
-while IFS='|' read -r _source_ref project_ref expected_id expected_size; do
+while IFS='|' read -r _source_ref _source_digest project_ref expected_id budget_bytes; do
   [[ -n $_source_ref && $_source_ref != \#* ]] || continue
   actual_id="$(docker image inspect --format '{{.Id}}' "$project_ref" 2>/dev/null || true)"
   if [[ -n $actual_id ]]; then
     [[ $actual_id == "$expected_id" ]] || die "existing project alias has an unexpected image ID: $project_ref"
   else
-    missing_bytes=$((missing_bytes + expected_size))
+    missing_bytes=$((missing_bytes + budget_bytes))
   fi
 done <"${script_dir}/../platform-images.lock"
 

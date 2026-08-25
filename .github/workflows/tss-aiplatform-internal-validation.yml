@@ -26,6 +26,7 @@ on:
           - runner-smoke
           - resolve-artifact-lock
           - export-airgap-bundles
+          - export-platform-images
           - stage-airgap-bundles
       airgap_run_id:
         description: Successful export workflow run ID (staging task only)
@@ -39,6 +40,7 @@ on:
 permissions:
   contents: read
   actions: read
+  packages: read
 
 concurrency:
   group: tss-internal-cluster-validation-${{ github.ref }}
@@ -155,6 +157,50 @@ jobs:
           path: ${{ runner.temp }}/tss-aiplatform-airgap
           if-no-files-found: error
           retention-days: 3
+          compression-level: 0
+
+  export-platform-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-platform-images'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out trusted source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export four registry-locked platform images
+        run: |
+          set -Eeuo pipefail
+          output_dir="$RUNNER_TEMP/tss-aiplatform-platform-images"
+          install -d -m 0700 "$output_dir"
+          bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh \
+            > "$output_dir/platform-images-amd64.tar"
+          cp deploy/tss-aiplatform-internal/platform/platform-images.lock \
+            "$output_dir/sources.lock"
+          (
+            cd "$output_dir"
+            sha256sum platform-images-amd64.tar sources.lock \
+              > platform-images.sha256
+            sha256sum --check --strict platform-images.sha256
+          )
+
+      - name: Upload reproducible platform-image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-platform-images-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-platform-images
+          if-no-files-found: error
+          retention-days: 7
           compression-level: 0
 
   stage-airgap-bundles:
