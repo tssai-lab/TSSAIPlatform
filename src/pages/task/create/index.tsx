@@ -48,6 +48,10 @@ import {
   filterModelCandidates,
   isSpecDrivenInput,
 } from './trainingAssetCompatibility.mjs';
+import {
+  firstCpuTrainingResourceProfileId,
+  listCpuTrainingResourceProfiles,
+} from './resourceProfilePresentation.mjs';
 import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
@@ -273,6 +277,7 @@ const TaskCreate: React.FC = () => {
   const backFromModelDetail = fromSource === 'model' && !!fromModelAssetId;
 
   const [form] = Form.useForm();
+  const selectedResourceProfileId = Form.useWatch('resourceProfileId', form);
   const [currentStep, setCurrentStep] = useState(0);
 
   const [modelOptions, setModelOptions] = useState<API.ModelItem[]>([]);
@@ -397,11 +402,11 @@ const TaskCreate: React.FC = () => {
   );
 
   const resourceProfiles = useMemo(
-    () =>
-      selectedTrainingPlan?.runtimes.flatMap(
-        (runtime) => runtime.resourceProfiles,
-      ) ?? [],
+    () => listCpuTrainingResourceProfiles(selectedTrainingPlan),
     [selectedTrainingPlan],
+  );
+  const selectedResourceProfile = resourceProfiles.find(
+    (profile) => profile.id === selectedResourceProfileId,
   );
 
   useEffect(() => {
@@ -524,7 +529,7 @@ const TaskCreate: React.FC = () => {
       planVersion: selectedTrainingPlan.version,
       trainingMode: selectedTrainingPlan.trainingModes?.[0],
       resourceProfileId:
-        selectedTrainingPlan.runtimes?.[0]?.resourceProfiles?.[0]?.id,
+        firstCpuTrainingResourceProfileId(selectedTrainingPlan),
       hyperParams: buildTrainingPlanHyperParams(selectedTrainingPlan),
     });
   }, [form, isExperimentContinue, selectedTrainingPlan]);
@@ -1044,9 +1049,24 @@ const TaskCreate: React.FC = () => {
     await form.validateFields([
       'trainingProfile',
       'trainingMode',
-      'resourceProfileId',
       'hyperParams',
     ]);
+  };
+
+  const validateResourceSection = async () => {
+    await form.validateFields(['resourceProfileId']);
+    if (!resourceProfiles.length) {
+      message.error('当前训练方案没有可用的 CPU 资源规格');
+      throw new Error('missing CPU resource profile');
+    }
+    if (
+      !resourceProfiles.some(
+        (profile) => profile.id === selectedResourceProfileId,
+      )
+    ) {
+      message.error('请选择当前训练方案允许的 CPU 资源规格');
+      throw new Error('invalid CPU resource profile');
+    }
   };
 
   const validateCodeSection = async () => {
@@ -1150,6 +1170,10 @@ const TaskCreate: React.FC = () => {
     }
     if (step === 3) {
       await validateCodeStep();
+      return;
+    }
+    if (step === 4) {
+      await validateResourceSection();
     }
   };
 
@@ -1167,6 +1191,12 @@ const TaskCreate: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    try {
+      await validateResourceSection();
+    } catch {
+      setCurrentStep(4);
+      return;
+    }
     if (!codeCheck.passed) {
       Modal.error({
         title: '训练代码校验未通过',
@@ -1258,6 +1288,7 @@ const TaskCreate: React.FC = () => {
     { title: '基础模型' },
     { title: '训练数据集' },
     { title: '训练配置与代码' },
+    { title: '资源配置' },
     { title: '确认并提交' },
   ];
 
@@ -1360,7 +1391,7 @@ const TaskCreate: React.FC = () => {
                       planVersion: plan?.version,
                       trainingMode: plan?.trainingModes?.[0],
                       resourceProfileId:
-                        plan?.runtimes?.[0]?.resourceProfiles?.[0]?.id,
+                        firstCpuTrainingResourceProfileId(plan),
                       modelType:
                         modelTypes.length === 1 ? modelTypes[0] : undefined,
                       hyperParams: buildTrainingPlanHyperParams(plan),
@@ -1385,7 +1416,10 @@ const TaskCreate: React.FC = () => {
                         }
                         acc[groupLabel].options.push({
                           value: plan.id,
-                          label: `${plan.displayName} (${plan.id})`,
+                          label: firstCpuTrainingResourceProfileId(plan)
+                            ? `${plan.displayName} (${plan.id})`
+                            : `${plan.displayName} (${plan.id}) · 当前无 CPU 档位`,
+                          disabled: !firstCpuTrainingResourceProfileId(plan),
                         });
                         return acc;
                       },
@@ -1393,7 +1427,11 @@ const TaskCreate: React.FC = () => {
                         string,
                         {
                           label: string;
-                          options: { value: string; label: string }[];
+                          options: {
+                            value: string;
+                            label: string;
+                            disabled: boolean;
+                          }[];
                         }
                       >,
                     ),
@@ -1607,19 +1645,6 @@ const TaskCreate: React.FC = () => {
                   )}
                 />
               </Form.Item>
-              <Form.Item
-                name="resourceProfileId"
-                label="计算资源规格"
-                extra="任务提交后等待训练容器启动时显示为“调度中”。"
-                rules={[{ required: true, message: '请选择计算资源规格' }]}
-              >
-                <Select
-                  options={resourceProfiles.map((profile) => ({
-                    value: profile.id,
-                    label: `${profile.id} / GPU ${profile.gpuCount}`,
-                  }))}
-                />
-              </Form.Item>
               <Form.Item name="remark" label="备注（可选）">
                 <Input placeholder="例如：create-page k8s test" />
               </Form.Item>
@@ -1806,6 +1831,59 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 4 && (
             <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="为本次训练选择资源规格"
+                description="当前平台只启用 CPU 训练。这里选择的是训练方案 YAML 中由平台审核过的资源档位，用户不能直接填写任意 CPU、内存或 GPU 数值。"
+              />
+              {!resourceProfiles.length && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="当前训练方案没有可用的 CPU 资源规格"
+                  description="该方案可能只配置了 GPU 运行时；当前阶段不能提交，请改选包含 CPU 运行时的训练方案。"
+                />
+              )}
+              <Form.Item
+                name="resourceProfileId"
+                label="计算资源规格"
+                extra="任务提交后会固化此规格；任务等待容器启动时显示为“调度中”。"
+                rules={[{ required: true, message: '请选择计算资源规格' }]}
+              >
+                <Select
+                  disabled={!resourceProfiles.length}
+                  placeholder="请选择 CPU 资源规格"
+                  options={resourceProfiles.map((profile) => ({
+                    value: profile.id,
+                    label: `${profile.id} / CPU ${profile.cpuRequest}~${profile.cpuLimit} / 内存 ${profile.memoryRequest}~${profile.memoryLimit}`,
+                  }))}
+                />
+              </Form.Item>
+              {selectedResourceProfile && (
+                <Descriptions size="small" column={1} bordered>
+                  <Descriptions.Item label="设备">CPU</Descriptions.Item>
+                  <Descriptions.Item label="CPU（申请 / 上限）">
+                    {selectedResourceProfile.cpuRequest} /{' '}
+                    {selectedResourceProfile.cpuLimit}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="内存（申请 / 上限）">
+                    {selectedResourceProfile.memoryRequest} /{' '}
+                    {selectedResourceProfile.memoryLimit}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="临时磁盘上限">
+                    {selectedResourceProfile.ephemeralStorageLimit}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="GPU 数量">0</Descriptions.Item>
+                </Descriptions>
+              )}
+            </>
+          )}
+
+          {currentStep === 5 && (
+            <>
               {(!codeCheck.passed ||
                 !isCodeApproved(
                   selectedCodeApprovalStatus || codeCheck.approvalStatus,
@@ -1877,7 +1955,7 @@ const TaskCreate: React.FC = () => {
               上一步
             </Button>
           )}
-          {currentStep < 4 ? (
+          {currentStep < 5 ? (
             <Button type="primary" htmlType="button" onClick={handleNext}>
               下一步
             </Button>

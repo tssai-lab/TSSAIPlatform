@@ -50,7 +50,16 @@ export type TrainingPlan = {
   runtimes: Array<{
     id: string;
     deviceType: 'CPU' | 'NVIDIA_GPU';
-    resourceProfiles: Array<{ id: string; gpuCount: number }>;
+    resourceProfiles: Array<{
+      id: string;
+      cpuRequest: string;
+      cpuLimit: string;
+      memoryRequest: string;
+      memoryLimit: string;
+      ephemeralStorageLimit: string;
+      gpuCount: number;
+      nodeSelector?: Record<string, string>;
+    }>;
   }>;
 };
 

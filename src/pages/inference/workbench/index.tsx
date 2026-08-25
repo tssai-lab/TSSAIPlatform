@@ -25,6 +25,7 @@ import {
   Radio,
   Select,
   Space,
+  Steps,
   Tag,
   Tour,
   Typography,
@@ -47,9 +48,11 @@ import {
   getInferenceTask,
   getInferenceTaskResult,
   type InferenceInputMode,
+  type InferenceResourceProfile,
   type InferenceScriptVersion,
   type InferenceTask,
   listInferenceScripts,
+  listInferenceResourceProfiles,
   listInferenceTasks,
   objectNameFromMinioPath,
   retryInferenceTask,
@@ -57,6 +60,10 @@ import {
   uploadInferenceScript,
   uploadObject,
 } from '@/services/platform';
+import {
+  defaultInferenceResourceProfileId,
+  listUsableCpuInferenceProfiles,
+} from './resourceProfilePresentation.mjs';
 
 /**
  * 推理工作台
@@ -132,6 +139,10 @@ function shortId(value?: string) {
 const InferenceWorkbench: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [taskForm] = Form.useForm();
+  const selectedResourceProfileId = Form.useWatch(
+    'resourceProfileId',
+    taskForm,
+  );
   const [scriptForm] = Form.useForm();
   const actionRef = useRef<ActionType | undefined>(undefined);
   const prefillAppliedRef = useRef(false);
@@ -147,6 +158,10 @@ const InferenceWorkbench: React.FC = () => {
   const [scriptOptions, setScriptOptions] = useState<InferenceScriptVersion[]>(
     [],
   );
+  const [resourceProfileOptions, setResourceProfileOptions] = useState<
+    InferenceResourceProfile[]
+  >([]);
+  const [createStep, setCreateStep] = useState(0);
   const [loadingAssets, setLoadingAssets] = useState(false);
   // 引导段 S4：推理工作台讲解
   const tourProps = usePageTour(4, { ready: !loadingAssets });
@@ -160,6 +175,14 @@ const InferenceWorkbench: React.FC = () => {
     useState<InferenceInputMode>('SINGLE_OBJECT');
   const [selectedTask, setSelectedTask] = useState<InferenceTask>();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const usableResourceProfiles = useMemo(
+    () => listUsableCpuInferenceProfiles(resourceProfileOptions),
+    [resourceProfileOptions],
+  );
+  const selectedResourceProfile = usableResourceProfiles.find(
+    (profile) => profile.id === selectedResourceProfileId,
+  );
 
   /** 打开结果抽屉，并拉取最新 result / logPath / outputPath */
   const openTaskResult = async (task: InferenceTask) => {
@@ -265,6 +288,26 @@ const InferenceWorkbench: React.FC = () => {
     } finally {
       setLoadingAssets(false);
     }
+    try {
+      const resourceProfileRes = await listInferenceResourceProfiles({
+        skipErrorHandler: true,
+      });
+      const nextProfiles = listUsableCpuInferenceProfiles(
+        resourceProfileRes?.data ?? [],
+      );
+      setResourceProfileOptions(nextProfiles);
+      const currentProfileId = taskForm.getFieldValue('resourceProfileId');
+      if (!nextProfiles.some((profile) => profile.id === currentProfileId)) {
+        taskForm.setFieldValue(
+          'resourceProfileId',
+          defaultInferenceResourceProfileId(nextProfiles),
+        );
+      }
+    } catch (error: any) {
+      setResourceProfileOptions([]);
+      taskForm.setFieldValue('resourceProfileId', undefined);
+      message.error(error?.message || '推理资源规格加载失败');
+    }
   };
 
   useEffect(() => {
@@ -345,7 +388,16 @@ const InferenceWorkbench: React.FC = () => {
 
   /** 创建推理任务；单文件模式会先 uploadObject 再提交 */
   const handleCreateTask = async () => {
-    const values = await taskForm.validateFields();
+    await taskForm.validateFields(['resourceProfileId']);
+    const values = taskForm.getFieldsValue(true);
+    if (
+      !usableResourceProfiles.some(
+        (profile) => profile.id === values.resourceProfileId,
+      )
+    ) {
+      message.error('请选择后端当前启用的 CPU 推理资源规格');
+      return;
+    }
     setCreating(true);
     try {
       const params = parseJson(values.paramsJson);
@@ -374,6 +426,7 @@ const InferenceWorkbench: React.FC = () => {
               : undefined,
           inputObjectName:
             values.inputMode === 'SINGLE_OBJECT' ? inputObjectName : undefined,
+          resourceProfileId: values.resourceProfileId,
           params,
           remark: values.remark,
         },
@@ -381,6 +434,7 @@ const InferenceWorkbench: React.FC = () => {
       );
       message.success('推理任务已创建');
       setInputFileList([]);
+      setCreateStep(0);
       taskForm.setFieldsValue({
         name: '',
         remark: '',
@@ -393,6 +447,31 @@ const InferenceWorkbench: React.FC = () => {
       message.error(error?.message || '创建推理任务失败');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleOpenResourceStep = async () => {
+    try {
+      await taskForm.validateFields([
+        'name',
+        'modelVersionId',
+        'scriptVersionId',
+        'inputMode',
+        ...(inputMode === 'DATASET_VERSION' ? ['datasetVersionId'] : []),
+        'paramsJson',
+      ]);
+      parseJson(taskForm.getFieldValue('paramsJson'));
+      if (inputMode === 'SINGLE_OBJECT' && !inputFileList[0]?.originFileObj) {
+        message.error('请选择单文件输入');
+        return;
+      }
+      if (!usableResourceProfiles.length) {
+        message.error('后端当前没有可用的 CPU 推理资源规格');
+        return;
+      }
+      setCreateStep(1);
+    } catch {
+      // 表单已经显示具体错误。
     }
   };
 
@@ -677,120 +756,196 @@ const InferenceWorkbench: React.FC = () => {
                 if (changed.inputMode) setInputMode(changed.inputMode);
               }}
             >
-              <Form.Item
-                name="name"
-                label="任务名称"
-                rules={[{ required: true, message: '请输入任务名称' }]}
-              >
-                <Input placeholder="例如 smoke-single-inference" />
-              </Form.Item>
-              <Form.Item
-                name="modelVersionId"
-                label="模型"
-                rules={[{ required: true, message: '请选择模型' }]}
-              >
-                <Select
-                  data-tour="inf-model"
-                  showSearch
-                  loading={loadingAssets}
-                  options={modelSelectOptions}
-                  optionFilterProp="label"
-                  placeholder="选择训练产出的模型"
-                />
-              </Form.Item>
-              <Form.Item
-                name="scriptVersionId"
-                label="推理脚本"
-                rules={[{ required: true, message: '请选择推理脚本' }]}
-              >
-                <Select
-                  data-tour="inf-script"
-                  showSearch
-                  loading={loadingAssets}
-                  options={scriptSelectOptions}
-                  optionFilterProp="label"
-                  placeholder="选择已上传脚本版本"
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Button
-                        block
-                        type="link"
-                        icon={<UploadOutlined />}
-                        onClick={() => setScriptModalOpen(true)}
-                      >
-                        上传新的推理脚本
-                      </Button>
-                    </>
-                  )}
-                />
-              </Form.Item>
-              <Form.Item name="inputMode" label="输入方式">
-                <Radio.Group
-                  optionType="button"
-                  buttonStyle="solid"
-                  data-tour="inf-mode"
-                >
-                  <Radio.Button value="SINGLE_OBJECT">单文件</Radio.Button>
-                  <Radio.Button value="DATASET_VERSION">数据集</Radio.Button>
-                </Radio.Group>
-              </Form.Item>
-              {inputMode === 'DATASET_VERSION' ? (
-                <Form.Item
-                  name="datasetVersionId"
-                  label="数据集"
-                  rules={[{ required: true, message: '请选择数据集' }]}
-                >
-                  <Select
-                    showSearch
-                    loading={loadingAssets}
-                    options={datasetSelectOptions}
-                    optionFilterProp="label"
-                    placeholder="选择 READY 数据集"
-                  />
-                </Form.Item>
-              ) : (
+              <Steps
+                size="small"
+                current={createStep}
+                items={[{ title: '任务输入' }, { title: '资源配置' }]}
+                style={{ marginBottom: 20 }}
+              />
+              {createStep === 0 && (
                 <>
-                  <Form.Item label="上传单文件" required>
-                    <Upload
-                      maxCount={1}
-                      fileList={inputFileList}
-                      beforeUpload={() => false}
-                      onChange={({ fileList }) =>
-                        setInputFileList(fileList.slice(-1))
-                      }
-                    >
-                      <Button icon={<UploadOutlined />}>选择文件</Button>
-                    </Upload>
+                  <Form.Item
+                    name="name"
+                    label="任务名称"
+                    rules={[{ required: true, message: '请输入任务名称' }]}
+                  >
+                    <Input placeholder="例如 smoke-single-inference" />
                   </Form.Item>
+                  <Form.Item
+                    name="modelVersionId"
+                    label="模型"
+                    rules={[{ required: true, message: '请选择模型' }]}
+                  >
+                    <Select
+                      data-tour="inf-model"
+                      showSearch
+                      loading={loadingAssets}
+                      options={modelSelectOptions}
+                      optionFilterProp="label"
+                      placeholder="选择训练产出的模型"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="scriptVersionId"
+                    label="推理脚本"
+                    rules={[{ required: true, message: '请选择推理脚本' }]}
+                  >
+                    <Select
+                      data-tour="inf-script"
+                      showSearch
+                      loading={loadingAssets}
+                      options={scriptSelectOptions}
+                      optionFilterProp="label"
+                      placeholder="选择已上传脚本版本"
+                      dropdownRender={(menu) => (
+                        <>
+                          {menu}
+                          <Button
+                            block
+                            type="link"
+                            icon={<UploadOutlined />}
+                            onClick={() => setScriptModalOpen(true)}
+                          >
+                            上传新的推理脚本
+                          </Button>
+                        </>
+                      )}
+                    />
+                  </Form.Item>
+                  <Form.Item name="inputMode" label="输入方式">
+                    <Radio.Group
+                      optionType="button"
+                      buttonStyle="solid"
+                      data-tour="inf-mode"
+                    >
+                      <Radio.Button value="SINGLE_OBJECT">单文件</Radio.Button>
+                      <Radio.Button value="DATASET_VERSION">
+                        数据集
+                      </Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  {inputMode === 'DATASET_VERSION' ? (
+                    <Form.Item
+                      name="datasetVersionId"
+                      label="数据集"
+                      rules={[{ required: true, message: '请选择数据集' }]}
+                    >
+                      <Select
+                        showSearch
+                        loading={loadingAssets}
+                        options={datasetSelectOptions}
+                        optionFilterProp="label"
+                        placeholder="选择 READY 数据集"
+                      />
+                    </Form.Item>
+                  ) : (
+                    <Form.Item label="上传单文件" required>
+                      <Upload
+                        maxCount={1}
+                        fileList={inputFileList}
+                        beforeUpload={() => false}
+                        onChange={({ fileList }) =>
+                          setInputFileList(fileList.slice(-1))
+                        }
+                      >
+                        <Button icon={<UploadOutlined />}>选择文件</Button>
+                      </Upload>
+                    </Form.Item>
+                  )}
+                  <Form.Item
+                    name="paramsJson"
+                    label="脚本参数"
+                    rules={[
+                      {
+                        validator: async (_, value) => {
+                          parseJson(value);
+                        },
+                      },
+                    ]}
+                  >
+                    <TextArea rows={6} placeholder='{"threshold":0.5}' />
+                  </Form.Item>
+                  <Form.Item name="remark" label="备注">
+                    <Input.TextArea rows={2} />
+                  </Form.Item>
+                  <Button block type="primary" onClick={handleOpenResourceStep}>
+                    下一步：资源配置
+                  </Button>
                 </>
               )}
-              <Form.Item
-                name="paramsJson"
-                label="脚本参数"
-                rules={[
-                  {
-                    validator: async (_, value) => {
-                      parseJson(value);
-                    },
-                  },
-                ]}
-              >
-                <TextArea rows={6} placeholder='{"threshold":0.5}' />
-              </Form.Item>
-              <Form.Item name="remark" label="备注">
-                <Input.TextArea rows={2} />
-              </Form.Item>
-              <Button
-                block
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                loading={creating}
-                onClick={handleCreateTask}
-                data-tour="inf-submit"
-              >
-                创建并执行
-              </Button>
+              {createStep === 1 && (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="选择本次推理使用的资源规格"
+                    description="当前只启用 CPU。资源数值来自后端白名单，任务脚本不能自行突破 CPU、内存和临时磁盘上限。"
+                  />
+                  {!usableResourceProfiles.length && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="没有可用的 CPU 推理资源规格"
+                      description="请刷新资源；若仍为空，需要先检查后端资源配置接口。"
+                    />
+                  )}
+                  <Form.Item
+                    name="resourceProfileId"
+                    label="计算资源规格"
+                    rules={[{ required: true, message: '请选择计算资源规格' }]}
+                  >
+                    <Select
+                      disabled={!usableResourceProfiles.length}
+                      options={usableResourceProfiles.map((profile) => ({
+                        value: profile.id,
+                        label: `${profile.displayName} (${profile.id})`,
+                      }))}
+                    />
+                  </Form.Item>
+                  {selectedResourceProfile && (
+                    <Descriptions size="small" column={1} bordered>
+                      <Descriptions.Item label="设备">
+                        {selectedResourceProfile.deviceType}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="CPU（申请 / 上限）">
+                        {selectedResourceProfile.cpuRequest} /{' '}
+                        {selectedResourceProfile.cpuLimit}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="内存（申请 / 上限）">
+                        {selectedResourceProfile.memoryRequest} /{' '}
+                        {selectedResourceProfile.memoryLimit}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="临时磁盘（申请 / 上限）">
+                        {selectedResourceProfile.ephemeralStorageRequest} /{' '}
+                        {selectedResourceProfile.ephemeralStorageLimit}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="GPU 数量">
+                        {selectedResourceProfile.gpuCount}
+                      </Descriptions.Item>
+                    </Descriptions>
+                  )}
+                  <Space style={{ marginTop: 16, width: '100%' }}>
+                    <Button
+                      style={{ flex: 1 }}
+                      onClick={() => setCreateStep(0)}
+                    >
+                      上一步
+                    </Button>
+                    <Button
+                      style={{ flex: 1 }}
+                      type="primary"
+                      icon={<PlayCircleOutlined />}
+                      loading={creating}
+                      onClick={handleCreateTask}
+                      data-tour="inf-submit"
+                    >
+                      创建并执行
+                    </Button>
+                  </Space>
+                </>
+              )}
             </Form>
           </ProCard>
           <ProCard title="推理任务" colSpan={{ xs: 24, md: 15 }}>
@@ -987,6 +1142,9 @@ const InferenceWorkbench: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="推理脚本">
                 {optionLabel(scriptSelectOptions, selectedTask.scriptVersionId)}
+              </Descriptions.Item>
+              <Descriptions.Item label="资源规格">
+                {selectedTask.resourceProfileId || '历史任务（旧全局配置）'}
               </Descriptions.Item>
               <Descriptions.Item label="输入">
                 {selectedTask.inputMode === 'DATASET_VERSION'

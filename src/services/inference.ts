@@ -65,6 +65,8 @@ export type InferenceTask = {
   datasetVersionId?: string | null;
   /** SINGLE_OBJECT 时的输入对象路径 */
   inputObjectName?: string | null;
+  /** 新任务会固化资源档位；历史任务可能为空并沿用旧全局配置。 */
+  resourceProfileId?: string | null;
   params?: Record<string, unknown>;
   status: InferenceTaskStatus | string;
   progress?: number;
@@ -116,8 +118,24 @@ export type CreateInferenceTaskBody = {
   inputMode: InferenceInputMode;
   datasetVersionId?: string;
   inputObjectName?: string;
+  resourceProfileId?: string;
   params?: Record<string, unknown>;
   remark?: string;
+};
+
+/** 后端白名单中的可用推理资源规格。 */
+export type InferenceResourceProfile = {
+  id: string;
+  displayName: string;
+  description?: string;
+  deviceType: 'CPU' | 'NVIDIA_GPU' | string;
+  cpuRequest: string;
+  cpuLimit: string;
+  memoryRequest: string;
+  memoryLimit: string;
+  ephemeralStorageRequest: string;
+  ephemeralStorageLimit: string;
+  gpuCount: number;
 };
 
 /** 推理任务分页列表 */
@@ -233,6 +251,19 @@ export async function createInferenceTask(
     data: body,
     ...(options || {}),
   });
+}
+
+/** 获取当前后端实际启用的推理资源档位。 */
+export async function listInferenceResourceProfiles(
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: InferenceResourceProfile[] }>(
+    '/inference/resource-profiles',
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
 }
 
 /** 分页查询推理任务。GET `/inference/tasks` */
