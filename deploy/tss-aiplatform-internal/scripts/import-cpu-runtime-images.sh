@@ -85,7 +85,7 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
     && $image_id =~ ^sha256:[0-9a-f]{64}$ ]] \
     || die "invalid CPU runtime source line after import"
   image_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
-    | awk -v ref="$source_ref" '$1 == ref {print; exit}')"
+    | awk -v ref="$source_ref" '$1 == ref {print}')"
   [[ -n $image_line ]] || die "expected source image tag is absent after import: $source_ref"
   actual_manifest="$(awk '{print $3}' <<<"$image_line")"
   [[ $actual_manifest == "$manifest_digest" ]] \
@@ -98,7 +98,7 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
   ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images tag \
     "$source_ref" "$runtime_ref" >/dev/null
   runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
-    | awk -v ref="$runtime_ref" '$1 == ref {print; exit}')"
+    | awk -v ref="$runtime_ref" '$1 == ref {print}')"
   [[ -n $runtime_line ]] || die "runtime image alias is absent after import: $runtime_ref"
   [[ $(awk '{print $3}' <<<"$runtime_line") == "$manifest_digest" ]] \
     || die "runtime image alias points to unexpected content: $runtime_ref"
