@@ -228,6 +228,8 @@ bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
 bash "${internal_dir}/ci/export-airgap-bundles.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/export-cpu-runtime-images.sh" --validate-only >/dev/null
 python3 "${internal_dir}/ci/download-airgap-artifact.py" --self-test >/dev/null
+grep -F '"max_bytes": 10 * 1024**3' \
+  "${internal_dir}/ci/download-airgap-artifact.py" >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
 
