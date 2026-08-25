@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   firstCpuTrainingResourceProfileId,
+  isCpuTrainingResourceProfileIdAllowed,
   listCpuTrainingResourceProfiles,
 } from './resourceProfilePresentation.mjs';
 
@@ -46,4 +47,18 @@ test('empty or GPU-only plans have no selectable CPU profile', () => {
     }),
     undefined,
   );
+});
+
+test('accepts only the preserved form value that belongs to the current CPU profiles', () => {
+  const profiles = [{ id: 'cpu-small' }];
+
+  assert.equal(
+    isCpuTrainingResourceProfileIdAllowed(profiles, 'cpu-small'),
+    true,
+  );
+  assert.equal(
+    isCpuTrainingResourceProfileIdAllowed(profiles, undefined),
+    false,
+  );
+  assert.equal(isCpuTrainingResourceProfileIdAllowed(profiles, 'gpu-1'), false);
 });

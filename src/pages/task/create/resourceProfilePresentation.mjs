@@ -25,3 +25,11 @@ export function listCpuTrainingResourceProfiles(plan) {
 export function firstCpuTrainingResourceProfileId(plan) {
   return listCpuTrainingResourceProfiles(plan)[0]?.id;
 }
+
+export function isCpuTrainingResourceProfileIdAllowed(profiles, profileId) {
+  return (
+    typeof profileId === 'string' &&
+    profileId.length > 0 &&
+    profiles.some((profile) => profile.id === profileId)
+  );
+}

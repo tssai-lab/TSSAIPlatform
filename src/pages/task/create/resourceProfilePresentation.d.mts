@@ -13,3 +13,8 @@ export function listCpuTrainingResourceProfiles(
 export function firstCpuTrainingResourceProfileId(
   plan?: TrainingPlan,
 ): string | undefined;
+
+export function isCpuTrainingResourceProfileIdAllowed(
+  profiles: CpuTrainingResourceProfile[],
+  profileId: unknown,
+): boolean;

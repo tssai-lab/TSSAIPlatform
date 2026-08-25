@@ -44,14 +44,15 @@ import {
 import type { TrainingPlan } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
 import {
+  firstCpuTrainingResourceProfileId,
+  isCpuTrainingResourceProfileIdAllowed,
+  listCpuTrainingResourceProfiles,
+} from './resourceProfilePresentation.mjs';
+import {
   filterDatasetCandidates,
   filterModelCandidates,
   isSpecDrivenInput,
 } from './trainingAssetCompatibility.mjs';
-import {
-  firstCpuTrainingResourceProfileId,
-  listCpuTrainingResourceProfiles,
-} from './resourceProfilePresentation.mjs';
 import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
@@ -1055,13 +1056,17 @@ const TaskCreate: React.FC = () => {
 
   const validateResourceSection = async () => {
     await form.validateFields(['resourceProfileId']);
+    // 提交确认页会卸载资源步骤，useWatch 此时可能返回 undefined；
+    // 直接读取 Form 保留的字段值，确保“已显示并确认”的默认档位能够提交。
+    const formResourceProfileId = form.getFieldValue('resourceProfileId');
     if (!resourceProfiles.length) {
       message.error('当前训练方案没有可用的 CPU 资源规格');
       throw new Error('missing CPU resource profile');
     }
     if (
-      !resourceProfiles.some(
-        (profile) => profile.id === selectedResourceProfileId,
+      !isCpuTrainingResourceProfileIdAllowed(
+        resourceProfiles,
+        formResourceProfileId,
       )
     ) {
       message.error('请选择当前训练方案允许的 CPU 资源规格');
