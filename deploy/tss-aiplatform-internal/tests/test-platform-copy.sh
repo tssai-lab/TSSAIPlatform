@@ -112,6 +112,10 @@ done
 grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
 grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null
 grep -F 'network_mode: host' "$compose" >/dev/null
+grep -F 'MINIO_ENDPOINT: http://${TSS_PLATFORM_BIND_IP}:${TSS_MINIO_API_PORT}' "$compose" >/dev/null
+grep -F 'TRAINING_MLFLOW_TRACKING_URI: http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT}' "$compose" >/dev/null
+! grep -F 'MINIO_ENDPOINT: http://127.0.0.1' "$compose" >/dev/null
+! grep -F 'TRAINING_MLFLOW_TRACKING_URI: http://127.0.0.1' "$compose" >/dev/null
 grep -F 'TRAINING_K8S_AUTO_CREATE: "false"' "$compose" >/dev/null
 grep -F 'TRAINING_K8S_FALLBACK_TO_LOCAL: "false"' "$compose" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"' "$compose" >/dev/null
