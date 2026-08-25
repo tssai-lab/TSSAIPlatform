@@ -22,15 +22,41 @@ import urllib.request
 import zipfile
 
 
-EXPECTED_FILES = {
-    "airgap-common.sha256",
-    "airgap-gpu.sha256",
-    "calico-amd64.tar",
-    "k8s-core-amd64.tar",
-    "nvidia-amd64.tar",
-    "sources.lock",
+PROFILES = {
+    "airgap": {
+        "artifact_prefix": "tss-aiplatform-airgap",
+        "expected_files": {
+            "airgap-common.sha256",
+            "airgap-gpu.sha256",
+            "calico-amd64.tar",
+            "k8s-core-amd64.tar",
+            "nvidia-amd64.tar",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "airgap-common.sha256": [
+                "k8s-core-amd64.tar",
+                "calico-amd64.tar",
+                "sources.lock",
+            ],
+            "airgap-gpu.sha256": ["nvidia-amd64.tar"],
+        },
+        "max_bytes": 4 * 1024**3,
+    },
+    "cpu-runtime": {
+        "artifact_prefix": "tss-aiplatform-cpu-runtime",
+        "expected_files": {
+            "cpu-runtime-amd64.tar",
+            "cpu-runtime.sha256",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "cpu-runtime.sha256": ["cpu-runtime-amd64.tar", "sources.lock"],
+        },
+        "max_bytes": 8 * 1024**3,
+    },
 }
-USER_AGENT = "tss-aiplatform-airgap/1.0"
+USER_AGENT = "tss-aiplatform-artifact/1.1"
 
 
 def fail(message: str) -> "NoReturn":
@@ -75,20 +101,21 @@ def signed_archive_url(repository: str, artifact_id: int, token: str) -> str:
 
 
 def trusted_artifact(
-    repository: str, run_id: int, head_sha: str, token: str
+    repository: str, run_id: int, head_sha: str, token: str, profile: str
 ) -> tuple[int, int, str]:
     payload = api_json(
         f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100",
         token,
     )
-    expected_name = f"tss-aiplatform-airgap-{head_sha}"
+    profile_config = PROFILES[profile]
+    expected_name = f"{profile_config['artifact_prefix']}-{head_sha}"
     matches = [
         artifact
         for artifact in payload.get("artifacts", [])
         if artifact.get("name") == expected_name
     ]
     if len(matches) != 1:
-        fail("the export run must contain exactly one expected air-gap artifact")
+        fail(f"the export run must contain exactly one expected {profile} artifact")
     artifact = matches[0]
     if artifact.get("expired") is not False:
         fail("the expected air-gap artifact is expired")
@@ -97,8 +124,8 @@ def trusted_artifact(
     digest = artifact.get("digest", "")
     if not isinstance(artifact_id, int) or artifact_id <= 0:
         fail("artifact ID is invalid")
-    if not isinstance(size, int) or size <= 0 or size > 4 * 1024**3:
-        fail("artifact size is invalid or exceeds the 4 GiB safety limit")
+    if not isinstance(size, int) or size <= 0 or size > profile_config["max_bytes"]:
+        fail(f"artifact size is invalid or exceeds the {profile} safety limit")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         fail("artifact has no valid GitHub SHA256 digest")
     return artifact_id, size, digest.removeprefix("sha256:")
@@ -198,12 +225,14 @@ def validate_checksum_file(extract_dir: Path, checksum_name: str, expected_names
             fail(f"bundle checksum mismatch: {name}")
 
 
-def extract_verified_archive(archive_path: Path, extract_dir: Path) -> None:
+def extract_verified_archive(archive_path: Path, extract_dir: Path, profile: str) -> None:
+    profile_config = PROFILES[profile]
+    expected_files = profile_config["expected_files"]
     with zipfile.ZipFile(archive_path) as archive:
         infos = archive.infolist()
         names = [info.filename for info in infos]
-        if len(names) != len(EXPECTED_FILES) or set(names) != EXPECTED_FILES:
-            fail("artifact archive does not contain exactly the six expected files")
+        if len(names) != len(expected_files) or set(names) != expected_files:
+            fail(f"artifact archive does not contain exactly the expected {profile} files")
         if len(names) != len(set(names)):
             fail("artifact archive contains duplicate paths")
         total_size = 0
@@ -214,7 +243,7 @@ def extract_verified_archive(archive_path: Path, extract_dir: Path) -> None:
             if file_type == stat.S_IFLNK:
                 fail("artifact archive contains a symbolic link")
             total_size += info.file_size
-        if total_size <= 0 or total_size > 4 * 1024**3:
+        if total_size <= 0 or total_size > profile_config["max_bytes"]:
             fail("artifact extracted size is invalid or exceeds the safety limit")
 
         extract_dir.mkdir(mode=0o700)
@@ -224,16 +253,8 @@ def extract_verified_archive(archive_path: Path, extract_dir: Path) -> None:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
             os.chmod(destination, 0o640)
 
-    validate_checksum_file(
-        extract_dir,
-        "airgap-common.sha256",
-        ["k8s-core-amd64.tar", "calico-amd64.tar", "sources.lock"],
-    )
-    validate_checksum_file(
-        extract_dir,
-        "airgap-gpu.sha256",
-        ["nvidia-amd64.tar"],
-    )
+    for checksum_name, expected_names in profile_config["checksum_files"].items():
+        validate_checksum_file(extract_dir, checksum_name, expected_names)
 
 
 def safe_stage_root(stage_root: str) -> Path:
@@ -269,7 +290,7 @@ def run_download(args: argparse.Namespace) -> None:
     partial_dir.mkdir(mode=0o700)
 
     artifact_id, metadata_size, expected_digest = trusted_artifact(
-        args.repository, args.run_id, args.head_sha, token
+        args.repository, args.run_id, args.head_sha, token, args.profile
     )
     initial_url = signed_archive_url(args.repository, artifact_id, token)
     archive_size = probe_archive_size(initial_url)
@@ -326,7 +347,7 @@ def run_download(args: argparse.Namespace) -> None:
         fail("combined artifact SHA256 does not match the GitHub artifact digest")
 
     extracted_dir = partial_dir / "extracted"
-    extract_verified_archive(archive_path, extracted_dir)
+    extract_verified_archive(archive_path, extracted_dir, args.profile)
     extracted_dir.replace(target_dir)
     shutil.rmtree(partial_dir)
     print(
@@ -336,38 +357,49 @@ def run_download(args: argparse.Namespace) -> None:
     )
 
 
+def make_checksum(content: dict[str, bytes], names: list[str]) -> bytes:
+    return "".join(
+        f"{hashlib.sha256(content[name]).hexdigest()}  {name}\n" for name in names
+    ).encode()
+
+
+def self_test_profile(root: Path, profile: str, content: dict[str, bytes]) -> None:
+    profile_config = PROFILES[profile]
+    for checksum_name, names in profile_config["checksum_files"].items():
+        content[checksum_name] = make_checksum(content, names)
+    archive_path = root / f"valid-{profile}.zip"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, value in content.items():
+            archive.writestr(name, value)
+    extract_verified_archive(archive_path, root / f"valid-{profile}", profile)
+
+    unsafe_path = root / f"unsafe-{profile}.zip"
+    with zipfile.ZipFile(unsafe_path, "w") as archive:
+        for name, value in content.items():
+            archive.writestr("../escape" if name == "sources.lock" else name, value)
+    try:
+        extract_verified_archive(unsafe_path, root / f"unsafe-{profile}", profile)
+    except RuntimeError:
+        pass
+    else:
+        fail(f"{profile} self-test did not reject an unsafe archive path")
+
+
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
-        content = {
+        airgap_content = {
             "k8s-core-amd64.tar": b"core",
             "calico-amd64.tar": b"calico",
             "nvidia-amd64.tar": b"nvidia",
             "sources.lock": b"image example.invalid/test:v1 sha256:" + b"0" * 64 + b"\n",
         }
-        common_names = ["k8s-core-amd64.tar", "calico-amd64.tar", "sources.lock"]
-        content["airgap-common.sha256"] = "".join(
-            f"{hashlib.sha256(content[name]).hexdigest()}  {name}\n" for name in common_names
-        ).encode()
-        content["airgap-gpu.sha256"] = (
-            f"{hashlib.sha256(content['nvidia-amd64.tar']).hexdigest()}  nvidia-amd64.tar\n"
-        ).encode()
-        archive_path = root / "valid.zip"
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
-            for name, value in content.items():
-                archive.writestr(name, value)
-        extract_verified_archive(archive_path, root / "valid")
-
-        unsafe_path = root / "unsafe.zip"
-        with zipfile.ZipFile(unsafe_path, "w") as archive:
-            for name, value in content.items():
-                archive.writestr("../escape" if name == "sources.lock" else name, value)
-        try:
-            extract_verified_archive(unsafe_path, root / "unsafe")
-        except RuntimeError:
-            pass
-        else:
-            fail("self-test did not reject an unsafe archive path")
+        self_test_profile(root, "airgap", airgap_content)
+        cpu_content = {
+            "cpu-runtime-amd64.tar": b"cpu-runtime",
+            "sources.lock": b"ghcr.io/example/runtime:v1|sha256:" + b"0" * 64 + b"\n",
+        }
+        self_test_profile(root, "cpu-runtime", cpu_content)
     print("Parallel artifact downloader self-test passed.")
 
 
@@ -378,6 +410,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", type=int)
     parser.add_argument("--head-sha")
     parser.add_argument("--stage-root")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="airgap")
     parser.add_argument("--workers", type=int, default=16)
     args = parser.parse_args()
     if not args.self_test and not all(
