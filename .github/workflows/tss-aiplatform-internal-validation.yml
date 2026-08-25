@@ -27,6 +27,7 @@ on:
           - resolve-artifact-lock
           - export-airgap-bundles
           - export-platform-images
+          - export-backend-image
           - export-cpu-runtime-images
           - stage-airgap-bundles
           - stage-platform-images
@@ -62,7 +63,9 @@ permissions:
   packages: read
 
 concurrency:
-  group: tss-internal-cluster-validation-${{ github.ref }}
+  # A backend-ops push must not cancel a long, explicitly dispatched artifact
+  # transfer. Repeated runs of the same manual task still replace each other.
+  group: tss-internal-cluster-validation-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.task || github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -251,6 +254,51 @@ jobs:
         with:
           name: tss-aiplatform-cpu-runtime-${{ github.sha }}
           path: ${{ runner.temp }}/tss-aiplatform-cpu-runtime
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  export-backend-image:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-backend-image'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export only the registry-locked backend image
+        run: |
+          set -Eeuo pipefail
+          output_dir="$RUNNER_TEMP/tss-aiplatform-backend-image"
+          install -d -m 0700 "$output_dir"
+          bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh \
+            --backend-only > "$output_dir/backend-image-amd64.tar"
+          grep '^ghcr.io/tssai-lab/tssai-backend:' \
+            deploy/tss-aiplatform-internal/platform/platform-images.lock \
+            > "$output_dir/sources.lock"
+          test "$(wc -l < "$output_dir/sources.lock")" -eq 1
+          (
+            cd "$output_dir"
+            sha256sum backend-image-amd64.tar sources.lock > backend-image.sha256
+            sha256sum --check --strict backend-image.sha256
+          )
+
+      - name: Upload reproducible backend-image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-backend-image-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-backend-image
           if-no-files-found: error
           retention-days: 7
           compression-level: 0

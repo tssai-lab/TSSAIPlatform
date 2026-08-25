@@ -73,6 +73,18 @@ PROFILES = {
         # 2 GiB. Reject anything larger before creating a partial directory.
         "max_bytes": 2 * 1024**3,
     },
+    "backend-image": {
+        "artifact_prefix": "tss-aiplatform-backend-image",
+        "expected_files": {
+            "backend-image-amd64.tar",
+            "backend-image.sha256",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "backend-image.sha256": ["backend-image-amd64.tar", "sources.lock"],
+        },
+        "max_bytes": 768 * 1024**2,
+    },
 }
 USER_AGENT = "tss-aiplatform-artifact/1.1"
 
@@ -177,14 +189,31 @@ def download_part(
     token: str,
 ) -> tuple[int, int]:
     expected_size = end - start + 1
+    temporary_path = part_path.with_suffix(part_path.suffix + ".download")
+    if part_path.exists():
+        if part_path.is_symlink() or not part_path.is_file():
+            fail(f"part {part_number} is not a regular file")
+        actual_size = part_path.stat().st_size
+        if actual_size != expected_size:
+            fail(f"completed part {part_number} has an invalid size")
+        return part_number, actual_size
+    if temporary_path.exists() and (
+        temporary_path.is_symlink() or not temporary_path.is_file()
+    ):
+        fail(f"partial part {part_number} is not a regular file")
     for attempt in range(1, 6):
-        temporary_path = part_path.with_suffix(part_path.suffix + ".download")
-        temporary_path.unlink(missing_ok=True)
+        resumed_size = temporary_path.stat().st_size if temporary_path.exists() else 0
+        if resumed_size > expected_size:
+            fail(f"partial part {part_number} exceeds its expected size")
+        if resumed_size == expected_size:
+            temporary_path.replace(part_path)
+            return part_number, expected_size
+        request_start = start + resumed_size
         url = initial_url if attempt == 1 else signed_archive_url(repository, artifact_id, token)
         request = urllib.request.Request(
             url,
             headers={
-                "Range": f"bytes={start}-{end}",
+                "Range": f"bytes={request_start}-{end}",
                 "User-Agent": USER_AGENT,
             },
         )
@@ -193,10 +222,10 @@ def download_part(
                 content_range = response.headers.get("Content-Range", "")
                 if response.getcode() != 206:
                     fail(f"part {part_number} was not returned as HTTP 206")
-                if content_range != f"bytes {start}-{end}/{archive_size}":
+                if content_range != f"bytes {request_start}-{end}/{archive_size}":
                     fail(f"part {part_number} returned an unexpected content range")
-                written = 0
-                with temporary_path.open("xb") as output_file:
+                written = resumed_size
+                with temporary_path.open("ab") as output_file:
                     while True:
                         block = response.read(1024 * 1024)
                         if not block:
@@ -210,7 +239,6 @@ def download_part(
             temporary_path.replace(part_path)
             return part_number, written
         except Exception:
-            temporary_path.unlink(missing_ok=True)
             if attempt == 5:
                 raise
             time.sleep(min(2**attempt, 16))
@@ -302,9 +330,8 @@ def run_download(args: argparse.Namespace) -> None:
     stage_root = safe_stage_root(args.stage_root)
     target_dir = stage_root / f"{args.head_sha}-{args.run_id}"
     partial_dir = stage_root / f".partial-{args.head_sha}-{args.run_id}"
-    for path in (target_dir, partial_dir):
-        if path.exists() or path.is_symlink():
-            fail(f"staging path already exists: {path}")
+    if target_dir.exists() or target_dir.is_symlink():
+        fail(f"staging path already exists: {target_dir}")
 
     artifact_id, metadata_size, expected_digest = trusted_artifact(
         args.repository, args.run_id, args.head_sha, token, args.profile
@@ -315,7 +342,14 @@ def run_download(args: argparse.Namespace) -> None:
         fail(
             f"artifact size differs between metadata and storage: {metadata_size} != {archive_size}"
         )
-    partial_dir.mkdir(mode=0o700)
+    if partial_dir.exists() or partial_dir.is_symlink():
+        if partial_dir.is_symlink() or not partial_dir.is_dir():
+            fail("partial staging path is not a real directory")
+        partial_stat = partial_dir.stat()
+        if partial_stat.st_uid != os.getuid() or partial_stat.st_mode & 0o077:
+            fail("partial staging directory is not private to the Runner user")
+    else:
+        partial_dir.mkdir(mode=0o700)
 
     part_count = min(args.workers, archive_size)
     part_size = math.ceil(archive_size / part_count)
@@ -325,8 +359,23 @@ def run_download(args: argparse.Namespace) -> None:
         end = min(start + part_size, archive_size) - 1
         tasks.append((part_number, start, end, partial_dir / f"part-{part_number:03d}"))
 
+    allowed_paths = {
+        candidate
+        for _, _, _, part_path in tasks
+        for candidate in (part_path.name, f"{part_path.name}.download")
+    }
+    existing_paths = list(partial_dir.iterdir())
+    if any(path.name not in allowed_paths for path in existing_paths):
+        fail("partial staging directory contains an unexpected path")
+    if any(path.is_symlink() or not path.is_file() for path in existing_paths):
+        fail("partial staging directory contains a non-regular path")
+    for _, _, _, part_path in tasks:
+        if part_path.exists() and part_path.with_suffix(part_path.suffix + ".download").exists():
+            fail(f"partial staging contains two copies of {part_path.name}")
+
     print(
-        f"Downloading artifact={artifact_id} bytes={archive_size} parts={part_count}",
+        f"Downloading artifact={artifact_id} bytes={archive_size} parts={part_count} "
+        f"resume_files={len(existing_paths)}",
         flush=True,
     )
     with concurrent.futures.ThreadPoolExecutor(max_workers=part_count) as executor:
@@ -423,6 +472,63 @@ def self_test() -> None:
             "sources.lock": b"ghcr.io/example/backend:v1|sha256:" + b"0" * 64 + b"\n",
         }
         self_test_profile(root, "platform", platform_content)
+        backend_content = {
+            "backend-image-amd64.tar": b"backend-image",
+            "sources.lock": b"ghcr.io/example/backend:v1|sha256:" + b"0" * 64 + b"\n",
+        }
+        self_test_profile(root, "backend-image", backend_content)
+
+        payload = b"resume-this-download"
+        resumed_part = root / "part-000"
+        resumed_part.with_suffix(".download").write_bytes(payload[:7])
+
+        class RangeResponse:
+            def __init__(self, request: urllib.request.Request):
+                requested_range = request.headers["Range"]
+                match = re.fullmatch(r"bytes=(\d+)-(\d+)", requested_range)
+                if not match:
+                    fail("self-test received an invalid range")
+                self.start, self.end = map(int, match.groups())
+                self.headers = {
+                    "Content-Range": f"bytes {self.start}-{self.end}/{len(payload)}"
+                }
+                self.offset = self.start
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def getcode(self):
+                return 206
+
+            def read(self, size: int = -1):
+                if self.offset > self.end:
+                    return b""
+                stop = self.end + 1 if size < 0 else min(self.offset + size, self.end + 1)
+                block = payload[self.offset:stop]
+                self.offset = stop
+                return block
+
+        original_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = lambda request, timeout=0: RangeResponse(request)
+        try:
+            download_part(
+                part_number=0,
+                start=0,
+                end=len(payload) - 1,
+                archive_size=len(payload),
+                initial_url="https://artifact.invalid/download",
+                part_path=resumed_part,
+                repository="example/project",
+                artifact_id=1,
+                token="self-test",
+            )
+        finally:
+            urllib.request.urlopen = original_urlopen
+        if resumed_part.read_bytes() != payload:
+            fail("parallel downloader did not resume the existing partial bytes")
     print("Parallel artifact downloader self-test passed.")
 
 

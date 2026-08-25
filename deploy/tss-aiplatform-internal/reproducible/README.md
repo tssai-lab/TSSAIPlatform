@@ -79,6 +79,17 @@ The Actions artifact is intentionally retained for seven days to avoid using
 GitHub as a permanent binary backup. The committed lock and exporter do not
 expire; rerun the workflow to recreate the same bundle from the same digests.
 
+For an existing platform whose three base services are already verified, do
+not move the complete four-image bundle just to update the application. Run
+`export-backend-image` instead. It exports only the single backend entry from
+the same lock, with its checksum and source metadata. This is the disk-minimal
+path used to keep the internal platform aligned with Main.
+
+Interrupted range downloads retain only the private, run-specific partial
+directory and resume its verified byte ranges on the next identical run. A
+push/PR validation run uses a different concurrency key, so it cannot cancel a
+manually dispatched long transfer.
+
 ## Stage the minimal C6 CPU runtime bundle
 
 C6 does not import all four historical runtime images. It locks and exports
