@@ -115,8 +115,10 @@ public class ServerMetricsCollector {
             }
         }
 
-        // 把 K8s 节点也自动同步进来
-        for (String name : topMetrics.keySet()) {
+        // 把 K8s 节点也自动同步进来。节点发现不能依赖 Metrics Server：
+        // 新集群可能尚未部署 metrics.k8s.io，但 kubectl get nodes 已经可用。
+        for (String name : discoveredNodeNames(
+                capacities, osInfo, nodeLabels, topMetrics)) {
             if (!ipMap.containsKey(name)) {
                 double[] cap = capacities.get(name);
                 String osImage = osInfo.get(name);
@@ -126,6 +128,21 @@ public class ServerMetricsCollector {
         }
 
         cleanupHistory();
+    }
+
+    static Set<String> discoveredNodeNames(
+            Map<String, double[]> capacities,
+            Map<String, String> osInfo,
+            Map<String, String> nodeLabels,
+            Map<String, TopData> topMetrics
+    ) {
+        Set<String> names = new LinkedHashSet<>();
+        if (capacities != null) names.addAll(capacities.keySet());
+        if (osInfo != null) names.addAll(osInfo.keySet());
+        if (nodeLabels != null) names.addAll(nodeLabels.keySet());
+        if (topMetrics != null) names.addAll(topMetrics.keySet());
+        names.removeIf(name -> name == null || name.isBlank());
+        return names;
     }
 
     void collectOne(ComputeServer server, TopData top, double[] capacity) {
