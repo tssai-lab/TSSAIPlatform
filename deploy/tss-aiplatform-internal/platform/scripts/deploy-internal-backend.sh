@@ -7,13 +7,27 @@ die() {
   exit 1
 }
 
-repository_root=/srv/tss-AIplatform/repository
-node_config=/etc/tss-aiplatform/node.env
-platform_config=/etc/tss-aiplatform/platform.env
-secrets_file=/srv/tss-AIplatform/platform/config/platform.secrets.env
-stage_root=/srv/tss-AIplatform/staging/internal-deploy
+deployment_config=/etc/tss-aiplatform-deploy/backend.env
+[[ -f $deployment_config && ! -L $deployment_config ]] \
+  || die "backend deployment target configuration is absent or symbolic"
+[[ $(stat -c '%U:%G:%a' "$deployment_config") == root:root:644 ]] \
+  || die "backend deployment target configuration metadata differs"
+# shellcheck disable=SC1090
+source "$deployment_config"
+for name in TSS_DEPLOYMENT_USER TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
+  TSS_REPOSITORY_ROOT TSS_NODE_CONFIG TSS_PLATFORM_CONFIG \
+  TSS_DEPLOY_STAGE_ROOT TSS_DEPLOY_STATE_FILE; do
+  [[ -n ${!name:-} ]] || die "backend deployment target setting is empty: $name"
+done
+[[ $TSS_DEPLOYMENT_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+  || die "backend deployment user is invalid"
+repository_root=$TSS_REPOSITORY_ROOT
+node_config=$TSS_NODE_CONFIG
+platform_config=$TSS_PLATFORM_CONFIG
+secrets_file=${TSS_PLATFORM_ROOT}/config/platform.secrets.env
+stage_root=$TSS_DEPLOY_STAGE_ROOT
 bundle_path=${stage_root}/backend.bundle
-state_file=/srv/tss-AIplatform/platform/state/c7-backend-deployment.env
+state_file=$TSS_DEPLOY_STATE_FILE
 lock_file=${repository_root}/deploy/tss-aiplatform-internal/platform/platform-images.lock
 compose_file=${repository_root}/deploy/tss-aiplatform-internal/platform/compose.yml
 
@@ -38,11 +52,18 @@ load_platform_config "$node_config" "$platform_config"
 load_platform_secrets "$secrets_file"
 require_control_plane_identity
 require_space_gates
+[[ $TSS_PROJECT_ROOT == "${TSS_PLATFORM_ROOT%/platform}" \
+  && $repository_root == "$TSS_REPOSITORY_ROOT" \
+  && $stage_root == "${TSS_PROJECT_ROOT}/staging/internal-deploy" \
+  && $state_file == "${TSS_PLATFORM_ROOT}/state/c7-backend-deployment.env" ]] \
+  || die "backend deployment target paths differ from the root-administered platform overlay"
+deployment_group=$(id -gn "$TSS_DEPLOYMENT_USER" 2>/dev/null || true)
+[[ -n $deployment_group ]] || die "backend deployment group is absent"
 for command_name in docker flock git python3 sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || die "required deployment command is missing: ${command_name}"
 done
 [[ -f $bundle_path && ! -L $bundle_path ]] || die "backend deployment bundle is absent or symbolic"
-[[ $(stat -c '%U:%G:%a' "$bundle_path") == user:user:600 ]] \
+[[ $(stat -c '%U:%G:%a' "$bundle_path") == "${TSS_DEPLOYMENT_USER}:${deployment_group}:600" ]] \
   || die "backend deployment bundle metadata differs"
 bundle_size=$(stat -c %s "$bundle_path")
 (( bundle_size > 0 && bundle_size <= 800 * 1024 * 1024 )) \

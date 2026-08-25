@@ -199,6 +199,7 @@ grep -F 'inputs.task == '\''export-cpu-runtime-images'\''' "$internal_workflow" 
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-platform-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''deploy-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'fetch-depth: 0' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
 grep -F 'packages: read' "$internal_workflow" >/dev/null
@@ -219,7 +220,11 @@ grep -F 'sudo, containerd import and cluster writes: not attempted' "$internal_w
 grep -F 'persist-credentials: false' "$internal_workflow" >/dev/null
 grep -F "github.event_name == 'workflow_dispatch' && inputs.task || github.event_name" \
   "$internal_workflow" >/dev/null
-grep -F 'GITHUB_WORKSPACE" == /media/seu/data/tssai-platform/actions-runner/_work/*' "$internal_workflow" >/dev/null
+grep -F 'RUNNER_WORK_ROOT: ${{ vars.RUNNER_WORK_ROOT }}' "$internal_workflow" >/dev/null
+grep -F 'GITHUB_WORKSPACE" == "${runner_work_root}/"*' "$internal_workflow" >/dev/null
+grep -F 'runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]' \
+  "$internal_workflow" >/dev/null
+! grep -F 'seu4080' "$internal_workflow" >/dev/null
 grep -F 'CONTROL_PLANE_HOST" =~ ^[0-9]' "$internal_workflow" >/dev/null
 grep -F 'SSH authentication, sudo, deployment and host writes: not attempted' "$internal_workflow" >/dev/null
 if grep -F '${{ secrets.' "$internal_workflow" >/dev/null; then
@@ -240,6 +245,21 @@ grep -F '"max_bytes": 10 * 1024**3' \
 grep -F 'resume_files=' "${internal_dir}/ci/download-airgap-artifact.py" >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
+
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/alternate-storage.env"
+sed -i 's#TSS_STORAGE_MOUNT_POINT=.*#TSS_STORAGE_MOUNT_POINT=/data/tss-AIplatform#' \
+  "${workdir}/alternate-storage.env"
+bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/alternate-storage.env" >/dev/null
+
+cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/invalid-storage.env"
+sed -i 's#TSS_STORAGE_MOUNT_POINT=.*#TSS_STORAGE_MOUNT_POINT=/etc/tss-AIplatform#' \
+  "${workdir}/invalid-storage.env"
+if bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
+  "${workdir}/invalid-storage.env" >/dev/null 2>&1; then
+  echo "Storage configuration must reject an operating-system mount path." >&2
+  exit 1
+fi
 
 cp "${internal_dir}/config/seu5090-storage.env" "${workdir}/invalid-storage.env"
 sed -i 's/TSS_STORAGE_PARTITION_GIB=2048/TSS_STORAGE_PARTITION_GIB=4096/' \
@@ -327,6 +347,20 @@ grep -F 'shared system containerd PID changed during image import' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F 'CPU runtime bundle sources do not match the committed lock' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
+for file in \
+  "${internal_dir}/scripts/install-cpu-runtime-deployer.sh" \
+  "${internal_dir}/scripts/deploy-cpu-runtime.sh"; do
+  [[ -f $file ]]
+  bash -n "$file"
+done
+grep -F 'TSS_INSTALL_ROOT_TO_HARDEN=$install_root harden_project_install_tree' \
+  "${internal_dir}/scripts/install-cpu-runtime-deployer.sh" >/dev/null
+grep -F 'SUDO_USER:-} == "$TSS_DEPLOYMENT_USER"' \
+  "${internal_dir}/scripts/deploy-cpu-runtime.sh" >/dev/null
+grep -F 'chown -R root:root "$bundle_dir"' \
+  "${internal_dir}/scripts/deploy-cpu-runtime.sh" >/dev/null
+grep -F 'sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime' \
+  "$internal_workflow" >/dev/null
 grep -F 'shared Docker container count changed during CPU runtime import' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
 grep -F 'imported image ID differs from lock' \

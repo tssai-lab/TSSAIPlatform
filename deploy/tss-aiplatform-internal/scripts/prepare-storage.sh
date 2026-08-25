@@ -55,8 +55,14 @@ done
   || die "this approval is limited to one 2048 GiB partition"
 [[ $TSS_STORAGE_FS_LABEL == tss-AIplatform ]] \
   || die "filesystem label must be tss-AIplatform"
-[[ $TSS_STORAGE_MOUNT_POINT == /srv/tss-AIplatform ]] \
-  || die "mount point must be /srv/tss-AIplatform"
+validate_path TSS_STORAGE_MOUNT_POINT
+[[ ${TSS_STORAGE_MOUNT_POINT##*/} == tss-AIplatform ]] \
+  || die "mount point must end with the dedicated tss-AIplatform directory"
+case "$TSS_STORAGE_MOUNT_POINT" in
+  /boot/*|/dev/*|/etc/*|/proc/*|/run/*|/sys/*|/usr/*|/var/*)
+    die "mount point must not be below an operating-system directory"
+    ;;
+esac
 
 if [[ $mode == --config-only ]]; then
   echo "Storage configuration contract passed: serial=${TSS_STORAGE_EXPECTED_SERIAL} size=2048GiB"

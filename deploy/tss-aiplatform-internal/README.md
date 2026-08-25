@@ -105,7 +105,7 @@ The import command verifies every bundle checksum and requires `sources.lock`
 to byte-match the committed 11-image lock before writing the isolated runtime.
 When the operator's direct download path is unreliable, the
 `stage-airgap-bundles` task may download the exact successful export run to the
-reviewed `AIRGAP_STAGE_ROOT` on the protected seu4080 Runner. It verifies the
+reviewed `AIRGAP_STAGE_ROOT` on the protected internal Runner. It verifies the
 run SHA, branch, workflow, conclusion, six files, both checksum lists and the
 11-image source lock. Because the campus artifact path is slow per connection,
 the Runner downloads 16 strict byte ranges in parallel, then requires the
@@ -222,10 +222,12 @@ sudo bash deploy/tss-aiplatform-internal/scripts/prepare-storage.sh \
 
 ## C2 Runner and artifact lock
 
-The existing `seu4080-platform-deploy` Runner is reused only for a manually
-dispatched, no-Secrets smoke from the protected `backend-ops` branch. It checks
-out the exact SHA, repeats the GitHub data path, and checks TCP/22 reachability
-to the configured control-plane address. It deliberately does not attempt SSH
+The existing internal deployment Runner is selected through the logical labels
+`tss-aiplatform-internal` and `deploy`, not a physical hostname. Its work root
+comes from the environment variable `RUNNER_WORK_ROOT`. The manually dispatched,
+no-Secrets smoke from the protected `backend-ops` branch checks out the exact
+SHA, repeats the GitHub data path, and checks TCP/22 reachability to the
+configured control-plane address. It deliberately does not attempt SSH
 authentication, sudo, deployment or host writes.
 
 The same workflow resolves an artifact lock on a GitHub-hosted Runner. This
