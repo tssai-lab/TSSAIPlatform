@@ -23,10 +23,26 @@ public final class ArtifactSpecEvidence {
     }
 
     public static String recognizeModelArchive(String taskType, Collection<String> filePaths) {
-        if (!"CV".equals(normalize(taskType)) || filePaths == null || filePaths.isEmpty()) {
+        String type = normalize(taskType);
+        if (filePaths == null || filePaths.isEmpty()) {
             return null;
         }
         Set<String> paths = normalizedPaths(filePaths);
+        if ("NLP".equals(type)) {
+            boolean descriptor = paths.contains("model.yaml")
+                    && paths.contains("config.json")
+                    && paths.contains("vocab.txt");
+            boolean weight = paths.stream().anyMatch(path ->
+                    rootFile(path) && (path.endsWith(".safetensors")
+                            || "pytorch_model.bin".equals(path))
+            );
+            return descriptor && weight
+                    ? ArtifactSpecIds.MODEL_NLP_BERT_SEQUENCE_CLASSIFICATION
+                    : null;
+        }
+        if (!"CV".equals(type)) {
+            return null;
+        }
         boolean hfDescriptor = paths.contains("model.yaml") && paths.contains("config.json");
         boolean hfWeight = paths.stream().anyMatch(path ->
                 rootFile(path) && (path.endsWith(".safetensors") || path.endsWith(".bin"))
@@ -64,7 +80,9 @@ public final class ArtifactSpecEvidence {
         Set<String> paths = normalizedPaths(filePaths);
         return switch (type) {
             case "CV" -> recognizeCvDataset(cvTaskType, annotationFormat, paths);
-            case "NLP" -> paths.isEmpty() ? null : ArtifactSpecIds.DATASET_NLP_DOCUMENTS;
+            case "NLP" -> hasTextClassificationJsonlStructure(paths)
+                    ? ArtifactSpecIds.DATASET_NLP_TEXT_CLASSIFICATION_JSONL
+                    : paths.isEmpty() ? null : ArtifactSpecIds.DATASET_NLP_DOCUMENTS;
             case "POINT_CLOUD" -> paths.stream().anyMatch(ArtifactSpecEvidence::isPointCloud)
                     ? ArtifactSpecIds.DATASET_POINT_CLOUD_PLY_PCD : null;
             case "ROBOT" -> paths.isEmpty() ? null : ArtifactSpecIds.DATASET_ROBOT_CONFIG;
@@ -119,6 +137,13 @@ public final class ArtifactSpecEvidence {
         return hasClassImageUnder(paths, "data/train/")
                 && hasClassImageUnder(paths, "data/validation/")
                 && hasClassImageUnder(paths, "data/test/");
+    }
+
+    private static boolean hasTextClassificationJsonlStructure(Set<String> paths) {
+        return paths.contains("dataset.json")
+                && paths.contains("data/train.jsonl")
+                && paths.contains("data/validation.jsonl")
+                && paths.contains("data/test.jsonl");
     }
 
     private static boolean hasClassImageUnder(Set<String> paths, String prefix) {

@@ -58,6 +58,20 @@ class ArtifactSpecEvidenceTest {
         );
         assertNull(ArtifactSpecEvidence.recognizeSingleModel("CV", "models/best.pt"));
         assertNull(ArtifactSpecEvidence.recognizeSingleModel("NLP", "yolo11n.pt"));
+
+        assertEquals(
+                ArtifactSpecIds.MODEL_NLP_BERT_SEQUENCE_CLASSIFICATION,
+                ArtifactSpecEvidence.recognizeModelArchive("NLP", List.of(
+                        "model.yaml",
+                        "config.json",
+                        "pytorch_model.bin",
+                        "vocab.txt"
+                ))
+        );
+        assertNull(ArtifactSpecEvidence.recognizeModelArchive(
+                "NLP",
+                List.of("config.json", "pytorch_model.bin", "vocab.txt")
+        ));
     }
 
     @Test
@@ -125,6 +139,31 @@ class ArtifactSpecEvidenceTest {
                 ArtifactSpecEvidence.recognizeSingleDataset("NLP", "corpus.jsonl")
         );
         assertNull(ArtifactSpecEvidence.recognizeSingleDataset("CV", "image.jpg"));
+    }
+
+    @Test
+    void textClassificationRequiresAllThreeJsonlSplitsAndManifest() {
+        List<String> complete = List.of(
+                "dataset.json",
+                "data/train.jsonl",
+                "data/validation.jsonl",
+                "data/test.jsonl"
+        );
+        assertEquals(
+                ArtifactSpecIds.DATASET_NLP_TEXT_CLASSIFICATION_JSONL,
+                ArtifactSpecEvidence.recognizeDatasetArchive(
+                        "NLP", null, null, complete
+                )
+        );
+        assertEquals(
+                ArtifactSpecIds.DATASET_NLP_DOCUMENTS,
+                ArtifactSpecEvidence.recognizeDatasetArchive(
+                        "NLP", null, null, complete.subList(0, 3)
+                )
+        );
+        assertNull(ArtifactSpecEvidence.recognizeDatasetArchive(
+                "OTHER", null, null, complete
+        ));
     }
 
     @Test
