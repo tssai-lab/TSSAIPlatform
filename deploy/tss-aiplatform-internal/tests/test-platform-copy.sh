@@ -119,6 +119,7 @@ grep -F 'TRAINING_MLFLOW_TRACKING_URI: http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFL
 grep -F 'TRAINING_K8S_AUTO_CREATE: "false"' "$compose" >/dev/null
 grep -F 'TRAINING_K8S_FALLBACK_TO_LOCAL: "false"' "$compose" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"' "$compose" >/dev/null
+grep -F '[[ $files_health_status == 401 ]]' "$platform_root/scripts/verify-platform.sh" >/dev/null
 grep -F 'module1-schema-postgresql.sql:/docker-entrypoint-initdb.d/001-module1.sql:ro' "$compose" >/dev/null
 grep -F "psql -U \$\$POSTGRES_USER -d \$\$POSTGRES_DB -Atqc 'SELECT 1'" "$compose" >/dev/null
 grep -F 'install -d -m 0700 -o 999 -g 999' "$platform_root/scripts/prepare-platform.sh" >/dev/null
