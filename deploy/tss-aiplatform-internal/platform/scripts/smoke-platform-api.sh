@@ -90,7 +90,7 @@ upload_status="$(curl --config "$tmp_dir/auth.curl" --output "$tmp_dir/upload.re
 stored_name="$(python3 - "$tmp_dir/upload.response" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
-if int(payload.get("code", -1)) != 200:
+if payload.get("success") is not True:
     raise SystemExit("authenticated object upload business result failed")
 print((payload.get("data") or {}).get("objectName") or "")
 PY
@@ -108,7 +108,7 @@ delete_status="$(curl --config "$tmp_dir/auth.curl" --output "$tmp_dir/delete.re
 python3 - "$tmp_dir/delete.response" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
-if int(payload.get("code", -1)) != 200 or not (payload.get("data") or {}).get("minioDeleteQueued"):
+if payload.get("success") is not True or not (payload.get("data") or {}).get("minioDeleteQueued"):
     raise SystemExit("smoke object cleanup was not queued")
 PY
 curl --config "$tmp_dir/auth.curl" --silent --show-error --output /dev/null \
