@@ -329,6 +329,15 @@ grep -F 'CPU runtime bundle sources do not match the committed lock' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
 grep -F 'shared Docker container count changed during CPU runtime import' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
+if grep -F '{print; exit}' \
+  "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null; then
+  echo "CPU runtime image lookup must consume ctr output under pipefail." >&2
+  exit 1
+fi
+[[ $(grep -Fc "awk -v ref=\"\$source_ref\" '\$1 == ref {print}'" \
+  "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 1 ]]
+[[ $(grep -Fc "awk -v ref=\"\$runtime_ref\" '\$1 == ref {print}'" \
+  "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 1 ]]
 
 cpu_runtime_lock="${internal_dir}/reproducible/cpu-runtime-images.lock"
 [[ $(grep -Evc '^(#|$)' "$cpu_runtime_lock") -eq 2 ]]
