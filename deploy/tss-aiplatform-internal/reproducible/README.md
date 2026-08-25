@@ -124,9 +124,13 @@ sudo /srv/tss-AIplatform/repository/deploy/tss-aiplatform-internal/scripts/impor
   --confirm-node tss-ai-worker-01
 ```
 
-The importer verifies checksums, the committed two-image lock, source manifest
-digests, linux/amd64 image IDs and Kubernetes runtime aliases. It also verifies
-that the shared Docker container count and shared containerd PID do not change.
+The exporter verifies source registry manifest digests and linux/amd64 image
+IDs. The importer verifies bundle checksums, the committed two-image lock,
+imported config digests and Kubernetes runtime aliases. The split is required
+because `docker image save` can reserialize a platform image under a different
+local OCI manifest descriptor while preserving its locked config and layers.
+The importer also verifies that the shared Docker container count and shared
+containerd PID do not change.
 
 ## Minimal clean-server flow
 
