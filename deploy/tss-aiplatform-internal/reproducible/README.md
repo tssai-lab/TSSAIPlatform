@@ -50,6 +50,16 @@ gh run list \
 Use the successful run ID and its exact commit SHA shown by GitHub:
 
 ```bash
+# Preferred on the reviewed seu4080 Runner: download and verify without sudo
+# or changing Docker. The export SHA may be an ancestor of the current
+# backend-ops SHA only when both platform image locks are byte-identical.
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-ops \
+  -f task=stage-platform-images \
+  -f platform_run_id=REPLACE_RUN_ID \
+  -f platform_head_sha=REPLACE_40_CHARACTER_SHA
+
+# Direct operator download remains available when the network permits it.
 gh run download REPLACE_RUN_ID \
   --name tss-aiplatform-platform-images-REPLACE_40_CHARACTER_SHA \
   --dir /path/to/new-empty-directory
