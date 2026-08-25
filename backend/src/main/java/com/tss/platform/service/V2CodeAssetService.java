@@ -16,8 +16,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /** Shared V2 facade with explicit owner and administrator entry points. */
@@ -86,9 +89,17 @@ public class V2CodeAssetService {
     @Transactional(readOnly = true)
     public List<V2CodeAssetDto> list() {
         Integer ownerUserId = currentUserId();
-        return assetRepository.findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(ownerUserId)
-                .stream()
-                .filter(asset -> Objects.equals(ownerUserId, asset.getOwnerUserId()))
+        // 本人代码资产 + 演示代码资产（is_demo=true，全局共享、只读）
+        List<CodeAsset> assets = new ArrayList<>(
+                assetRepository.findByOwnerUserIdAndDeletedFalseOrderByCreatedAtDesc(ownerUserId));
+        assets.addAll(assetRepository.findByIsDemoTrueAndDeletedFalseOrderByCreatedAtDesc());
+        Set<String> visited = new HashSet<>();
+        return assets.stream()
+                .filter(asset -> {
+                    boolean isDemo = Boolean.TRUE.equals(asset.getIsDemo());
+                    return visited.add(asset.getId())
+                            && (isDemo || Objects.equals(ownerUserId, asset.getOwnerUserId()));
+                })
                 .map(asset -> toDto(
                         asset,
                         workspaceRepository.findOpenByAssetId(asset.getId()).isPresent()
@@ -107,6 +118,16 @@ public class V2CodeAssetService {
     }
 
     private V2CodeAssetDto get(String assetId, CodeAccessScope scope) {
+        if (scope != CodeAccessScope.ADMIN) {
+            // 演示代码（is_demo=true）对所有用户只读可见
+            CodeAsset demoAsset = assetRepository.findByIdAndDeletedFalse(assetId).orElse(null);
+            if (demoAsset != null && Boolean.TRUE.equals(demoAsset.getIsDemo())) {
+                return toDto(
+                        demoAsset,
+                        workspaceRepository.findOpenByAssetId(demoAsset.getId()).isPresent()
+                );
+            }
+        }
         CodeAsset asset = requireAsset(assetId, false, scope);
         return toDto(asset, workspaceRepository.findOpenByAssetId(asset.getId()).isPresent());
     }
@@ -398,7 +419,8 @@ public class V2CodeAssetService {
                 revision(asset),
                 asset.getCreatedAt(),
                 asset.getUpdatedAt(),
-                hasOpenWorkspace
+                hasOpenWorkspace,
+                asset.getIsDemo()
         );
     }
 

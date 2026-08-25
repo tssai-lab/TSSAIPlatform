@@ -435,7 +435,10 @@ public class V2CodeVersionQueryService {
                 ? assetRepository.findByIdAndDeletedFalseForUpdate(assetId)
                 : assetRepository.findByIdAndDeletedFalse(assetId))
                 .orElseThrow(CodeAssetAccessException::new);
-        accessPolicy.require(accessScope, asset.getOwnerUserId());
+        // 演示代码（is_demo=true）对普通用户只读可见；管理端仍走上方 ADMIN 校验
+        if (!Boolean.TRUE.equals(asset.getIsDemo())) {
+            accessPolicy.require(accessScope, asset.getOwnerUserId());
+        }
         return asset;
     }
 
