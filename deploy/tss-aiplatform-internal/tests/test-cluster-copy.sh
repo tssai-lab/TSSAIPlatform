@@ -194,6 +194,7 @@ grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-platform-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''export-backend-image'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-platform-images'\''' "$internal_workflow" >/dev/null
@@ -202,6 +203,7 @@ grep -F 'fetch-depth: 0' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
 grep -F 'packages: read' "$internal_workflow" >/dev/null
 grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
+grep -F -- '--backend-only' "$internal_workflow" >/dev/null
 grep -F -- '--profile cpu-runtime' "$internal_workflow" >/dev/null
 grep -F -- '--profile platform' "$internal_workflow" >/dev/null
 grep -F 'git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"' \
@@ -215,6 +217,8 @@ grep -F 'test ! -L "$target_dir"' "$internal_workflow" >/dev/null
 grep -F 'sha256sum --check --strict airgap-common.sha256' "$internal_workflow" >/dev/null
 grep -F 'sudo, containerd import and cluster writes: not attempted' "$internal_workflow" >/dev/null
 grep -F 'persist-credentials: false' "$internal_workflow" >/dev/null
+grep -F "github.event_name == 'workflow_dispatch' && inputs.task || github.event_name" \
+  "$internal_workflow" >/dev/null
 grep -F 'GITHUB_WORKSPACE" == /media/seu/data/tssai-platform/actions-runner/_work/*' "$internal_workflow" >/dev/null
 grep -F 'CONTROL_PLANE_HOST" =~ ^[0-9]' "$internal_workflow" >/dev/null
 grep -F 'SSH authentication, sudo, deployment and host writes: not attempted' "$internal_workflow" >/dev/null
@@ -233,6 +237,7 @@ bash "${internal_dir}/ci/export-cpu-runtime-images.sh" --validate-only >/dev/nul
 python3 "${internal_dir}/ci/download-airgap-artifact.py" --self-test >/dev/null
 grep -F '"max_bytes": 10 * 1024**3' \
   "${internal_dir}/ci/download-airgap-artifact.py" >/dev/null
+grep -F 'resume_files=' "${internal_dir}/ci/download-airgap-artifact.py" >/dev/null
 bash "${internal_dir}/scripts/prepare-storage.sh" --config-only \
   "${internal_dir}/config/seu5090-storage.env" >/dev/null
 
