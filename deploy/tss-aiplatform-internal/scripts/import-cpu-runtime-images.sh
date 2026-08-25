@@ -88,8 +88,11 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
     | awk -v ref="$source_ref" '$1 == ref {print}')"
   [[ -n $image_line ]] || die "expected source image tag is absent after import: $source_ref"
   actual_manifest="$(awk '{print $3}' <<<"$image_line")"
-  [[ $actual_manifest == "$manifest_digest" ]] \
-    || die "imported manifest differs from lock: $source_ref"
+  [[ $actual_manifest =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || die "imported manifest is invalid: $source_ref"
+  # docker image save serializes a platform image as a new local OCI manifest,
+  # so its descriptor can differ from the registry manifest verified at export.
+  # The immutable config digest still identifies the imported image contents.
   actual_image_id="$(
     ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io content get "$actual_manifest" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])'
@@ -100,7 +103,7 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
   runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
     | awk -v ref="$runtime_ref" '$1 == ref {print}')"
   [[ -n $runtime_line ]] || die "runtime image alias is absent after import: $runtime_ref"
-  [[ $(awk '{print $3}' <<<"$runtime_line") == "$manifest_digest" ]] \
+  [[ $(awk '{print $3}' <<<"$runtime_line") == "$actual_manifest" ]] \
     || die "runtime image alias points to unexpected content: $runtime_ref"
 done < <(grep -Ev '^(#|$)' "${bundle_dir}/sources.lock")
 
