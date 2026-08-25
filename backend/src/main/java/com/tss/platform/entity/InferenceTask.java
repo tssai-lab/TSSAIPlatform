@@ -37,6 +37,9 @@ public class InferenceTask {
     @Column(name = "input_object_name", length = 1024)
     private String inputObjectName;
 
+    @Column(name = "resource_profile_id", length = 64)
+    private String resourceProfileId;
+
     @Column(name = "params_json", columnDefinition = "TEXT")
     private String paramsJson;
 

@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.config.MinioConfig;
+import com.tss.platform.config.InferenceKubernetesResourceProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.CreateInferenceTaskRequest;
 import com.tss.platform.dto.InferenceTaskDto;
@@ -12,6 +13,7 @@ import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.MinioDeleteTask;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.inference.InferenceExecutorRouter;
+import com.tss.platform.inference.InferenceResourceProfileService;
 import com.tss.platform.inference.KubernetesInferenceExecutor;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
@@ -94,6 +96,7 @@ class InferenceTaskServiceTest {
                 emptyProxy(DatasetAssetRepository.class),
                 scriptService,
                 executorRouter,
+                new InferenceResourceProfileService(new InferenceKubernetesResourceProperties()),
                 minioService,
                 minioDeleteTaskService,
                 new FakeAuthContext(),
@@ -125,6 +128,7 @@ class InferenceTaskServiceTest {
         assertEquals(0, dto.getRetryCount());
         assertEquals(3, dto.getMaxRetries());
         assertEquals(false, dto.getRetryable());
+        assertEquals("cpu-small", dto.getResourceProfileId());
         assertEquals(dto.getId(), executorRouter.startedTaskId);
         verify(attestation).attestReady("model-ver-1");
     }
@@ -162,6 +166,28 @@ class InferenceTaskServiceTest {
         assertEquals(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT, dto.getInputMode());
         assertEquals("users/7/files/input.jpg", dto.getInputObjectName());
         assertEquals(dto.getId(), executorRouter.startedTaskId);
+    }
+
+    @Test
+    void rejectsUnknownResourceProfileBeforeSavingTask() {
+        modelVersionRepo.model = modelVersion();
+        scriptService.version = scriptVersion();
+
+        CreateInferenceTaskRequest req = new CreateInferenceTaskRequest();
+        req.setModelVersionId("model-ver-1");
+        req.setScriptVersionId("script-ver-1");
+        req.setInputMode(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT);
+        req.setInputObjectName("users/7/files/input.jpg");
+        req.setResourceProfileId("gpu-1");
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.createTask(req)
+        );
+
+        assertEquals("不支持的推理资源规格: gpu-1", error.getMessage());
+        assertEquals(0, taskRepo.tasks.size());
+        assertNull(executorRouter.startedTaskId);
     }
 
     @Test

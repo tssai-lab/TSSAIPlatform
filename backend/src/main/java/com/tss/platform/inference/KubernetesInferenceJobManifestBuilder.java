@@ -6,6 +6,7 @@ import com.tss.platform.entity.DatasetVersion;
 import com.tss.platform.entity.InferenceScriptVersion;
 import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelVersion;
+import com.tss.platform.dto.InferenceResourceProfileDto;
 import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
@@ -38,30 +39,16 @@ public class KubernetesInferenceJobManifestBuilder {
     @Value("${inference.kubernetes.worker-image-pull-policy:IfNotPresent}")
     private String workerImagePullPolicy;
 
-    @Value("${inference.kubernetes.cpu-request:500m}")
-    private String cpuRequest;
-
-    @Value("${inference.kubernetes.cpu-limit:2}")
-    private String cpuLimit;
-
-    @Value("${inference.kubernetes.memory-request:512Mi}")
-    private String memoryRequest;
-
-    @Value("${inference.kubernetes.memory-limit:4Gi}")
-    private String memoryLimit;
-
-    @Value("${inference.kubernetes.ephemeral-storage-request:2Gi}")
-    private String ephemeralStorageRequest;
-
-    @Value("${inference.kubernetes.ephemeral-storage-limit:12Gi}")
-    private String ephemeralStorageLimit;
+    private final InferenceResourceProfileService resourceProfileService;
 
     public KubernetesInferenceJobManifestBuilder(
             TrainingKubernetesProperties properties,
-            InferenceModelCacheProperties modelCacheProperties
+            InferenceModelCacheProperties modelCacheProperties,
+            InferenceResourceProfileService resourceProfileService
     ) {
         this.properties = properties;
         this.modelCacheProperties = modelCacheProperties;
+        this.resourceProfileService = resourceProfileService;
     }
 
     @Autowired
@@ -111,6 +98,8 @@ public class KubernetesInferenceJobManifestBuilder {
                 minioBucket,
                 targetNodeName
         );
+        InferenceResourceProfileDto resourceProfile =
+                resourceProfileService.resolveForExecution(task.getResourceProfileId());
 
         return """
                 apiVersion: batch/v1
@@ -241,12 +230,12 @@ public class KubernetesInferenceJobManifestBuilder {
                 escapeYaml(properties.requireInternalCallbackToken()),
                 escapeYaml(outputObjectPrefix(task)),
                 modelCache.mainEnvYaml(),
-                cpuRequest,
-                memoryRequest,
-                ephemeralStorageRequest,
-                cpuLimit,
-                memoryLimit,
-                ephemeralStorageLimit
+                resourceProfile.cpuRequest(),
+                resourceProfile.memoryRequest(),
+                resourceProfile.ephemeralStorageRequest(),
+                resourceProfile.cpuLimit(),
+                resourceProfile.memoryLimit(),
+                resourceProfile.ephemeralStorageLimit()
         );
     }
 

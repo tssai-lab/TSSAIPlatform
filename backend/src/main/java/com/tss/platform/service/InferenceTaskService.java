@@ -15,6 +15,7 @@ import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.inference.InferenceExecutorRouter;
+import com.tss.platform.inference.InferenceResourceProfileService;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
@@ -66,6 +67,7 @@ public class InferenceTaskService {
     private final DatasetAssetRepository datasetAssetRepo;
     private final InferenceScriptService scriptService;
     private final InferenceExecutorRouter executorRouter;
+    private final InferenceResourceProfileService resourceProfileService;
     private final MinioService minioService;
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
@@ -80,6 +82,7 @@ public class InferenceTaskService {
             DatasetAssetRepository datasetAssetRepo,
             InferenceScriptService scriptService,
             InferenceExecutorRouter executorRouter,
+            InferenceResourceProfileService resourceProfileService,
             MinioService minioService,
             MinioDeleteTaskService minioDeleteTaskService,
             AuthContext authContext,
@@ -93,6 +96,7 @@ public class InferenceTaskService {
         this.datasetAssetRepo = datasetAssetRepo;
         this.scriptService = scriptService;
         this.executorRouter = executorRouter;
+        this.resourceProfileService = resourceProfileService;
         this.minioService = minioService;
         this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
@@ -117,6 +121,9 @@ public class InferenceTaskService {
         }
 
         JsonNode params = toJsonNode(req.getParams(), "params 必须是合法 JSON");
+        String resourceProfileId = resourceProfileService
+                .resolveForCreate(req.getResourceProfileId())
+                .id();
         String taskId = "infer-task-" + UUID.randomUUID().toString().replace("-", "");
         Instant now = Instant.now();
 
@@ -128,6 +135,7 @@ public class InferenceTaskService {
         task.setInputMode(inputMode);
         task.setDatasetVersionId(datasetVersionId);
         task.setInputObjectName(inputObjectName);
+        task.setResourceProfileId(resourceProfileId);
         task.setParamsJson(writeJson(params, "params 必须是合法 JSON"));
         task.setStatus(STATUS_PENDING);
         task.setProgress(progressOf(STATUS_PENDING));
@@ -328,6 +336,7 @@ public class InferenceTaskService {
         dto.setInputMode(task.getInputMode());
         dto.setDatasetVersionId(task.getDatasetVersionId());
         dto.setInputObjectName(task.getInputObjectName());
+        dto.setResourceProfileId(task.getResourceProfileId());
         dto.setParams(fromJson(task.getParamsJson()));
         dto.setStatus(task.getStatus());
         dto.setProgress(task.getProgress());
@@ -477,6 +486,7 @@ public class InferenceTaskService {
     }
 
     private void validateRetryDependencies(InferenceTask task) {
+        resourceProfileService.resolveForExecution(task.getResourceProfileId());
         requireAccessibleModel(task.getModelVersionId());
         scriptService.requireAccessibleVersion(task.getScriptVersionId());
         String inputMode = normalizeInputMode(task.getInputMode());

@@ -14,6 +14,7 @@ public class InferenceTaskDto {
     private String inputMode;
     private String datasetVersionId;
     private String inputObjectName;
+    private String resourceProfileId;
     private JsonNode params;
     private String status;
     private Integer progress;
