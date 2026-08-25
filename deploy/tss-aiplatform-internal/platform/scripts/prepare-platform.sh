@@ -63,8 +63,11 @@ fi
 
 exec 9>/run/lock/tss-aiplatform-platform-compose.lock
 flock -n 9 || die "another internal platform deployment is running"
+# The locked official PostgreSQL image runs the database as 999:999. Reapply
+# must preserve that ownership instead of making an initialized PGDATA unreadable.
+install -d -m 0700 -o 999 -g 999 \
+  "${TSS_PLATFORM_ROOT}/data/postgres"
 install -d -m 0750 -o root -g root \
-  "${TSS_PLATFORM_ROOT}/data/postgres" \
   "${TSS_PLATFORM_ROOT}/data/minio" \
   "${TSS_PLATFORM_ROOT}/state"
 install -d -m 0750 -o 10001 -g 10001 \
