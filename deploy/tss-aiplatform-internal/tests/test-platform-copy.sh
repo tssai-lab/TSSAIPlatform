@@ -58,6 +58,9 @@ while IFS='|' read -r source_ref source_digest _project_ref expected_id budget_b
 done <"$lock"
 [[ $lock_entry_count -eq 4 ]] || { echo "image lock parser did not produce four entries" >&2; exit 1; }
 bash "$platform_root/scripts/export-platform-images.sh" --validate-only >/dev/null
+grep -F '[[ -n $_source_ref && $_source_ref != \#* ]] || continue' \
+  "$platform_root/scripts/verify-platform-images.sh" >/dev/null \
+  || { echo "platform image verifier does not skip the commented lock header" >&2; exit 1; }
 
 [[ $(grep -Ev '^(#|$)' "$runtime_lock" | wc -l) -eq 4 ]]
 ! cut -d'|' -f1 "$runtime_lock" | grep -F ':latest' >/dev/null
