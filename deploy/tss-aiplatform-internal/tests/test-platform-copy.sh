@@ -178,6 +178,8 @@ grep -F 'sha256sum --check --strict backend-image.sha256' "$deployer" >/dev/null
 grep -F 'staged backend source lock differs from protected repository' "$deployer" >/dev/null
 grep -F 'runtime content differs' "$deployer" >/dev/null
 grep -F 'docker compose -f "$compose_file" up -d backend' "$deployer" >/dev/null
+grep -F -- '--confirm-node "$TSS_NODE_NAME"' "$deployer" >/dev/null
+! grep -F -- '--confirm-node "$TSS_PLATFORM_HOSTNAME"' "$deployer" >/dev/null
 grep -F 'a non-backend platform container changed during backend deployment' "$deployer" >/dev/null
 grep -F 'TSS_CONSECUTIVE_SUCCESS_COUNT=' "$deployer" >/dev/null
 ! grep -E 'docker (system|image|container|volume) prune' "$deployer" >/dev/null
