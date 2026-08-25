@@ -103,7 +103,9 @@ root-owned project disk; the private key is not uploaded to GitHub. On seu5090,
 the matching public key is restricted by `authorized_keys` to
 `internal-runner-gateway.sh`. That gateway permits only `probe`, an exact
 protected-branch fast-forward, a bounded backend bundle stream and one fixed
-root deployment command. Port, agent and X11 forwarding and arbitrary shells
+root deployment command. It can also read only the fixed C7 deployment-state
+file through an exact sudoers command; the rest of the root-owned state
+directory stays private. Port, agent and X11 forwarding and arbitrary shells
 remain disabled.
 
 Install the gateway only after reviewing the Runner public key and the exact

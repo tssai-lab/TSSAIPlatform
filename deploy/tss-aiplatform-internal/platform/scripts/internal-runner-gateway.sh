@@ -23,8 +23,10 @@ command_text=${SSH_ORIGINAL_COMMAND:-}
 case "$command_text" in
   probe)
     state_file=/srv/tss-AIplatform/platform/state/c7-backend-deployment.env
-    if [[ -f $state_file && ! -L $state_file && $(stat -c '%U:%G:%a' "$state_file") == root:root:644 ]]; then
-      grep -E '^TSS_(APPLICATION_SOURCE_SHA|INFRASTRUCTURE_SHA|BACKEND_IMAGE|CONSECUTIVE_SUCCESS_COUNT|DEPLOYED_AT_UTC)=' "$state_file"
+    state_content=$(sudo -n /usr/bin/cat "$state_file" 2>/dev/null || true)
+    if [[ -n $state_content ]]; then
+      grep -E '^TSS_(APPLICATION_SOURCE_SHA|INFRASTRUCTURE_SHA|BACKEND_IMAGE|CONSECUTIVE_SUCCESS_COUNT|DEPLOYED_AT_UTC)=' \
+        <<<"$state_content"
     else
       echo 'TSS_C7_BACKEND_DEPLOYMENT=NOT_RECORDED'
     fi
