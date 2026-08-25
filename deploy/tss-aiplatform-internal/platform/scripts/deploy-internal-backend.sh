@@ -162,7 +162,7 @@ fi
 
 "${script_dir}/prepare-platform.sh" --check "$node_config" "$platform_config" "$secrets_file"
 "${script_dir}/prepare-platform.sh" --apply "$node_config" "$platform_config" "$secrets_file" \
-  --confirm-node "$TSS_PLATFORM_HOSTNAME"
+  --confirm-node "$TSS_NODE_NAME"
 "${script_dir}/verify-platform.sh" "$node_config" "$platform_config" "$secrets_file"
 [[ $(docker inspect -f '{{.Config.Image}}' tss-aiplatform-internal-backend) == "$project_ref" ]] \
   || die "running internal backend image differs after deployment"
