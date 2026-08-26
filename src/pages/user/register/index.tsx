@@ -193,7 +193,9 @@ const Register: React.FC = () => {
               style={{ height: 44, marginBottom: 16 }}
             />
             <h2 style={{ marginBottom: 8 }}>注册账号</h2>
-            <p style={{ color: '#999', fontSize: 14 }}>创建您的新账号</p>
+            <p style={{ color: '#999', fontSize: 14 }}>
+              设置用户名、手机号和登录密码
+            </p>
           </div>
 
           {status === 'error' && (
@@ -213,9 +215,16 @@ const Register: React.FC = () => {
               rules={[
                 { required: true, message: '请输入用户名' },
                 { min: 6, max: 20, message: '用户名需为6-20位字符' },
+                {
+                  pattern: /^(?!1[3-9]\d{9}$).*$/,
+                  message: '用户名不能使用手机号格式',
+                },
               ]}
             >
-              <Input prefix={<UserOutlined />} placeholder="请输入用户名" />
+              <Input
+                prefix={<UserOutlined />}
+                placeholder="设置用户名（6-20位，不能使用手机号）"
+              />
             </Form.Item>
 
             <Form.Item
@@ -264,7 +273,7 @@ const Register: React.FC = () => {
             >
               <Input
                 prefix={<MobileOutlined />}
-                placeholder="手机号"
+                placeholder="请输入手机号（用于验证码登录和找回密码）"
                 maxLength={11}
               />
             </Form.Item>
@@ -278,7 +287,7 @@ const Register: React.FC = () => {
             >
               <Input
                 prefix={<LockOutlined />}
-                placeholder="请输入验证码"
+                placeholder="请输入短信验证码"
                 maxLength={6}
                 suffix={
                   countdown > 0 ? (
@@ -301,13 +310,13 @@ const Register: React.FC = () => {
 
             <Form.Item>
               <Button type="primary" htmlType="submit" block>
-                注册
+                注册账号
               </Button>
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 0, textAlign: 'center' }}>
               <Button type="link" onClick={() => history.push('/user/login')}>
-                已有账号？去登录
+                已有账号？返回登录
               </Button>
             </Form.Item>
           </Form>

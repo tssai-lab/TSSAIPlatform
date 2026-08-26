@@ -252,14 +252,14 @@ const Login: React.FC = () => {
                 key: 'account',
                 label: intl.formatMessage({
                   id: 'pages.login.accountLogin.tab',
-                  defaultMessage: '账户密码登录',
+                  defaultMessage: '账号密码登录',
                 }),
               },
               {
                 key: 'mobile',
                 label: intl.formatMessage({
                   id: 'pages.login.phoneLogin.tab',
-                  defaultMessage: '手机号登录',
+                  defaultMessage: '手机验证码登录',
                 }),
               },
             ]}
@@ -271,7 +271,7 @@ const Login: React.FC = () => {
                 loginErrorMsg ||
                 intl.formatMessage({
                   id: 'pages.login.accountLogin.errorMessage',
-                  defaultMessage: '账户或密码错误(admin/ant.design)',
+                  defaultMessage: '用户名/手机号或密码错误',
                 })
               }
             />
@@ -286,7 +286,7 @@ const Login: React.FC = () => {
                 }}
                 placeholder={intl.formatMessage({
                   id: 'pages.login.username.placeholder',
-                  defaultMessage: '请输入用户名',
+                  defaultMessage: '请输入用户名或手机号',
                 })}
                 rules={[
                   {
@@ -294,7 +294,7 @@ const Login: React.FC = () => {
                     message: (
                       <FormattedMessage
                         id="pages.login.username.required"
-                        defaultMessage="请输入用户名!"
+                        defaultMessage="请输入用户名或手机号！"
                       />
                     ),
                   },
