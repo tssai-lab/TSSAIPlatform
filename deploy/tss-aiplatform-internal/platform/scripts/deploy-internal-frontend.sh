@@ -146,7 +146,7 @@ IFS='|' read -r source_ref source_digest runtime_ref expected_id expected_finger
   && $expected_fingerprint =~ ^[0-9a-f]{64}$ \
   && $budget_bytes =~ ^[1-9][0-9]*$ ]] \
   || die "frontend image lock differs"
-frontend_source_sha=${BASH_REMATCH[1]}
+frontend_source_sha=${source_ref##*:}
 [[ $runtime_ref == docker.io/library/tss-aiplatform-frontend:"${frontend_source_sha:0:12}" ]] \
   || die "frontend runtime reference differs"
 

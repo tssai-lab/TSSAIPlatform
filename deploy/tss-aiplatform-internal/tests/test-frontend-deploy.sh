@@ -27,7 +27,7 @@ IFS='|' read -r source_ref source_digest runtime_ref image_id fingerprint budget
   <<<"${lock_lines[0]}"
 [[ -z ${extra:-} ]]
 [[ $source_ref =~ ^ghcr\.io/tssai-lab/tssai-frontend:([0-9a-f]{40})$ ]]
-source_sha=${BASH_REMATCH[1]}
+source_sha=${source_ref##*:}
 [[ $source_digest =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ $runtime_ref == docker.io/library/tss-aiplatform-frontend:"${source_sha:0:12}" ]]
 [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -55,6 +55,8 @@ grep -F 'require_control_plane_identity' "$deployer" >/dev/null
 grep -F 'require_space_gates' "$deployer" >/dev/null
 grep -F 'frontend-image.sha256' "$deployer" >/dev/null
 grep -F 'staged frontend source lock differs from protected repository' "$deployer" >/dev/null
+grep -F 'frontend_source_sha=${source_ref##*:}' "$deployer" >/dev/null
+! grep -F 'frontend_source_sha=${BASH_REMATCH[1]}' "$deployer" >/dev/null
 grep -F 'frontend imported image ID differs from lock' "$deployer" >/dev/null
 grep -F 'shared runtime state changed during frontend image import' "$deployer" >/dev/null
 grep -F "docker ps -q --no-trunc | sort | sha256sum" "$deployer" >/dev/null
