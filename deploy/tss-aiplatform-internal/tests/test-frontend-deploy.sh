@@ -7,12 +7,13 @@ workflow="${repo_root}/.github/workflows/tss-aiplatform-internal-validation.yml"
 lock="${platform_root}/frontend-image.lock"
 manifest="${platform_root}/k8s/frontend.yaml.template"
 exporter="${platform_root}/scripts/export-frontend-image.sh"
+normalizer="${platform_root}/scripts/normalize-image-archive.py"
 deployer="${platform_root}/scripts/deploy-internal-frontend.sh"
 installer="${platform_root}/scripts/install-internal-frontend-deployer.sh"
 gateway="${platform_root}/scripts/internal-runner-gateway.sh"
 downloader="${repo_root}/deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py"
 
-for file in "$lock" "$manifest" "$exporter" "$deployer" "$installer" \
+for file in "$lock" "$manifest" "$exporter" "$normalizer" "$deployer" "$installer" \
   "$gateway" "$downloader" "$workflow"; do
   [[ -f $file ]] || { echo "missing frontend deployment file: $file" >&2; exit 1; }
 done
@@ -20,6 +21,7 @@ for script in "$exporter" "$deployer" "$installer" "$gateway"; do
   bash -n "$script"
 done
 python3 "$downloader" --self-test >/dev/null
+python3 "$normalizer" --self-test >/dev/null
 
 mapfile -t lock_lines < <(grep -Ev '^(#|$)' "$lock")
 [[ ${#lock_lines[@]} -eq 1 ]]
@@ -34,6 +36,10 @@ source_sha=${source_ref##*:}
 [[ $fingerprint =~ ^[0-9a-f]{64}$ ]]
 [[ $budget =~ ^[1-9][0-9]*$ && $budget -le $((256 * 1024 * 1024)) ]]
 bash "$exporter" --validate-only >/dev/null
+grep -F 'normalize-image-archive.py' "$exporter" >/dev/null
+grep -F 'docker image load --input' "$exporter" >/dev/null
+grep -F 'normalized frontend image ID differs from lock' "$exporter" >/dev/null
+grep -F 'archive_sha256=' "$exporter" >/dev/null
 
 grep -F 'type: Recreate' "$manifest" >/dev/null
 grep -F 'automountServiceAccountToken: false' "$manifest" >/dev/null
