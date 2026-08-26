@@ -417,6 +417,10 @@ grep -F 'ufw --dry-run route allow from "$TSS_POD_CIDR"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'from "$TSS_POD_CIDR" to "$TSS_NODE_IP" port 6443' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'from "$TSS_POD_CIDR" to "$TSS_NODE_IP" port 10250' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 10250' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'from "$worker_ip" to "$TSS_NODE_IP" port 4789' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'confirmation node does not match the reviewed configuration' \
@@ -497,6 +501,8 @@ grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
   "$metrics_installer" >/dev/null
 grep -F 'top nodes --no-headers' "$metrics_installer" >/dev/null
 grep -F 'resources were preserved for diagnosis' "$metrics_installer" >/dev/null
+grep -F 'if ($field == "<unknown>") valid=0' "$metrics_installer" >/dev/null
+bash "$metrics_installer" --self-test >/dev/null
 grep -F 'install-metrics-server.sh' \
   "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
 

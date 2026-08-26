@@ -33,6 +33,22 @@ done
 "${kube[@]}" get --raw /apis/metrics.k8s.io/v1beta1/nodes \
   | grep -F '"items"' >/dev/null \
   || { echo "Metrics API is unavailable to the restricted backend identity" >&2; exit 1; }
+metrics_output="$("${kube[@]}" top nodes --no-headers)" \
+  || { echo "Metrics API did not return node usage" >&2; exit 1; }
+mapfile -t cluster_nodes < <("${kube[@]}" get nodes \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+for node in "${cluster_nodes[@]}"; do
+  printf '%s\n' "$metrics_output" | awk -v wanted="$node" '
+    $1 == wanted && NF >= 5 {
+      valid=1
+      for (field=2; field<=5; field++) {
+        if ($field == "<unknown>") valid=0
+      }
+      if (valid) found=1
+    }
+    END {exit !found}
+  ' || { echo "Metrics API has no complete usage for node: $node" >&2; exit 1; }
+done
 
 cat <<'YAML' | "${kube[@]}" create --dry-run=server -f - >/dev/null
 apiVersion: batch/v1
