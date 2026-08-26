@@ -164,6 +164,31 @@ class DatasetContractTest(unittest.TestCase):
                 split="../../secret", max_texts=10, batch_size=8, max_length=64
             )
 
+    def test_long_inference_text_is_kept_in_bounded_task_output_preview_box(self):
+        short_text = "短文本"
+        long_text = "长" * (infer.INLINE_TEXT_PREVIEW_CHARS + 1)
+        predictions = [
+            {"index": 0, "text": short_text, "prediction": "正面"},
+            {"index": 1, "text": long_text, "prediction": "负面"},
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp)
+            previews = infer.build_prediction_previews(predictions, output_dir)
+
+            self.assertEqual(short_text, previews[0]["text"])
+            self.assertEqual(short_text, previews[0]["inputPreview"]["text"])
+            self.assertNotIn("text", previews[1])
+            self.assertEqual("previews/text/1.txt", previews[1]["inputPreview"]["path"])
+            self.assertEqual(
+                long_text,
+                (output_dir / "previews" / "text" / "1.txt").read_text(encoding="utf-8"),
+            )
+
+    def test_text_preview_byte_limit_does_not_split_utf8_character(self):
+        stored, truncated = infer.truncate_utf8_preview("测试文本", max_bytes=7)
+        self.assertEqual("测试", stored)
+        self.assertTrue(truncated)
+
 
 if __name__ == "__main__":
     unittest.main()
