@@ -83,9 +83,21 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
-# 短信验证码（开发环境未接真实短信网关时，验证码输出到后台日志）
+# 短信验证码。正式环境默认关闭；阿里云号码认证参数只从环境变量注入，不写入仓库。
 sms:
-  expose-code: true
+  provider: ${SMS_PROVIDER:disabled}
+  expose-code: ${SMS_EXPOSE_CODE:false}
+  max-daily-sends: ${SMS_MAX_DAILY_SENDS:20}
+  aliyun:
+    credential-type: ${ALIYUN_CREDENTIAL_TYPE:ecs_ram_role}
+    access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
+    role-name: ${ALIBABA_CLOUD_ECS_METADATA:}
+    sign-name: ${ALIYUN_PNVS_SIGN_NAME:}
+    login-register-template-code: ${ALIYUN_PNVS_LOGIN_REGISTER_TEMPLATE_CODE:100001}
+    reset-password-template-code: ${ALIYUN_PNVS_RESET_PASSWORD_TEMPLATE_CODE:100003}
+    scheme-name: ${ALIYUN_PNVS_SCHEME_NAME:}
+    endpoint: ${ALIYUN_PNVS_ENDPOINT:dypnsapi.aliyuncs.com}
 
 sa-token:
   token-name: Authorization

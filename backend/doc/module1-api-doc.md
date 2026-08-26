@@ -145,30 +145,32 @@ POST /api/user/sms/code
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `mobile` | string | 是 | 手机号，正则 `^1[3-9]\d{9}$` |
+| `purpose` | string | 否 | `LOGIN_REGISTER`（默认，登录/注册）或 `RESET_PASSWORD`（重置密码） |
 
 请求示例：
 
 ```json
 {
-  "mobile": "13900000000"
+  "mobile": "13900000000",
+  "purpose": "LOGIN_REGISTER"
 }
 ```
 
 规则：
 - 验证码为 6 位数字。
-- 内存缓存，默认 300 秒过期。
+- 正式阿里云模式由号码认证服务生成并校验验证码；平台只在内存保存 300 秒“已发码”标记和一次性消费状态。
 - 同一手机号 60 秒内只能发送一次。
-- 配置 `sms.expose-code` 默认为 `true` 时，响应 `data` 中会返回验证码，便于开发联调。
+- 正式环境 `sms.provider` 默认 `disabled`，未配置时明确返回“短信服务尚未开通”。
+- 只有隔离的本机 `dev` 配置允许 `sms.provider=local` 且 `sms.expose-code=true`；阿里云和 Main 禁止返回或记录明文验证码。
 
 开发模式响应示例：
 
 ```json
 {
   "code": 200,
-  "message": "验证码发送成功（开发模式，验证码见后台日志）",
+  "message": "验证码发送成功",
   "data": {
     "code": "123456",
-    "mobile": "13900000000",
     "expireSeconds": 300
   }
 }
