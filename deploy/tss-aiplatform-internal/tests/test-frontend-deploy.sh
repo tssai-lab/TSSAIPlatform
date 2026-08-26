@@ -48,7 +48,8 @@ grep -F 'key: node-role.kubernetes.io/control-plane' "$manifest" >/dev/null
 grep -F 'imagePullPolicy: Never' "$manifest" >/dev/null
 grep -F 'hostPort: REPLACE_FRONTEND_PORT' "$manifest" >/dev/null
 grep -F 'hostIP: REPLACE_CONTROL_PLANE_IP' "$manifest" >/dev/null
-grep -F 'path: /healthz' "$manifest" >/dev/null
+[[ $(grep -Fc 'http://127.0.0.1/healthz' "$manifest") -eq 2 ]]
+[[ $(grep -Fc -- '- wget' "$manifest") -eq 2 ]]
 grep -F 'allowPrivilegeEscalation: false' "$manifest" >/dev/null
 for capability in CHOWN NET_BIND_SERVICE SETGID SETUID; do
   grep -F -- "- ${capability}" "$manifest" >/dev/null

@@ -49,17 +49,25 @@ spec:
               hostIP: REPLACE_CONTROL_PLANE_IP
               protocol: TCP
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            exec:
+              command:
+                - wget
+                - -qO-
+                - -T
+                - "2"
+                - http://127.0.0.1/healthz
             initialDelaySeconds: 2
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 12
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            exec:
+              command:
+                - wget
+                - -qO-
+                - -T
+                - "2"
+                - http://127.0.0.1/healthz
             initialDelaySeconds: 10
             periodSeconds: 15
             timeoutSeconds: 3
