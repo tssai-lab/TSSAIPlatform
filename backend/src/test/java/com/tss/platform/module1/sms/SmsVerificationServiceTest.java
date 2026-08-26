@@ -237,6 +237,31 @@ class SmsVerificationServiceTest {
                 .hasMessageContaining("今日验证码发送量已达");
     }
 
+    @Test
+    void legacyZeroDailyLimitFallsBackToFiftySuccessfulSends() {
+        AtomicInteger sends = new AtomicInteger();
+        SmsVerificationProvider provider = new StubProvider() {
+            @Override
+            public IssueReceipt issue(String mobile, SmsPurpose purpose, int expireSeconds, int resendSeconds) {
+                sends.incrementAndGet();
+                return IssueReceipt.remote();
+            }
+        };
+        SmsProperties properties = new SmsProperties();
+        properties.setProvider("aliyun");
+        properties.setMaxDailySends(0);
+        SmsVerificationService service = new SmsVerificationService(provider, new SmsCodeUtil(), properties);
+
+        for (int index = 0; index < 50; index++) {
+            service.issue(String.format("1380001%04d", index));
+        }
+
+        assertThatThrownBy(() -> service.issue("13800019999"))
+                .isInstanceOf(SmsRateLimitException.class)
+                .hasMessageContaining("今日验证码发送量已达");
+        assertThat(sends).hasValue(50);
+    }
+
     private static SmsProperties localProperties() {
         SmsProperties properties = new SmsProperties();
         properties.setProvider("local");
