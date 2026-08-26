@@ -1,0 +1,93 @@
+name: Frontend Runtime Image
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "deploy/nginx/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "config/**"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - ".github/workflows/frontend-runtime-image.yml"
+  push:
+    branches:
+      - frontend-dev
+      - frontend-main
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "deploy/nginx/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "config/**"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - ".github/workflows/frontend-runtime-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build immutable linux-amd64 frontend image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ghcr.io/${{ github.repository_owner }}/tssai-frontend:${{ github.sha }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+          provenance: false
+          sbom: false
+
+      - name: Record immutable image identity
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          test -n "${{ steps.image.outputs.digest }}"
+          {
+            echo "### Frontend runtime image"
+            echo "- Source SHA: `${GITHUB_SHA}`"
+            echo "- Image: `ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${GITHUB_SHA}`"
+            echo "- Digest: `${{ steps.image.outputs.digest }}`"
+            echo "- Published: `${{ github.event_name != 'pull_request' }}`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record pull-request validation result
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo "### Frontend runtime image"
+            echo "- Source SHA: `${GITHUB_SHA}`"
+            echo "- linux/amd64 image build: passed"
+            echo "- Published: `false`"
+          } >> "$GITHUB_STEP_SUMMARY"
