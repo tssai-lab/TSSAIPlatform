@@ -14,15 +14,18 @@ import com.tss.platform.module1.security.UserAdministrationPolicy;
 import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.service.OperationLogService;
 import com.tss.platform.module1.service.UserService;
+import com.tss.platform.module1.sms.SmsProviderException;
+import com.tss.platform.module1.sms.SmsPurpose;
+import com.tss.platform.module1.sms.SmsRateLimitException;
+import com.tss.platform.module1.sms.SmsServiceUnavailableException;
+import com.tss.platform.module1.sms.SmsVerificationService;
 import com.tss.platform.module1.util.ClientIpUtil;
-import com.tss.platform.module1.util.SmsCodeUtil;
 import com.tss.platform.module1.util.DesensitizationUtil;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -40,7 +43,7 @@ public class UserController {
     private UserService userService;
 
     @Resource
-    private SmsCodeUtil smsCodeUtil;
+    private SmsVerificationService smsVerificationService;
 
     @Resource
     private OperationLogService operationLogService;
@@ -50,10 +53,6 @@ public class UserController {
 
     @Resource
     private UserAdministrationPolicy userAdministrationPolicy;
-
-    /** 开发环境将验证码写入日志并在接口中返回（生产环境请设为 false） */
-    @Value("${sms.expose-code:true}")
-    private boolean smsExposeCode;
 
     @PostMapping("/add")
     public Result<?> addUser(@RequestBody User user, HttpServletRequest request) {
@@ -386,32 +385,36 @@ public class UserController {
 
     @PostMapping("/sms/code")
     public Result<?> sendSmsCode(@Valid @RequestBody SmsCodeDTO dto) {
-        if (smsCodeUtil.isLimited(dto.getMobile())) {
-            SYSTEM_LOG.warn("验证码频率超限: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
-            USER_LOG.warn("验证码发送失败: 频率超限, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
-            return Result.fail("60秒内只能发送一次验证码");
-        }
-        
+        String maskedMobile = DesensitizationUtil.maskMobile(dto.getMobile());
         try {
-            String code = smsCodeUtil.genCode();
-            smsCodeUtil.save(dto.getMobile(), code);
-            String mobile = dto.getMobile().trim();
-            // 后台日志输出完整验证码，便于开发联调（未接真实短信通道）
-            SYSTEM_LOG.info("【短信验证码】手机号={}, 验证码={}, 有效期5分钟", mobile, code);
-            USER_LOG.info("【短信验证码】手机号={}, 验证码={}", mobile, code);
-
-            if (smsExposeCode) {
-                Map<String, Object> data = new HashMap<>();
-                data.put("code", code);
-                data.put("mobile", mobile);
-                data.put("expireSeconds", 300);
-                return Result.success(data, "验证码发送成功（开发模式，验证码见后台日志）");
+            SmsVerificationService.IssueResult issued =
+                    smsVerificationService.issue(dto.getMobile(), SmsPurpose.from(dto.getPurpose()));
+            Map<String, Object> data = new HashMap<>();
+            data.put("expireSeconds", issued.expireSeconds());
+            if (issued.exposedCode() != null) {
+                data.put("code", issued.exposedCode());
             }
-            return Result.success(null, "验证码发送成功");
+            SYSTEM_LOG.info("验证码发送成功: mobile={}", maskedMobile);
+            USER_LOG.info("验证码发送成功: mobile={}", maskedMobile);
+            return Result.success(data, "验证码发送成功");
+        } catch (SmsRateLimitException e) {
+            SYSTEM_LOG.warn("验证码频率超限: mobile={}", maskedMobile);
+            USER_LOG.warn("验证码发送失败: 频率超限, mobile={}", maskedMobile);
+            return Result.fail(e.getMessage());
+        } catch (SmsServiceUnavailableException e) {
+            SYSTEM_LOG.warn("短信服务未开通: mobile={}", maskedMobile);
+            USER_LOG.warn("验证码发送失败: 短信服务未开通, mobile={}", maskedMobile);
+            return Result.fail("短信服务尚未开通，请联系管理员");
+        } catch (SmsProviderException e) {
+            SYSTEM_LOG.error("验证码供应商发送失败: mobile={}, error={}", maskedMobile, e.getMessage());
+            USER_LOG.error("验证码发送失败: mobile={}", maskedMobile);
+            return Result.fail("验证码发送失败，请稍后重试");
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
         } catch (Exception e) {
-            SYSTEM_LOG.error("验证码发送失败(系统异常): mobile={}, error={}", DesensitizationUtil.maskMobile(dto.getMobile()), e.getMessage());
-            USER_LOG.error("验证码发送失败: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
-            return Result.fail("验证码发送失败");
+            SYSTEM_LOG.error("验证码发送失败(系统异常): mobile={}, error={}", maskedMobile, e.getMessage());
+            USER_LOG.error("验证码发送失败: mobile={}", maskedMobile);
+            return Result.fail("验证码发送失败，请稍后重试");
         }
     }
 
@@ -439,6 +442,9 @@ public class UserController {
             return Result.success(data, "注册成功");
         } catch (IllegalArgumentException e) {
             return Result.fail(e.getMessage());
+        } catch (SmsProviderException e) {
+            SYSTEM_LOG.warn("手机号注册时验证码服务异常: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
+            return Result.fail("验证码服务暂不可用，请稍后重试");
         } catch (Exception e) {
             return Result.fail("注册失败，请稍后重试");
         }
@@ -489,6 +495,17 @@ public class UserController {
                     .fallbackUsername(loginAccount)
                     .build());
             return Result.fail(e.getMessage());
+        } catch (SmsProviderException e) {
+            auditRecordService.record(AuditRecordCommand.builder()
+                    .actionType(AuditActionType.LOGIN)
+                    .objectType(AuditObjectType.USER)
+                    .result(AuditResult.FAILED)
+                    .failReason("验证码服务暂不可用")
+                    .detail("LOGIN_SMS_PROVIDER_FAILED")
+                    .ipAddress(ip)
+                    .fallbackUsername(loginAccount)
+                    .build());
+            return Result.fail("验证码服务暂不可用，请稍后重试");
         } catch (Exception e) {
             auditRecordService.record(AuditRecordCommand.builder()
                     .actionType(AuditActionType.LOGIN)
@@ -606,6 +623,9 @@ public class UserController {
             return Result.success("密码重置成功，请使用新密码登录");
         } catch (IllegalArgumentException e) {
             return Result.fail(e.getMessage());
+        } catch (SmsProviderException e) {
+            SYSTEM_LOG.warn("密码重置时验证码服务异常: mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
+            return Result.fail("验证码服务暂不可用，请稍后重试");
         } catch (Exception e) {
             return Result.fail("密码重置失败，请稍后重试");
         }
