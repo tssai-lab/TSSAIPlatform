@@ -51,10 +51,19 @@ declare namespace API {
     currentAuthority?: string;
   };
 
-  type FakeCaptcha = {
+  type SmsCodeResult = {
     code?: number;
     status?: string;
+    message?: string;
+    msg?: string;
+    data?: {
+      /** 仅隔离的 local 开发模式返回；正式环境不存在。 */
+      code?: string;
+      expireSeconds?: number;
+    };
   };
+
+  type FakeCaptcha = SmsCodeResult;
 
   type LoginParams = {
     username?: string;
@@ -85,6 +94,7 @@ declare namespace API {
   type ForgotPasswordResult = {
     code?: number;
     msg?: string;
+    message?: string;
     data?: {
       captcha?: string;
       expireTime?: number;
@@ -115,6 +125,7 @@ declare namespace API {
   type RegisterResult = {
     code?: number;
     msg?: string;
+    message?: string;
     data?: {
       userId?: string;
       username?: string;

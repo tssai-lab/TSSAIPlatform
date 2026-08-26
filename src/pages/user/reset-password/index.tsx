@@ -4,7 +4,12 @@ import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useEffect, useRef, useState } from 'react';
 import { forgotPassword } from '@/services/ant-design-pro/api';
-import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { sendSmsCode } from '@/services/ant-design-pro/login';
+import {
+  apiMessage,
+  isApiSuccess,
+  localSmsCode,
+} from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import Settings from '../../../../config/defaultSettings';
 
 const useStyles = createStyles(({ token }) => {
@@ -99,27 +104,26 @@ const ResetPassword: React.FC = () => {
       // 验证手机号格式
       await form.validateFields(['phone']);
 
-      const result = await getFakeCaptcha({
+      const result = await sendSmsCode({
         phone: phone,
+        purpose: 'RESET_PASSWORD',
       });
 
-      // 兼容不同的响应格式
-      if (result.code === 200 || result.status === 'ok') {
-        // 开发环境显示验证码，生产环境不显示
-        if ((result as any).data?.captcha) {
-          messageApi.success(
-            `验证码发送成功！验证码为：${(result as any).data.captcha}`,
-          );
-        } else {
-          messageApi.success('验证码已发送到您的手机，请查收');
-        }
+      if (isApiSuccess(result)) {
+        const localCode = localSmsCode(result);
+        messageApi.success(
+          localCode
+            ? `本地开发验证码：${localCode}`
+            : '验证码已发送到您的手机，请查收',
+        );
         startCountdown();
       } else {
+        const errorMessage = apiMessage(result, '验证码发送失败，请重试！');
         setResetPasswordState({
           status: 'error',
-          message: (result as any).msg || '验证码发送失败，请重试！',
+          message: errorMessage,
         });
-        messageApi.error((result as any).msg || '验证码发送失败，请重试！');
+        messageApi.error(errorMessage);
       }
     } catch (error: any) {
       if (error.errorFields) {
@@ -145,20 +149,15 @@ const ResetPassword: React.FC = () => {
         newPassword: values.newPassword,
       });
 
-      if (response.code === 200) {
+      if (isApiSuccess(response)) {
         messageApi.success(
-          (response as any).msg ??
-            (response as any).message ??
-            '密码重置成功！',
+          apiMessage(response, '密码重置成功！'),
         );
         setTimeout(() => {
           history.push('/user/login');
         }, 1000);
       } else {
-        const errText =
-          (response as any).msg ??
-          (response as any).message ??
-          '密码重置失败，请重试！';
+        const errText = apiMessage(response, '密码重置失败，请重试！');
         setResetPasswordState({
           status: 'error',
           message: errText,

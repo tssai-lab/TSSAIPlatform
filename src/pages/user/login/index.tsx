@@ -24,7 +24,12 @@ import { createStyles } from 'antd-style';
 import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { login } from '@/services/ant-design-pro/api';
-import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { sendSmsCode } from '@/services/ant-design-pro/login';
+import {
+  apiMessage,
+  isApiSuccess,
+  localSmsCode,
+} from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import { getLoginRedirectTarget } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import Settings from '../../../../config/defaultSettings';
@@ -403,20 +408,25 @@ const Login: React.FC = () => {
                     message.error('请先输入正确的手机号');
                     return;
                   }
-                  const result = await getFakeCaptcha({
+                  const result = await sendSmsCode({
                     phone,
+                    purpose: 'LOGIN_REGISTER',
                   });
-                  if (
-                    (result as any)?.code === 200 ||
-                    (result as any)?.status === 'ok'
-                  ) {
+                  if (isApiSuccess(result)) {
+                    const localCode = localSmsCode(result);
                     message.success(
-                      '验证码发送成功，请使用后端生成的验证码登录',
+                      localCode
+                        ? `本地开发验证码：${localCode}`
+                        : '验证码已发送到您的手机，请查收',
                     );
                   } else {
-                    message.error(
-                      (result as any)?.msg || '验证码发送失败，请重试',
+                    const errorMessage = apiMessage(
+                      result,
+                      '验证码发送失败，请重试',
                     );
+                    message.error(errorMessage);
+                    // ProFormCaptcha 只会在 Promise resolve 后开始倒计时。
+                    throw new Error(errorMessage);
                   }
                 }}
               />
