@@ -434,10 +434,7 @@ public class UserController {
                 return Result.fail("注册失败");
             }
             Map<String, Object> data = new HashMap<>();
-            String username = dto.getUsername() != null && !dto.getUsername().isBlank()
-                    ? dto.getUsername().trim()
-                    : dto.getMobile().trim();
-            data.put("username", username);
+            data.put("username", dto.getUsername().trim());
             data.put("mobile", dto.getMobile().trim());
             return Result.success(data, "注册成功");
         } catch (IllegalArgumentException e) {

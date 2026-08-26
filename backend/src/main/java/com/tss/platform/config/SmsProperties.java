@@ -15,8 +15,8 @@ public class SmsProperties {
     /** Only allowed with the local provider; never enable on Main. */
     private boolean exposeCode = false;
 
-    /** Single-instance cost guard. Zero disables the guard. */
-    private int maxDailySends = 20;
+    /** Single-instance cost guard. Non-positive legacy values fall back to 50. */
+    private int maxDailySends = 50;
 
     private Aliyun aliyun = new Aliyun();
 

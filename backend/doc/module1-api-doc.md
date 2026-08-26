@@ -101,7 +101,7 @@ POST /api/user/register/username
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `username` | string | 是 | 用户名，DTO 校验为 6-20 位字符 |
+| `username` | string | 是 | 用户名，6-20 位字符，不能使用完整的 11 位手机号格式 |
 | `password` | string | 是 | 密码，正则 `^\w{6,16}$` |
 | `confirmPassword` | string | 是 | 确认密码，必须与 `password` 一致 |
 
@@ -119,6 +119,7 @@ POST /api/user/register/username
 - 新用户默认 `roleId=3`、`status=true`。
 - 密码使用 BCrypt 加密保存。
 - 邮箱默认生成 `{username}@default.com`。
+- 如果用户名是完整的 11 位手机号格式，返回“用户名不能使用手机号格式”。
 - 如果存在同名未删除用户，返回用户名已存在。
 - 如果存在同名软删除用户，会恢复该账号。
 
@@ -160,6 +161,7 @@ POST /api/user/sms/code
 - 验证码为 6 位数字。
 - 正式阿里云模式由号码认证服务生成并校验验证码；平台只在内存保存 300 秒“已发码”标记和一次性消费状态。
 - 同一手机号 60 秒内只能发送一次。
+- 正式短信供应商每天最多成功发送 50 条；旧配置中的 `0` 也按 50 条处理，避免意外关闭费用保护。
 - 正式环境 `sms.provider` 默认 `disabled`，未配置时明确返回“短信服务尚未开通”。
 - 只有隔离的本机 `dev` 配置允许 `sms.provider=local` 且 `sms.expose-code=true`；阿里云和 Main 禁止返回或记录明文验证码。
 
@@ -192,7 +194,7 @@ POST /api/user/register/mobile
 | `smsCode` | string | 是 | 短信验证码 |
 | `password` | string | 是 | 密码，正则 `^\w{6,16}$` |
 | `confirmPassword` | string | 是 | 确认密码 |
-| `username` | string | 否 | 用户名；不传时使用手机号作为用户名 |
+| `username` | string | 是 | 用户名，6-20 位字符，不能使用完整的 11 位手机号格式 |
 
 请求示例：
 
@@ -234,7 +236,7 @@ POST /api/user/login
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `type` | string | 是 | 固定为 `account` |
-| `username` | string | 是 | 用户名；代码中也会用该值匹配 `mobile` |
+| `username` | string | 是 | 登录标识；输入完整的 11 位手机号时按手机号匹配，否则按用户名匹配 |
 | `password` | string | 是 | 密码 |
 
 请求示例：
@@ -918,7 +920,7 @@ GET /api/system/log/objects
 | 未登录访问受保护接口 | HTTP 401，`{"code":401,"message":"请先登录","data":null}` |
 | 普通用户访问管理员接口 | HTTP 403，`{"code":403,"message":"无权限访问，仅管理员可操作","data":null}` |
 | 登录类型不正确 | `code=400`，提示使用 `account` 或 `mobile` |
-| 账号密码错误 | `code=400`，提示用户名或密码错误 |
+| 账号密码错误 | `code=400`，提示用户名/手机号或密码错误 |
 | 账号被禁用 | `code=400`，提示账号已被禁用 |
 | 验证码错误或过期 | `code=400`，提示验证码错误或已过期 |
 | 用户名重复 | `code=400`，提示用户名已存在 |
