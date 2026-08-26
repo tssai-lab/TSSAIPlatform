@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 lock_file="${script_dir}/../frontend-image.lock"
+normalizer="${script_dir}/normalize-image-archive.py"
 
 die() {
   echo "ERROR: $*" >&2
@@ -34,7 +35,8 @@ if [[ $mode == --validate-only ]]; then
   exit 0
 fi
 [[ ! -e $mode && ! -L $mode ]] || die "frontend export directory already exists"
-for command_name in docker mkdir python3 sha256sum; do
+[[ -f $normalizer && ! -L $normalizer ]] || die "frontend image normalizer is absent or symbolic"
+for command_name in awk docker mkdir mktemp python3 sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || die "required command is missing: $command_name"
 done
 mkdir -m 0700 -- "$mode"
@@ -52,11 +54,20 @@ actual_fingerprint=$(docker image inspect "$immutable_ref" \
   || die "frontend registry image differs from the reviewed lock"
 (( actual_size <= budget_bytes )) || die "frontend image exceeds its conservative disk budget"
 docker tag "$immutable_ref" "$runtime_ref"
-docker image save --output "${mode}/frontend-image-amd64.tar" "$runtime_ref"
+raw_archive=$(mktemp "${mode}/.frontend-image-raw.XXXXXX.tar")
+trap 'rm -f "$raw_archive"' EXIT
+docker image save --output "$raw_archive" "$runtime_ref"
+python3 "$normalizer" "$raw_archive" "${mode}/frontend-image-amd64.tar"
+rm -f "$raw_archive"
+trap - EXIT
+docker image load --input "${mode}/frontend-image-amd64.tar" >/dev/null
+normalized_id=$(docker image inspect --format '{{.Id}}' "$runtime_ref")
+[[ $normalized_id == "$image_id" ]] || die "normalized frontend image ID differs from lock"
 cp -- "$lock_file" "${mode}/sources.lock"
 (
   cd "$mode"
   sha256sum frontend-image-amd64.tar sources.lock >frontend-image.sha256
   sha256sum --check --strict frontend-image.sha256 >/dev/null
 )
-echo "Frontend image bundle exported: source=${source_sha} output=${mode}"
+archive_sha256=$(sha256sum "${mode}/frontend-image-amd64.tar" | awk '{print $1}')
+echo "Frontend image bundle exported: source=${source_sha} archive_sha256=${archive_sha256} output=${mode}"
