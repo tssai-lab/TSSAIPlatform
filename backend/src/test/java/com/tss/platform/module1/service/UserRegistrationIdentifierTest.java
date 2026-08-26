@@ -1,6 +1,7 @@
 package com.tss.platform.module1.service;
 
 import com.tss.platform.module1.dto.UserRegisterDTO;
+import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,17 @@ class UserRegistrationIdentifierTest {
 
         UserRegisterDTO mobileUsername = registration("13800000000");
         assertThatThrownBy(() -> new UserServiceImpl().registerByMobile(mobileUsername))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("用户名不能使用手机号格式");
+    }
+
+    @Test
+    void administratorCreationAlsoRejectsAMobileNumberAsUsername() {
+        User user = new User();
+        user.setUsername("13800000000");
+        user.setPassword("password123");
+
+        assertThatThrownBy(() -> new UserServiceImpl().addUser(user))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("用户名不能使用手机号格式");
     }
