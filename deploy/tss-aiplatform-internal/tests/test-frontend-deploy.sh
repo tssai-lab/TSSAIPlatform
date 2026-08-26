@@ -50,6 +50,9 @@ grep -F 'hostPort: REPLACE_FRONTEND_PORT' "$manifest" >/dev/null
 grep -F 'hostIP: REPLACE_CONTROL_PLANE_IP' "$manifest" >/dev/null
 grep -F 'path: /healthz' "$manifest" >/dev/null
 grep -F 'allowPrivilegeEscalation: false' "$manifest" >/dev/null
+for capability in CHOWN NET_BIND_SERVICE SETGID SETUID; do
+  grep -F -- "- ${capability}" "$manifest" >/dev/null
+done
 grep -F 'type: RuntimeDefault' "$manifest" >/dev/null
 for placeholder in REPLACE_FRONTEND_SOURCE_SHA REPLACE_FRONTEND_IMAGE \
   REPLACE_CONTROL_PLANE_NODE REPLACE_CONTROL_PLANE_IP REPLACE_BACKEND_PORT \
