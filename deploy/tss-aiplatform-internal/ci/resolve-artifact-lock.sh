@@ -9,6 +9,7 @@ mode="${1:-resolve}"
 
 calico_url="https://raw.githubusercontent.com/projectcalico/calico/${TSS_CALICO_VERSION}/manifests/calico.yaml"
 nvidia_url="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}/deployments/static/nvidia-device-plugin.yml"
+metrics_url="https://github.com/kubernetes-sigs/metrics-server/releases/download/${TSS_METRICS_SERVER_VERSION}/components.yaml"
 
 die() {
   echo "ERROR: $*" >&2
@@ -92,17 +93,22 @@ curl --fail --location --silent --show-error \
   "$calico_url" -o "${workdir}/calico.yaml"
 curl --fail --location --silent --show-error \
   "$nvidia_url" -o "${workdir}/nvidia-device-plugin.yaml"
+curl --fail --location --silent --show-error \
+  "$metrics_url" -o "${workdir}/metrics-server-components.yaml"
 
 calico_sha="$(sha256sum "${workdir}/calico.yaml" | awk '{print $1}')"
 nvidia_sha="$(sha256sum "${workdir}/nvidia-device-plugin.yaml" | awk '{print $1}')"
-[[ $calico_sha =~ ^[0-9a-f]{64}$ && $nvidia_sha =~ ^[0-9a-f]{64}$ ]] \
+metrics_sha="$(sha256sum "${workdir}/metrics-server-components.yaml" | awk '{print $1}')"
+[[ $calico_sha =~ ^[0-9a-f]{64}$ && $nvidia_sha =~ ^[0-9a-f]{64}$ \
+  && $metrics_sha =~ ^[0-9a-f]{64}$ ]] \
   || die "manifest SHA-256 resolution failed"
 
 mapfile -t images < <(
   {
     grep -Ev '^(#|$)' "$core_images"
     extract_images < <(
-      cat "${workdir}/calico.yaml" "${workdir}/nvidia-device-plugin.yaml"
+      cat "${workdir}/calico.yaml" "${workdir}/nvidia-device-plugin.yaml" \
+        "${workdir}/metrics-server-components.yaml"
     )
   } | sort -u
 )
@@ -113,6 +119,7 @@ required_manifest_images=(
   "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}"
   "quay.io/calico/node:${TSS_CALICO_VERSION}"
   "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"
+  "registry.k8s.io/metrics-server/metrics-server:${TSS_METRICS_SERVER_VERSION}"
 )
 for required_image in "${required_manifest_images[@]}"; do
   printf '%s\n' "${images[@]}" | grep -Fx "$required_image" >/dev/null \
@@ -123,6 +130,7 @@ printf '# tss-AIplatform internal artifact lock candidate\n'
 printf '# Commit this output only after independent review.\n'
 printf 'manifest %s sha256:%s\n' "$calico_url" "$calico_sha"
 printf 'manifest %s sha256:%s\n' "$nvidia_url" "$nvidia_sha"
+printf 'manifest %s sha256:%s\n' "$metrics_url" "$metrics_sha"
 
 for image in "${images[@]}"; do
   [[ $image != *:latest ]] || die "latest image tag is forbidden: $image"

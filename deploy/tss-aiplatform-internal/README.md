@@ -104,16 +104,17 @@ sudo bash deploy/tss-aiplatform-internal/scripts/prepare-node.sh \
 The campus hosts can reach `registry.k8s.io` itself but time out after it
 redirects to Google Artifact Registry. C4 therefore uses the no-Secrets
 `export-airgap-bundles` workflow task on a GitHub-hosted Runner. It pulls the
-already locked linux/amd64 image digests and emits three short-lived bundles.
+already locked linux/amd64 image digests and emits Kubernetes, Calico, Metrics
+Server and optional NVIDIA files in one short-lived artifact.
 Download the artifact from the exact trusted `backend-ops` run, copy only the
 common files to the control plane and include the NVIDIA files on GPU workers.
 The import command verifies every bundle checksum and requires `sources.lock`
-to byte-match the committed 11-image lock before writing the isolated runtime.
+to byte-match the committed 12-image lock before writing the isolated runtime.
 When the operator's direct download path is unreliable, the
 `stage-airgap-bundles` task may download the exact successful export run to the
 reviewed `AIRGAP_STAGE_ROOT` on the protected internal Runner. It verifies the
-run SHA, branch, workflow, conclusion, six files, both checksum lists and the
-11-image source lock. Because the campus artifact path is slow per connection,
+run SHA, branch, workflow, conclusion, seven files, both checksum lists and the
+12-image source lock. Because the campus artifact path is slow per connection,
 the Runner downloads 16 strict byte ranges in parallel, then requires the
 combined archive to match GitHub's whole-artifact SHA256 before extracting it.
 This staging task does not use sudo, import images or write cluster state.
@@ -125,6 +126,25 @@ sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
 sudo bash deploy/tss-aiplatform-internal/scripts/import-airgap-bundles.sh \
   --apply /etc/tss-aiplatform/node.env /path/to/bundles \
   --confirm-node REPLACE_WITH_REVIEWED_NODE_NAME
+```
+
+The common bundle includes the digest-locked Metrics Server image. Import it
+on every node that may schedule system workloads. The exact upstream v0.9.0
+manifest is versioned below `manifests/` and byte-matches the SHA-256 in
+`artifacts.lock`. After both node imports, install it only from the reviewed
+control plane. The installer adds the laboratory kubelet-certificate override,
+forces offline `imagePullPolicy: Never`, rejects Main/Second node names and
+requires the Metrics API to report every reviewed node. The platform bootstrap
+calls the same installer, so a clean redeployment cannot silently omit CPU and
+memory metrics.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/scripts/install-metrics-server.sh \
+  --check /etc/tss-aiplatform/node.env
+
+sudo bash deploy/tss-aiplatform-internal/scripts/install-metrics-server.sh \
+  --apply /etc/tss-aiplatform/node.env \
+  --confirm-node REPLACE_WITH_REVIEWED_CONTROL_PLANE_NODE
 ```
 
 After the exact image import succeeds, prepare only the active control-plane
@@ -239,7 +259,7 @@ authentication, sudo, deployment or host writes.
 The same workflow resolves an artifact lock on a GitHub-hosted Runner. This
 avoids relying on the campus hosts' currently unreliable redirect from
 `registry.k8s.io` to Google Artifact Registry. The reviewed result is committed
-as `artifacts.lock`: its two manifest checksums and all 11 multi-architecture
+as `artifacts.lock`: its three manifest checksums and all 12 multi-architecture
 image digests were independently checked against the source registries. C4
 must reject a missing or mismatched artifact instead of silently using a tag.
 

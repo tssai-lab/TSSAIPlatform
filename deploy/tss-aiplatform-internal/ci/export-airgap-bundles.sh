@@ -9,16 +9,18 @@ die() {
   exit 1
 }
 
-mapfile -t core_lines < <(awk '$1 == "image" && $2 ~ /^registry\.k8s\.io\// {print}' "$artifact_lock")
+mapfile -t metrics_lines < <(awk '$1 == "image" && $2 ~ /^registry\.k8s\.io\/metrics-server\// {print}' "$artifact_lock")
+mapfile -t core_lines < <(awk '$1 == "image" && $2 ~ /^registry\.k8s\.io\// && $2 !~ /^registry\.k8s\.io\/metrics-server\// {print}' "$artifact_lock")
 mapfile -t calico_lines < <(awk '$1 == "image" && $2 ~ /^quay\.io\/calico\// {print}' "$artifact_lock")
 mapfile -t nvidia_lines < <(awk '$1 == "image" && $2 ~ /^nvcr\.io\/nvidia\// {print}' "$artifact_lock")
 [[ ${#core_lines[@]} -eq 7 ]] || die "expected 7 Kubernetes core images"
 [[ ${#calico_lines[@]} -eq 3 ]] || die "expected 3 Calico images"
+[[ ${#metrics_lines[@]} -eq 1 ]] || die "expected 1 Metrics Server image"
 [[ ${#nvidia_lines[@]} -eq 1 ]] || die "expected 1 NVIDIA image"
-[[ $(grep -c '^image ' "$artifact_lock") -eq 11 ]] || die "expected 11 locked images"
+[[ $(grep -c '^image ' "$artifact_lock") -eq 12 ]] || die "expected 12 locked images"
 
 if [[ ${1:-} == --validate-only ]]; then
-  echo "Air-gap export contract passed: core=7 calico=3 nvidia=1"
+  echo "Air-gap export contract passed: core=7 calico=3 metrics-server=1 nvidia=1"
   exit 0
 fi
 
@@ -35,6 +37,7 @@ mkdir -p -- "$output_dir"
 
 declare -a core_refs=()
 declare -a calico_refs=()
+declare -a metrics_refs=()
 declare -a nvidia_refs=()
 pull_group() {
   local group_name="$1"
@@ -51,6 +54,7 @@ pull_group() {
     case "$group_name" in
       core) core_refs+=("$reference") ;;
       calico) calico_refs+=("$reference") ;;
+      metrics) metrics_refs+=("$reference") ;;
       nvidia) nvidia_refs+=("$reference") ;;
       *) die "unknown image group: $group_name" ;;
     esac
@@ -59,23 +63,27 @@ pull_group() {
 
 pull_group core "${core_lines[@]}"
 pull_group calico "${calico_lines[@]}"
+pull_group metrics "${metrics_lines[@]}"
 pull_group nvidia "${nvidia_lines[@]}"
 
 docker image save --output "${output_dir}/k8s-core-amd64.tar" "${core_refs[@]}"
 docker image save --output "${output_dir}/calico-amd64.tar" "${calico_refs[@]}"
+docker image save --output "${output_dir}/metrics-server-amd64.tar" "${metrics_refs[@]}"
 docker image save --output "${output_dir}/nvidia-amd64.tar" "${nvidia_refs[@]}"
 grep '^image ' "$artifact_lock" >"${output_dir}/sources.lock"
 
 (
   cd "$output_dir"
-  sha256sum k8s-core-amd64.tar calico-amd64.tar sources.lock \
+  sha256sum k8s-core-amd64.tar calico-amd64.tar \
+    metrics-server-amd64.tar sources.lock \
     >airgap-common.sha256
   sha256sum nvidia-amd64.tar >airgap-gpu.sha256
 )
 for output_file in \
-  k8s-core-amd64.tar calico-amd64.tar nvidia-amd64.tar sources.lock \
+  k8s-core-amd64.tar calico-amd64.tar metrics-server-amd64.tar \
+  nvidia-amd64.tar sources.lock \
   airgap-common.sha256 airgap-gpu.sha256; do
   [[ -s ${output_dir}/${output_file} ]] || die "bundle output is empty: $output_file"
 done
 
-echo "Air-gap bundles exported from 11 immutable image digests: $output_dir"
+echo "Air-gap bundles exported from 12 immutable image digests: $output_dir"

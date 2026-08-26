@@ -341,6 +341,8 @@ grep -F '$1 ~ /cri/ || $2 ~ /cri/' \
 grep -F 'compression-level: 0' "$internal_workflow" >/dev/null
 grep -F 'expected 7 Kubernetes core images' \
   "${internal_dir}/ci/export-airgap-bundles.sh" >/dev/null
+grep -F 'expected 1 Metrics Server image' \
+  "${internal_dir}/ci/export-airgap-bundles.sh" >/dev/null
 grep -F 'bundle sources do not match the committed artifact lock' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F 'shared system containerd PID changed during image import' \
@@ -453,8 +455,8 @@ fi
 
 artifact_lock="${internal_dir}/artifacts.lock"
 [[ -f $artifact_lock ]]
-[[ $(grep -c '^manifest ' "$artifact_lock") -eq 2 ]]
-[[ $(grep -c '^image ' "$artifact_lock") -eq 11 ]]
+[[ $(grep -c '^manifest ' "$artifact_lock") -eq 3 ]]
+[[ $(grep -c '^image ' "$artifact_lock") -eq 12 ]]
 if grep -Ev '^(#.*|manifest https://[^ ]+ sha256:[0-9a-f]{64}|image [^ ]+:[^ ]+ sha256:[0-9a-f]{64})$' \
   "$artifact_lock" >/dev/null; then
   echo "Artifact lock contains an invalid line." >&2
@@ -472,9 +474,31 @@ for required_image in \
   "quay.io/calico/cni:${TSS_CALICO_VERSION}" \
   "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}" \
   "quay.io/calico/node:${TSS_CALICO_VERSION}" \
+  "registry.k8s.io/metrics-server/metrics-server:${TSS_METRICS_SERVER_VERSION}" \
   "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"; do
   grep -E "^image ${required_image//./\\.} sha256:[0-9a-f]{64}$" "$artifact_lock" >/dev/null
 done
+
+metrics_manifest="${internal_dir}/manifests/metrics-server-components.yaml"
+metrics_installer="${internal_dir}/scripts/install-metrics-server.sh"
+[[ -f $metrics_manifest && -f $metrics_installer ]]
+metrics_url="https://github.com/kubernetes-sigs/metrics-server/releases/download/${TSS_METRICS_SERVER_VERSION}/components.yaml"
+metrics_sha="$(awk -v url="$metrics_url" \
+  '$1 == "manifest" && $2 == url {sub(/^sha256:/, "", $3); print $3}' \
+  "$artifact_lock")"
+[[ $metrics_sha =~ ^[0-9a-f]{64}$ ]]
+[[ $(sha256sum "$metrics_manifest" | awk '{print $1}') == "$metrics_sha" ]]
+grep -F 'image: registry.k8s.io/metrics-server/metrics-server:v0.9.0' \
+  "$metrics_manifest" >/dev/null
+grep -F 'imagePullPolicy: Never' "$metrics_installer" >/dev/null
+grep -F -- '--kubelet-insecure-tls' "$metrics_installer" >/dev/null
+grep -F 'apply --dry-run=server' "$metrics_installer" >/dev/null
+grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
+  "$metrics_installer" >/dev/null
+grep -F 'top nodes --no-headers' "$metrics_installer" >/dev/null
+grep -F 'resources were preserved for diagnosis' "$metrics_installer" >/dev/null
+grep -F 'install-metrics-server.sh' \
+  "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
 
 find "${internal_dir}" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 echo "Internal cluster copy contract tests passed."

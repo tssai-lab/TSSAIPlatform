@@ -58,9 +58,10 @@ sudo bash deploy/tss-aiplatform-internal/platform/scripts/bootstrap-platform.sh 
 ```
 
 The command generates fresh local secrets without displaying them, prepares
-only the internal namespace/RBAC/services and exact firewall ports, starts the
+the locked Metrics Server plus only the internal namespace/RBAC/services and
+exact firewall ports, starts the
 four Compose services, then verifies database, object storage, MLflow,
-Kubernetes least privilege and callback authentication. Re-running `--apply`
+Kubernetes least privilege, live node metrics and callback authentication. Re-running `--apply`
 is idempotent. It also creates one clearly named normal smoke user, proves
 login, permission denial and a tiny MinIO upload/download/delete flow, and
 retains the resulting audit evidence. After the first deployment, `--check`
