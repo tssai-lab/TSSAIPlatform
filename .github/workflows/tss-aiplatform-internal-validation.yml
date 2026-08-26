@@ -1097,7 +1097,8 @@ jobs:
           )
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe-frontend
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
-          tar -C "$FRONTEND_TARGET_DIR" -cf - \
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+            --mode='u+rw,go-rwx' -C "$FRONTEND_TARGET_DIR" -cf - \
             frontend-image-amd64.tar frontend-image.sha256 sources.lock \
             | ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-frontend
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-frontend
