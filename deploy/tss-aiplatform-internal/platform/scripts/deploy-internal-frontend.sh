@@ -195,6 +195,12 @@ if "REPLACE_" in text:
     raise SystemExit("frontend manifest retains an unresolved placeholder")
 pathlib.Path(target).write_text(text, encoding="utf-8")
 PY
+namespace_manifest=${work_dir}/frontend-namespace.yaml
+"${kube[@]}" apply --dry-run=client -f "$rendered_manifest" >/dev/null
+"${kube[@]}" create namespace tss-platform-system --dry-run=client -o yaml \
+  >"$namespace_manifest"
+"${kube[@]}" apply --dry-run=server -f "$namespace_manifest" >/dev/null
+"${kube[@]}" apply -f "$namespace_manifest" >/dev/null
 "${kube[@]}" apply --dry-run=server -f "$rendered_manifest" >/dev/null
 deployment_changed=true
 "${kube[@]}" apply -f "$rendered_manifest" >/dev/null
