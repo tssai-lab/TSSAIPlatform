@@ -17,5 +17,6 @@ public class ForgetPasswordDTO extends SmsCodeDTO {
 
     // 验证码（复用注册的验证码字段）
     @NotBlank(message = "验证码不能为空")
+    @Pattern(regexp = "^\\d{6}$", message = "验证码应为6位数字")
     private String smsCode;
 }

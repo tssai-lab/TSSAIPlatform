@@ -10,7 +10,8 @@ import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.mapper.UserMapper;
 import com.tss.platform.module1.security.UserSessionInvalidator;
 import com.tss.platform.module1.service.UserService;
-import com.tss.platform.module1.util.SmsCodeUtil;
+import com.tss.platform.module1.sms.SmsVerificationService;
+import com.tss.platform.module1.sms.SmsPurpose;
 import com.tss.platform.module1.util.DesensitizationUtil;
 import com.tss.platform.module1.util.UserRoleUtil;
 import jakarta.annotation.Resource;
@@ -34,7 +35,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private static final Logger USER_LOG = LoggerFactory.getLogger("USER_LOG");
 
     @Resource
-    private SmsCodeUtil smsCodeUtil;
+    private SmsVerificationService smsVerificationService;
 
     @Resource
     private UserSessionInvalidator userSessionInvalidator;
@@ -232,14 +233,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public boolean registerByMobile(UserRegisterDTO dto) {
+        if (dto.getMobile() == null || !dto.getMobile().trim().matches("^1[3-9]\\d{9}$")) {
+            throw new IllegalArgumentException("手机号格式错误");
+        }
+        if (dto.getSmsCode() == null || !dto.getSmsCode().trim().matches("^\\d{6}$")) {
+            throw new IllegalArgumentException("验证码应为6位数字");
+        }
         String mobile = dto.getMobile().trim();
         SYSTEM_LOG.debug("手机号注册请求入参: mobile={}", DesensitizationUtil.maskMobile(mobile));
-
-        if (!smsCodeUtil.verify(mobile, dto.getSmsCode())) {
-            SYSTEM_LOG.warn("验证码错误或已过期: mobile={}", DesensitizationUtil.maskMobile(mobile));
-            USER_LOG.warn("注册失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(mobile));
-            throw new IllegalArgumentException("验证码错误或已过期");
-        }
 
         if (dto.getPassword() == null || !dto.getPassword().equals(dto.getConfirmPassword())) {
             SYSTEM_LOG.warn("两次密码不一致");
@@ -265,6 +266,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         activeUsernameWrapper.isNull(User::getDeletedAt);
         if (this.count(activeUsernameWrapper) > 0) {
             throw new IllegalArgumentException("用户名已存在");
+        }
+
+        if (!smsVerificationService.verifyAndConsumeAfterCommit(
+                mobile, dto.getSmsCode(), SmsPurpose.LOGIN_REGISTER)) {
+            SYSTEM_LOG.warn("验证码错误、已过期或正在使用: mobile={}", DesensitizationUtil.maskMobile(mobile));
+            USER_LOG.warn("注册失败: 验证码错误、已过期或正在使用, mobile={}", DesensitizationUtil.maskMobile(mobile));
+            throw new IllegalArgumentException("验证码错误或已过期");
         }
 
         String passwordHash = BCrypt.hashpw(dto.getPassword(), BCrypt.gensalt());
@@ -294,9 +302,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                     SYSTEM_LOG.info("注册成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
                     USER_LOG.info("注册成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
                 }
-            }
-            if (ok) {
-                smsCodeUtil.consume(mobile);
             }
             return ok;
         } catch (Exception e) {
@@ -339,12 +344,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Override
     public boolean forgetPassword(ForgetPasswordDTO dto) {
         String mobile = dto.getMobile().trim();
-        if (!smsCodeUtil.verify(mobile, dto.getSmsCode())) {
-            SYSTEM_LOG.warn("验证码错误或已过期: mobile={}", DesensitizationUtil.maskMobile(mobile));
-            USER_LOG.warn("密码重置失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(mobile));
-            throw new IllegalArgumentException("验证码错误或已过期");
-        }
-
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(User::getMobile, mobile);
         wrapper.isNull(User::getDeletedAt);
@@ -355,6 +354,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new IllegalArgumentException("该手机号未注册");
         }
 
+        if (!smsVerificationService.verifyAndConsumeAfterCommit(
+                mobile, dto.getSmsCode(), SmsPurpose.RESET_PASSWORD)) {
+            SYSTEM_LOG.warn("验证码错误、已过期或正在使用: mobile={}", DesensitizationUtil.maskMobile(mobile));
+            USER_LOG.warn("密码重置失败: 验证码错误、已过期或正在使用, mobile={}", DesensitizationUtil.maskMobile(mobile));
+            throw new IllegalArgumentException("验证码错误或已过期");
+        }
+
         try {
             LambdaUpdateWrapper<User> updateWrapper = new LambdaUpdateWrapper<>();
             updateWrapper.eq(User::getMobile, mobile)
@@ -363,7 +369,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
             boolean result = this.update(updateWrapper);
             if (result) {
-                smsCodeUtil.consume(mobile);
                 userSessionInvalidator.invalidateAfterCommit(user.getId());
                 SYSTEM_LOG.info("密码重置成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
                 USER_LOG.info("密码重置成功: mobile={}", DesensitizationUtil.maskMobile(mobile));
@@ -421,10 +426,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 throw new IllegalArgumentException("验证码不能为空");
             }
 
-            if (!smsCodeUtil.check(dto.getMobile(), dto.getSmsCode())) {
-                SYSTEM_LOG.warn("登录失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
-                USER_LOG.warn("登录失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
-                throw new IllegalArgumentException("验证码错误或已过期");
+            if (!dto.getMobile().trim().matches("^1[3-9]\\d{9}$")) {
+                throw new IllegalArgumentException("手机号格式错误");
+            }
+            if (!dto.getSmsCode().trim().matches("^\\d{6}$")) {
+                throw new IllegalArgumentException("验证码应为6位数字");
             }
 
             LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
@@ -442,6 +448,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 SYSTEM_LOG.warn("登录失败: 账号已被禁用, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
                 USER_LOG.warn("登录失败: 账号已被禁用, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
                 throw new IllegalArgumentException("账号已被禁用");
+            }
+
+            if (!smsVerificationService.verifyAndConsume(
+                    dto.getMobile(), dto.getSmsCode(), SmsPurpose.LOGIN_REGISTER)) {
+                SYSTEM_LOG.warn("登录失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
+                USER_LOG.warn("登录失败: 验证码错误或已过期, mobile={}", DesensitizationUtil.maskMobile(dto.getMobile()));
+                throw new IllegalArgumentException("验证码错误或已过期");
             }
 
         } else if ("account".equals(dto.getType())) {
