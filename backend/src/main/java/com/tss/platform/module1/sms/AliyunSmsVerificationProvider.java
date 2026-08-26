@@ -11,6 +11,7 @@ import com.aliyun.teaopenapi.models.Config;
 import com.tss.platform.config.SmsProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +30,7 @@ public class AliyunSmsVerificationProvider implements SmsVerificationProvider {
     private final SmsProperties.Aliyun properties;
     private final AliyunPnvsClient client;
 
+    @Autowired
     public AliyunSmsVerificationProvider(SmsProperties smsProperties) {
         this(smsProperties.getAliyun(), createClient(smsProperties.getAliyun()));
     }

@@ -8,6 +8,10 @@ import com.aliyun.dypnsapi20170525.models.SendSmsVerifyCodeResponse;
 import com.aliyun.dypnsapi20170525.models.SendSmsVerifyCodeResponseBody;
 import com.tss.platform.config.SmsProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -15,6 +19,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AliyunSmsVerificationProviderTest {
+
+    @Test
+    void springCreatesTheAliyunProviderWithTheProductionConstructor() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(AliyunProviderConfiguration.class)
+                .withPropertyValues(
+                        "sms.provider=aliyun",
+                        "sms.aliyun.credential-type=ecs_ram_role",
+                        "sms.aliyun.role-name=TSSAIPlatformSmsRole",
+                        "sms.aliyun.sign-name=恒创联众")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(AliyunSmsVerificationProvider.class);
+                });
+    }
 
     @Test
     void sendsSystemGeneratedSixDigitCodeWithoutReturningPlaintext() {
@@ -156,5 +175,11 @@ class AliyunSmsVerificationProviderTest {
         public CheckSmsVerifyCodeResponse check(CheckSmsVerifyCodeRequest request) {
             return checkResponse("OK", true, "PASS");
         }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(SmsProperties.class)
+    @Import(AliyunSmsVerificationProvider.class)
+    static class AliyunProviderConfiguration {
     }
 }
