@@ -3,7 +3,12 @@ import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
-import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { sendSmsCode } from '@/services/ant-design-pro/login';
+import {
+  apiMessage,
+  isApiSuccess,
+  localSmsCode,
+} from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import Settings from '../../../../config/defaultSettings';
 
 const useStyles = createStyles(({ token }) => {
@@ -52,22 +57,21 @@ const ForgotPassword: React.FC = () => {
   const handleForgotPassword = async (values: any) => {
     try {
       // 与后端 POST /api/user/sms/code（SmsCodeDTO.mobile）对齐，勿调用 forget/password
-      const response = await getFakeCaptcha({
+      const response = await sendSmsCode({
         phone: values.phone,
+        purpose: 'RESET_PASSWORD',
       });
 
-      if (response.code === 200) {
+      if (isApiSuccess(response)) {
+        const localCode = localSmsCode(response);
         messageApi.success(
-          (response as any).msg ??
-            (response as any).message ??
-            '验证码已发送到您的手机，请查收',
+          localCode
+            ? `本地开发验证码：${localCode}`
+            : apiMessage(response, '验证码已发送到您的手机，请查收'),
         );
         history.push(`/user/reset-password?phone=${values.phone}`);
       } else {
-        const errText =
-          (response as any).msg ??
-          (response as any).message ??
-          '验证码发送失败，请重试！';
+        const errText = apiMessage(response, '验证码发送失败，请重试！');
         setForgotPasswordState({
           status: 'error',
           message: errText,

@@ -4,7 +4,12 @@ import { Alert, App, Button, Form, Input } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
 import { registerByMobile } from '@/services/ant-design-pro/api';
-import { getFakeCaptcha } from '@/services/ant-design-pro/login';
+import { sendSmsCode } from '@/services/ant-design-pro/login';
+import {
+  apiMessage,
+  isApiSuccess,
+  localSmsCode,
+} from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import Settings from '../../../../config/defaultSettings';
 
 const useStyles = createStyles(({ token }) => {
@@ -82,20 +87,26 @@ const Register: React.FC = () => {
       // 验证手机号格式
       await form.validateFields(['phone']);
 
-      const result = await getFakeCaptcha({
+      const result = await sendSmsCode({
         phone: phone,
+        purpose: 'LOGIN_REGISTER',
       });
 
-      // 兼容不同的响应格式
-      if (result.code === 200 || result.status === 'ok') {
-        messageApi.success('验证码发送成功，请使用后端生成的验证码');
+      if (isApiSuccess(result)) {
+        const localCode = localSmsCode(result);
+        messageApi.success(
+          localCode
+            ? `本地开发验证码：${localCode}`
+            : '验证码已发送到您的手机，请查收',
+        );
         startCountdown();
       } else {
+        const errorMessage = apiMessage(result, '验证码发送失败，请重试！');
         setRegisterState({
           status: 'error',
-          message: (result as any).msg || '验证码发送失败，请重试！',
+          message: errorMessage,
         });
-        messageApi.error((result as any).msg || '验证码发送失败，请重试！');
+        messageApi.error(errorMessage);
       }
     } catch (error: any) {
       if (error.errorFields) {
@@ -128,11 +139,12 @@ const Register: React.FC = () => {
           history.push('/user/login');
         }, 1000);
       } else {
+        const errorMessage = apiMessage(response, '注册失败，请重试！');
         setRegisterState({
           status: 'error',
-          message: response.msg || '注册失败，请重试！',
+          message: errorMessage,
         });
-        messageApi.error(response.msg || '注册失败，请重试！');
+        messageApi.error(errorMessage);
       }
     } catch (error: any) {
       console.error('注册失败:', error);
