@@ -87,6 +87,9 @@ grep -F -- '--profile frontend-image' "$workflow" >/dev/null
 grep -F 'probe-frontend' "$workflow" >/dev/null
 grep -F 'stage-frontend' "$workflow" >/dev/null
 grep -F 'deploy-frontend' "$workflow" >/dev/null
+grep -F -- 'tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner' \
+  "$workflow" >/dev/null
+grep -F -- "--mode='u+rw,go-rwx'" "$workflow" >/dev/null
 grep -F 'runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]' \
   "$workflow" >/dev/null
 
