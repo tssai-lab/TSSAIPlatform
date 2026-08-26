@@ -172,3 +172,59 @@ dispatch `deploy-cpu-runtime-images` with the same run ID and source SHA. The
 root helper freezes the staged directory, repeats the immutable lock and image
 checks, imports only into the configured project containerd, and records an
 independent result below the configured project audit directory.
+
+## C7 internal frontend (manual, independent target)
+
+The internal frontend is separate from Main's existing host-nginx deployment.
+A `frontend-dev` merge still follows the original Main deployment workflow and
+also publishes one immutable linux/amd64 image tagged with the full frontend
+commit SHA. It does not automatically change the internal cluster.
+
+The frontend image workflow pulls its just-published image back from GHCR and
+records its manifest digest, image ID, execution fingerprint and measured Docker
+archive size in a short-lived identity artifact. Review that artifact and commit
+its single lock row as `frontend-image.lock` on `backend`, then release the exact
+backend commit to `backend-ops`. This keeps application source identity separate
+from the environment-specific deployment mechanism.
+
+Install the restricted frontend helper only after the C7 backend gateway is
+installed. The port must be a reviewed unused high port and is stored in a
+root-owned local configuration file; no physical host, account, path, address or
+port is committed to Git.
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-internal-frontend-deployer.sh \
+  --node-config /etc/tss-aiplatform/node.env \
+  --platform-config /etc/tss-aiplatform/platform.env \
+  --deployment-user REPLACE_DEPLOYMENT_USER \
+  --frontend-port REPLACE_FRONTEND_PORT \
+  --confirm-node REPLACE_CONTROL_PLANE_NODE
+```
+
+The release consists of two explicit `backend-ops` workflow dispatches:
+
+1. `export-frontend-image` exports only the image named by the committed lock.
+2. `deploy-frontend` receives that successful run ID and the exact current
+   `backend-ops` SHA, verifies the run and checksums, then stages at most 256 MiB
+   through the restricted gateway.
+
+The root helper fails before import when the common 10 GiB root survival floor
+or platform-disk gate is not met. It fixes the Pod to the reviewed control-plane
+node, uses `imagePullPolicy: Never`, exposes only the configured host port, and
+checks `/healthz` plus the proxied backend `/v3/api-docs` route. If Kubernetes
+was changed and verification fails, it rolls an existing Deployment back or
+removes a failed first Deployment. It never rolls Main back or deletes data.
+
+No campus-network firewall opening is part of C7. For first acceptance, use an
+SSH local forward from an authorized operator machine and browse the local port.
+Direct network exposure is a separate permission decision.
+
+```bash
+ssh -L REPLACE_LOCAL_PORT:REPLACE_CONTROL_PLANE_IP:REPLACE_FRONTEND_PORT \
+  REPLACE_SSH_USER@REPLACE_CONTROL_PLANE_IP
+```
+
+Record two consecutive successful deployments of the same frontend source and
+infrastructure SHA before calling this independent release path stable. A
+failure on only one cluster is fixed as an environment adaptation; the other
+cluster remains online.

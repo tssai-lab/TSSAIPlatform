@@ -85,6 +85,18 @@ PROFILES = {
         },
         "max_bytes": 768 * 1024**2,
     },
+    "frontend-image": {
+        "artifact_prefix": "tss-aiplatform-frontend-image",
+        "expected_files": {
+            "frontend-image-amd64.tar",
+            "frontend-image.sha256",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "frontend-image.sha256": ["frontend-image-amd64.tar", "sources.lock"],
+        },
+        "max_bytes": 256 * 1024**2,
+    },
 }
 USER_AGENT = "tss-aiplatform-artifact/1.1"
 
@@ -477,6 +489,11 @@ def self_test() -> None:
             "sources.lock": b"ghcr.io/example/backend:v1|sha256:" + b"0" * 64 + b"\n",
         }
         self_test_profile(root, "backend-image", backend_content)
+        frontend_content = {
+            "frontend-image-amd64.tar": b"frontend-image",
+            "sources.lock": b"frontend-lock\n",
+        }
+        self_test_profile(root, "frontend-image", frontend_content)
 
         payload = b"resume-this-download"
         resumed_part = root / "part-000"

@@ -40,6 +40,7 @@ repository_root=$TSS_REPOSITORY_ROOT
 stage_root=$TSS_DEPLOY_STAGE_ROOT
 bundle_path=${stage_root}/backend.bundle
 state_file=$TSS_DEPLOY_STATE_FILE
+frontend_config=/etc/tss-aiplatform-deploy/frontend.env
 expected_group=$(id -gn "$expected_user" 2>/dev/null || true)
 [[ -n $expected_group ]] || die "backend deployment group is absent"
 [[ $(id -un) == "$expected_user" ]] || die "internal Runner gateway has an unexpected local user"
@@ -47,6 +48,30 @@ expected_group=$(id -gn "$expected_user" 2>/dev/null || true)
   || die "internal deployment paths are absent or unsafe"
 [[ $(stat -c '%U:%G:%a' "$stage_root") == "${expected_user}:${expected_group}:700" ]] \
   || die "internal deployment staging metadata differs"
+
+load_frontend_target() {
+  [[ -f $frontend_config && ! -L $frontend_config \
+    && $(stat -c '%U:%G:%a' "$frontend_config") == root:root:644 ]] \
+    || die "frontend deployment target configuration metadata differs"
+  # shellcheck disable=SC1090
+  source "$frontend_config"
+  for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_PROJECT_ROOT \
+    TSS_FRONTEND_PLATFORM_ROOT TSS_FRONTEND_REPOSITORY_ROOT \
+    TSS_FRONTEND_STAGE_ROOT TSS_FRONTEND_STATE_FILE TSS_FRONTEND_PORT; do
+    [[ -n ${!name:-} ]] || die "frontend deployment target setting is empty: $name"
+  done
+  [[ $TSS_FRONTEND_DEPLOYMENT_USER == "$expected_user" \
+    && $TSS_FRONTEND_PROJECT_ROOT == "$TSS_PROJECT_ROOT" \
+    && $TSS_FRONTEND_PLATFORM_ROOT == "$TSS_PLATFORM_ROOT" \
+    && $TSS_FRONTEND_REPOSITORY_ROOT == "$repository_root" \
+    && $TSS_FRONTEND_STAGE_ROOT == "$stage_root" \
+    && $TSS_FRONTEND_STATE_FILE == "${TSS_PLATFORM_ROOT}/state/c7-frontend-deployment.env" \
+    && $TSS_FRONTEND_PORT =~ ^[0-9]{4,5}$ \
+    && $TSS_FRONTEND_PORT -ge 1024 && $TSS_FRONTEND_PORT -le 65535 ]] \
+    || die "frontend deployment target crosses its reviewed project boundary"
+  frontend_bundle_path=${stage_root}/frontend.bundle
+  frontend_state_file=$TSS_FRONTEND_STATE_FILE
+}
 
 command_text=${SSH_ORIGINAL_COMMAND:-}
 case "$command_text" in
@@ -101,6 +126,43 @@ case "$command_text" in
     ;;
   deploy-backend)
     exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-backend
+    ;;
+  probe-frontend)
+    load_frontend_target
+    state_content=$(sudo -n /usr/bin/cat "$frontend_state_file" 2>/dev/null || true)
+    if [[ -n $state_content ]]; then
+      grep -E '^TSS_(FRONTEND_SOURCE_SHA|INFRASTRUCTURE_SHA|FRONTEND_IMAGE|FRONTEND_PORT|CONSECUTIVE_SUCCESS_COUNT|DEPLOYED_AT_UTC)=' \
+        <<<"$state_content"
+    else
+      echo 'TSS_C7_FRONTEND_DEPLOYMENT=NOT_RECORDED'
+    fi
+    ;;
+  stage-frontend)
+    load_frontend_target
+    [[ ! -e $frontend_bundle_path || ( -f $frontend_bundle_path && ! -L $frontend_bundle_path \
+      && $(stat -c '%U:%G:%a' "$frontend_bundle_path") == "${expected_user}:${expected_group}:600" ) ]] \
+      || die "pending frontend deployment bundle metadata differs"
+    pending=$(mktemp "${stage_root}/.frontend.bundle.XXXXXX")
+    trap 'rm -f "$pending"' EXIT
+    chmod 0600 "$pending"
+    ulimit -f $((256 * 1024))
+    dd of="$pending" bs=1M status=none
+    size=$(stat -c %s "$pending")
+    (( size > 0 && size <= 256 * 1024 * 1024 )) \
+      || die "frontend deployment bundle size differs"
+    if [[ -f $frontend_bundle_path ]]; then
+      [[ $(sha256sum "$pending" | awk '{print $1}') == $(sha256sum "$frontend_bundle_path" | awk '{print $1}') ]] \
+        || die "a different frontend deployment bundle is already pending"
+      rm -f "$pending"
+    else
+      mv "$pending" "$frontend_bundle_path"
+    fi
+    trap - EXIT
+    echo "PASS: frontend deployment bundle staged (${size} bytes)"
+    ;;
+  deploy-frontend)
+    load_frontend_target
+    exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-frontend
     ;;
   *)
     die "command is not permitted by the internal Runner gateway"
