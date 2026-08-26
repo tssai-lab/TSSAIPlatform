@@ -42,6 +42,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public boolean addUser(User user) {
+        String username = UserRoleUtil.safeString(user.getUsername());
+        if (username == null) {
+            throw new IllegalArgumentException("用户名不能为空");
+        }
+        if (UserRoleUtil.isMainlandMobile(username)) {
+            throw new IllegalArgumentException("用户名不能使用手机号格式");
+        }
+        user.setUsername(username);
         String encryptedPwd = BCrypt.hashpw(user.getPassword(), BCrypt.gensalt());
         user.setPassword(encryptedPwd);
         user.setStatus(true);
