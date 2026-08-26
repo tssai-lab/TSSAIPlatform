@@ -411,7 +411,9 @@ grep -F '### tuple ### allow ${protocol} ${port}' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F '### tuple ### route:allow any any 0.0.0.0/0 any ${TSS_POD_CIDR} in' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
-grep -F '### tuple ### allow tcp 6443 ${TSS_NODE_IP} any ${TSS_POD_CIDR} in' \
+grep -F 'pod_host_rule_present 6443' \
+  "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
+grep -F 'pod_host_rule_present 10250' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'ufw --dry-run route allow from "$TSS_POD_CIDR"' \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
