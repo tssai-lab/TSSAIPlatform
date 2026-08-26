@@ -54,6 +54,12 @@ registry application images and one-command guarded bootstrap are defined
 in [`platform/README.md`](platform/README.md). C5 does not remove the worker's
 staging taint or claim CPU/GPU business parity.
 
+The same platform guide defines the C7 internal frontend release. It preserves
+Main's existing frontend deployment, consumes a full-SHA immutable image through
+manual export/deploy tasks, keeps the internal port in root-owned local config,
+and uses SSH forwarding for initial acceptance instead of opening a new campus
+firewall rule.
+
 The cross-layer inventory for bringing up a new server without copying files
 from Main is defined in [`reproducible/README.md`](reproducible/README.md).
 
