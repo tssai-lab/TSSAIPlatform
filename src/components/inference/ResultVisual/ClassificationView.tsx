@@ -1,6 +1,7 @@
 import { Card, Progress, Space, Table, Tag, Typography } from 'antd';
 import React, { useMemo } from 'react';
 import DistributionChart from './DistributionChart';
+import InputPreviewCell from './InputPreviewCell';
 import MetricsCards, { pickMetrics } from './MetricsCards';
 import {
   formatNumber,
@@ -8,6 +9,7 @@ import {
   isObjectArray,
   isPlainObject,
 } from './resolveView';
+import type { ResultVisualProps } from './types';
 
 function formatCell(value: unknown) {
   if (isFiniteNumber(value)) return formatNumber(value);
@@ -18,7 +20,9 @@ function formatCell(value: unknown) {
 
 const ClassificationView: React.FC<{
   result: Record<string, unknown>;
-}> = ({ result }) => {
+  outputPath?: string | null;
+  onDownloadObject?: ResultVisualProps['onDownloadObject'];
+}> = ({ result, outputPath, onDownloadObject }) => {
   const rows = isObjectArray(result.predictionsPreview)
     ? result.predictionsPreview
     : isObjectArray(result.samples)
@@ -34,6 +38,18 @@ const ClassificationView: React.FC<{
   const columns = useMemo(
     () => [
       { title: '#', dataIndex: 'index', width: 56 },
+      {
+        title: '原始输入',
+        key: 'inputPreview',
+        width: 110,
+        render: (_: unknown, row: Record<string, unknown>) => (
+          <InputPreviewCell
+            row={row}
+            outputPath={outputPath}
+            onDownloadObject={onDownloadObject}
+          />
+        ),
+      },
       {
         title: '真值',
         dataIndex: 'label',
@@ -81,7 +97,7 @@ const ClassificationView: React.FC<{
         },
       },
     ],
-    [],
+    [onDownloadObject, outputPath],
   );
 
   return (
@@ -105,7 +121,7 @@ const ClassificationView: React.FC<{
       ) : null}
       <Card size="small" title="预测样例（预览）">
         {rows.length === 0 ? (
-          <Typography.Text type="secondary">暂无预览样例</Typography.Text>
+          <Typography.Text type="secondary">暂无预测样例</Typography.Text>
         ) : (
           <Table
             size="small"
@@ -115,7 +131,7 @@ const ClassificationView: React.FC<{
             pagination={
               rows.length > 8 ? { pageSize: 8, size: 'small' } : false
             }
-            scroll={{ x: 560 }}
+            scroll={{ x: 670 }}
             expandable={{
               expandedRowRender: (record) => {
                 const topK = isObjectArray(record.topKRecords)

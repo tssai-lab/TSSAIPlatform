@@ -67,11 +67,23 @@ function renderByView(
         />
       );
     case 'image_classification':
-      return <ClassificationView result={result} />;
+      return (
+        <ClassificationView
+          result={result}
+          outputPath={outputPath}
+          onDownloadObject={onDownloadObject}
+        />
+      );
     case 'table_classification':
       return <TabularView result={result} />;
     case 'text_classification':
-      return <TextClassificationView result={result} />;
+      return (
+        <TextClassificationView
+          result={result}
+          outputPath={outputPath}
+          onDownloadObject={onDownloadObject}
+        />
+      );
     case 'unknown':
       return (
         <Alert

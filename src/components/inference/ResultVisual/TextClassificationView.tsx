@@ -1,12 +1,14 @@
 import { Card, Progress, Space, Table, Tag, Typography } from 'antd';
 import React, { useMemo } from 'react';
 import DistributionChart from './DistributionChart';
+import InputPreviewCell from './InputPreviewCell';
 import MetricsCards, { pickMetrics } from './MetricsCards';
 import { isFiniteNumber, isObjectArray, isPlainObject } from './resolveView';
 import {
   confidencePercent,
   listTextClassificationRows,
 } from './textClassificationPresentation.mjs';
+import type { ResultVisualProps } from './types';
 
 function display(value: unknown) {
   if (typeof value === 'string' && value.length) return value;
@@ -16,7 +18,9 @@ function display(value: unknown) {
 
 const TextClassificationView: React.FC<{
   result: Record<string, unknown>;
-}> = ({ result }) => {
+  outputPath?: string | null;
+  onDownloadObject?: ResultVisualProps['onDownloadObject'];
+}> = ({ result, outputPath, onDownloadObject }) => {
   const rows = listTextClassificationRows(result) as Record<string, unknown>[];
   const metrics = pickMetrics(result, [
     { key: 'accuracy', label: '准确率', percent: true },
@@ -30,16 +34,15 @@ const TextClassificationView: React.FC<{
     () => [
       { title: '#', dataIndex: 'index', width: 56 },
       {
-        title: '原始文本',
-        dataIndex: 'text',
+        title: '原始输入',
+        key: 'inputPreview',
         width: 360,
-        render: (value: unknown) => (
-          <Typography.Paragraph
-            style={{ marginBottom: 0 }}
-            ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
-          >
-            {display(value)}
-          </Typography.Paragraph>
+        render: (_: unknown, row: Record<string, unknown>) => (
+          <InputPreviewCell
+            row={row}
+            outputPath={outputPath}
+            onDownloadObject={onDownloadObject}
+          />
         ),
       },
       {
@@ -81,7 +84,7 @@ const TextClassificationView: React.FC<{
         },
       },
     ],
-    [],
+    [onDownloadObject, outputPath],
   );
 
   return (
@@ -103,9 +106,9 @@ const TextClassificationView: React.FC<{
           ]}
         />
       ) : null}
-      <Card size="small" title="文本预测样例">
+      <Card size="small" title="预测样例（预览）">
         {rows.length === 0 ? (
-          <Typography.Text type="secondary">暂无文本预测样例</Typography.Text>
+          <Typography.Text type="secondary">暂无预测样例</Typography.Text>
         ) : (
           <Table
             size="small"

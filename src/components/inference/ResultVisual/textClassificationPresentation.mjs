@@ -4,13 +4,21 @@ export function listTextClassificationRows(result) {
     : Array.isArray(result?.samples)
       ? result.samples
       : [];
-  return source.filter(
-    (row) =>
-      row &&
-      typeof row === 'object' &&
-      typeof row.text === 'string' &&
-      row.text.trim().length > 0,
-  );
+  return source.filter((row) => {
+    if (!row || typeof row !== 'object') return false;
+    if (typeof row.text === 'string' && row.text.trim().length > 0) {
+      return true;
+    }
+    const preview = row.inputPreview;
+    if (!preview || typeof preview !== 'object') return false;
+    const kind = String(preview.kind || preview.type || '').toLowerCase();
+    return (
+      kind === 'text' &&
+      [preview.text, preview.summary, preview.path].some(
+        (value) => typeof value === 'string' && value.trim().length > 0,
+      )
+    );
+  });
 }
 
 export function confidencePercent(value) {
