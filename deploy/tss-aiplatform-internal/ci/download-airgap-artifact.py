@@ -30,6 +30,7 @@ PROFILES = {
             "airgap-gpu.sha256",
             "calico-amd64.tar",
             "k8s-core-amd64.tar",
+            "metrics-server-amd64.tar",
             "nvidia-amd64.tar",
             "sources.lock",
         },
@@ -37,6 +38,7 @@ PROFILES = {
             "airgap-common.sha256": [
                 "k8s-core-amd64.tar",
                 "calico-amd64.tar",
+                "metrics-server-amd64.tar",
                 "sources.lock",
             ],
             "airgap-gpu.sha256": ["nvidia-amd64.tar"],
@@ -470,6 +472,7 @@ def self_test() -> None:
         airgap_content = {
             "k8s-core-amd64.tar": b"core",
             "calico-amd64.tar": b"calico",
+            "metrics-server-amd64.tar": b"metrics-server",
             "nvidia-amd64.tar": b"nvidia",
             "sources.lock": b"image example.invalid/test:v1 sha256:" + b"0" * 64 + b"\n",
         }

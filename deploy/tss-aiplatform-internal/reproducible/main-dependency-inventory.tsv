@@ -3,7 +3,7 @@ backend-image	Main runs backend-ops commit a5dc1d99	platform/platform-images.loc
 mlflow-image	Main tag was local-only	deploy/main/mlflow-lite plus locked GHCR digest	use CI-built locked image; do not copy Main image	VERSIONED_REPLACEMENT
 postgres-image	Main local image reports PostgreSQL 16.13 on Debian trixie	locked official postgres:16.13-trixie manifest	pull/export exact registry digest; existing Main bytes are not required	VERSIONED_REPLACEMENT
 minio-image	Main used a moving latest tag	locked historical Docker Hub manifest matching Main image ID	pull/export exact registry digest	VERSIONED
-kubernetes-images	Main/Second images are environment-specific	versions.env and artifacts.lock	generate verified air-gap bundle on GitHub-hosted Runner	VERSIONED
+kubernetes-images	Main/Second images are environment-specific	versions.env and artifacts.lock	generate verified Kubernetes/Calico/Metrics Server bundle on GitHub-hosted Runner	VERSIONED
 training-inference-images	Main containerd contains CPU/CV/NLP runtime images	reproducible/runtime-images.lock and runtime-images.yml	pull exact GHCR digests or rebuild the recorded commit	VERSIONED
 frontend-dist	Main serves compiled files from /var/www	reproducible/frontend-source.lock and frontend-dev package lock	build from source; never copy Main dist	REBUILD
 frontend-nginx	Main route configuration existed only under /etc/nginx	reproducible/nginx/frontend.conf.template	render environment values, review and validate before install	VERSIONED_TEMPLATE

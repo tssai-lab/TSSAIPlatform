@@ -46,6 +46,7 @@ bundle_dir="$(cd "$bundle_dir" && pwd -P)"
 declare -a required_files=(
   k8s-core-amd64.tar
   calico-amd64.tar
+  metrics-server-amd64.tar
   sources.lock
   airgap-common.sha256
 )
@@ -58,7 +59,7 @@ for required_file in "${required_files[@]}"; do
 done
 
 common_names="$(awk '{print $2}' "${bundle_dir}/airgap-common.sha256")"
-[[ $common_names == $'k8s-core-amd64.tar\ncalico-amd64.tar\nsources.lock' ]] \
+[[ $common_names == $'k8s-core-amd64.tar\ncalico-amd64.tar\nmetrics-server-amd64.tar\nsources.lock' ]] \
   || die "common checksum file contains unexpected paths"
 (
   cd "$bundle_dir"
@@ -76,8 +77,19 @@ fi
 cmp <(grep '^image ' "${internal_root}/artifacts.lock") \
   "${bundle_dir}/sources.lock" >/dev/null \
   || die "bundle sources do not match the committed artifact lock"
-[[ $(grep -c '^image ' "${bundle_dir}/sources.lock") -eq 11 ]] \
-  || die "bundle source lock must contain exactly 11 images"
+[[ $(grep -c '^image ' "${bundle_dir}/sources.lock") -eq 12 ]] \
+  || die "bundle source lock must contain exactly 12 images"
+metrics_url="https://github.com/kubernetes-sigs/metrics-server/releases/download/${TSS_METRICS_SERVER_VERSION}/components.yaml"
+metrics_sha="$(awk -v url="$metrics_url" \
+  '$1 == "manifest" && $2 == url {sub(/^sha256:/, "", $3); print $3}' \
+  "${internal_root}/artifacts.lock")"
+[[ $metrics_sha =~ ^[0-9a-f]{64}$ ]] \
+  || die "Metrics Server manifest checksum is absent from the committed lock"
+metrics_manifest="${internal_root}/manifests/metrics-server-components.yaml"
+[[ -f $metrics_manifest && ! -L $metrics_manifest ]] \
+  || die "versioned Metrics Server manifest is absent"
+[[ $(sha256sum "$metrics_manifest" | awk '{print $1}') == "$metrics_sha" ]] \
+  || die "Metrics Server manifest differs from the committed lock"
 
 systemctl is-active --quiet tss-aiplatform-containerd.service \
   || die "isolated project containerd is not active"
@@ -93,8 +105,8 @@ system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
   || die "shared system containerd PID is invalid"
 docker_container_count="$(docker ps -q | wc -l)"
 
-echo "PASS: bundle checksums and 11 locked sources verified"
-echo "PLAN: import Kubernetes core and Calico into node=${TSS_NODE_NAME}"
+echo "PASS: bundle checksums and 12 locked sources verified"
+echo "PLAN: import Kubernetes core, Calico and Metrics Server into node=${TSS_NODE_NAME}"
 if has_role gpu; then
   echo "PLAN: import the NVIDIA device-plugin image for the GPU node"
 fi
@@ -112,6 +124,8 @@ ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images import \
   "${bundle_dir}/k8s-core-amd64.tar"
 ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images import \
   "${bundle_dir}/calico-amd64.tar"
+ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images import \
+  "${bundle_dir}/metrics-server-amd64.tar"
 if has_role gpu; then
   ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images import \
     "${bundle_dir}/nvidia-amd64.tar"
@@ -133,5 +147,5 @@ done <"${bundle_dir}/sources.lock"
 [[ $(docker ps -q | wc -l) == "$docker_container_count" ]] \
   || die "shared Docker container count changed during image import"
 logger -t tss-aiplatform-images \
-  "import complete node=${TSS_NODE_NAME} locked_images=11" 2>/dev/null || true
+  "import complete node=${TSS_NODE_NAME} locked_images=12" 2>/dev/null || true
 echo "Air-gap image import complete: node=${TSS_NODE_NAME}"

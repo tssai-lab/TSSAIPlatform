@@ -20,7 +20,8 @@ for permission in \
   'get resourcequota/tss-training-quota' \
   'patch resourcequota/tss-training-quota' \
   'get configmap/tss-model-cache-policy' \
-  'list nodes'; do
+  'list nodes' \
+  'list nodes.metrics.k8s.io'; do
   read -r verb resource <<<"$permission"
   [[ $("${kube[@]}" auth can-i "$verb" "$resource" -n "$namespace") == yes ]] \
     || { echo "required Kubernetes permission is missing: $permission" >&2; exit 1; }
@@ -29,6 +30,9 @@ done
   || { echo "restricted backend identity must not read Kubernetes Secrets" >&2; exit 1; }
 [[ $("${kube[@]}" auth can-i create namespaces) == no ]] \
   || { echo "restricted backend identity must not create namespaces" >&2; exit 1; }
+"${kube[@]}" get --raw /apis/metrics.k8s.io/v1beta1/nodes \
+  | grep -F '"items"' >/dev/null \
+  || { echo "Metrics API is unavailable to the restricted backend identity" >&2; exit 1; }
 
 cat <<'YAML' | "${kube[@]}" create --dry-run=server -f - >/dev/null
 apiVersion: batch/v1

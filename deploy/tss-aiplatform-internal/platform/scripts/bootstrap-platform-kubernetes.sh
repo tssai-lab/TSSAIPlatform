@@ -38,6 +38,17 @@ mapfile -t nodes < <("${admin[@]}" get nodes -o jsonpath='{range .items[*]}{.met
 [[ " ${nodes[*]} " != *" k8s-master "* && " ${nodes[*]} " != *" k8s-node1 "* ]] \
   || die "refusing a kubeconfig that resembles the Main/Second cluster"
 
+metrics_installer="${TSS_REPOSITORY_ROOT}/deploy/tss-aiplatform-internal/scripts/install-metrics-server.sh"
+[[ -x $metrics_installer ]] || die "Metrics Server installer is not executable"
+if [[ $mode == --check ]]; then
+  KUBECTL="$TSS_KUBECTL_PATH" KUBECONFIG="$TSS_ADMIN_KUBECONFIG" \
+    "$metrics_installer" --check "$node_config"
+else
+  KUBECTL="$TSS_KUBECTL_PATH" KUBECONFIG="$TSS_ADMIN_KUBECONFIG" \
+    "$metrics_installer" --apply "$node_config" \
+      --confirm-node "$TSS_NODE_NAME"
+fi
+
 host_manifest="$(mktemp)"
 trap 'rm -f "$host_manifest"' EXIT
 sed \
