@@ -71,23 +71,69 @@ jobs:
 
       - name: Record immutable image identity
         if: github.event_name != 'pull_request'
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          test -n "${{ steps.image.outputs.digest }}"
+          test -n "$IMAGE_DIGEST"
+          source_ref="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${GITHUB_SHA}"
+          immutable_ref="${source_ref}@${IMAGE_DIGEST}"
+          runtime_ref="docker.io/library/tss-aiplatform-frontend:${GITHUB_SHA:0:12}"
+          docker pull --quiet --platform linux/amd64 "$immutable_ref" >/dev/null
+          image_id="$(docker image inspect --format '{{.Id}}' "$immutable_ref")"
+          image_size="$(docker image inspect --format '{{.Size}}' "$immutable_ref")"
+          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$immutable_ref")"
+          image_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$immutable_ref")"
+          fingerprint="$(docker image inspect "$immutable_ref" | python3 scripts/image-runtime-fingerprint.py)"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$image_platform" == linux/amd64 ]]
+          [[ "$image_revision" == "$GITHUB_SHA" ]]
+          (( image_size > 0 && image_size <= 200 * 1024 * 1024 ))
+          docker tag "$immutable_ref" "$runtime_ref"
+          docker image save --output "$RUNNER_TEMP/frontend-image-size-check.tar" "$runtime_ref"
+          archive_size="$(stat -c %s "$RUNNER_TEMP/frontend-image-size-check.tar")"
+          (( archive_size > 0 && archive_size <= 250 * 1024 * 1024 ))
+          rm -f "$RUNNER_TEMP/frontend-image-size-check.tar"
+          printf '%s|%s|%s|%s|%s|%s\n' \
+            "$source_ref" "$IMAGE_DIGEST" "$runtime_ref" "$image_id" \
+            "$fingerprint" 268435456 \
+            > "$RUNNER_TEMP/frontend-image.lock-candidate"
+          {
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'source_manifest_digest=%s\n' "$IMAGE_DIGEST"
+            printf 'image_id=%s\n' "$image_id"
+            printf 'runtime_fingerprint_sha256=%s\n' "$fingerprint"
+            printf 'docker_image_bytes=%s\n' "$image_size"
+            printf 'docker_archive_bytes=%s\n' "$archive_size"
+          } > "$RUNNER_TEMP/frontend-image.metadata"
           {
             echo "### Frontend runtime image"
-            echo "- Source SHA: `${GITHUB_SHA}`"
-            echo "- Image: `ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${GITHUB_SHA}`"
-            echo "- Digest: `${{ steps.image.outputs.digest }}`"
-            echo "- Published: `${{ github.event_name != 'pull_request' }}`"
+            printf '%s\n' "- Source SHA: \`${GITHUB_SHA}\`"
+            printf '%s\n' "- Image: \`ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${GITHUB_SHA}\`"
+            printf '%s\n' "- Digest: \`${IMAGE_DIGEST}\`"
+            printf '%s\n' "- Image ID: \`${image_id}\`"
+            printf '%s\n' "- Docker archive bytes: \`${archive_size}\`"
+            printf '%s\n' "- Published: \`${{ github.event_name != 'pull_request' }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reviewed identity candidate
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-frontend-identity-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/frontend-image.lock-candidate
+            ${{ runner.temp }}/frontend-image.metadata
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Record pull-request validation result
         if: github.event_name == 'pull_request'
         run: |
           {
             echo "### Frontend runtime image"
-            echo "- Source SHA: `${GITHUB_SHA}`"
+            printf '%s\n' "- Source SHA: \`${GITHUB_SHA}\`"
             echo "- linux/amd64 image build: passed"
-            echo "- Published: `false`"
+            printf '%s\n' '- Published: `false`'
           } >> "$GITHUB_STEP_SUMMARY"
