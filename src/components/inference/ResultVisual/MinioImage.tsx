@@ -6,7 +6,9 @@ const MinioImage: React.FC<{
   objectName: string;
   alt?: string;
   width?: number | string;
-}> = ({ objectName, alt, width = '100%' }) => {
+  height?: number | string;
+  fit?: React.CSSProperties['objectFit'];
+}> = ({ objectName, alt, width = '100%', height, fit = 'contain' }) => {
   const [url, setUrl] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -52,7 +54,15 @@ const MinioImage: React.FC<{
       </Typography.Text>
     );
   }
-  return <Image src={url} alt={alt || objectName} width={width} />;
+  return (
+    <Image
+      src={url}
+      alt={alt || objectName}
+      width={width}
+      height={height}
+      style={height ? { objectFit: fit } : undefined}
+    />
+  );
 };
 
 export default MinioImage;
