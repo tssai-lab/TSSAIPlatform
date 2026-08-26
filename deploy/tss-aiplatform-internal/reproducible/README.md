@@ -9,7 +9,7 @@ offline bundle is needed.
 
 | Layer | Versioned source | How a new server obtains it |
 |---|---|---|
-| Kubernetes, Calico and NVIDIA bootstrap | `../versions.env`, `../artifacts.lock` and repository scripts | Run the existing `export-airgap-bundles` workflow task, or pull the locked digests directly. |
+| Kubernetes, Calico, Metrics Server and NVIDIA bootstrap | `../versions.env`, `../artifacts.lock` and repository scripts | Run the existing `export-airgap-bundles` workflow task, or pull the locked digests directly. |
 | PostgreSQL, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
 | Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
 | Minimal C6 CPU training and inference images | `cpu-runtime-images.lock` | Export and stage only the two locked images with the internal validation workflow. |

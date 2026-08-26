@@ -38,6 +38,13 @@ for file in \
   [[ -f $file ]] || { echo "missing C5 file: $file" >&2; exit 1; }
 done
 
+grep -F 'install-metrics-server.sh' \
+  "$platform_root/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
+grep -F 'list nodes.metrics.k8s.io' \
+  "$platform_root/scripts/verify-internal-kubeadm.sh" >/dev/null
+grep -F '/apis/metrics.k8s.io/v1beta1/nodes' \
+  "$platform_root/scripts/verify-internal-kubeadm.sh" >/dev/null
+
 while IFS= read -r script; do
   bash -n "$script"
 done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)

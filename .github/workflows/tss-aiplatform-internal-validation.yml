@@ -457,16 +457,16 @@ jobs:
           target_dir="${AIRGAP_STAGE_ROOT}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}"
           test -d "$target_dir"
           test ! -L "$target_dir"
-          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 6
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 7
           test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
           (
             cd "$target_dir"
-            test "$(awk '{print $2}' airgap-common.sha256)" = $'k8s-core-amd64.tar\ncalico-amd64.tar\nsources.lock'
+            test "$(awk '{print $2}' airgap-common.sha256)" = $'k8s-core-amd64.tar\ncalico-amd64.tar\nmetrics-server-amd64.tar\nsources.lock'
             test "$(awk '{print $2}' airgap-gpu.sha256)" = nvidia-amd64.tar
             sha256sum --check --strict airgap-common.sha256
             sha256sum --check --strict airgap-gpu.sha256
             cmp <(grep '^image ' "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/artifacts.lock") sources.lock
-            test "$(grep -c '^image ' sources.lock)" -eq 11
+            test "$(grep -c '^image ' sources.lock)" -eq 12
           )
 
       - name: Record staged artifact result
@@ -480,7 +480,7 @@ jobs:
             echo "- Export run: \`${AIRGAP_RUN_ID}\`"
             echo "- Source SHA: \`${AIRGAP_HEAD_SHA}\`"
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}\`"
-            echo "- Checksums and 11-source lock: passed"
+            echo "- Checksums and 12-source lock: passed"
             echo "- sudo, containerd import and cluster writes: not attempted"
           } >> "$GITHUB_STEP_SUMMARY"
 
