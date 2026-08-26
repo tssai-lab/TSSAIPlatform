@@ -66,6 +66,9 @@ grep -F 'frontend_source_sha=${source_ref##*:}' "$deployer" >/dev/null
 grep -F 'frontend imported image ID differs from lock' "$deployer" >/dev/null
 grep -F 'shared runtime state changed during frontend image import' "$deployer" >/dev/null
 grep -F "docker ps -q --no-trunc | sort | sha256sum" "$deployer" >/dev/null
+grep -F 'apply --dry-run=client -f "$rendered_manifest"' "$deployer" >/dev/null
+grep -F 'create namespace tss-platform-system --dry-run=client -o yaml' "$deployer" >/dev/null
+grep -F 'apply --dry-run=server -f "$namespace_manifest"' "$deployer" >/dev/null
 grep -F 'apply --dry-run=server' "$deployer" >/dev/null
 grep -F 'rollout undo deployment/tss-aiplatform-frontend' "$deployer" >/dev/null
 grep -F 'delete deployment/tss-aiplatform-frontend' "$deployer" >/dev/null
