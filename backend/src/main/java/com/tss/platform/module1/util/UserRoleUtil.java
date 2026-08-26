@@ -1,9 +1,13 @@
 package com.tss.platform.module1.util;
 
+import java.util.regex.Pattern;
+
 /**
  * 前后端角色文案与 role_id 映射
  */
 public final class UserRoleUtil {
+
+    private static final Pattern MAINLAND_MOBILE = Pattern.compile("^1[3-9]\\d{9}$");
 
     private UserRoleUtil() {}
 
@@ -37,5 +41,10 @@ public final class UserRoleUtil {
             return null;
         }
         return s;
+    }
+
+    /** 完整手机号格式保留给手机号登录标识，避免与用户名产生歧义。 */
+    public static boolean isMainlandMobile(String value) {
+        return value != null && MAINLAND_MOBILE.matcher(value.trim()).matches();
     }
 }

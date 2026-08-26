@@ -106,6 +106,9 @@ public class SystemUserController {
             if (username == null) {
                 return Result.fail("用户名不能为空");
             }
+            if (UserRoleUtil.isMainlandMobile(username)) {
+                return Result.fail("用户名不能使用手机号格式");
+            }
 
             String mobile = UserRoleUtil.safeString(params.get("phone"));
             if (mobile == null) {
@@ -228,6 +231,9 @@ public class SystemUserController {
 
             String newUsername = UserRoleUtil.safeString(params.get("username"));
             if (newUsername != null) {
+                if (UserRoleUtil.isMainlandMobile(newUsername)) {
+                    return Result.fail("用户名不能使用手机号格式");
+                }
                 Result<?> dup = checkUsernameAvailable(newUsername, userId);
                 if (dup != null) {
                     return dup;

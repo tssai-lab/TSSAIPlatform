@@ -130,6 +130,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         
         if (updateDTO.getUsername() != null && !updateDTO.getUsername().isBlank()) {
+            if (UserRoleUtil.isMainlandMobile(updateDTO.getUsername())) {
+                throw new IllegalArgumentException("用户名不能使用手机号格式");
+            }
             user.setUsername(updateDTO.getUsername());
         }
         if (updateDTO.getMobile() != null && !updateDTO.getMobile().isBlank()) {
@@ -185,6 +188,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
 
         String username = dto.getUsername().trim();
+        if (UserRoleUtil.isMainlandMobile(username)) {
+            throw new IllegalArgumentException("用户名不能使用手机号格式");
+        }
         LambdaQueryWrapper<User> activeWrapper = new LambdaQueryWrapper<>();
         activeWrapper.eq(User::getUsername, username);
         activeWrapper.isNull(User::getDeletedAt);
@@ -248,6 +254,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new IllegalArgumentException("两次密码不一致");
         }
 
+        String username = UserRoleUtil.safeString(dto.getUsername());
+        if (username == null) {
+            throw new IllegalArgumentException("用户名不能为空");
+        }
+        if (UserRoleUtil.isMainlandMobile(username)) {
+            throw new IllegalArgumentException("用户名不能使用手机号格式");
+        }
+
         LambdaQueryWrapper<User> activeMobileWrapper = new LambdaQueryWrapper<>();
         activeMobileWrapper.eq(User::getMobile, mobile);
         activeMobileWrapper.isNull(User::getDeletedAt);
@@ -257,10 +271,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new IllegalArgumentException("手机号已注册");
         }
 
-        String username = UserRoleUtil.safeString(dto.getUsername());
-        if (username == null) {
-            username = mobile;
-        }
         LambdaQueryWrapper<User> activeUsernameWrapper = new LambdaQueryWrapper<>();
         activeUsernameWrapper.eq(User::getUsername, username);
         activeUsernameWrapper.isNull(User::getDeletedAt);
@@ -475,20 +485,24 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             String loginId = dto.getUsername().trim();
             LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
             wrapper.isNull(User::getDeletedAt);
-            wrapper.and(w -> w.eq(User::getUsername, loginId).or().eq(User::getMobile, loginId));
+            if (UserRoleUtil.isMainlandMobile(loginId)) {
+                wrapper.eq(User::getMobile, loginId);
+            } else {
+                wrapper.eq(User::getUsername, loginId);
+            }
             user = this.getOne(wrapper);
 
             if (user == null) {
                 SYSTEM_LOG.warn("登录失败: 用户不存在, loginId={}", DesensitizationUtil.maskUsername(loginId));
                 USER_LOG.warn("登录失败: 用户不存在, loginId={}", DesensitizationUtil.maskUsername(loginId));
-                throw new IllegalArgumentException("用户名或密码错误");
+                throw new IllegalArgumentException("用户名/手机号或密码错误");
             }
 
             if (!BCrypt.checkpw(dto.getPassword(), user.getPassword())) {
                 SYSTEM_LOG.warn("登录失败: 密码错误, username={}",
                         DesensitizationUtil.maskUsername(dto.getUsername()));
                 USER_LOG.warn("登录失败: 密码错误, username={}", DesensitizationUtil.maskUsername(dto.getUsername()));
-                throw new IllegalArgumentException("用户名或密码错误");
+                throw new IllegalArgumentException("用户名/手机号或密码错误");
             }
 
             if (user.getStatus() != null && !user.getStatus()) {

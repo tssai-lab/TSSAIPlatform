@@ -37,7 +37,8 @@ public class SmsVerificationService {
         this.codeUtil = codeUtil;
         this.exposeCode = properties.isExposeCode();
         this.remoteProvider = "aliyun".equalsIgnoreCase(properties.getProvider());
-        this.maxDailySends = Math.max(0, properties.getMaxDailySends());
+        int configuredDailyLimit = properties.getMaxDailySends();
+        this.maxDailySends = configuredDailyLimit > 0 ? configuredDailyLimit : 50;
         if (exposeCode && !"local".equalsIgnoreCase(properties.getProvider())) {
             throw new IllegalStateException("sms.expose-code 只能与 local 短信供应商一起使用");
         }
@@ -159,7 +160,7 @@ public class SmsVerificationService {
     }
 
     private boolean reserveDailySlot() {
-        if (!remoteProvider || maxDailySends == 0) {
+        if (!remoteProvider) {
             return false;
         }
         synchronized (dailyLimitLock) {

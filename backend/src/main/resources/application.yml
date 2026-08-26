@@ -87,7 +87,7 @@ mybatis-plus:
 sms:
   provider: ${SMS_PROVIDER:disabled}
   expose-code: ${SMS_EXPOSE_CODE:false}
-  max-daily-sends: ${SMS_MAX_DAILY_SENDS:20}
+  max-daily-sends: ${SMS_MAX_DAILY_SENDS:50}
   aliyun:
     credential-type: ${ALIYUN_CREDENTIAL_TYPE:ecs_ram_role}
     access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
