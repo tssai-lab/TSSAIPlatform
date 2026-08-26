@@ -10,6 +10,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+INLINE_TEXT_PREVIEW_CHARS = 160
+MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024
+RESULT_PREVIEW_LIMIT = 50
+
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +118,51 @@ def validate_inference_parameters(
         raise ValueError("split must contain only letters, numbers, underscore or hyphen")
 
 
+def build_prediction_previews(
+    predictions: list[dict[str, Any]], output_dir: Path
+) -> list[dict[str, Any]]:
+    """Keep small texts inline and place long originals in a bounded task-output box."""
+    previews: list[dict[str, Any]] = []
+    for position, prediction in enumerate(predictions[:RESULT_PREVIEW_LIMIT]):
+        preview = dict(prediction)
+        text = str(preview.pop("text", ""))
+        name = f"原始文本 #{position + 1}"
+        if len(text) <= INLINE_TEXT_PREVIEW_CHARS:
+            preview["text"] = text
+            preview["inputPreview"] = {
+                "kind": "text",
+                "name": name,
+                "summary": text,
+                "text": text,
+                "truncated": False,
+            }
+        else:
+            relative_path = Path("previews") / "text" / f"{position}.txt"
+            absolute_path = output_dir / relative_path
+            absolute_path.parent.mkdir(parents=True, exist_ok=True)
+            stored_text, content_truncated = truncate_utf8_preview(text)
+            absolute_path.write_text(stored_text, encoding="utf-8")
+            preview["inputPreview"] = {
+                "kind": "text",
+                "name": name,
+                "summary": text[:INLINE_TEXT_PREVIEW_CHARS] + "…",
+                "path": relative_path.as_posix(),
+                "truncated": True,
+                "contentTruncated": content_truncated,
+            }
+        previews.append(preview)
+    return previews
+
+
+def truncate_utf8_preview(
+    text: str, max_bytes: int = MAX_TEXT_PREVIEW_BYTES
+) -> tuple[str, bool]:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text, False
+    return encoded[:max_bytes].decode("utf-8", errors="ignore"), True
+
+
 def main() -> int:
     model_dir = Path(os.environ.get("MODEL_DIR", "/workspace/job/model"))
     input_path = Path(os.environ.get("INPUT_PATH", "/workspace/job/input"))
@@ -198,20 +247,21 @@ def main() -> int:
             "f1": float(f1),
         }
     first = predictions[0]
+    prediction_previews = build_prediction_previews(predictions, output_dir)
     result = {
         "ok": True,
         "view": "text_classification",
         "taskId": os.environ.get("TASK_ID"),
         "inputMode": os.environ.get("INPUT_MODE"),
         "model": "MiniRBT-H288",
-        "text": first["text"],
+        "text": first["text"][:INLINE_TEXT_PREVIEW_CHARS],
         "label": first["prediction"],
         "score": first["confidence"],
         "sampleCount": len(predictions),
         **metrics,
         "labelCounts": dict(Counter(record["label"] for record in labeled)),
         "predictionCounts": dict(Counter(record["prediction"] for record in predictions)),
-        "predictionsPreview": predictions[:50],
+        "predictionsPreview": prediction_previews,
         "artifacts": {"predictionsJsonl": "predictions.jsonl"},
     }
     write_json(output_dir / "result.json", result)
