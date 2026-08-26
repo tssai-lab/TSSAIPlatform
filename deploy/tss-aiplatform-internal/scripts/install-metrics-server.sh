@@ -5,13 +5,43 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "${script_dir}/lib.sh"
 
+node_metrics_complete() {
+  local wanted="$1"
+  awk -v wanted="$wanted" '
+    $1 == wanted && NF >= 5 {
+      valid=1
+      for (field=2; field<=5; field++) {
+        if ($field == "<unknown>") valid=0
+      }
+      if (valid) found=1
+    }
+    END {exit !found}
+  '
+}
+
 usage() {
+  echo "usage: $0 --self-test" >&2
   echo "usage: $0 --check /path/to/node.env" >&2
   echo "       $0 --apply /path/to/node.env --confirm-node NODE" >&2
   exit 2
 }
 
 mode="${1:-}"
+if [[ $mode == --self-test ]]; then
+  printf '%s\n' 'node-a 25m 1% 512Mi 4%' \
+    | node_metrics_complete node-a \
+    || die "complete node metrics must pass"
+  if printf '%s\n' 'node-a <unknown> <unknown> <unknown> <unknown>' \
+    | node_metrics_complete node-a; then
+    die "unknown node metrics must fail"
+  fi
+  if printf '%s\n' 'node-b 25m 1% 512Mi 4%' \
+    | node_metrics_complete node-a; then
+    die "a missing node metric line must fail"
+  fi
+  echo "Metrics Server node-usage parser self-test passed"
+  exit 0
+fi
 config_file="${2:-}"
 confirmation_flag="${3:-}"
 confirmation_node="${4:-}"
@@ -130,7 +160,7 @@ for _attempt in $(seq 1 30); do
   if top_output="$("${admin[@]}" top nodes --no-headers 2>/dev/null)"; then
     missing=false
     for node in "${nodes[@]}"; do
-      if ! printf '%s\n' "$top_output" | awk -v wanted="$node" '$1 == wanted {found=1} END {exit !found}'; then
+      if ! printf '%s\n' "$top_output" | node_metrics_complete "$node"; then
         missing=true
         break
       fi
