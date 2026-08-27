@@ -6,18 +6,19 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib-platform.sh"
 
 usage() {
-  echo "usage: $0 --public-key FILE --node-config FILE --platform-config FILE --deployment-user USER --confirm-node NODE" >&2
+  echo "usage: $0 --public-key FILE --node-config FILE --platform-config FILE --deployment-user USER --deployment-branch BRANCH --confirm-node NODE" >&2
   exit 2
 }
 
-[[ $# -eq 10 && $1 == --public-key && $3 == --node-config \
+[[ $# -eq 12 && $1 == --public-key && $3 == --node-config \
   && $5 == --platform-config && $7 == --deployment-user \
-  && $9 == --confirm-node ]] || usage
+  && $9 == --deployment-branch && $11 == --confirm-node ]] || usage
 public_key_file=$2
 node_config=$4
 platform_config=$6
 deployment_user=$8
-confirmation_node=${10}
+deployment_branch=${10}
+confirmation_node=${12}
 
 [[ $(id -u) -eq 0 ]] || die "gateway installation must run as root"
 [[ -f $public_key_file && ! -L $public_key_file ]] \
@@ -27,6 +28,8 @@ public_key=$(<"$public_key_file")
   || die "Runner public key format or comment differs"
 [[ $deployment_user =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
   || die "control-plane deployment user is invalid"
+[[ $deployment_branch == backend-ops || $deployment_branch == backend-gpu ]] \
+  || die "deployment branch must be backend-ops or backend-gpu"
 user_record=$(getent passwd "$deployment_user" || true)
 [[ -n $user_record ]] || die "control-plane deployment user is absent"
 IFS=: read -r _ _ _ _ _ deployment_home _ <<<"$user_record"
@@ -64,6 +67,7 @@ deployment_pending=$(mktemp "${deploy_config_root}/.backend.env.XXXXXX")
 trap 'rm -f "$deployment_pending"' EXIT
 {
   printf 'TSS_DEPLOYMENT_USER=%s\n' "$deployment_user"
+  printf 'TSS_DEPLOYMENT_BRANCH=%s\n' "$deployment_branch"
   printf 'TSS_PROJECT_ROOT=%s\n' "$TSS_PROJECT_ROOT"
   printf 'TSS_PLATFORM_ROOT=%s\n' "$TSS_PLATFORM_ROOT"
   printf 'TSS_REPOSITORY_ROOT=%s\n' "$repository_root"

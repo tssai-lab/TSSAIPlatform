@@ -27,11 +27,14 @@ systemctl is-active --quiet docker || die "shared Docker is not active"
 [[ -d ${TSS_REPOSITORY_ROOT}/.git ]] || die "repository root is not a Git worktree"
 [[ -z $(git -C "$TSS_REPOSITORY_ROOT" status --porcelain) ]] \
   || die "deployment repository must be clean"
-[[ $(git -C "$TSS_REPOSITORY_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == backend-ops ]] \
-  || die "manual C5 deployment must use the protected backend-ops branch"
+deployment_branch=${TSS_DEPLOYMENT_BRANCH:-backend-ops}
+[[ $deployment_branch == backend-ops || $deployment_branch == backend-gpu ]] \
+  || die "deployment branch must be backend-ops or backend-gpu"
+[[ $(git -C "$TSS_REPOSITORY_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == "$deployment_branch" ]] \
+  || die "platform preparation must use the configured deployment branch"
 [[ $(git -C "$TSS_REPOSITORY_ROOT" rev-parse HEAD) == \
-   $(git -C "$TSS_REPOSITORY_ROOT" rev-parse refs/remotes/origin/backend-ops) ]] \
-  || die "local backend-ops is not the exact recorded origin/backend-ops commit"
+   $(git -C "$TSS_REPOSITORY_ROOT" rev-parse "refs/remotes/origin/${deployment_branch}") ]] \
+  || die "local deployment branch is not the exact recorded remote commit"
 origin_url="$(git -C "$TSS_REPOSITORY_ROOT" remote get-url origin)"
 [[ $origin_url =~ ^(https://github\.com/|git@github\.com:|ssh://git@ssh\.github\.com:443/)tssai-lab/TSSAIPlatform(\.git)?$ ]] \
   || die "deployment repository origin is not the reviewed private repository"
