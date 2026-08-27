@@ -83,7 +83,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+set +e
 gzip -dc | ctr --namespace k8s.io images import - >/dev/null
+import_status=("${PIPESTATUS[@]}")
+set -e
+if (( import_status[1] != 0 )); then
+  echo "Kubernetes containerd failed to import the runtime image archive (exit ${import_status[1]})." >&2
+  exit "${import_status[1]}"
+fi
+if (( import_status[0] != 0 && import_status[0] != 141 )); then
+  echo "Runtime image archive decompression failed (exit ${import_status[0]})." >&2
+  exit "${import_status[0]}"
+fi
+if (( import_status[0] == 141 )); then
+  echo "Runtime image archive importer closed after a successful import; continuing with digest and readiness checks."
+fi
 image_target_digest="$(
   ctr --namespace k8s.io images list \
     | awk -v expected="$image" '$1 == expected { print $3; exit }'

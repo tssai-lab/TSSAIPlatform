@@ -83,6 +83,9 @@ grep -F 'ServerAliveInterval=30 -o ServerAliveCountMax=20' "$runtime_workflow" >
 grep -F 'required_images+=("$cv_image" "$nlp_image")' "$runtime_loader" >/dev/null
 grep -F 'Imported runtime image is not ready in Kubernetes containerd' "$runtime_loader" >/dev/null
 grep -F 'gzip -dc | ctr --namespace k8s.io images import -' "$runtime_loader" >/dev/null
+grep -F 'import_status=("${PIPESTATUS[@]}")' "$runtime_loader" >/dev/null
+grep -F 'import_status[0] != 0 && import_status[0] != 141' "$runtime_loader" >/dev/null
+grep -F 'import_status[1] != 0' "$runtime_loader" >/dev/null
 grep -F 'ctr --namespace k8s.io content get "$image_target_digest"' "$runtime_loader" >/dev/null
 grep -F 'json.load(sys.stdin)["config"]["digest"]' "$runtime_loader" >/dev/null
 grep -F 'Imported image identifier does not match the runner image.' "$runtime_loader" >/dev/null
