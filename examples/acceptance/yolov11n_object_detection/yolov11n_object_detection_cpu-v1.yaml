@@ -1,0 +1,119 @@
+schemaVersion: tss.training.plan/v2
+id: yolov11n_object_detection_cpu_acceptance
+version: v1
+displayName: YOLO11n 小型目标检测验收（CPU）
+description: 使用固定 YOLO11n 权重和 COCO128 非重叠固定子集，在 CPU 上验证目标检测训练闭环；不作为精度或性能基准。
+category: CV
+enabled: true
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments:
+    - --model-dir
+    - "${MODEL_DIR}"
+    - --data-dir
+    - "${DATA_DIR}"
+    - --output-dir
+    - "${OUTPUT_DIR}"
+    - --params-file
+    - "${PARAMS_FILE}"
+    - --device
+    - "${DEVICE}"
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    acceptedSpecIds: [model.cv.yolo-weight/v1]
+    formatGuide: 模型 ZIP 根目录必须包含 yolo11n.pt。
+  dataset:
+    required: true
+    acceptedSpecIds: [dataset.cv.yolo/v1]
+    formatGuide: 数据集 ZIP 根目录必须包含 data.yaml，以及成对的 images/{train,val,test} 与 labels/{train,val,test} 文件。
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: epochs
+    displayName: 训练轮数
+    type: INTEGER
+    required: false
+    defaultValue: 2
+    minimum: 1
+    maximum: 20
+  - name: batch
+    displayName: 批大小
+    type: INTEGER
+    required: false
+    defaultValue: 2
+    minimum: 1
+    maximum: 16
+  - name: imgsz
+    displayName: 输入图片尺寸
+    type: INTEGER
+    required: false
+    defaultValue: 160
+    minimum: 64
+    maximum: 640
+  - name: learningRate
+    displayName: 学习率
+    type: NUMBER
+    required: false
+    defaultValue: 0.001
+    minimum: 0.000001
+    maximum: 0.1
+
+runtimes:
+  - id: cv-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@sha256:c319dc2ffc58119d0fa130b46eb90b8ab9b45e0e8e06683329dbbf75e69cb310
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-yolo-tiny
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: best.pt
+      role: PRIMARY_MODEL
+      required: true
+      format: YOLO_PT
+      publishAsModel: true
+      publishedModelSpecId: model.cv.yolo-weight/v1
+    - path: last.pt
+      role: CHECKPOINT
+      required: true
+      format: YOLO_PT
+      publishAsModel: false
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 7200

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the small, offline MiniRBT-H288 acceptance bundle."""
+"""Build the offline MiniRBT-H288 + MASSIVE zh-CN CPU acceptance bundle."""
 
 from __future__ import annotations
 
@@ -8,85 +8,42 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
+import tarfile
 import urllib.request
 import zipfile
-from pathlib import Path
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
 
 
 MODEL_REPOSITORY = "hfl/minirbt-h288"
 MODEL_REVISION = "dc4eebb0cf6f9e7094142ac28fbf971517c6a366"
-LICENSE_REPOSITORY = "iflytek/MiniRBT"
-LICENSE_REVISION = "baef787a1cee4fdc4051083943a460807e7b8a86"
+MODEL_LICENSE_REPOSITORY = "iflytek/MiniRBT"
+MODEL_LICENSE_REVISION = "baef787a1cee4fdc4051083943a460807e7b8a86"
 UPSTREAM_FILES = {
     "README.md": "667be60e0b89d63d308d3d1e76f906d056ad4a2c56e6a2f785544098e220f3eb",
     "config.json": "40770b75151e7633503a0c70a25291cb62431ed89f8a091576f0b7526011eeb4",
     "pytorch_model.bin": "691a14f646648bbf772dd0054c78c1a5451e09bc76bc3bdf874bd42bf5ee55b1",
     "vocab.txt": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
 }
-LICENSE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
-LABELS = ["负面", "正面"]
+MODEL_LICENSE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
 
-TRAIN_TEXTS = {
-    "正面": [
-        "这个产品操作简单，整体体验很好。",
-        "页面响应很快，功能也很清楚。",
-        "客服回复及时，问题很快解决了。",
-        "模型训练顺利完成，结果符合预期。",
-        "这次更新提升明显，我愿意继续使用。",
-        "数据导入过程稳定，没有遇到错误。",
-        "说明文档简洁明了，新手也能看懂。",
-        "推理结果展示直观，关键信息很完整。",
-        "系统运行稳定，任务提交后很快完成。",
-        "资源配置合理，使用起来比较放心。",
-        "下载速度不错，文件校验也顺利通过。",
-        "训练日志保存完整，排查问题很方便。",
-    ],
-    "负面": [
-        "这个页面经常卡住，体验很差。",
-        "任务提交失败，而且没有清楚的提示。",
-        "下载速度太慢，等了很久仍未完成。",
-        "说明文档不够清楚，我不知道怎么操作。",
-        "模型结果不稳定，多次运行差异很大。",
-        "上传过程反复中断，文件一直传不上去。",
-        "日志内容太少，无法判断失败原因。",
-        "按钮点击后没有反应，功能暂时不可用。",
-        "资源不足导致任务失败，等待时间很长。",
-        "页面显示的数据有误，结果难以确认。",
-        "系统突然退出，刚才的配置没有保存。",
-        "推理输出缺少关键字段，无法继续使用。",
-    ],
-}
-
-VALIDATION_TEXTS = {
-    "正面": [
-        "界面布局清晰，查找任务很方便。",
-        "训练完成后产物可以正常下载。",
-        "错误提示具体，修正配置后即可运行。",
-        "平台功能完整，验收过程比较顺利。",
-    ],
-    "负面": [
-        "列表加载失败，刷新后仍然没有数据。",
-        "模型文件无法读取，任务直接报错。",
-        "权限提示不明确，不知道该联系谁。",
-        "运行时间过长，最后也没有生成结果。",
-    ],
-}
-
-TEST_TEXTS = {
-    "正面": [
-        "数据集预览正常，文本内容显示完整。",
-        "任务状态更新及时，使用过程很顺畅。",
-        "资源限制展示明确，提交前可以确认。",
-        "结果页面信息丰富，能够支持验收。",
-    ],
-    "负面": [
-        "系统提示超时，任务一直停在等待状态。",
-        "上传后的文件损坏，无法发起训练。",
-        "结果页面是空的，看不到任何预测。",
-        "日志下载失败，问题现场无法保留。",
-    ],
-}
+MASSIVE_VERSION = "1.1"
+MASSIVE_URL = "https://amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.1.tar.gz"
+MASSIVE_SHA256 = "4cba5faa11c71437928e17cb1b9b3d8b8e727e7ea363a3a9a8045e19c0491577"
+MASSIVE_NOTICE_URL = "https://raw.githubusercontent.com/alexa/massive/main/NOTICE.md"
+MASSIVE_NOTICE_SHA256 = "db1466b051afd1d9ad34b7bd6346a1857f568a0c5f6534168813b4ad3c26013e"
+CC_BY_URL = "https://creativecommons.org/licenses/by/4.0/legalcode.txt"
+CC_BY_SHA256 = "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+SELECTED_INTENTS = (
+    "alarm_set",
+    "weather_query",
+    "play_music",
+    "news_query",
+    "calendar_set",
+    "transport_taxi",
+)
+SOURCE_SPLIT_COUNTS = {"train": 24, "dev": 8, "test": 8}
+OUTPUT_SPLITS = {"train": "train", "dev": "validation", "test": "test"}
 
 
 def sha256_file(path: Path) -> str:
@@ -134,21 +91,79 @@ def deterministic_zip(output: Path, files: dict[str, bytes | Path]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def split_records(split: str, values: dict[str, list[str]]) -> list[dict[str, str]]:
-    records: list[dict[str, str]] = []
-    maximum = max(len(values[label]) for label in LABELS)
-    for item_index in range(maximum):
-        for label in LABELS:
-            if item_index >= len(values[label]):
-                continue
-            records.append(
-                {
-                    "id": f"{split}-{label}-{item_index + 1:03d}",
-                    "text": values[label][item_index],
-                    "label": label,
-                }
-            )
-    return records
+def _read_regular_tar_member(archive: tarfile.TarFile, name: str) -> bytes:
+    path = PurePosixPath(name)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise RuntimeError(f"unsafe MASSIVE archive member: {name}")
+    member = archive.getmember(name)
+    if not member.isfile() or member.issym() or member.islnk():
+        raise RuntimeError(f"MASSIVE archive member is not a regular file: {name}")
+    source = archive.extractfile(member)
+    if source is None:
+        raise RuntimeError(f"cannot read MASSIVE archive member: {name}")
+    return source.read()
+
+
+def read_massive_source(archive_path: Path) -> tuple[list[dict[str, object]], bytes, bytes]:
+    with tarfile.open(archive_path, "r:gz") as archive:
+        raw_rows = _read_regular_tar_member(archive, "1.1/data/zh-CN.jsonl")
+        citation = _read_regular_tar_member(archive, "1.1/CITATION.md")
+        archive_notice = _read_regular_tar_member(archive, "1.1/NOTICE.md")
+    rows: list[dict[str, object]] = []
+    for line_number, raw in enumerate(raw_rows.decode("utf-8").splitlines(), start=1):
+        if not raw.strip():
+            continue
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"MASSIVE zh-CN line {line_number} is not an object")
+        if value.get("locale") != "zh-CN":
+            raise RuntimeError(f"MASSIVE zh-CN line {line_number} has wrong locale")
+        rows.append(value)
+    if len(rows) != 16521:
+        raise RuntimeError(f"MASSIVE zh-CN v1.1 must contain 16521 rows, got {len(rows)}")
+    return rows, citation, archive_notice
+
+
+def _source_id_key(record: dict[str, object]) -> tuple[int, int | str]:
+    raw = str(record.get("id", ""))
+    return (0, int(raw)) if raw.isdigit() else (1, raw)
+
+
+def select_massive_subset(rows: list[dict[str, object]]) -> dict[str, list[dict[str, str]]]:
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        partition = str(row.get("partition", ""))
+        intent = str(row.get("intent", ""))
+        if partition in SOURCE_SPLIT_COUNTS and intent in SELECTED_INTENTS:
+            grouped[(partition, intent)].append(row)
+
+    output: dict[str, list[dict[str, str]]] = {name: [] for name in OUTPUT_SPLITS.values()}
+    for source_split, per_class in SOURCE_SPLIT_COUNTS.items():
+        target_split = OUTPUT_SPLITS[source_split]
+        for intent in SELECTED_INTENTS:
+            candidates = sorted(grouped[(source_split, intent)], key=_source_id_key)
+            if len(candidates) < per_class:
+                raise RuntimeError(
+                    f"MASSIVE {source_split}/{intent} has {len(candidates)} rows; need {per_class}"
+                )
+            for source in candidates[:per_class]:
+                source_id = str(source.get("id", "")).strip()
+                text = str(source.get("utt", "")).strip()
+                if not source_id or not text:
+                    raise RuntimeError(f"MASSIVE {source_split}/{intent} contains an empty id or utterance")
+                output[target_split].append(
+                    {
+                        "id": f"massive-zh-CN-{source_split}-{source_id}",
+                        "text": text,
+                        "label": intent,
+                    }
+                )
+    for records in output.values():
+        records.sort(key=lambda record: (record["label"], record["id"]))
+    all_ids = [record["id"] for records in output.values() for record in records]
+    if len(all_ids) != len(set(all_ids)):
+        raise RuntimeError("MASSIVE subset contains duplicate IDs")
+    return output
 
 
 def jsonl_bytes(records: list[dict[str, str]]) -> bytes:
@@ -158,25 +173,59 @@ def jsonl_bytes(records: list[dict[str, str]]) -> bytes:
     ).encode("utf-8")
 
 
-def build_dataset_zip(output: Path) -> None:
+def dataset_source_notice() -> bytes:
+    return (
+        "MASSIVE zh-CN v1.1 fixed CPU acceptance subset\n\n"
+        f"Official archive: {MASSIVE_URL}\n"
+        f"Archive SHA-256: {MASSIVE_SHA256}\n"
+        "Locale: zh-CN\n"
+        f"Selected intents: {', '.join(SELECTED_INTENTS)}\n"
+        "Selection: for each intent, sort official source IDs ascending and take the first "
+        "24 train, 8 dev and 8 test records. Source dev is renamed validation. Text and intent "
+        "labels are unchanged; only field names and packaging are adapted.\n"
+        "License: CC BY 4.0. Preserve attribution, license, change notice and citation.\n"
+    ).encode("utf-8")
+
+
+def build_dataset_zip(
+    output: Path,
+    massive_archive: Path,
+    official_notice: Path,
+    cc_by_license: Path,
+) -> dict[str, list[dict[str, str]]]:
+    rows, citation, archive_notice = read_massive_source(massive_archive)
+    splits = select_massive_subset(rows)
     manifest = {
         "schemaVersion": "tss.dataset.nlp.text-classification/v1",
-        "labels": LABELS,
+        "name": "MASSIVE zh-CN v1.1 fixed intent-classification subset",
+        "labels": list(SELECTED_INTENTS),
         "fields": {"id": "id", "text": "text", "label": "label"},
-        "splits": {"train": 24, "validation": 8, "test": 8},
-        "license": "TSS synthetic acceptance data; project use only",
+        "splits": {name: len(records) for name, records in splits.items()},
+        "source": {
+            "dataset": "MASSIVE",
+            "version": MASSIVE_VERSION,
+            "locale": "zh-CN",
+            "archiveUrl": MASSIVE_URL,
+            "archiveSha256": MASSIVE_SHA256,
+        },
+        "adaptation": "six-intent stratified fixed subset; official dev renamed validation",
+        "license": "CC BY 4.0",
     }
     deterministic_zip(
         output,
         {
+            "CC-BY-4.0.txt": cc_by_license,
+            "MASSIVE_ARCHIVE_NOTICE.txt": archive_notice,
+            "MASSIVE_CITATION.txt": citation,
+            "MASSIVE_NOTICE.txt": official_notice,
+            "SOURCE_AND_CHANGES.txt": dataset_source_notice(),
             "dataset.json": json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
-            "data/train.jsonl": jsonl_bytes(split_records("train", TRAIN_TEXTS)),
-            "data/validation.jsonl": jsonl_bytes(
-                split_records("validation", VALIDATION_TEXTS)
-            ),
-            "data/test.jsonl": jsonl_bytes(split_records("test", TEST_TEXTS)),
+            "data/train.jsonl": jsonl_bytes(splits["train"]),
+            "data/validation.jsonl": jsonl_bytes(splits["validation"]),
+            "data/test.jsonl": jsonl_bytes(splits["test"]),
         },
     )
+    return splits
 
 
 def build_model_zip(output: Path, cache: Path) -> None:
@@ -187,9 +236,9 @@ def build_model_zip(output: Path, cache: Path) -> None:
             expected,
         )
     download_verified(
-        f"https://raw.githubusercontent.com/{LICENSE_REPOSITORY}/{LICENSE_REVISION}/LICENSE",
+        f"https://raw.githubusercontent.com/{MODEL_LICENSE_REPOSITORY}/{MODEL_LICENSE_REVISION}/LICENSE",
         cache / "LICENSE",
-        LICENSE_SHA256,
+        MODEL_LICENSE_SHA256,
     )
     model_manifest = (
         "schemaVersion: tss.model.nlp.bert-sequence-classification/v1\n"
@@ -202,8 +251,6 @@ def build_model_zip(output: Path, cache: Path) -> None:
     deterministic_zip(
         output,
         {
-            # 模型包校验器要求每个文件都有白名单扩展名；保留许可证内容，
-            # 仅将归档内的标准 LICENSE 文件命名为 LICENSE.txt。
             "LICENSE.txt": cache / "LICENSE",
             "UPSTREAM_README.md": cache / "README.md",
             "config.json": cache / "config.json",
@@ -214,30 +261,61 @@ def build_model_zip(output: Path, cache: Path) -> None:
     )
 
 
-def build_bundle(output_dir: Path, cache: Path, source_dir: Path) -> dict[str, object]:
+def build_bundle(
+    output_dir: Path,
+    model_cache: Path,
+    dataset_cache: Path,
+    source_dir: Path,
+) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    build_model_zip(output_dir / "minirbt-h288-base.zip", cache)
-    build_dataset_zip(output_dir / "minirbt-sentiment-dataset.zip")
+    massive_archive = dataset_cache / "amazon-massive-dataset-1.1.tar.gz"
+    official_notice = dataset_cache / "MASSIVE_NOTICE.md"
+    cc_by_license = dataset_cache / "CC-BY-4.0.txt"
+    download_verified(MASSIVE_URL, massive_archive, MASSIVE_SHA256)
+    download_verified(MASSIVE_NOTICE_URL, official_notice, MASSIVE_NOTICE_SHA256)
+    download_verified(CC_BY_URL, cc_by_license, CC_BY_SHA256)
+
+    build_model_zip(output_dir / "minirbt-h288-base.zip", model_cache)
+    splits = build_dataset_zip(
+        output_dir / "massive-zhcn-intent-dataset.zip",
+        massive_archive,
+        official_notice,
+        cc_by_license,
+    )
     deterministic_zip(output_dir / "minirbt-training-code.zip", {"train.py": source_dir / "train.py"})
     deterministic_zip(output_dir / "minirbt-inference-script.zip", {"infer.py": source_dir / "infer.py"})
+    repository_root = source_dir.parents[2]
+    shutil.copy2(source_dir / "README.md", output_dir)
+    shutil.copy2(
+        repository_root / "backend/src/main/resources/training-plans/minirbt_text_classification-v1.yaml",
+        output_dir,
+    )
     artifacts = []
-    for path in sorted(output_dir.glob("*.zip")):
-        artifacts.append(
-            {"file": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)}
-        )
+    for path in sorted(output_dir.iterdir()):
+        if path.is_file() and path.name != "acceptance-manifest.json":
+            artifacts.append(
+                {"file": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)}
+            )
     manifest = {
         "schemaVersion": "tss.acceptance.bundle/v1",
-        "name": "MiniRBT-H288 Chinese text classification CPU acceptance",
+        "name": "MiniRBT-H288 MASSIVE zh-CN intent classification CPU acceptance",
         "upstream": {
             "model": MODEL_REPOSITORY,
-            "revision": MODEL_REVISION,
-            "license": "Apache-2.0",
-            "excluded": ["tf_model.h5"],
+            "modelRevision": MODEL_REVISION,
+            "modelLicense": "Apache-2.0",
+            "dataset": "MASSIVE",
+            "datasetVersion": MASSIVE_VERSION,
+            "datasetArchiveSha256": MASSIVE_SHA256,
+            "datasetLicense": "CC BY 4.0",
+        },
+        "dataset": {
+            "locale": "zh-CN",
+            "intents": list(SELECTED_INTENTS),
+            "splits": {name: len(records) for name, records in splits.items()},
         },
         "artifacts": artifacts,
     }
-    manifest_path = output_dir / "acceptance-manifest.json"
-    manifest_path.write_text(
+    (output_dir / "acceptance-manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return manifest
@@ -245,12 +323,17 @@ def build_bundle(output_dir: Path, cache: Path, source_dir: Path) -> dict[str, o
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-dir", type=Path, default=Path("dist/minirbt-acceptance"))
-    parser.add_argument("--cache-dir", type=Path, default=Path(".cache/minirbt-h288"))
+    parser.add_argument("--output-dir", type=Path, default=Path("dist/minirbt-massive-acceptance"))
+    parser.add_argument("--model-cache-dir", type=Path, default=Path(".cache/minirbt-h288"))
+    parser.add_argument("--dataset-cache-dir", type=Path, default=Path(".cache/massive-v1.1"))
     args = parser.parse_args()
     source_dir = Path(__file__).resolve().parent
-    with tempfile.TemporaryDirectory(prefix="minirbt-acceptance-check-"):
-        manifest = build_bundle(args.output_dir.resolve(), args.cache_dir.resolve(), source_dir)
+    manifest = build_bundle(
+        args.output_dir.resolve(),
+        args.model_cache_dir.resolve(),
+        args.dataset_cache_dir.resolve(),
+        source_dir,
+    )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
 

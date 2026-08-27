@@ -90,27 +90,32 @@ class DatasetContractTest(unittest.TestCase):
             plain.write_text("第一条\n\n第二条\n", encoding="utf-8")
             self.assertEqual(2, len(infer.load_records(plain, "test")))
 
-    def test_generated_dataset_has_expected_small_complete_shape(self):
-        with tempfile.TemporaryDirectory() as temp:
-            output = Path(temp) / "dataset.zip"
-            prepare.build_dataset_zip(output)
-            import zipfile
+    def test_massive_subset_is_balanced_small_and_deterministic(self):
+        rows = []
+        next_id = 1
+        for source_split, count in prepare.SOURCE_SPLIT_COUNTS.items():
+            for intent in prepare.SELECTED_INTENTS:
+                for item in range(count + 2):
+                    rows.append(
+                        {
+                            "id": str(next_id),
+                            "locale": "zh-CN",
+                            "partition": source_split,
+                            "intent": intent,
+                            "utt": f"{intent}-{source_split}-{item}",
+                        }
+                    )
+                    next_id += 1
 
-            with zipfile.ZipFile(output) as archive:
-                self.assertEqual(
-                    {
-                        "dataset.json",
-                        "data/train.jsonl",
-                        "data/validation.jsonl",
-                        "data/test.jsonl",
-                    },
-                    set(archive.namelist()),
-                )
-                train_rows = [
-                    json.loads(line)
-                    for line in archive.read("data/train.jsonl").decode("utf-8").splitlines()
-                ]
-                self.assertEqual({"负面", "正面"}, {row["label"] for row in train_rows[:2]})
+        first = prepare.select_massive_subset(rows)
+        second = prepare.select_massive_subset(list(reversed(rows)))
+        self.assertEqual(first, second)
+        self.assertEqual({"train": 144, "validation": 48, "test": 48}, {
+            name: len(records) for name, records in first.items()
+        })
+        self.assertEqual(set(prepare.SELECTED_INTENTS), {
+            row["label"] for row in first["train"]
+        })
 
     def test_generated_model_archive_uses_platform_accepted_file_names(self):
         with tempfile.TemporaryDirectory() as temp:
