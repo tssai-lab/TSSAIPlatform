@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NativeDownloadTicketServiceTest {
 
     @Test
-    void ticketIsBoundToExactDownloadAndCanOnlyBeUsedOnce() {
+    void exactDownloadCanReuseTicketWithinItsFixedLifetime() {
         AtomicLong now = new AtomicLong(1_000L);
         NativeDownloadTicketService service = new NativeDownloadTicketService(60, now::get);
         NativeDownloadTicketService.IssuedTicket issued = service.issue(
@@ -34,19 +34,22 @@ class NativeDownloadTicketServiceTest {
                 "objectName", "users/7/result.zip",
                 NativeDownloadTicketService.QUERY_PARAMETER, ticket
         );
-        assertEquals("sa-token-value", service.consume(ticket, request));
-        assertThrows(IllegalArgumentException.class, () -> service.consume(ticket, request));
+        assertEquals("sa-token-value", service.resolve(ticket, request));
+        now.set(30_000L);
+        assertEquals("sa-token-value", service.resolve(ticket, request));
+        now.set(61_000L);
+        assertThrows(IllegalArgumentException.class, () -> service.resolve(ticket, request));
     }
 
     @Test
-    void ticketExpiresAndWrongTargetAttemptConsumesIt() {
+    void ticketExpiresAndWrongTargetDoesNotBreakItsLegitimateDownload() {
         AtomicLong now = new AtomicLong(1_000L);
         NativeDownloadTicketService service = new NativeDownloadTicketService(60, now::get);
         String expired = ticketFrom(service.issue(
                 "/api/dataset-versions/dataset-v1/download", "token-a"
         ).downloadUrl());
         now.set(61_000L);
-        assertThrows(IllegalArgumentException.class, () -> service.consume(
+        assertThrows(IllegalArgumentException.class, () -> service.resolve(
                 expired,
                 request("/api/dataset-versions/dataset-v1/download",
                         NativeDownloadTicketService.QUERY_PARAMETER, expired)
@@ -60,8 +63,8 @@ class NativeDownloadTicketServiceTest {
                 "/api/v2/model-versions/model-v2/download",
                 NativeDownloadTicketService.QUERY_PARAMETER, wrongTarget
         );
-        assertThrows(IllegalArgumentException.class, () -> service.consume(wrongTarget, wrongRequest));
-        assertThrows(IllegalArgumentException.class, () -> service.consume(
+        assertThrows(IllegalArgumentException.class, () -> service.resolve(wrongTarget, wrongRequest));
+        assertEquals("token-b", service.resolve(
                 wrongTarget,
                 request("/api/v2/model-versions/model-v1/download",
                         NativeDownloadTicketService.QUERY_PARAMETER, wrongTarget)
@@ -84,7 +87,7 @@ class NativeDownloadTicketServiceTest {
     }
 
     @Test
-    void concurrentConsumersHaveExactlyOneWinner() throws Exception {
+    void downloadManagerProbeAndParallelRequestsCanAllResolveWithinTtl() throws Exception {
         NativeDownloadTicketService service = new NativeDownloadTicketService(60, System::currentTimeMillis);
         String ticket = ticketFrom(service.issue(
                 "/api/admin/training-plans/templates/cv-cpu-v2", "token"
@@ -99,13 +102,11 @@ class NativeDownloadTicketServiceTest {
                 futures.add(executor.submit(() -> {
                     try {
                         start.await();
-                        service.consume(ticket, request(
+                        service.resolve(ticket, request(
                                 "/api/admin/training-plans/templates/cv-cpu-v2",
                                 NativeDownloadTicketService.QUERY_PARAMETER, ticket
                         ));
                         successes.incrementAndGet();
-                    } catch (IllegalArgumentException ignored) {
-                        // Expected for every consumer except the atomic winner.
                     } catch (InterruptedException exception) {
                         Thread.currentThread().interrupt();
                     }
@@ -118,7 +119,7 @@ class NativeDownloadTicketServiceTest {
         } finally {
             executor.shutdownNow();
         }
-        assertEquals(1, successes.get());
+        assertEquals(consumers, successes.get());
     }
 
     @Test
@@ -135,7 +136,7 @@ class NativeDownloadTicketServiceTest {
                 NativeDownloadTicketService.QUERY_PARAMETER, ticket,
                 "path", "src/main.py"
         );
-        assertEquals("token", service.consume(ticket, request));
+        assertEquals("token", service.resolve(ticket, request));
         assertTrue(issued.expiresAt().toEpochMilli() > System.currentTimeMillis());
     }
 
