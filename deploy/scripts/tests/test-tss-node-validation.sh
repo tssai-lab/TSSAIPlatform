@@ -86,6 +86,7 @@ grep -F 'required_images+=("$cv_image" "$nlp_image")' "$runtime_loader" >/dev/nu
 grep -F 'Private-registry runtime preload passed' "$runtime_loader" >/dev/null
 grep -F 'serviceAccountName: ${service_account}' "$runtime_loader" >/dev/null
 grep -F 'imagePullPolicy: Always' "$runtime_loader" >/dev/null
+grep -F 'TRAINING_K8S_KUBECTL_PATH' "$runtime_loader" >/dev/null
 grep -F 'for required_image in "${required_images[@]}"' "$runtime_loader" >/dev/null
 grep -F 'available_bytes -lt $runtime_reserve_bytes' "$runtime_loader" >/dev/null
 grep -F 'Runtime image is not available in Kubernetes containerd' "$runtime_loader" >/dev/null
