@@ -2,6 +2,8 @@ package com.tss.platform.controller.v2;
 
 import com.tss.platform.dto.v2.V2CodeAssetImportMetadata;
 import com.tss.platform.dto.v2.V2CodeAssetImportResult;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.CodeAssetImportCommand;
 import com.tss.platform.service.CodeAssetImportResult;
 import com.tss.platform.service.CodeAssetImportService;
@@ -20,9 +22,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class V2CodeAssetImportController {
 
     private final CodeAssetImportService importService;
+    private final AuditHooks auditHooks;
 
-    public V2CodeAssetImportController(CodeAssetImportService importService) {
+    public V2CodeAssetImportController(CodeAssetImportService importService, AuditHooks auditHooks) {
         this.importService = importService;
+        this.auditHooks = auditHooks;
     }
 
     @PostMapping(
@@ -34,20 +38,27 @@ public class V2CodeAssetImportController {
             @Valid @RequestPart("metadata") V2CodeAssetImportMetadata metadata,
             @RequestPart("file") MultipartFile file
     ) {
-        CodeAssetImportResult result = importService.importAsset(
-                file,
-                new CodeAssetImportCommand(
-                        metadata.name(),
-                        metadata.version(),
-                        metadata.trainingProfile(),
-                        metadata.purpose(),
-                        metadata.runtime(),
-                        metadata.entryScript(),
-                        metadata.trainingType(),
-                        metadata.remark()
-                )
-        );
-        return ResponseEntity.status(HttpStatus.CREATED).body(toDto(result));
+        try {
+            CodeAssetImportResult result = importService.importAsset(
+                    file,
+                    new CodeAssetImportCommand(
+                            metadata.name(),
+                            metadata.version(),
+                            metadata.trainingProfile(),
+                            metadata.purpose(),
+                            metadata.runtime(),
+                            metadata.entryScript(),
+                            metadata.trainingType(),
+                            metadata.remark()
+                    )
+            );
+            auditHooks.upload(AuditObjectType.TRAINING_CODE, result.assetId(), "CODE_UPLOAD_V2", true, null);
+            return ResponseEntity.status(HttpStatus.CREATED).body(toDto(result));
+        } catch (RuntimeException exception) {
+            auditHooks.upload(AuditObjectType.TRAINING_CODE, metadata.name(), "CODE_UPLOAD_V2", false,
+                    exception.getMessage());
+            throw exception;
+        }
     }
 
     private static V2CodeAssetImportResult toDto(CodeAssetImportResult result) {

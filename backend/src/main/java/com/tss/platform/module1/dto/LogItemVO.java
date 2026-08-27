@@ -4,7 +4,7 @@ import lombok.Data;
 
 @Data
 public class LogItemVO {
-    private Integer id;
+    private Long id;
     private String username;
     private String operateType;
     private String operateTime;

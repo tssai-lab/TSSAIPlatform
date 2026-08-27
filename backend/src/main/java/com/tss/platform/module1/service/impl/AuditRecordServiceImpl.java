@@ -9,11 +9,15 @@ import com.tss.platform.module1.entity.AuditRecord;
 import com.tss.platform.module1.mapper.AuditRecordMapper;
 import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.util.AuditDetailSanitizer;
+import com.tss.platform.module1.util.ClientIpUtil;
 import com.tss.platform.module1.util.DesensitizationUtil;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 
@@ -41,8 +45,15 @@ public class AuditRecordServiceImpl implements AuditRecordService {
             record.setObjectId(trimTo(command.getObjectId(), 128));
             record.setResult(command.getResult().name());
             record.setFailReason(AuditDetailSanitizer.sanitizeFailReason(command.getFailReason()));
-            record.setIpAddress(trimTo(command.getIpAddress(), 64));
-            record.setRequestId(trimTo(command.getRequestId(), 64));
+            HttpServletRequest request = currentRequest();
+            String ipAddress = command.getIpAddress() != null
+                    ? command.getIpAddress()
+                    : ClientIpUtil.resolve(request);
+            String requestId = command.getRequestId() != null
+                    ? command.getRequestId()
+                    : requestId(request);
+            record.setIpAddress(trimTo(ipAddress, 64));
+            record.setRequestId(trimTo(requestId, 64));
             record.setDetail(AuditDetailSanitizer.sanitize(command.getDetail()));
             record.setCreatedAt(LocalDateTime.now());
 
@@ -111,5 +122,23 @@ public class AuditRecordServiceImpl implements AuditRecordService {
         }
         String v = value.trim();
         return v.length() > max ? v.substring(0, max) : v;
+    }
+
+    private static HttpServletRequest currentRequest() {
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
+            return attributes.getRequest();
+        }
+        return null;
+    }
+
+    private static String requestId(HttpServletRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String requestId = request.getHeader("X-Request-ID");
+        if (requestId == null || requestId.isBlank()) {
+            requestId = request.getHeader("X-Correlation-ID");
+        }
+        return requestId;
     }
 }

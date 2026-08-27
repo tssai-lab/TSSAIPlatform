@@ -15,7 +15,7 @@ public final class OperationLogConverter {
 
     public static LogItemVO toVo(OperationLog log) {
         LogItemVO vo = new LogItemVO();
-        vo.setId(log.getId());
+        vo.setId(log.getId() != null ? log.getId().longValue() : null);
         vo.setUsername(log.getUserName() != null ? log.getUserName() : "");
         vo.setOperateType(mapOperateType(log.getOperationType()));
         vo.setOperateTime(log.getOperationTime() != null ? log.getOperationTime().format(FORMATTER) : "");

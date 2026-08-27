@@ -43,6 +43,9 @@ public class InferenceTaskController {
         } catch (IllegalArgumentException e) {
             auditHooks.inference(null, "INFERENCE_CREATE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.inference(null, "INFERENCE_CREATE", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -77,6 +80,9 @@ public class InferenceTaskController {
         } catch (IllegalArgumentException e) {
             auditHooks.inference(id, "INFERENCE_STOP", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.inference(id, "INFERENCE_STOP", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -89,6 +95,9 @@ public class InferenceTaskController {
         } catch (IllegalArgumentException e) {
             auditHooks.inference(id, "INFERENCE_RETRY", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.inference(id, "INFERENCE_RETRY", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -104,9 +113,15 @@ public class InferenceTaskController {
     @DeleteMapping("/{id}")
     public ApiResponse<Map<String, Object>> delete(@PathVariable String id) {
         try {
-            return ApiResponse.ok(taskService.deleteTask(id));
+            Map<String, Object> result = taskService.deleteTask(id);
+            auditHooks.delete(AuditObjectType.INFERENCE_TASK, id, "INFERENCE_TASK_DELETE", true, null);
+            return ApiResponse.ok(result);
         } catch (IllegalArgumentException e) {
+            auditHooks.delete(AuditObjectType.INFERENCE_TASK, id, "INFERENCE_TASK_DELETE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.delete(AuditObjectType.INFERENCE_TASK, id, "INFERENCE_TASK_DELETE", false, e.getMessage());
+            throw e;
         }
     }
 }
