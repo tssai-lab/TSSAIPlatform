@@ -105,11 +105,17 @@ if [[ -n $cv_image ]]; then
 fi
 
 if [[ $import_mode == "registry" ]]; then
-  kubectl_bin="${TSS_KUBECTL_BIN:-/usr/local/bin/kubectl}"
   namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
   service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
   smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-$(hostname)}"
   runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+  kubectl_bin="$(
+    docker inspect "$TSS_BACKEND_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+      | awk -F= '$1 == "TRAINING_K8S_KUBECTL_PATH" { sub(/^[^=]*=/, ""); print; exit }'
+  )"
+  if [[ -z $kubectl_bin ]]; then
+    kubectl_bin="$(command -v kubectl || true)"
+  fi
   kubeconfig="$(
     docker inspect "$TSS_BACKEND_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' \
       | awk -F= '$1 == "TRAINING_K8S_KUBECONFIG" { sub(/^[^=]*=/, ""); print; exit }'
