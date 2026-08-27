@@ -17,6 +17,7 @@
     <properties>
         <java.version>17</java.version>
         <testcontainers.version>1.21.4</testcontainers.version>
+        <fabric8.kubernetes-client.version>7.5.2</fabric8.kubernetes-client.version>
     </properties>
     <dependencies>
         <dependency>
@@ -82,6 +83,11 @@
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-client</artifactId>
+            <version>${fabric8.kubernetes-client.version}</version>
         </dependency>
         <dependency>
             <groupId>com.twelvemonkeys.imageio</groupId>

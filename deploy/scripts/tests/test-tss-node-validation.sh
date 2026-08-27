@@ -68,6 +68,9 @@ grep -F 'automountServiceAccountToken: false' "$validator" >/dev/null
 grep -F 'trap cleanup EXIT' "$validator" >/dev/null
 grep -F 'tss-node-activate-backend' "$bootstrap" >/dev/null
 grep -F 'tss-node-load-backend' "$bootstrap" >/dev/null
+grep -F 'training_k8s_client_mode="${TSS_TRAINING_K8S_CLIENT_MODE:-kubectl}"' "$bootstrap" >/dev/null
+grep -F 'TSS_TRAINING_K8S_CLIENT_MODE must be kubectl or fabric8.' "$bootstrap" >/dev/null
+grep -F 'TRAINING_K8S_CLIENT_MODE=${training_k8s_client_mode}' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-deployment "$image" "$expected_image_id"' "$backend_activator" >/dev/null
 grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_loader" >/dev/null
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null

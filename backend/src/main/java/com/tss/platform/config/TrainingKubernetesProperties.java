@@ -2,21 +2,33 @@ package com.tss.platform.config;
 
 import lombok.Getter;
 import lombok.Setter;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 @Getter
 @Setter
+@Validated
 @ConfigurationProperties(prefix = "training.kubernetes")
 public class TrainingKubernetesProperties {
+
+    public enum ClientMode {
+        KUBECTL,
+        FABRIC8
+    }
 
     public static final String PUBLIC_DEVELOPMENT_INTERNAL_CALLBACK_TOKEN =
             "tss-internal-callback-dev";
 
     /** 是否启用 K8s 训练调度（false 时回退本地 Java 训练） */
     private boolean enabled = true;
+
+    /** 训练 Job 控制通道；同一进程只会装配一种实现。 */
+    private ClientMode clientMode = ClientMode.KUBECTL;
 
     /** 启动时环境不可用时是否自动创建 kind 集群 */
     private boolean autoCreate = true;
@@ -83,6 +95,11 @@ public class TrainingKubernetesProperties {
 
     /** Job 状态轮询间隔（毫秒） */
     private long monitorIntervalMs = 30000;
+
+    /** 训练 Job 客户端单次请求超时（秒）。 */
+    @Min(1)
+    @Max(3600)
+    private int clientRequestTimeoutSeconds = 120;
 
     /** 是否在 K8s Job/Pod 被 TTL 清理前归档脱敏失败现场。 */
     private boolean failureDiagnosticsEnabled = true;

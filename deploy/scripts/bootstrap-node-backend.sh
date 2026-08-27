@@ -46,6 +46,7 @@ minio_endpoint="${TSS_MINIO_ENDPOINT:-http://127.0.0.1:9010}"
 minio_bucket="${TSS_MINIO_BUCKET:-models}"
 mlflow_tracking_uri="${TSS_MLFLOW_TRACKING_URI:-http://127.0.0.1:5000}"
 training_experiment_name="${TSS_TRAINING_EXPERIMENT_NAME:-tss-training}"
+training_k8s_client_mode="${TSS_TRAINING_K8S_CLIENT_MODE:-kubectl}"
 k8s_backend_service_url="${TSS_K8S_BACKEND_SERVICE_URL:-http://tss-backend:8080}"
 k8s_minio_service_url="${TSS_K8S_MINIO_SERVICE_URL:-http://tss-minio:9000}"
 k8s_mlflow_service_url="${TSS_K8S_MLFLOW_SERVICE_URL:-http://tss-mlflow:5000}"
@@ -69,6 +70,11 @@ model_cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
 model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
 model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
 model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+
+if [[ $training_k8s_client_mode != kubectl && $training_k8s_client_mode != fabric8 ]]; then
+  echo "TSS_TRAINING_K8S_CLIENT_MODE must be kubectl or fabric8." >&2
+  exit 1
+fi
 
 if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
   echo "TSS_MODEL_CACHE_ENABLED must be true or false." >&2
@@ -163,6 +169,7 @@ TRAINING_MLFLOW_ENABLED=true
 TRAINING_MLFLOW_TRACKING_URI=${mlflow_tracking_uri}
 TRAINING_MLFLOW_EXPERIMENT_NAME=${training_experiment_name}
 TRAINING_K8S_ENABLED=true
+TRAINING_K8S_CLIENT_MODE=${training_k8s_client_mode}
 TRAINING_K8S_AUTO_CREATE=false
 TRAINING_K8S_VERIFY_ON_STARTUP=true
 TRAINING_K8S_FALLBACK_TO_LOCAL=false

@@ -115,6 +115,8 @@ training:
     experiment-name: ${TRAINING_MLFLOW_EXPERIMENT_NAME:tss-training}
   kubernetes:
     enabled: ${TRAINING_K8S_ENABLED:true}
+    # 训练 Job 控制通道。默认 kubectl 以保持现有集群升级兼容；内网 GPU 集群显式设为 fabric8。
+    client-mode: ${TRAINING_K8S_CLIENT_MODE:kubectl}
     auto-create: ${TRAINING_K8S_AUTO_CREATE:true}
     verify-on-startup: ${TRAINING_K8S_VERIFY_ON_STARTUP:true}
     fallback-to-local: ${TRAINING_K8S_FALLBACK_TO_LOCAL:true}
@@ -149,6 +151,7 @@ training:
     job-ttl-seconds-after-finished: ${TRAINING_K8S_JOB_TTL_SECONDS:3600}
     internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}
     monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
+    client-request-timeout-seconds: ${TRAINING_K8S_CLIENT_REQUEST_TIMEOUT_SECONDS:120}
     failure-diagnostics-enabled: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_ENABLED:true}
     failure-diagnostics-retry-window-seconds: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_RETRY_WINDOW_SECONDS:900}
     failure-diagnostics-retention-days: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_RETENTION_DAYS:30}

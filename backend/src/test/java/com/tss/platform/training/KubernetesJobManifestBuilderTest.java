@@ -64,7 +64,50 @@ class KubernetesJobManifestBuilderTest {
 
         assertTrue(yaml.contains("workingDir: /workspace/job\n"));
         assertFalse(yaml.contains("workingDir: /workspace/job/code\n"));
+        assertFalse(yaml.contains("nvidia.com/gpu:"));
         assertTrue(yaml.contains("ttlSecondsAfterFinished: 180\n"));
+    }
+
+    @Test
+    void gpuRunRequestsTheExactGpuCountWithoutChangingTheClientContract() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        properties.setInternalCallbackToken("test-callback-token");
+
+        TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
+        when(task.getId()).thenReturn("train-gpu-test");
+        when(task.getRunSpecJson()).thenReturn("{}");
+        when(task.getRunSpecSha256()).thenReturn("c".repeat(64));
+
+        TrainingRunSpec runSpec = mock(TrainingRunSpec.class);
+        TrainingPlanDefinition.Security security = mock(TrainingPlanDefinition.Security.class);
+        TrainingRunSpec.Resources resources = mock(TrainingRunSpec.Resources.class);
+        TrainingRunSpec.Runtime runtime = mock(TrainingRunSpec.Runtime.class);
+        when(runSpec.security()).thenReturn(security);
+        when(security.maxRuntimeSeconds()).thenReturn(3600);
+        when(security.runAsNonRoot()).thenReturn(true);
+        when(security.allowPrivilegeEscalation()).thenReturn(false);
+        when(runSpec.resources()).thenReturn(resources);
+        when(resources.nodeSelector()).thenReturn(Map.of());
+        when(resources.ephemeralStorageLimit()).thenReturn("1Gi");
+        when(resources.cpuRequest()).thenReturn("1");
+        when(resources.cpuLimit()).thenReturn("2");
+        when(resources.memoryRequest()).thenReturn("1Gi");
+        when(resources.memoryLimit()).thenReturn("2Gi");
+        when(resources.gpuCount()).thenReturn(2);
+        when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
+
+        TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
+        when(codec.decode(task)).thenReturn(runSpec);
+        TrainingRuntimeImageService runtimeImageService = mock(TrainingRuntimeImageService.class);
+        when(runtimeImageService.resolveImage(runSpec)).thenReturn("registry.example/training-worker:gpu-test");
+        KubernetesJobManifestBuilder builder =
+                new KubernetesJobManifestBuilder(properties, codec, runtimeImageService);
+
+        String yaml = builder.buildJobYaml(task, "access", "secret", "models", "seu4080");
+
+        assertTrue(yaml.contains("nvidia.com/gpu: \"2\""));
+        assertTrue(yaml.contains("nodeName: seu4080"));
     }
 
     @Test

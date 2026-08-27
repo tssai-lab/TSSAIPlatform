@@ -123,6 +123,8 @@ tail -f /opt/tss-platform/backend/logs/backend-daemon.log
 | `TRAINING_MLFLOW_TRACKING_URI` | `http://127.0.0.1:5000` | Backend 连 MLflow |
 | `TRAINING_MLFLOW_EXPERIMENT_NAME` | `tss-training` | 实验名 |
 | `TRAINING_K8S_CLUSTER_NAME` | `tss-training` | kind 集群名 |
+| `TRAINING_K8S_CLIENT_MODE` | `kubectl` | 训练 Job 控制通道：`kubectl` 或 `fabric8`；同一进程只启用一种，不自动回退 |
+| `TRAINING_K8S_CLIENT_REQUEST_TIMEOUT_SECONDS` | `120` | 训练 Job 客户端单次请求超时，允许 1--3600 秒 |
 | `TRAINING_K8S_NAMESPACE` | `tss-training` | 训练 Namespace |
 | `TRAINING_K8S_KUBECONFIG` | `k8s/.kube/config` | 相对 `backend/` 工作目录 |
 | `TRAINING_K8S_KIND_PATH` | `.tools/bin/kind` | 相对项目根 |
