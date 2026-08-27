@@ -85,7 +85,7 @@ jobs:
 
       - name: Run YOLOv11n inference preview tests
         run: |
-          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==12.0.0'
+          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'
           python3 -m unittest discover \
             -s examples/inference/yolov11n \
             -p 'test_*.py' -v

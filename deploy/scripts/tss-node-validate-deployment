@@ -303,6 +303,7 @@ YAML
 inference_script='from urllib.error import HTTPError
 from urllib.request import urlopen
 import infer_worker
+import ultralytics
 
 def status(url):
     try:
