@@ -13,6 +13,7 @@ offline bundle is needed.
 | PostgreSQL, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
 | Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
 | Minimal C6 CPU training and inference images | `cpu-runtime-images.lock` | Export and stage only the two locked images with the internal validation workflow. |
+| Minimal GPU training images | `gpu-runtime-images.lock` | Export and stage only the digest-locked CV/NLP GPU workers from `backend-gpu`; this does not enable GPU discovery or submit workloads. |
 | Frontend source | `frontend-source.lock` | Check out the exact `frontend-dev` commit and build from its lock file. Do not copy `/var/www` from Main. |
 | Public Nginx routes | `nginx/frontend.conf.template` | Replace the five `REPLACE_*` values, review, run `nginx -t`, then install it for that environment. |
 | Node and platform configuration | `../config/*.example` and `../platform/platform.env.example` | Create environment-owned files outside Git. |
@@ -132,6 +133,36 @@ local OCI manifest descriptor while preserving its locked config and layers.
 The importer also verifies that the shared Docker container count and shared
 containerd PID do not change.
 
+## Stage the minimal GPU runtime bundle
+
+The GPU bundle contains only the CV and NLP workers built from the same full
+commit. Their shared CUDA/PyTorch base layer is stored once in the combined
+archive. Build, export, stage and import remain separate operations:
+
+```bash
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-gpu \
+  -f task=export-gpu-runtime-images
+
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-gpu \
+  -f task=stage-gpu-runtime-images \
+  -f gpu_runtime_run_id=REPLACE_RUN_ID \
+  -f gpu_runtime_head_sha=REPLACE_40_CHARACTER_SHA
+
+gh workflow run tss-aiplatform-internal-validation.yml \
+  --ref backend-gpu \
+  -f task=deploy-gpu-runtime-images \
+  -f gpu_runtime_run_id=REPLACE_RUN_ID \
+  -f gpu_runtime_head_sha=REPLACE_40_CHARACTER_SHA
+```
+
+The staging task performs no root or containerd write. The deployment task
+imports only into the isolated project containerd and verifies both config
+digests and runtime aliases. It deliberately does not install the NVIDIA Device
+Plugin, change node labels or submit a training Job. Those operations remain
+behind the separate GPU-worker gate and the immediate shared-host idle check.
+
 ## Minimal clean-server flow
 
 1. Check out the reviewed deployment branch/SHA.
@@ -146,9 +177,10 @@ containerd PID do not change.
 6. Bootstrap the empty platform and run its verification scripts.
 7. Build the locked frontend commit and install the reviewed Nginx template.
 8. Import the locked CPU runtime images and run real CV/NLP acceptance tasks.
-9. For a GPU worker, import the locked NVIDIA bundle, enable
-   `TSS_ENABLE_GPU_WORKER`, rerun the guarded platform bootstrap, and require a
-   positive `nvidia.com/gpu` capacity before any single-GPU acceptance task.
+9. For a GPU worker, import the locked CV/NLP GPU runtime bundle and the locked
+   NVIDIA infrastructure bundle. Then enable `TSS_ENABLE_GPU_WORKER`, rerun the
+   guarded platform bootstrap, and require a positive `nvidia.com/gpu` capacity
+   before any single-GPU acceptance task.
 
 Steps 7 and 8 are required for a complete user-facing CPU platform. Finishing
 only the four base containers is an empty-platform milestone, not full

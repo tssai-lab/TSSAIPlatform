@@ -61,6 +61,21 @@ PROFILES = {
         # equally narrow while accepting the measured 9.67 GB bundle.
         "max_bytes": 10 * 1024**3,
     },
+    "gpu-runtime": {
+        "artifact_prefix": "tss-aiplatform-gpu-runtime",
+        "expected_files": {
+            "gpu-runtime-amd64.tar",
+            "gpu-runtime.sha256",
+            "sources.lock",
+        },
+        "checksum_files": {
+            "gpu-runtime.sha256": ["gpu-runtime-amd64.tar", "sources.lock"],
+        },
+        # CV and NLP share the same 4.18 GB CUDA/PyTorch base layer. Export
+        # them in one Docker archive so that layer is stored only once, while
+        # retaining GitHub's 10 GiB artifact ceiling as the hard limit.
+        "max_bytes": 10 * 1024**3,
+    },
     "platform": {
         "artifact_prefix": "tss-aiplatform-platform-images",
         "expected_files": {
@@ -482,6 +497,11 @@ def self_test() -> None:
             "sources.lock": b"ghcr.io/example/runtime:v1|sha256:" + b"0" * 64 + b"\n",
         }
         self_test_profile(root, "cpu-runtime", cpu_content)
+        gpu_content = {
+            "gpu-runtime-amd64.tar": b"gpu-runtime",
+            "sources.lock": b"ghcr.io/example/gpu-runtime:v1|sha256:" + b"0" * 64 + b"\n",
+        }
+        self_test_profile(root, "gpu-runtime", gpu_content)
         platform_content = {
             "platform-images-amd64.tar": b"platform-images",
             "sources.lock": b"ghcr.io/example/backend:v1|sha256:" + b"0" * 64 + b"\n",

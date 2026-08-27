@@ -40,7 +40,8 @@ deploy_config_root=/etc/tss-aiplatform-deploy
 deployment_config=${deploy_config_root}/runtime.env
 stage_root=${TSS_PROJECT_ROOT}/staging/airgap
 state_file=${TSS_PROJECT_ROOT}/audit/c7-cpu-runtime-deployment.env
-for path in "$install_root" "$runtime_root" "$stage_root" "$state_file"; do
+gpu_state_file=${TSS_PROJECT_ROOT}/audit/c8-gpu-runtime-deployment.env
+for path in "$install_root" "$runtime_root" "$stage_root" "$state_file" "$gpu_state_file"; do
   TSS_RUNTIME_INSTALL_PATH=$path validate_path TSS_RUNTIME_INSTALL_PATH
 done
 [[ -d $install_root && ! -L $install_root ]] \
@@ -51,11 +52,15 @@ install -o root -g root -m 0755 \
   "${script_dir}/lib.sh" \
   "${script_dir}/verify-storage.sh" \
   "${script_dir}/import-cpu-runtime-images.sh" \
+  "${script_dir}/import-gpu-runtime-images.sh" \
   "$runtime_root/scripts/"
 install -o root -g root -m 0644 "${internal_root}/versions.env" "$runtime_root/versions.env"
 install -o root -g root -m 0644 \
   "${internal_root}/reproducible/cpu-runtime-images.lock" \
   "$runtime_root/reproducible/cpu-runtime-images.lock"
+install -o root -g root -m 0644 \
+  "${internal_root}/reproducible/gpu-runtime-images.lock" \
+  "$runtime_root/reproducible/gpu-runtime-images.lock"
 TSS_INSTALL_ROOT_TO_HARDEN=$install_root harden_project_install_tree "$install_root"
 
 install -d -o root -g root -m 0755 "$deploy_config_root"
@@ -67,6 +72,7 @@ trap 'rm -f "$deployment_pending"' EXIT
   printf 'TSS_NODE_CONFIG=%s\n' "$node_config"
   printf 'TSS_DEPLOY_STAGE_ROOT=%s\n' "$stage_root"
   printf 'TSS_DEPLOY_STATE_FILE=%s\n' "$state_file"
+  printf 'TSS_GPU_DEPLOY_STATE_FILE=%s\n' "$gpu_state_file"
 } >"$deployment_pending"
 chown root:root "$deployment_pending"
 chmod 0644 "$deployment_pending"
@@ -77,15 +83,23 @@ install -d -o "$deployment_user" -g "$deployment_group" -m 0700 "$stage_root"
 install -d -o root -g root -m 0700 "$(dirname "$state_file")"
 install -o root -g root -m 0755 "${script_dir}/deploy-cpu-runtime.sh" \
   /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime
+install -o root -g root -m 0755 "${script_dir}/deploy-gpu-runtime.sh" \
+  /usr/local/sbin/tss-aiplatform-internal-deploy-gpu-runtime
 
 sudoers_pending=$(mktemp /etc/sudoers.d/.tss-aiplatform-runtime-deploy.XXXXXX)
 trap 'rm -f "$sudoers_pending"' EXIT
-printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime *\n' \
-  "$deployment_user" >"$sudoers_pending"
+{
+  printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime *\n' \
+    "$deployment_user"
+  if has_role gpu; then
+    printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/tss-aiplatform-internal-deploy-gpu-runtime *\n' \
+      "$deployment_user"
+  fi
+} >"$sudoers_pending"
 chown root:root "$sudoers_pending"
 chmod 0440 "$sudoers_pending"
 visudo -cf "$sudoers_pending" >/dev/null
 mv "$sudoers_pending" /etc/sudoers.d/tss-aiplatform-runtime-deploy
 trap - EXIT
 
-echo "PASS: root-owned CPU runtime deployer installed for node=${TSS_NODE_NAME} user=${deployment_user}"
+echo "PASS: root-owned runtime deployer installed for node=${TSS_NODE_NAME} user=${deployment_user}"

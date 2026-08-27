@@ -198,16 +198,20 @@ grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/de
 grep -F 'inputs.task == '\''export-platform-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-backend-image'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''export-gpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-airgap-bundles'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-platform-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''stage-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''stage-gpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''deploy-cpu-runtime-images'\''' "$internal_workflow" >/dev/null
+grep -F 'inputs.task == '\''deploy-gpu-runtime-images'\''' "$internal_workflow" >/dev/null
 grep -F 'fetch-depth: 0' "$internal_workflow" >/dev/null
 grep -F 'actions: read' "$internal_workflow" >/dev/null
 grep -F 'packages: read' "$internal_workflow" >/dev/null
 grep -F 'download-airgap-artifact.py' "$internal_workflow" >/dev/null
 grep -F -- '--backend-only' "$internal_workflow" >/dev/null
 grep -F -- '--profile cpu-runtime' "$internal_workflow" >/dev/null
+grep -F -- '--profile gpu-runtime' "$internal_workflow" >/dev/null
 grep -F -- '--profile platform' "$internal_workflow" >/dev/null
 grep -F 'git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"' \
   "$internal_workflow" >/dev/null
@@ -241,6 +245,7 @@ bash "${internal_dir}/ci/resolve-artifact-lock.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/resolve-artifact-lock.sh" --self-test >/dev/null
 bash "${internal_dir}/ci/export-airgap-bundles.sh" --validate-only >/dev/null
 bash "${internal_dir}/ci/export-cpu-runtime-images.sh" --validate-only >/dev/null
+bash "${internal_dir}/ci/export-gpu-runtime-images.sh" --validate-only >/dev/null
 python3 "${internal_dir}/ci/download-airgap-artifact.py" --self-test >/dev/null
 grep -F '"max_bytes": 10 * 1024**3' \
   "${internal_dir}/ci/download-airgap-artifact.py" >/dev/null
@@ -351,9 +356,12 @@ grep -F 'shared system containerd PID changed during image import' \
   "${internal_dir}/scripts/import-airgap-bundles.sh" >/dev/null
 grep -F 'CPU runtime bundle sources do not match the committed lock' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
+grep -F 'GPU runtime bundle sources do not match the committed lock' \
+  "${internal_dir}/scripts/import-gpu-runtime-images.sh" >/dev/null
 for file in \
   "${internal_dir}/scripts/install-cpu-runtime-deployer.sh" \
-  "${internal_dir}/scripts/deploy-cpu-runtime.sh"; do
+  "${internal_dir}/scripts/deploy-cpu-runtime.sh" \
+  "${internal_dir}/scripts/deploy-gpu-runtime.sh"; do
   [[ -f $file ]]
   bash -n "$file"
 done
@@ -364,6 +372,8 @@ grep -F 'SUDO_USER:-} == "$TSS_DEPLOYMENT_USER"' \
 grep -F 'chown -R root:root "$bundle_dir"' \
   "${internal_dir}/scripts/deploy-cpu-runtime.sh" >/dev/null
 grep -F 'sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime' \
+  "$internal_workflow" >/dev/null
+grep -F 'sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-gpu-runtime' \
   "$internal_workflow" >/dev/null
 grep -F 'shared Docker container count changed during CPU runtime import' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
@@ -405,6 +415,31 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
   [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ -n $runtime_ref && -n $purpose && $producer_run =~ ^[1-9][0-9]*$ ]]
 done < <(grep -Ev '^(#|$)' "$cpu_runtime_lock")
+
+gpu_runtime_lock="${internal_dir}/reproducible/gpu-runtime-images.lock"
+[[ $(grep -Evc '^(#|$)' "$gpu_runtime_lock") -eq 2 ]]
+[[ $(awk -F'|' '!/^#/ {print $5}' "$gpu_runtime_lock" | sort) == $'cv-gpu-training\nnlp-gpu-training' ]]
+if grep -F ':latest' "$gpu_runtime_lock" >/dev/null; then
+  echo "GPU runtime image lock must not use latest tags." >&2
+  exit 1
+fi
+[[ $(awk -F'|' '!/^#/ {split($1, fields, ":"); print fields[2]}' \
+  "$gpu_runtime_lock" | sort -u | wc -l) -eq 1 ]]
+while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose producer_run; do
+  [[ $source_ref =~ ^ghcr\.io/tssai-lab/tss-(cv|nlp)-worker:[0-9a-f]{40}$ ]]
+  [[ $manifest_digest =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ $runtime_ref == *@"$manifest_digest" ]]
+  [[ -n $purpose && $producer_run =~ ^[1-9][0-9]*$ ]]
+done < <(grep -Ev '^(#|$)' "$gpu_runtime_lock")
+grep -F 'PLAN: do not install the Device Plugin and do not submit a training Job' \
+  "${internal_dir}/scripts/import-gpu-runtime-images.sh" >/dev/null
+grep -F 'shared Docker container count changed during GPU runtime import' \
+  "${internal_dir}/scripts/import-gpu-runtime-images.sh" >/dev/null
+grep -F 'TSS_GPU_DEPLOY_STATE_FILE=' \
+  "${internal_dir}/scripts/install-cpu-runtime-deployer.sh" >/dev/null
+grep -F '/usr/local/sbin/tss-aiplatform-internal-deploy-gpu-runtime' \
+  "${internal_dir}/scripts/install-cpu-runtime-deployer.sh" >/dev/null
 grep -F "ufw --dry-run allow proto tcp" \
   "${internal_dir}/scripts/prepare-control-plane-network.sh" >/dev/null
 grep -F 'ufw_user_rules=/etc/ufw/user.rules' \

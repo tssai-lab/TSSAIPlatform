@@ -212,12 +212,20 @@ sudo bash deploy/tss-aiplatform-internal/scripts/install-cpu-runtime-deployer.sh
 ```
 
 The installer makes the complete project helper tree root-owned and grants the
-deployment user only the fixed runtime command, not a general root shell. After
+deployment user only the fixed CPU runtime command and, on a node with the
+`gpu` role, the fixed GPU runtime command—not a general root shell. After
 `stage-cpu-runtime-images` has verified and staged an exact successful export,
 dispatch `deploy-cpu-runtime-images` with the same run ID and source SHA. The
 root helper freezes the staged directory, repeats the immutable lock and image
 checks, imports only into the configured project containerd, and records an
 independent result below the configured project audit directory.
+
+For a reviewed GPU worker, the same installer also provisions the separate
+`tss-aiplatform-internal-deploy-gpu-runtime` helper. Run the three
+`export-gpu-runtime-images`, `stage-gpu-runtime-images` and
+`deploy-gpu-runtime-images` workflow tasks from `backend-gpu` with one exact
+source SHA and export run ID. Importing these two images does not enable the
+Device Plugin or start a training workload.
 
 ## C7 internal frontend (manual, independent target)
 
