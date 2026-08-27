@@ -156,6 +156,8 @@ grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null
 grep -F 'run_smoke_pod "inference" "$inference_image" "IfNotPresent"' "$validator" >/dev/null
 grep -F -A1 'import infer_worker' "$validator" | grep -Fx 'import ultralytics' >/dev/null
+grep -F 'status.conditions[?(@.type=="DiskPressure")].status' "$validator" >/dev/null
+grep -F 'Smoke node remained under DiskPressure' "$validator" >/dev/null
 grep -F 'images list --quiet' "$validator" >/dev/null
 if grep -F 'Configured inference image is not ready in Kubernetes containerd.' "$validator" >/dev/null; then
   echo "Validator must allow an authenticated IfNotPresent pull after kubelet image GC." >&2
