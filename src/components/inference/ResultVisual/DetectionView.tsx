@@ -1,6 +1,7 @@
 import { DownloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Space, Table, Tag, Typography } from 'antd';
 import React, { useMemo, useState } from 'react';
+import InputPreviewCell from './InputPreviewCell';
 import MetricsCards, { pickMetrics } from './MetricsCards';
 import MinioImage from './MinioImage';
 import {
@@ -99,6 +100,22 @@ const DetectionView: React.FC<{
           })}
         </Space>
       )}
+      <Card size="small" title="原始输入">
+        {current ? (
+          <Space direction="vertical" size={4}>
+            <InputPreviewCell
+              row={current}
+              outputPath={outputPath}
+              onDownloadObject={onDownloadObject}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              点击缩略图可查看大图；旧任务没有预览时会显示为不可视化。
+            </Typography.Text>
+          </Space>
+        ) : (
+          <Typography.Text type="secondary">暂无原始输入</Typography.Text>
+        )}
+      </Card>
       <Card
         size="small"
         title={
