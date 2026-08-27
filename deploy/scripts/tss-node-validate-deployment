@@ -404,8 +404,8 @@ import sklearn
 import torch
 import transformers
 print("TSS_DEPLOYMENT_SMOKE_OK:nlp")'
-  run_smoke_pod "cv" "$cv_image" "Always" 300 "$cv_script"
-  run_smoke_pod "nlp" "$nlp_image" "Always" 300 "$nlp_script"
+  run_smoke_pod "cv" "$cv_image" "IfNotPresent" 300 "$cv_script"
+  run_smoke_pod "nlp" "$nlp_image" "IfNotPresent" 300 "$nlp_script"
 fi
 
 echo "Deployment validation passed: backend=$backend_image node=$smoke_node"

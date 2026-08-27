@@ -76,6 +76,12 @@ grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader"
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
 grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/dev/null
+grep -F 'docker pull "$cv_image"' "$runtime_workflow" >/dev/null
+grep -F 'docker pull "$nlp_image"' "$runtime_workflow" >/dev/null
+grep -F 'docker save "$image" "$cv_image" "$nlp_image"' "$runtime_workflow" >/dev/null
+grep -F 'ServerAliveInterval=30 -o ServerAliveCountMax=20' "$runtime_workflow" >/dev/null
+grep -F 'required_images+=("$cv_image" "$nlp_image")' "$runtime_loader" >/dev/null
+grep -F 'Imported runtime image is not ready in Kubernetes containerd' "$runtime_loader" >/dev/null
 grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
@@ -155,6 +161,8 @@ fi
 grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}' "$runtime_workflow" >/dev/null
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null
 grep -F 'run_smoke_pod "inference" "$inference_image" "IfNotPresent"' "$validator" >/dev/null
+grep -F 'run_smoke_pod "cv" "$cv_image" "IfNotPresent"' "$validator" >/dev/null
+grep -F 'run_smoke_pod "nlp" "$nlp_image" "IfNotPresent"' "$validator" >/dev/null
 grep -F -A1 'import infer_worker' "$validator" | grep -Fx 'import ultralytics' >/dev/null
 grep -F 'status.conditions[?(@.type=="DiskPressure")].status' "$validator" >/dev/null
 grep -F 'Smoke node remained under DiskPressure' "$validator" >/dev/null
