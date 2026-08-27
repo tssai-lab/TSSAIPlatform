@@ -288,15 +288,13 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Transfer image to Main Docker and Kubernetes containerd
+      - name: Activate runtime images on Main through the private registry
         run: |
           image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"
           cv_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
           nlp_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
           docker pull "$image"
           image_id="$(docker image inspect "$image" --format '{{.Id}}')"
-          set -o pipefail
-          docker save "$image" \
-            | gzip -1 \
-            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                "sudo -n /usr/local/sbin/tss-node-load-inference '$image' '$image_id' '$cv_image' '$nlp_image'"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo -n /usr/local/sbin/tss-node-load-inference --registry '$image' '$image_id' '$cv_image' '$nlp_image'"

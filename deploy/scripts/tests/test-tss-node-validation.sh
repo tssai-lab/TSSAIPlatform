@@ -79,6 +79,35 @@ grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader"
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
 grep -F 'tss-node-load-inference' "$runtime_workflow" | grep -F '$cv_image' >/dev/null
+grep -F 'tss-node-load-inference --registry' "$runtime_workflow" >/dev/null
+if grep -F 'docker save "$image" "$cv_image" "$nlp_image"' "$runtime_workflow" >/dev/null; then
+  echo "Main runtime deployment must use the persistent Kubernetes registry credential instead of a combined archive." >&2
+  exit 1
+fi
+grep -F 'ServerAliveInterval=30 -o ServerAliveCountMax=20' "$runtime_workflow" >/dev/null
+grep -F 'required_images+=("$cv_image" "$nlp_image")' "$runtime_loader" >/dev/null
+grep -F 'Private-registry runtime preload passed' "$runtime_loader" >/dev/null
+grep -F 'serviceAccountName: ${service_account}' "$runtime_loader" >/dev/null
+grep -F 'imagePullPolicy: Always' "$runtime_loader" >/dev/null
+grep -F 'TRAINING_K8S_KUBECTL_PATH' "$runtime_loader" >/dev/null
+grep -F 'for required_image in "${required_images[@]}"' "$runtime_loader" >/dev/null
+grep -F 'available_bytes -lt $runtime_reserve_bytes' "$runtime_loader" >/dev/null
+grep -F 'Runtime image is not available in Kubernetes containerd' "$runtime_loader" >/dev/null
+grep -F 'gzip -dc | ctr --namespace k8s.io images import -' "$runtime_loader" >/dev/null
+grep -F 'import_status=("${PIPESTATUS[@]}")' "$runtime_loader" >/dev/null
+grep -F 'import_status[0] != 0 && import_status[0] != 141' "$runtime_loader" >/dev/null
+grep -F 'import_status[1] != 0' "$runtime_loader" >/dev/null
+grep -F 'ctr --namespace k8s.io content get "$image_target_digest"' "$runtime_loader" >/dev/null
+if grep -F 'print $3; exit' "$runtime_loader" >/dev/null; then
+  echo "Runtime image lookup must consume the full containerd list under pipefail." >&2
+  exit 1
+fi
+grep -F 'json.load(sys.stdin)["config"]["digest"]' "$runtime_loader" >/dev/null
+grep -F 'Imported image identifier does not match the runner image.' "$runtime_loader" >/dev/null
+if grep -F 'docker load' "$runtime_loader" >/dev/null; then
+  echo "Runtime loader must not keep a second Docker copy of Kubernetes-only images." >&2
+  exit 1
+fi
 grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
@@ -158,6 +187,8 @@ fi
 grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}' "$runtime_workflow" >/dev/null
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null
 grep -F 'run_smoke_pod "inference" "$inference_image" "IfNotPresent"' "$validator" >/dev/null
+grep -F 'run_smoke_pod "cv" "$cv_image" "IfNotPresent"' "$validator" >/dev/null
+grep -F 'run_smoke_pod "nlp" "$nlp_image" "IfNotPresent"' "$validator" >/dev/null
 grep -F -A1 'import infer_worker' "$validator" | grep -Fx 'import ultralytics' >/dev/null
 grep -F 'status.conditions[?(@.type=="DiskPressure")].status' "$validator" >/dev/null
 grep -F 'Smoke node remained under DiskPressure' "$validator" >/dev/null
