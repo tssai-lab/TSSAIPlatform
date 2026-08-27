@@ -1,6 +1,7 @@
 ARG INFERENCE_BASE_IMAGE=tss/yolo-trainer-cpu:latest
 FROM ${INFERENCE_BASE_IMAGE}
 
+USER root
 WORKDIR /app
 
 ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
@@ -31,5 +32,10 @@ RUN python -m pip uninstall -y opencv-python opencv-contrib-python opencv-contri
 COPY infer_worker.py .
 
 USER 10001
+
+# Verify the libraries are available without relying on the build user's
+# ~/.local directory. Production jobs replace HOME with a writable /tmp path.
+RUN HOME=/tmp/tss-runtime-home PYTHONNOUSERSITE=1 python -c \
+    "import cv2, numpy, torch, transformers, ultralytics; assert int(numpy.__version__.split('.')[0]) < 2"
 
 ENTRYPOINT ["python", "/app/infer_worker.py"]
