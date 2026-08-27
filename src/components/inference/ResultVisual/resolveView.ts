@@ -71,8 +71,11 @@ export function detectViewByShape(
   if (isObjectArray(result.images)) {
     const hit = result.images.some(
       (img) =>
-        isObjectArray(img.detections) &&
-        img.detections.some((det) => hasBBox(det)),
+        (Array.isArray(img.detections) &&
+          typeof img.annotatedImage === 'string' &&
+          img.annotatedImage.trim().length > 0) ||
+        (isObjectArray(img.detections) &&
+          img.detections.some((det) => hasBBox(det))),
     );
     if (hit) return 'image_detection';
   }
