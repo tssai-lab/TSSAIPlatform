@@ -67,6 +67,7 @@ export async function fetchModelCacheOverview(options?: {
   return request<Result<ModelCacheOverview>>('/system/model-cache', {
     method: 'GET',
     ...(options || {}),
+    timeout: 60_000,
   });
 }
 
