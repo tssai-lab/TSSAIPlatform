@@ -170,10 +170,19 @@ headless_reinstall_line="$(grep -nF 'pip install --no-cache-dir --force-reinstal
 [[ "$opencv_uninstall_line" -lt "$headless_reinstall_line" ]]
 
 grep -Fx 'ultralytics==8.3.18' "$inference_ml_requirements" >/dev/null
+grep -Fx 'numpy>=1.23,<2.0' "$inference_ml_requirements" >/dev/null
+grep -Fx 'opencv-python==4.11.0.86' "$inference_ml_requirements" >/dev/null
+grep -Fx 'USER root' "$inference_dockerfile" >/dev/null
+grep -F 'PYTHONNOUSERSITE=1 python -c' "$inference_dockerfile" >/dev/null
+grep -F 'import cv2, numpy, torch, transformers, ultralytics' "$inference_dockerfile" >/dev/null
 inference_requirements_install_line="$(grep -nF 'pip install --no-cache-dir -r requirements-ml-cpu.txt' "$inference_dockerfile" | cut -d: -f1)"
 inference_opencv_uninstall_line="$(grep -nF 'opencv-python opencv-contrib-python opencv-contrib-python-headless' "$inference_dockerfile" | tail -n1 | cut -d: -f1)"
 inference_headless_reinstall_line="$(grep -nF 'opencv-python-headless==4.11.0.86' "$inference_dockerfile" | tail -n1 | cut -d: -f1)"
+inference_runtime_user_line="$(grep -nF 'USER 10001' "$inference_dockerfile" | tail -n1 | cut -d: -f1)"
+inference_runtime_import_line="$(grep -nF 'PYTHONNOUSERSITE=1 python -c' "$inference_dockerfile" | cut -d: -f1)"
 [[ "$inference_requirements_install_line" -lt "$inference_opencv_uninstall_line" ]]
 [[ "$inference_opencv_uninstall_line" -lt "$inference_headless_reinstall_line" ]]
+[[ "$inference_headless_reinstall_line" -lt "$inference_runtime_user_line" ]]
+[[ "$inference_runtime_user_line" -lt "$inference_runtime_import_line" ]]
 
 echo "Deployment validation contract tests passed."
