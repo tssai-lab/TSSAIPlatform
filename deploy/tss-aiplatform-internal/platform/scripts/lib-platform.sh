@@ -39,6 +39,9 @@ load_platform_config() {
   source "$platform_config"
   set +a
 
+  # Optional for backwards-compatible CPU-only platform configurations.
+  TSS_ENABLE_GPU_WORKER="${TSS_ENABLE_GPU_WORKER:-false}"
+
   local name
   for name in \
     TSS_PLATFORM_ENVIRONMENT TSS_PLATFORM_ROOT TSS_REPOSITORY_ROOT \
@@ -65,6 +68,7 @@ load_platform_config() {
   [[ $TSS_PLATFORM_WORKER_IP != "$TSS_PLATFORM_BIND_IP" ]] \
     || die "worker and control-plane IPs must differ"
   validate_dns_label TSS_PLATFORM_WORKER_NODE
+  validate_bool TSS_ENABLE_GPU_WORKER
 
   for name in TSS_PLATFORM_ROOT TSS_REPOSITORY_ROOT TSS_KUBECTL_PATH TSS_ADMIN_KUBECONFIG; do
     validate_path "$name"

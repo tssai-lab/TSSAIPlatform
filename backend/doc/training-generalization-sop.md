@@ -34,10 +34,14 @@
 
 | 镜像 | 基础 | 预装库 | 覆盖方案 |
 |---|---|---|---|
-| `tss-cv-worker` | pytorch:2.5.1-cuda12.4-cudnn9-runtime | torchvision + transformers + Pillow + opencv-python-headless + ultralytics + numpy + pandas | hf 图像分类、yolo 目标检测、其他 CV |
-| `tss-nlp-worker` | pytorch:2.5.1-cuda12.4-cudnn9-runtime | transformers + tokenizers + datasets + scikit-learn + numpy + pandas | fusion 图文一致性、qwen 微调、其他 NLP |
+| `tss-cv-worker` | pytorch:2.7.1-cuda12.8-cudnn9-runtime（固定摘要） | torchvision + transformers + Pillow + opencv-python-headless + ultralytics + numpy + pandas | hf 图像分类、yolo 目标检测、其他 CV |
+| `tss-nlp-worker` | pytorch:2.7.1-cuda12.8-cudnn9-runtime（固定摘要） | transformers + tokenizers + datasets + scikit-learn + numpy + pandas | fusion 图文一致性、qwen 微调、其他 NLP |
 
 两套镜像都带 CUDA，CPU 任务（`gpuCount: 0`）同样可用，只是不使用 GPU。训练方案通过 `runtimes.image` 引用对应通用镜像，`deviceType` 与 `resourceProfiles.gpuCount` 决定是否调度到 GPU 节点。
+
+当前 GPU 阶段只开放单卡任务：`deviceType: NVIDIA_GPU`、`gpuCount: 1`，
+并使用可跨环境复用的 `tss.ai/accelerator=nvidia` 标签。多卡和分布式训练
+需要独立完成通信、失败恢复和资源一致性设计后再开放。
 
 通用镜像只装「重且通用」的库（torch/transformers 这种几个 G 的），覆盖 80% 常见场景。长尾依赖（小众库）由下一节「自动依赖镜像」处理，无需为每个新任务改通用镜像。
 

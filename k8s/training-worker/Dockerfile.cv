@@ -1,7 +1,8 @@
 # CV 通用训练 Worker 镜像。
-# 覆盖图像分类、目标检测等 CV 训练方案，预装 PyTorch + transformers + ultralytics + opencv。
+# PyTorch 2.7.1 + CUDA 12.8 是 RTX 4080（sm_89）和 RTX 5090（sm_120）
+# 在现有驱动上的共同基线。基础镜像固定 linux/amd64 manifest digest，禁止漂移。
 # 用户在 code.zip 内带 requirements.txt 时，由层2派生镜像机制 FROM 本镜像再 pip install。
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2
 
 WORKDIR /app
 

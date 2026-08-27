@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -42,6 +43,10 @@ public class TrainingKubernetesProperties {
     private String clusterName = "tss-training";
     private String namespace = "tss-training";
     private String serviceAccount = "tss-training-worker";
+
+    /** RuntimeClass used only by Pods that request NVIDIA GPUs. */
+    @Pattern(regexp = "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$", message = "must be a valid RuntimeClass name")
+    private String gpuRuntimeClassName = "nvidia";
 
     /** 项目根目录相对路径，用于定位脚本与 kubeconfig */
     private String projectRoot = "..";

@@ -70,17 +70,31 @@ class TrainingPlanV2ValidationTest {
     }
 
     @Test
-    void rejectsLegacyMatchingFieldsGpuAndMissingPublishedSpec() {
+    void rejectsLegacyMatchingFieldsAndMissingPublishedSpec() {
         assertViolation(replace(validYaml(),
                         "    acceptedSpecIds: [model.cv.hf-image/v1]",
                         "    acceptedSpecIds: [model.cv.hf-image/v1]\n    taskTypes: []"),
                 "禁止 formats/taskTypes/requiredEntries");
-        assertViolation(replace(validYaml(), "deviceType: CPU", "deviceType: NVIDIA_GPU"),
-                "当前仅允许发布 CPU runtime");
         assertViolation(replace(validYaml(),
                         "      publishedModelSpecId: model.cv.hf-image/v1\n",
                         ""),
                 "必须声明 publishedModelSpecId");
+    }
+
+    @Test
+    void acceptsOnlyOneGpuWithPortableNvidiaNodeSelector() {
+        String gpuYaml = replace(validYaml(), "deviceType: CPU", "deviceType: NVIDIA_GPU");
+        gpuYaml = replace(gpuYaml, "gpuCount: 0", "gpuCount: 1");
+        gpuYaml = replace(gpuYaml,
+                "tss.ai/node-pool: cpu", "tss.ai/accelerator: nvidia");
+
+        validator.validate(parse(gpuYaml), "valid-gpu-v2.yaml");
+
+        assertViolation(replace(gpuYaml, "gpuCount: 1", "gpuCount: 2"),
+                "当前只允许 gpuCount=1");
+        assertViolation(replace(gpuYaml,
+                        "tss.ai/accelerator: nvidia", "tss.ai/node-pool: gpu"),
+                "nodeSelector 必须为 tss.ai/accelerator=nvidia");
     }
 
     @Test

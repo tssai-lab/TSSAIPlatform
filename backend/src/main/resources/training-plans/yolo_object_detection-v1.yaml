@@ -3,7 +3,8 @@ id: yolo_object_detection
 version: v1
 displayName: YOLO object detection training
 description: Train an uploaded YOLO weight with an uploaded YOLO dataset and approved code.
-enabled: true
+enabled: false
+unavailableReason: GPU Worker 新镜像摘要和单卡实机验收尚未完成，暂不允许发起。
 trainingModes: [FROM_SCRATCH, FULL_FINETUNE]
 
 execution:
@@ -99,7 +100,7 @@ runtimes:
         ephemeralStorageLimit: 50Gi
         gpuCount: 1
         nodeSelector:
-          tss.ai/node-pool: gpu
+          tss.ai/accelerator: nvidia
 
 outputs:
   progressProtocol: TSS_EVENT_JSONL_V1

@@ -348,17 +348,21 @@ public class JobScheduler {
 
     private boolean matchesNodeSelector(ComputeServer node, Map<String, String> selector) {
         // 从 k8s_labels_json 解析 K8s 标签
+        boolean acceleratorRequired = selector.containsKey("tss.ai/accelerator");
         try {
             String labelsJson = node.getK8sLabelsJson();
-            if (labelsJson == null || labelsJson.isBlank()) return true;
+            if (labelsJson == null || labelsJson.isBlank()) return !acceleratorRequired;
             JsonNode labels = new ObjectMapper().readTree(labelsJson);
+            if (!labels.isObject()) return !acceleratorRequired;
             for (Map.Entry<String, String> e : selector.entrySet()) {
                 String val = labels.has(e.getKey()) ? labels.get(e.getKey()).asText() : null;
                 if (!e.getValue().equals(val)) return false;
             }
             return true;
         } catch (Exception ignored) {
-            return true;
+            // GPU capability must be positively observed. Keep the historical
+            // CPU fallback behavior so this isolated feature cannot stall Main.
+            return !acceleratorRequired;
         }
     }
 

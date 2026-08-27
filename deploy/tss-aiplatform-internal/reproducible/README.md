@@ -146,8 +146,13 @@ containerd PID do not change.
 6. Bootstrap the empty platform and run its verification scripts.
 7. Build the locked frontend commit and install the reviewed Nginx template.
 8. Import the locked CPU runtime images and run real CV/NLP acceptance tasks.
+9. For a GPU worker, import the locked NVIDIA bundle, enable
+   `TSS_ENABLE_GPU_WORKER`, rerun the guarded platform bootstrap, and require a
+   positive `nvidia.com/gpu` capacity before any single-GPU acceptance task.
 
 Steps 7 and 8 are required for a complete user-facing CPU platform. Finishing
 only the four base containers is an empty-platform milestone, not full
-acceptance. GPU workload images and GPU training behavior are intentionally not
-claimed here because that feature has not yet completed development.
+acceptance. Step 9 installs GPU discovery infrastructure only. GPU business
+behavior is claimed only after the immutable workload image and the guarded
+single-GPU real test both pass; on a shared host, Kubernetes capacity never
+replaces the immediate host-level idle check.

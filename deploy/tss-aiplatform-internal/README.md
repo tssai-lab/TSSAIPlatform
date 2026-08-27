@@ -147,6 +147,16 @@ sudo bash deploy/tss-aiplatform-internal/scripts/install-metrics-server.sh \
   --confirm-node REPLACE_WITH_REVIEWED_CONTROL_PLANE_NODE
 ```
 
+For a GPU worker, also import the generated `nvidia-amd64.tar` into that
+worker's isolated project containerd. GPU discovery is not an undocumented
+post-install command: after the runtime and image preconditions pass, set
+`TSS_ENABLE_GPU_WORKER=true` in the root-owned platform configuration and run
+the platform bootstrap. The bootstrap installs the committed, checksum-locked
+NVIDIA Device Plugin and `nvidia` RuntimeClass through the guarded
+`platform/scripts/install-gpu-worker.sh`. CPU-only deployments leave the same
+switch false and skip this step. The complete safety gate and removal boundary
+are documented in [`platform/README.md`](platform/README.md#optional-first-gpu-worker).
+
 After the exact image import succeeds, prepare only the active control-plane
 UFW instance. The command leaves UFW enabled and preserves its defaults and
 unrelated rules. It permits the reviewed worker address to reach only the

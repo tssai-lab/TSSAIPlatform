@@ -136,7 +136,7 @@
       "required": ["id", "deviceType", "image", "imagePullPolicy", "productionDigestRequired", "resourceProfiles"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
-        "deviceType": { "const": "CPU" },
+        "deviceType": { "enum": ["CPU", "NVIDIA_GPU"] },
         "image": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^crpi-s1uie3z8n3mbqf6y\\.cn-shanghai\\.personal\\.cr\\.aliyuncs\\.com/tss-platform/tss-(cv|nlp)-worker@sha256:[0-9a-f]{64}$" },
         "imagePullPolicy": { "enum": ["Always", "IfNotPresent"] },
         "productionDigestRequired": { "const": true },
@@ -146,7 +146,60 @@
           "minItems": 1,
           "maxItems": 16
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "deviceType": { "const": "CPU" } },
+            "required": ["deviceType"]
+          },
+          "then": {
+            "properties": {
+              "resourceProfiles": {
+                "items": {
+                  "properties": {
+                    "gpuCount": { "const": 0 },
+                    "nodeSelector": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "maxProperties": 1,
+                      "properties": {
+                        "tss.ai/node-pool": { "const": "cpu" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "deviceType": { "const": "NVIDIA_GPU" } },
+            "required": ["deviceType"]
+          },
+          "then": {
+            "properties": {
+              "resourceProfiles": {
+                "items": {
+                  "required": ["nodeSelector"],
+                  "properties": {
+                    "gpuCount": { "const": 1 },
+                    "nodeSelector": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["tss.ai/accelerator"],
+                      "properties": {
+                        "tss.ai/accelerator": { "const": "nvidia" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "resourceProfile": {
       "type": "object",
@@ -159,13 +212,14 @@
         "memoryRequest": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
         "memoryLimit": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
         "ephemeralStorageLimit": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
-        "gpuCount": { "const": 0 },
+        "gpuCount": { "type": "integer", "minimum": 0, "maximum": 1 },
         "nodeSelector": {
           "type": "object",
           "additionalProperties": false,
           "maxProperties": 1,
           "properties": {
-            "tss.ai/node-pool": { "const": "cpu" }
+            "tss.ai/node-pool": { "const": "cpu" },
+            "tss.ai/accelerator": { "const": "nvidia" }
           }
         }
       }

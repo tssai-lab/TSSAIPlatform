@@ -65,7 +65,7 @@
 `scheduleOrStart` 通过 `assignNodeForTraining(task, nodeSelector)` 选择节点，核心逻辑（私有方法 `assignNode`）：
 
 1. **筛选节点**：`status = online` 且 `enabled = true` 的节点；
-2. **按 nodeSelector 匹配**：默认 `tss.ai/node-pool: cpu`（`resolveNodeSelector`）；GPU 任务（`gpuCount > 0`）只调度到 `tss.ai/node-pool: gpu` 的节点；
+2. **按 nodeSelector 匹配**：CPU 默认使用 `tss.ai/node-pool: cpu`；当前单卡 GPU 任务必须使用 `tss.ai/accelerator: nvidia`。节点标签缺失或损坏时按“不匹配”处理，不允许绕过选择器；
 3. **统计已占用资源**：汇总该节点上 `running` + `scheduled` 任务申请的 CPU / 内存 / GPU；
 4. **计算剩余容量**：`节点容量 − 已占用`；
 5. **选节点**：优先满足任务需求（CPU、内存、GPU），在满足的节点中选**余量最多**的。
@@ -120,8 +120,8 @@ nvidia-smi        # 确认 GPU 可见
 ### 3.3 打节点标签（调度器匹配依据）
 
 ```bash
-# 调度器按此标签把 GPU 任务（gpuCount>0）调度到该节点
-kubectl label node <gpu-node-name> tss.ai/node-pool=gpu
+# GPU 能力使用附加标签，不能覆盖节点原有 CPU 池标签
+kubectl label node <gpu-node-name> tss.ai/accelerator=nvidia
 ```
 
 ### 3.4 后端自动发现

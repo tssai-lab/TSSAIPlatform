@@ -7,6 +7,7 @@ import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.service.ModelCachePolicyService;
+import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpec;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.springframework.stereotype.Component;
@@ -29,6 +30,7 @@ public class KubernetesJobManifestBuilder {
     private static final Logger LOGGER = LoggerFactory.getLogger(KubernetesJobManifestBuilder.class);
     private static final Pattern SHA256_PATTERN = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern LINUX_ABSOLUTE_PATH = Pattern.compile("/[A-Za-z0-9._/-]+");
+    private static final Pattern RUNTIME_CLASS_NAME = Pattern.compile("[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?");
 
     private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
     private JobTtlPolicyService jobTtlPolicyService;
@@ -74,6 +76,7 @@ public class KubernetesJobManifestBuilder {
             String targetNodeName
     ) {
         TrainingRunSpec runSpec = runSpecCodec.decode(task);
+        boolean gpuRuntimeRequired = validateDeviceResources(runSpec);
         String jobName = KubernetesJobNaming.jobNameForTraining(task.getId());
         String trainingLabel = KubernetesJobNaming.sanitizeLabelValue(task.getId());
         long deadlineSeconds = Math.min(properties.getJobActiveDeadlineSeconds(), runSpec.security().maxRuntimeSeconds());
@@ -112,6 +115,9 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 8, "app.kubernetes.io/name: tss-training-job");
         line(yaml, 8, "tss.ai/training-id: " + quote(trainingLabel));
         line(yaml, 4, "spec:");
+        if (gpuRuntimeRequired) {
+            line(yaml, 6, "runtimeClassName: " + requireGpuRuntimeClassName());
+        }
         line(yaml, 6, "serviceAccountName: " + properties.getServiceAccount());
         line(yaml, 6, "automountServiceAccountToken: false");
         line(yaml, 6, "restartPolicy: Never");
@@ -176,7 +182,7 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 14, "cpu: " + quote(runSpec.resources().cpuLimit()));
         line(yaml, 14, "memory: " + quote(runSpec.resources().memoryLimit()));
         line(yaml, 14, "ephemeral-storage: " + quote(runSpec.resources().ephemeralStorageLimit()));
-        if (runSpec.resources().gpuCount() != null && runSpec.resources().gpuCount() > 0) {
+        if (gpuRuntimeRequired) {
             line(yaml, 14, "nvidia.com/gpu: " + quote(runSpec.resources().gpuCount().toString()));
         }
         line(yaml, 10, "securityContext:");
@@ -185,6 +191,38 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 14, "drop:");
         line(yaml, 16, "- ALL");
         return yaml.toString();
+    }
+
+    private boolean validateDeviceResources(TrainingRunSpec runSpec) {
+        if (runSpec.runtime() == null || runSpec.runtime().deviceType() == null) {
+            throw new IllegalStateException("RunSpec runtime deviceType is required");
+        }
+        if (runSpec.resources() == null || runSpec.resources().gpuCount() == null) {
+            throw new IllegalStateException("RunSpec resources gpuCount is required");
+        }
+        int gpuCount = runSpec.resources().gpuCount();
+        if (gpuCount < 0) {
+            throw new IllegalStateException("RunSpec gpuCount cannot be negative");
+        }
+        if (runSpec.runtime().deviceType() == TrainingPlanDefinition.DeviceType.NVIDIA_GPU) {
+            if (gpuCount != 1) {
+                throw new IllegalStateException("NVIDIA_GPU runtime must request exactly one GPU");
+            }
+            return true;
+        }
+        if (gpuCount != 0) {
+            throw new IllegalStateException("CPU runtime cannot request a GPU");
+        }
+        return false;
+    }
+
+    private String requireGpuRuntimeClassName() {
+        String value = properties.getGpuRuntimeClassName();
+        String normalized = value == null ? "" : value.trim();
+        if (!RUNTIME_CLASS_NAME.matcher(normalized).matches()) {
+            throw new IllegalStateException("training.kubernetes.gpu-runtime-class-name is invalid");
+        }
+        return normalized;
     }
 
     private int effectiveJobTtlSecondsAfterFinished() {

@@ -19,9 +19,13 @@ class TrainingPlanRegistryTest {
         );
         registry.initialize();
 
-        TrainingPlanDefinition yolo = registry.requireEnabled("yolo_object_detection", "v1");
+        TrainingPlanDefinition yolo = registry.require("yolo_object_detection", "v1");
+        assertFalse(yolo.enabled(), "GPU plan must remain unavailable until its immutable image passes smoke");
         assertEquals("train.py", yolo.execution().entrypoint());
         assertTrue(yolo.trainingModes().contains(TrainingPlanDefinition.TrainingMode.FULL_FINETUNE));
+        assertEquals(1, yolo.runtimes().get(0).resourceProfiles().get(0).gpuCount());
+        assertEquals("nvidia", yolo.runtimes().get(0).resourceProfiles().get(0)
+                .nodeSelector().get("tss.ai/accelerator"));
         assertEquals("best.pt", yolo.outputs().artifacts().stream()
                 .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
                 .findFirst().orElseThrow().path());

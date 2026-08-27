@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TrainingPlanV2SchemaContractTest {
 
     @Test
-    void schemaDeclaresV2SpecBasedCpuOnlyContractWithoutLegacyMatchingFields() throws Exception {
+    void schemaDeclaresV2SpecBasedSingleGpuContractWithoutLegacyMatchingFields() throws Exception {
         try (InputStream input = getClass().getResourceAsStream(
                 "/training-plans/schema/training-plan-v2.schema.json"
         )) {
@@ -24,7 +24,10 @@ class TrainingPlanV2SchemaContractTest {
             assertEquals("tss.training.plan/v2",
                     schema.at("/properties/schemaVersion/const").asText());
             assertTrue(schema.at("/properties/category/enum").toString().contains("OTHER"));
-            assertEquals("CPU", schema.at("/$defs/runtime/properties/deviceType/const").asText());
+            assertTrue(schema.at("/$defs/runtime/properties/deviceType/enum").toString()
+                    .contains("NVIDIA_GPU"));
+            assertEquals(1,
+                    schema.at("/$defs/resourceProfile/properties/gpuCount/maximum").asInt());
             assertTrue(schema.at("/$defs/modelInput/required").toString().contains("acceptedSpecIds"));
             assertTrue(schema.at("/$defs/datasetInput/required").toString().contains("acceptedSpecIds"));
             assertFalse(schema.at("/$defs/modelInput/properties").has("taskTypes"));

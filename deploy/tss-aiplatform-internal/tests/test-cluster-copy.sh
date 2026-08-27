@@ -510,5 +510,37 @@ bash "$metrics_installer" --self-test >/dev/null
 grep -F 'install-metrics-server.sh' \
   "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
 
+nvidia_manifest="${internal_dir}/manifests/nvidia-device-plugin.yml"
+gpu_installer="${internal_dir}/platform/scripts/install-gpu-worker.sh"
+[[ -f $nvidia_manifest && -f $gpu_installer ]]
+nvidia_url="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}/deployments/static/nvidia-device-plugin.yml"
+nvidia_sha="$(awk -v url="$nvidia_url" \
+  '$1 == "manifest" && $2 == url {sub(/^sha256:/, "", $3); print $3}' \
+  "$artifact_lock")"
+[[ $nvidia_sha =~ ^[0-9a-f]{64}$ ]]
+[[ $(sha256sum "$nvidia_manifest" | awk '{print $1}') == "$nvidia_sha" ]]
+grep -F 'runtimeClassName: nvidia' "$gpu_installer" >/dev/null
+grep -F 'tss.ai/accelerator: nvidia' "$gpu_installer" >/dev/null
+grep -F 'tss.ai/node-pool=cpu' "$gpu_installer" >/dev/null
+grep -F 'imagePullPolicy: Never' "$gpu_installer" >/dev/null
+grep -F 'apply --dry-run=server' "$gpu_installer" >/dev/null
+grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
+  "$gpu_installer" >/dev/null
+grep -F 'nvidia.com/gpu' "$gpu_installer" >/dev/null
+grep -F 'no training Job was submitted' "$gpu_installer" >/dev/null
+bash "$gpu_installer" --self-test >/dev/null
+grep -F 'install-gpu-worker.sh' \
+  "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
+grep -F 'TSS_ENABLE_GPU_WORKER=false' \
+  "${internal_dir}/platform/platform.env.example" >/dev/null
+
+gpu_worker_base='FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2'
+for gpu_dockerfile in \
+  "${internal_dir}/../../k8s/training-worker/Dockerfile.cv" \
+  "${internal_dir}/../../k8s/training-worker/Dockerfile.nlp" \
+  "${internal_dir}/../../k8s/training-worker/Dockerfile.pytorch-cuda12"; do
+  [[ $(grep -Fxc "$gpu_worker_base" "$gpu_dockerfile") -eq 1 ]]
+done
+
 find "${internal_dir}" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 echo "Internal cluster copy contract tests passed."

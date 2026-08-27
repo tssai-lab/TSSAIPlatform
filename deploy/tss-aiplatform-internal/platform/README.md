@@ -67,6 +67,51 @@ login, permission denial and a tiny MinIO upload/download/delete flow, and
 retains the resulting audit evidence. After the first deployment, `--check`
 performs the same local preflight without changing state.
 
+## Optional first GPU worker
+
+GPU support is an explicit opt-in and is part of the normal bootstrap path, so
+a clean deployment cannot silently omit the required component. Keep
+`TSS_ENABLE_GPU_WORKER=false` for CPU-only clusters. Set it to `true` in the
+root-owned `platform.env` only after all of the following are true:
+
+- the reviewed worker uses the isolated `nvidia` containerd runtime;
+- `nvidia-amd64.tar` has been imported into the project containerd on that
+  worker;
+- the worker is Ready and the configured node name still identifies that exact
+  host;
+- host-level `nvidia-smi` confirms that no other laboratory user is using any
+  GPU exposed by the worker's Device Plugin. The first-stage scheduler requests
+  one GPU but cannot safely choose around unmanaged host processes.
+
+The guarded Kubernetes bootstrap then installs the digest-locked NVIDIA Device
+Plugin and the `nvidia` RuntimeClass from committed artifacts. It adds only the
+separate label `tss.ai/accelerator=nvidia`; it deliberately preserves
+`tss.ai/node-pool=cpu`, because the same worker must remain available for CPU
+jobs. Check mode performs the manifest checksum, cluster identity and
+server-side dry-run without changing the cluster:
+
+```bash
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-gpu-worker.sh \
+  --check /etc/tss-aiplatform/node.env /etc/tss-aiplatform/platform.env
+
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-gpu-worker.sh \
+  --apply /etc/tss-aiplatform/node.env /etc/tss-aiplatform/platform.env \
+  --confirm-node tss-ai-control-01
+```
+
+Successful installation means the worker reports a positive allocatable
+`nvidia.com/gpu` value. That proves Kubernetes can discover the device; it does
+not prove that an unmanaged host process is absent. On these shared laboratory
+servers, every real GPU acceptance run still requires an immediate host-level
+idle check. Never stop another user's process or submit a second test merely
+because Kubernetes reports capacity.
+
+If the optional component must be removed, first ensure no project GPU Job is
+running, then delete only `nvidia-device-plugin-daemonset`, the `nvidia`
+RuntimeClass and the worker's `tss.ai/accelerator` label. Do not reset the
+cluster, change the CPU node-pool label, prune shared images or remove the host
+driver/runtime. Preserve failed Pod logs before any cleanup.
+
 ## Credential and permission boundary
 
 The backend kubeconfig is stored at

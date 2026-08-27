@@ -4,6 +4,7 @@ import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.InferenceTask;
+import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.ComputeServerRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
 import com.tss.platform.repository.TrainingExperimentVersionRepository;
@@ -12,10 +13,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -76,6 +79,38 @@ class JobSchedulerModelCacheTest {
                 fixture.scheduler.assignNodeForInference(new InferenceTask(), digest));
     }
 
+    @Test
+    void gpuSelectorFailsClosedWhenNodeLabelsAreMissingOrMalformed() {
+        Fixture fixture = new Fixture(false);
+        TrainingExperimentVersion task = new TrainingExperimentVersion();
+        task.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":1}}
+                """);
+        ComputeServer missing = gpuNode("10.0.0.1", null);
+        ComputeServer malformed = gpuNode("10.0.0.2", "not-json");
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(missing, malformed));
+
+        assertNull(fixture.scheduler.assignNodeForTraining(
+                task, Map.of("tss.ai/accelerator", "nvidia")));
+
+        ComputeServer matching = gpuNode(
+                "10.0.0.3", "{\"tss.ai/accelerator\":\"nvidia\",\"tss.ai/node-pool\":\"cpu\"}");
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(missing, malformed, matching));
+        assertEquals("10.0.0.3", fixture.scheduler.assignNodeForTraining(
+                task, Map.of("tss.ai/accelerator", "nvidia")));
+    }
+
+    @Test
+    void cpuSchedulingKeepsHistoricalFallbackWhenMetricsLabelsAreTemporarilyMissing() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer cpu = node("10.0.0.4", false);
+        cpu.setK8sLabelsJson(null);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(cpu));
+
+        assertEquals("10.0.0.4",
+                fixture.scheduler.assignNodeForInference(new InferenceTask(), null));
+    }
+
     private static ComputeServer node(String serverIp, boolean cacheReady) {
         ComputeServer node = new ComputeServer();
         node.setServerIp(serverIp);
@@ -87,6 +122,13 @@ class JobSchedulerModelCacheTest {
         node.setGpuCount(0);
         node.setK8sLabelsJson("{\"tss.ai/node-pool\":\"cpu\",\"tss.ai/model-cache-ready\":\""
                 + cacheReady + "\"}");
+        return node;
+    }
+
+    private static ComputeServer gpuNode(String serverIp, String labelsJson) {
+        ComputeServer node = node(serverIp, false);
+        node.setGpuCount(2);
+        node.setK8sLabelsJson(labelsJson);
         return node;
     }
 

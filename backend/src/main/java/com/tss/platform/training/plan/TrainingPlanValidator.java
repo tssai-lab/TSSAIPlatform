@@ -371,9 +371,6 @@ public class TrainingPlanValidator {
             }
             if (runtime.deviceType() == null) {
                 errors.add("runtime " + runtime.id() + " 缺少 deviceType");
-            } else if (v2 && runtime.deviceType() != TrainingPlanDefinition.DeviceType.CPU) {
-                addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
-                        "runtimes.deviceType 当前仅允许发布 CPU runtime");
             }
             requireText(runtime.image(), "runtime.image", errors);
             requireMaxLength(runtime.image(), 512, "runtime.image", errors);
@@ -462,11 +459,12 @@ public class TrainingPlanValidator {
             errors.add("resourceProfile.nodeSelector 不能超过16项");
         }
         if (v2) {
-            validateImportedResourcePolicy(profile, errors);
+            validateImportedResourcePolicy(runtime, profile, errors);
         }
     }
 
     private void validateImportedResourcePolicy(
+            TrainingPlanDefinition.RuntimeVariant runtime,
             TrainingPlanDefinition.ResourceProfile profile,
             List<String> errors
     ) {
@@ -505,7 +503,16 @@ public class TrainingPlanValidator {
         }
 
         Map<String, String> selector = safeMap(profile.nodeSelector());
-        if (!selector.isEmpty() && !selector.equals(Map.of("tss.ai/node-pool", "cpu"))) {
+        if (runtime.deviceType() == TrainingPlanDefinition.DeviceType.NVIDIA_GPU) {
+            if (!Integer.valueOf(1).equals(profile.gpuCount())) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                        "NVIDIA_GPU runtime 当前只允许 gpuCount=1");
+            }
+            if (!selector.equals(Map.of("tss.ai/accelerator", "nvidia"))) {
+                addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
+                        "NVIDIA_GPU runtime 的 nodeSelector 必须为 tss.ai/accelerator=nvidia");
+            }
+        } else if (!selector.isEmpty() && !selector.equals(Map.of("tss.ai/node-pool", "cpu"))) {
             addError(errors, TrainingPlanErrorCode.PLAN_SECURITY_POLICY_VIOLATION,
                     "resourceProfile.nodeSelector 只允许 tss.ai/node-pool=cpu");
         }

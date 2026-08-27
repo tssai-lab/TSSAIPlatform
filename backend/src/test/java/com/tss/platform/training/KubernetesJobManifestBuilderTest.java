@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -47,6 +48,7 @@ class KubernetesJobManifestBuilderTest {
         when(resources.memoryLimit()).thenReturn("2Gi");
         when(resources.gpuCount()).thenReturn(0);
         when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.CPU);
         when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
 
         TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
@@ -65,6 +67,7 @@ class KubernetesJobManifestBuilderTest {
         assertTrue(yaml.contains("workingDir: /workspace/job\n"));
         assertFalse(yaml.contains("workingDir: /workspace/job/code\n"));
         assertFalse(yaml.contains("nvidia.com/gpu:"));
+        assertFalse(yaml.contains("runtimeClassName:"));
         assertTrue(yaml.contains("ttlSecondsAfterFinished: 180\n"));
     }
 
@@ -93,8 +96,9 @@ class KubernetesJobManifestBuilderTest {
         when(resources.cpuLimit()).thenReturn("2");
         when(resources.memoryRequest()).thenReturn("1Gi");
         when(resources.memoryLimit()).thenReturn("2Gi");
-        when(resources.gpuCount()).thenReturn(2);
+        when(resources.gpuCount()).thenReturn(1);
         when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.NVIDIA_GPU);
         when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
 
         TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
@@ -106,7 +110,8 @@ class KubernetesJobManifestBuilderTest {
 
         String yaml = builder.buildJobYaml(task, "access", "secret", "models", "seu4080");
 
-        assertTrue(yaml.contains("nvidia.com/gpu: \"2\""));
+        assertTrue(yaml.contains("nvidia.com/gpu: \"1\""));
+        assertTrue(yaml.contains("runtimeClassName: nvidia"));
         assertTrue(yaml.contains("nodeName: seu4080"));
     }
 
@@ -153,6 +158,7 @@ class KubernetesJobManifestBuilderTest {
         when(resources.memoryLimit()).thenReturn("2Gi");
         when(resources.gpuCount()).thenReturn(0);
         when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.CPU);
         when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
 
         TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
@@ -184,5 +190,68 @@ class KubernetesJobManifestBuilderTest {
         assertTrue(yaml.contains("nodeName: kind-worker"));
         assertTrue(yaml.contains("name: MODEL_CACHE_MAX_BYTES\n              value: \"8192\""));
         assertTrue(yaml.contains("name: MODEL_CACHE_MIN_FREE_BYTES\n              value: \"256\""));
+    }
+
+    @Test
+    void rejectsGpuCountOnCpuRuntimeBeforeCreatingAJob() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
+        TrainingRunSpec runSpec = mock(TrainingRunSpec.class);
+        TrainingRunSpec.Runtime runtime = mock(TrainingRunSpec.Runtime.class);
+        TrainingRunSpec.Resources resources = mock(TrainingRunSpec.Resources.class);
+        when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.CPU);
+        when(runSpec.resources()).thenReturn(resources);
+        when(resources.gpuCount()).thenReturn(1);
+        TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
+        when(codec.decode(task)).thenReturn(runSpec);
+
+        KubernetesJobManifestBuilder builder = new KubernetesJobManifestBuilder(
+                properties, codec, mock(TrainingRuntimeImageService.class));
+
+        assertThrows(IllegalStateException.class,
+                () -> builder.buildJobYaml(task, "access", "secret", "models", null));
+    }
+
+    @Test
+    void rejectsGpuRuntimeWithoutAGpuRequestBeforeCreatingAJob() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
+        TrainingRunSpec runSpec = mock(TrainingRunSpec.class);
+        TrainingRunSpec.Runtime runtime = mock(TrainingRunSpec.Runtime.class);
+        TrainingRunSpec.Resources resources = mock(TrainingRunSpec.Resources.class);
+        when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.NVIDIA_GPU);
+        when(runSpec.resources()).thenReturn(resources);
+        when(resources.gpuCount()).thenReturn(0);
+        TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
+        when(codec.decode(task)).thenReturn(runSpec);
+
+        KubernetesJobManifestBuilder builder = new KubernetesJobManifestBuilder(
+                properties, codec, mock(TrainingRuntimeImageService.class));
+
+        assertThrows(IllegalStateException.class,
+                () -> builder.buildJobYaml(task, "access", "secret", "models", null));
+    }
+
+    @Test
+    void rejectsMultiGpuRequestUntilDistributedTrainingIsImplemented() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
+        TrainingRunSpec runSpec = mock(TrainingRunSpec.class);
+        TrainingRunSpec.Runtime runtime = mock(TrainingRunSpec.Runtime.class);
+        TrainingRunSpec.Resources resources = mock(TrainingRunSpec.Resources.class);
+        when(runSpec.runtime()).thenReturn(runtime);
+        when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.NVIDIA_GPU);
+        when(runSpec.resources()).thenReturn(resources);
+        when(resources.gpuCount()).thenReturn(2);
+        TrainingRunSpecCodec codec = mock(TrainingRunSpecCodec.class);
+        when(codec.decode(task)).thenReturn(runSpec);
+
+        KubernetesJobManifestBuilder builder = new KubernetesJobManifestBuilder(
+                properties, codec, mock(TrainingRuntimeImageService.class));
+
+        assertThrows(IllegalStateException.class,
+                () -> builder.buildJobYaml(task, "access", "secret", "models", null));
     }
 }

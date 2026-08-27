@@ -2,7 +2,7 @@
 
 适用版本：`tss.training.plan/v2`  
 适用角色：平台超级管理员  
-当前设备范围：CPU
+当前设备范围：CPU、单张 NVIDIA GPU
 
 ## 1. 先理解三个独立功能
 
@@ -15,7 +15,7 @@
 ## 2. 当前能力边界
 
 - 在线方案只接受 `tss.training.plan/v2`。
-- 当前只允许 CPU runtime，`gpuCount` 必须为 `0`。
+- CPU runtime 的 `gpuCount` 必须为 `0`；NVIDIA GPU runtime 当前只能填写 `1`，多卡和分布式训练尚未开放。
 - 当前可下载并通过同源校验器的模板只有 `cv-cpu-v2`。
 - 当前 CV 模板接受：
   - 模型规范 `model.cv.hf-image/v1`
@@ -29,7 +29,9 @@
 
 1. 使用超级管理员账号；普通管理员和普通用户无发布权限。
 2. 需要使用的模型、数据集和训练代码已经上传；训练代码已经审核通过。
-3. 计算节点带有 `tss.ai/node-pool=cpu` 标签并处于可调度状态。
+3. CPU 计算节点带有 `tss.ai/node-pool=cpu` 标签；GPU 计算节点额外带有
+   `tss.ai/accelerator=nvidia` 标签，并已安装平台锁定的 RuntimeClass 和
+   NVIDIA Device Plugin。
 4. `tss-training-worker` ServiceAccount 已配置私有镜像 `imagePullSecrets`，或模板中的不可变镜像已存在于目标节点。
 5. 节点磁盘、内存和 CPU 余量满足模板中的 resource profile。
 
@@ -108,7 +110,12 @@ YAML 只规定“键和值怎么写”，字段名由本平台定义。`schemaVe
 - `productionDigestRequired: true`；
 - `imagePullPolicy` 只能是 `Always` 或 `IfNotPresent`；
 - CPU 上限不超过 8 核、内存上限不超过 32 GiB、临时磁盘不超过 50 GiB；
-- `nodeSelector` 为空或仅为 `tss.ai/node-pool: cpu`。
+- CPU runtime：`gpuCount: 0`，`nodeSelector` 为空或仅为
+  `tss.ai/node-pool: cpu`；
+- NVIDIA GPU runtime：`gpuCount: 1`，`nodeSelector` 必须且只能为
+  `tss.ai/accelerator: nvidia`；
+- 当前不接受多卡请求；共享实验室主机在每次真实任务前仍需确认所有由
+  Kubernetes 暴露的 GPU 都没有被主机侧进程占用。
 
 模板中的 digest 是不可变版本。更换镜像必须先由平台流水线构建、扫描和 smoke，再取得新 digest，不能手写一个不存在的摘要。
 

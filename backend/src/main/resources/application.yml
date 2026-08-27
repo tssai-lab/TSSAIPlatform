@@ -123,6 +123,7 @@ training:
     cluster-name: ${TRAINING_K8S_CLUSTER_NAME:tss-training}
     namespace: ${TRAINING_K8S_NAMESPACE:tss-training}
     service-account: ${TRAINING_K8S_SERVICE_ACCOUNT:tss-training-worker}
+    gpu-runtime-class-name: ${TRAINING_K8S_GPU_RUNTIME_CLASS_NAME:nvidia}
     project-root: ${TRAINING_K8S_PROJECT_ROOT:..}
     kubeconfig: ${TRAINING_K8S_KUBECONFIG:k8s/.kube/config}
     kind-path: ${TRAINING_K8S_KIND_PATH:.tools/bin/kind}
