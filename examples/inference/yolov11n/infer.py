@@ -24,6 +24,9 @@ from typing import Any
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 MODEL_EXTENSIONS = {".pt", ".onnx", ".engine", ".torchscript"}
+INPUT_PREVIEW_LIMIT = 20
+INPUT_PREVIEW_MAX_EDGE = 512
+INPUT_PREVIEW_JPEG_QUALITY = 85
 
 
 def read_json_env(name: str, default: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +91,64 @@ def collect_images(input_path: Path) -> list[Path]:
             p for p in input_path.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
         )
     return []
+
+
+def build_input_preview(
+    image_path: Path,
+    output_dir: Path,
+    position: int,
+) -> dict[str, Any] | None:
+    """Write one bounded, metadata-free preview without affecting inference success."""
+    if position < 0 or position >= INPUT_PREVIEW_LIMIT:
+        return None
+
+    relative_path = Path("previews") / "images" / f"{position:04d}.jpg"
+    target_path = output_dir / relative_path
+    try:
+        from PIL import Image, ImageOps
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(image_path) as source:
+            oriented = ImageOps.exif_transpose(source)
+            try:
+                if oriented.mode in {"RGBA", "LA"} or "transparency" in oriented.info:
+                    rgba = oriented.convert("RGBA")
+                    try:
+                        preview = Image.new("RGB", rgba.size, "white")
+                        preview.paste(rgba, mask=rgba.getchannel("A"))
+                    finally:
+                        rgba.close()
+                else:
+                    preview = oriented.convert("RGB")
+                try:
+                    preview.thumbnail(
+                        (INPUT_PREVIEW_MAX_EDGE, INPUT_PREVIEW_MAX_EDGE),
+                        Image.Resampling.LANCZOS,
+                    )
+                    preview.save(
+                        target_path,
+                        format="JPEG",
+                        quality=INPUT_PREVIEW_JPEG_QUALITY,
+                        optimize=True,
+                    )
+                finally:
+                    preview.close()
+            finally:
+                if oriented is not source:
+                    oriented.close()
+        return {
+            "kind": "image",
+            "path": relative_path.as_posix(),
+            "name": image_path.name,
+        }
+    except Exception:
+        # Preview is optional. A corrupt image or missing Pillow must not turn a
+        # successful prediction into a failed inference task.
+        try:
+            target_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
 
 def box_to_record(box: Any, names: dict[int, str]) -> dict[str, Any]:
@@ -156,7 +217,7 @@ def main() -> int:
     image_results: list[dict[str, Any]] = []
     total_detections = 0
 
-    for image in images:
+    for image_position, image in enumerate(images):
         kwargs = {
             "source": str(image),
             "conf": conf,
@@ -169,6 +230,7 @@ def main() -> int:
             kwargs["device"] = device
 
         predictions = model.predict(**kwargs)
+        input_preview = build_input_preview(image, output_dir, image_position)
         for idx, prediction in enumerate(predictions):
             boxes = prediction.boxes or []
             detections = [box_to_record(box, names) for box in boxes]
@@ -181,16 +243,17 @@ def main() -> int:
             prediction.save(filename=str(annotated_path))
             write_json(label_path, {"image": str(image), "detections": detections})
 
-            image_results.append(
-                {
-                    "image": str(image),
-                    "width": int(getattr(prediction, "orig_shape", [0, 0])[1]),
-                    "height": int(getattr(prediction, "orig_shape", [0, 0])[0]),
-                    "detections": detections,
-                    "annotatedImage": str(annotated_path.relative_to(output_dir)),
-                    "labelFile": str(label_path.relative_to(output_dir)),
-                }
-            )
+            image_result = {
+                "image": str(image),
+                "width": int(getattr(prediction, "orig_shape", [0, 0])[1]),
+                "height": int(getattr(prediction, "orig_shape", [0, 0])[0]),
+                "detections": detections,
+                "annotatedImage": str(annotated_path.relative_to(output_dir)),
+                "labelFile": str(label_path.relative_to(output_dir)),
+            }
+            if input_preview is not None:
+                image_result["inputPreview"] = input_preview
+            image_results.append(image_result)
 
     write_json(
         result_path,

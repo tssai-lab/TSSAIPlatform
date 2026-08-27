@@ -188,6 +188,23 @@ kubectl=("$kubectl_bin" --kubeconfig "$kubeconfig")
 "${kubectl[@]}" get namespace "$namespace" >/dev/null
 "${kubectl[@]}" get node "$smoke_node" >/dev/null
 
+disk_pressure=""
+disk_pressure_deadline=$((SECONDS + 360))
+while (( SECONDS < disk_pressure_deadline )); do
+  disk_pressure="$(
+    "${kubectl[@]}" get node "$smoke_node" \
+      -o jsonpath='{.status.conditions[?(@.type=="DiskPressure")].status}'
+  )"
+  if [[ $disk_pressure == "False" ]]; then
+    break
+  fi
+  sleep 5
+done
+if [[ $disk_pressure != "False" ]]; then
+  echo "Smoke node remained under DiskPressure: node=$smoke_node status=${disk_pressure:-Unknown}." >&2
+  exit 1
+fi
+
 active_smoke_pods=()
 cleanup() {
   local pod_name label
@@ -303,6 +320,7 @@ YAML
 inference_script='from urllib.error import HTTPError
 from urllib.request import urlopen
 import infer_worker
+import ultralytics
 
 def status(url):
     try:

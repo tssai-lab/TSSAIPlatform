@@ -8,6 +8,7 @@ on:
       - "!deploy/tss-aiplatform-internal/**"
       - "k8s/**"
       - "examples/acceptance/minirbt_text_classification/**"
+      - "examples/inference/yolov11n/**"
       - ".github/workflows/**"
   push:
     branches:
@@ -17,6 +18,7 @@ on:
       - "deploy/**"
       - "!deploy/tss-aiplatform-internal/**"
       - "k8s/**"
+      - "examples/inference/yolov11n/**"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -79,6 +81,13 @@ jobs:
         run: |
           python3 -m unittest discover \
             -s examples/acceptance/minirbt_text_classification \
+            -p 'test_*.py' -v
+
+      - name: Run YOLOv11n inference preview tests
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'
+          python3 -m unittest discover \
+            -s examples/inference/yolov11n \
             -p 'test_*.py' -v
 
       - name: Set up Java 17
