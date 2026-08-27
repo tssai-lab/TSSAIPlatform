@@ -11,6 +11,8 @@ cache_preparer="${root_dir}/deploy/scripts/tss-node-prepare-model-cache"
 cache_validator="${root_dir}/deploy/scripts/tss-node-validate-model-cache"
 runtime_workflow="${root_dir}/.github/workflows/runtime-images.yml"
 cv_dockerfile="${root_dir}/k8s/training-worker/Dockerfile.cv"
+inference_dockerfile="${root_dir}/k8s/inference-worker/Dockerfile"
+inference_ml_requirements="${root_dir}/k8s/inference-worker/requirements-ml-cpu.txt"
 
 workdir="$(mktemp -d)"
 cleanup() {
@@ -153,6 +155,7 @@ fi
 grep -F 'crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}' "$runtime_workflow" >/dev/null
 grep -F 'image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"' "$runtime_workflow" >/dev/null
 grep -F 'run_smoke_pod "inference" "$inference_image" "IfNotPresent"' "$validator" >/dev/null
+grep -F -A1 'import infer_worker' "$validator" | grep -Fx 'import ultralytics' >/dev/null
 grep -F 'images list --quiet' "$validator" >/dev/null
 if grep -F 'Configured inference image is not ready in Kubernetes containerd.' "$validator" >/dev/null; then
   echo "Validator must allow an authenticated IfNotPresent pull after kubelet image GC." >&2
@@ -163,5 +166,12 @@ opencv_uninstall_line="$(grep -nF 'pip uninstall -y opencv-python opencv-contrib
 headless_reinstall_line="$(grep -nF 'pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless==4.10.0.84' "$cv_dockerfile" | cut -d: -f1)"
 [[ "$requirements_install_line" -lt "$opencv_uninstall_line" ]]
 [[ "$opencv_uninstall_line" -lt "$headless_reinstall_line" ]]
+
+grep -Fx 'ultralytics==8.3.18' "$inference_ml_requirements" >/dev/null
+inference_requirements_install_line="$(grep -nF 'pip install --no-cache-dir -r requirements-ml-cpu.txt' "$inference_dockerfile" | cut -d: -f1)"
+inference_opencv_uninstall_line="$(grep -nF 'opencv-python opencv-contrib-python opencv-contrib-python-headless' "$inference_dockerfile" | tail -n1 | cut -d: -f1)"
+inference_headless_reinstall_line="$(grep -nF 'opencv-python-headless==4.11.0.86' "$inference_dockerfile" | tail -n1 | cut -d: -f1)"
+[[ "$inference_requirements_install_line" -lt "$inference_opencv_uninstall_line" ]]
+[[ "$inference_opencv_uninstall_line" -lt "$inference_headless_reinstall_line" ]]
 
 echo "Deployment validation contract tests passed."

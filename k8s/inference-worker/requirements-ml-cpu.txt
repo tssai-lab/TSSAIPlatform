@@ -2,3 +2,4 @@
 # image so user jobs do not spend pod-local storage installing them at runtime.
 transformers>=4.36,<5
 pillow>=10,<12
+ultralytics==8.3.18

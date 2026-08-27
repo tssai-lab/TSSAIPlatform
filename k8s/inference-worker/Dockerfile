@@ -21,6 +21,11 @@ RUN python -m pip uninstall -y opencv-python opencv-contrib-python opencv-contri
     "${TORCH_CPU_WHEEL_URL}" \
     "${TORCHVISION_CPU_WHEEL_URL}" \
     && python -m pip install --no-cache-dir -r requirements-ml-cpu.txt \
+    -i "${PYPI_INDEX_URL}" \
+    && python -m pip uninstall -y \
+    opencv-python opencv-contrib-python opencv-contrib-python-headless \
+    && python -m pip install --no-cache-dir --force-reinstall --no-deps \
+    opencv-python-headless==4.11.0.86 \
     -i "${PYPI_INDEX_URL}"
 
 COPY infer_worker.py .
