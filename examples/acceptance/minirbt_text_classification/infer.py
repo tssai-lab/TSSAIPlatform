@@ -249,6 +249,7 @@ def main() -> int:
     first = predictions[0]
     prediction_previews = build_prediction_previews(predictions, output_dir)
     result = {
+        "schemaVersion": "tss.inference.result/v1",
         "ok": True,
         "view": "text_classification",
         "taskId": os.environ.get("TASK_ID"),
@@ -275,6 +276,12 @@ if __name__ == "__main__":
         output_dir = Path(os.environ.get("OUTPUT_DIR", "/workspace/job/output"))
         write_json(
             output_dir / "result.json",
-            {"ok": False, "error": f"{type(exc).__name__}: {exc}", "traceback": traceback.format_exc(limit=8)},
+            {
+                "schemaVersion": "tss.inference.result/v1",
+                "ok": False,
+                "view": "unknown",
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(limit=8),
+            },
         )
         raise

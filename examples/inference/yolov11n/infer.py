@@ -258,7 +258,9 @@ def main() -> int:
     write_json(
         result_path,
         {
+            "schemaVersion": "tss.inference.result/v1",
             "ok": True,
+            "view": "image_detection",
             "taskId": os.environ.get("TASK_ID"),
             "inputMode": os.environ.get("INPUT_MODE"),
             "modelFile": str(model_file),
@@ -289,7 +291,9 @@ if __name__ == "__main__":
             write_json(
                 result_path,
                 {
+                    "schemaVersion": "tss.inference.result/v1",
                     "ok": False,
+                    "view": "unknown",
                     "error": f"{type(exc).__name__}: {exc}",
                     "modelDir": str(model_dir),
                     "modelDirFiles": preview_files(model_dir),

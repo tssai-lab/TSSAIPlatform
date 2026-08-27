@@ -8,6 +8,11 @@ app:
   cors:
     allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
 
+download:
+  ticket:
+    # 浏览器原生下载只使用一次；过期后用户重新点击即可。
+    ttl-seconds: ${DOWNLOAD_TICKET_TTL_SECONDS:60}
+
 # MinIO（本地数据持久化到仓库上一级目录 D:\work\minio-data）
 minio:
   endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9010}

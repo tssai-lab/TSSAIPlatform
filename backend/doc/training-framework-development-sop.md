@@ -412,20 +412,10 @@ result-collector（可信，负责上传和内部回调）
 
 ### 5.7 模型发布与推理契约
 
-训练结果必须生成统一输出描述：
-
-```json
-{
-  "schemaVersion": "tss.training.output/v1",
-  "model": {
-    "file": "output/best.pt",
-    "format": "YOLO_PT",
-    "sha256": "..."
-  },
-  "metricsFile": "output/metrics.json",
-  "logFile": "output/train.log"
-}
-```
+训练结果必须生成 `tss.training.output/v1` 统一输出描述。该清单由可信
+worker 根据 RunSpec、真实产物路径、文件大小和 SHA-256 生成；用户训练代码只负责
+生成 YAML 中声明的模型、指标和日志，禁止自行伪造输出清单。完整字段和代码侧约定见
+《自定义训练代码编写手册》。
 
 后端只能在产物校验成功后发布模型版本。推理Worker必须下载该模型版本并重新校验SHA-256；缺失或不一致时失败，禁止回退到 `yolo11n.pt`、`yolov8n.pt` 或缓存模型。
 
