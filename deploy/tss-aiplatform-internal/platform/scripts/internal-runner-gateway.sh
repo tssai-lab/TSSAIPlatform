@@ -17,12 +17,14 @@ die() {
 # This root-owned file contains paths and a local account name only, never credentials.
 # shellcheck disable=SC1090
 source "$deployment_config"
-for name in TSS_DEPLOYMENT_USER TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
+for name in TSS_DEPLOYMENT_USER TSS_DEPLOYMENT_BRANCH TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
   TSS_REPOSITORY_ROOT TSS_DEPLOY_STAGE_ROOT TSS_DEPLOY_STATE_FILE; do
   [[ -n ${!name:-} ]] || die "backend deployment target setting is empty: $name"
 done
 [[ $TSS_DEPLOYMENT_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
   || die "backend deployment user is invalid"
+[[ $TSS_DEPLOYMENT_BRANCH == backend-ops || $TSS_DEPLOYMENT_BRANCH == backend-gpu ]] \
+  || die "backend deployment branch is invalid"
 for path in "$TSS_PROJECT_ROOT" "$TSS_PLATFORM_ROOT" "$TSS_REPOSITORY_ROOT" \
   "$TSS_DEPLOY_STAGE_ROOT" "$TSS_DEPLOY_STATE_FILE"; do
   [[ $path =~ ^/[A-Za-z0-9._/-]+$ && $path != / && $path != *//* \
@@ -55,12 +57,14 @@ load_frontend_target() {
     || die "frontend deployment target configuration metadata differs"
   # shellcheck disable=SC1090
   source "$frontend_config"
-  for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_PROJECT_ROOT \
+  for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_DEPLOYMENT_BRANCH \
+    TSS_FRONTEND_PROJECT_ROOT \
     TSS_FRONTEND_PLATFORM_ROOT TSS_FRONTEND_REPOSITORY_ROOT \
     TSS_FRONTEND_STAGE_ROOT TSS_FRONTEND_STATE_FILE TSS_FRONTEND_PORT; do
     [[ -n ${!name:-} ]] || die "frontend deployment target setting is empty: $name"
   done
   [[ $TSS_FRONTEND_DEPLOYMENT_USER == "$expected_user" \
+    && $TSS_FRONTEND_DEPLOYMENT_BRANCH == "$TSS_DEPLOYMENT_BRANCH" \
     && $TSS_FRONTEND_PROJECT_ROOT == "$TSS_PROJECT_ROOT" \
     && $TSS_FRONTEND_PLATFORM_ROOT == "$TSS_PLATFORM_ROOT" \
     && $TSS_FRONTEND_REPOSITORY_ROOT == "$repository_root" \
@@ -89,13 +93,13 @@ case "$command_text" in
     [[ $requested_sha =~ ^[0-9a-f]{40}$ ]] || die "requested deployment SHA is invalid"
     [[ -z $(/usr/bin/git -C "$repository_root" status --porcelain) ]] \
       || die "deployment repository is not clean"
-    [[ $(/usr/bin/git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == backend-ops ]] \
-      || die "deployment repository is not on backend-ops"
+    [[ $(/usr/bin/git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == "$TSS_DEPLOYMENT_BRANCH" ]] \
+      || die "deployment repository is not on the configured branch"
     origin_url=$(/usr/bin/git -C "$repository_root" remote get-url origin)
     [[ $origin_url =~ $origin_pattern ]] || die "deployment repository origin differs"
-    /usr/bin/git -C "$repository_root" fetch --prune origin backend-ops
-    [[ $(/usr/bin/git -C "$repository_root" rev-parse refs/remotes/origin/backend-ops) == "$requested_sha" ]] \
-      || die "requested SHA is not the current protected backend-ops head"
+    /usr/bin/git -C "$repository_root" fetch --prune origin "$TSS_DEPLOYMENT_BRANCH"
+    [[ $(/usr/bin/git -C "$repository_root" rev-parse "refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}") == "$requested_sha" ]] \
+      || die "requested SHA is not the current configured deployment branch head"
     /usr/bin/git -C "$repository_root" merge --ff-only "$requested_sha"
     [[ $(/usr/bin/git -C "$repository_root" rev-parse HEAD) == "$requested_sha" ]] \
       || die "deployment repository did not reach the requested SHA"

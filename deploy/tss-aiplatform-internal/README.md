@@ -8,12 +8,20 @@ cluster.
 
 - Main/Second remains the CPU stable baseline and keeps its current deployment
   and data.
-- The internal cluster uses the same Git commit and immutable application image
-  as Main, but owns a separate Kubernetes cluster, database, object store,
+- The internal cluster uses `backend-gpu`: every successfully deployed
+  `backend-ops` CPU baseline is merged into it in one direction, while GPU-only
+  commits remain internal until an explicit later merge back to `backend`.
+  Automatic internal deployment remains disabled unless the repository variable
+  `INTERNAL_GPU_AUTO_DEPLOY_ENABLED` is exactly `true`; this allows the branch,
+  Environment policy and restricted server gateway to be prepared safely first.
+  The cluster owns a separate Kubernetes cluster, database, object store,
   MLflow data, Secrets, logs, caches and rollback record.
 - seu5090 is the control-plane/platform/storage host. Its control-plane etcd
   remains on NVMe; bulk platform data may use only the separately approved
   `tss-AIplatform` filesystem on the 8 TB disk.
+- The current seu5090 project root is `/srv/tss-AIplatform`, mounted from
+  `/dev/sda1`. `/media/user/data` is on the nearly-full root filesystem and is
+  not a valid project target.
 - seu4080 is the first CPU/GPU worker. Existing Docker containers and all files
   outside `/media/seu/data/tss-AIplatform` are fixed external state.
 - Neither host may reuse `/run/containerd/containerd.sock` or

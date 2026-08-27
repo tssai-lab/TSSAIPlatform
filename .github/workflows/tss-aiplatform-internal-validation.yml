@@ -6,14 +6,17 @@ on:
       - "deploy/tss-aiplatform-internal/**"
       - ".github/workflows/tss-aiplatform-internal-validation.yml"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/backend-gpu-internal-deploy.yml"
   push:
     branches:
       - backend
       - backend-ops
+      - backend-gpu
     paths:
       - "deploy/tss-aiplatform-internal/**"
       - ".github/workflows/tss-aiplatform-internal-validation.yml"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/backend-gpu-internal-deploy.yml"
   workflow_dispatch:
     inputs:
       task:
@@ -114,6 +117,7 @@ jobs:
           bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh
           bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh
           bash deploy/tss-aiplatform-internal/tests/test-frontend-deploy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-deployment-lanes.sh
 
   runner-smoke:
     if: >-
@@ -1124,7 +1128,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
           [[ "$GITHUB_SHA" == "$BACKEND_HEAD_SHA" ]]
           [[ "$BACKEND_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$BACKEND_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -1147,16 +1151,16 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${BACKEND_RUN_ID}" \
             --output "$RUNNER_TEMP/backend-export-run.json"
-          python3 - "$RUNNER_TEMP/backend-export-run.json" "$BACKEND_HEAD_SHA" <<'PY'
+          python3 - "$RUNNER_TEMP/backend-export-run.json" "$BACKEND_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
           import json
           import sys
 
-          metadata_path, expected_sha = sys.argv[1:]
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
           with open(metadata_path, encoding="utf-8") as metadata_file:
               metadata = json.load(metadata_file)
           expected = {
               "head_sha": expected_sha,
-              "head_branch": "backend-ops",
+              "head_branch": expected_branch,
               "event": "workflow_dispatch",
               "status": "completed",
               "conclusion": "success",
@@ -1268,7 +1272,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
           [[ "$GITHUB_SHA" == "$FRONTEND_HEAD_SHA" ]]
           [[ "$FRONTEND_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$FRONTEND_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -1291,16 +1295,16 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${FRONTEND_RUN_ID}" \
             --output "$RUNNER_TEMP/frontend-export-run.json"
-          python3 - "$RUNNER_TEMP/frontend-export-run.json" "$FRONTEND_HEAD_SHA" <<'PY'
+          python3 - "$RUNNER_TEMP/frontend-export-run.json" "$FRONTEND_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
           import json
           import sys
 
-          metadata_path, expected_sha = sys.argv[1:]
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
           with open(metadata_path, encoding="utf-8") as metadata_file:
               metadata = json.load(metadata_file)
           expected = {
               "head_sha": expected_sha,
-              "head_branch": "backend-ops",
+              "head_branch": expected_branch,
               "event": "workflow_dispatch",
               "status": "completed",
               "conclusion": "success",

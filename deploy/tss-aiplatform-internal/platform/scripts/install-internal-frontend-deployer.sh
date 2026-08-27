@@ -41,6 +41,7 @@ backend_config=/etc/tss-aiplatform-deploy/backend.env
 # shellcheck disable=SC1090
 source "$backend_config"
 [[ $TSS_DEPLOYMENT_USER == "$deployment_user" \
+  && ( $TSS_DEPLOYMENT_BRANCH == backend-ops || $TSS_DEPLOYMENT_BRANCH == backend-gpu ) \
   && $TSS_PROJECT_ROOT == "${TSS_PLATFORM_ROOT%/platform}" \
   && $TSS_PLATFORM_ROOT == "${TSS_PROJECT_ROOT}/platform" \
   && $TSS_REPOSITORY_ROOT == "$TSS_PROJECT_ROOT"/* \
@@ -72,6 +73,7 @@ pending_config=$(mktemp "${deploy_config_root}/.frontend.env.XXXXXX")
 trap 'rm -f "$pending_config"' EXIT
 {
   printf 'TSS_FRONTEND_DEPLOYMENT_USER=%s\n' "$deployment_user"
+  printf 'TSS_FRONTEND_DEPLOYMENT_BRANCH=%s\n' "$TSS_DEPLOYMENT_BRANCH"
   printf 'TSS_FRONTEND_PROJECT_ROOT=%s\n' "$TSS_PROJECT_ROOT"
   printf 'TSS_FRONTEND_PLATFORM_ROOT=%s\n' "$TSS_PLATFORM_ROOT"
   printf 'TSS_FRONTEND_REPOSITORY_ROOT=%s\n' "$TSS_REPOSITORY_ROOT"

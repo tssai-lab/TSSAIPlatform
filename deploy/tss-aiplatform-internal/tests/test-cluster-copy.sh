@@ -574,7 +574,7 @@ for gpu_dockerfile in \
   "${internal_dir}/../../k8s/training-worker/Dockerfile.cv" \
   "${internal_dir}/../../k8s/training-worker/Dockerfile.nlp" \
   "${internal_dir}/../../k8s/training-worker/Dockerfile.pytorch-cuda12"; do
-  [[ $(grep -Fxc "$gpu_worker_base" "$gpu_dockerfile") -eq 1 ]]
+  [[ $(tr -d '\r' <"$gpu_dockerfile" | grep -Fxc "$gpu_worker_base") -eq 1 ]]
 done
 
 find "${internal_dir}" -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n

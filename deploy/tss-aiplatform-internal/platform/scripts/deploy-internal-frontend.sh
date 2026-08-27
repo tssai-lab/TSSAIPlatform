@@ -13,7 +13,8 @@ deployment_config=/etc/tss-aiplatform-deploy/frontend.env
   || die "frontend deployment target configuration metadata differs"
 # shellcheck disable=SC1090
 source "$deployment_config"
-for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_PROJECT_ROOT \
+for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_DEPLOYMENT_BRANCH \
+  TSS_FRONTEND_PROJECT_ROOT \
   TSS_FRONTEND_PLATFORM_ROOT TSS_FRONTEND_REPOSITORY_ROOT \
   TSS_FRONTEND_NODE_CONFIG TSS_FRONTEND_PLATFORM_CONFIG \
   TSS_FRONTEND_STAGE_ROOT TSS_FRONTEND_STATE_FILE TSS_FRONTEND_PORT; do
@@ -21,6 +22,8 @@ for name in TSS_FRONTEND_DEPLOYMENT_USER TSS_FRONTEND_PROJECT_ROOT \
 done
 [[ $TSS_FRONTEND_DEPLOYMENT_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
   || die "frontend deployment user is invalid"
+[[ $TSS_FRONTEND_DEPLOYMENT_BRANCH == backend-ops || $TSS_FRONTEND_DEPLOYMENT_BRANCH == backend-gpu ]] \
+  || die "frontend deployment branch is invalid"
 
 repository_root=$TSS_FRONTEND_REPOSITORY_ROOT
 node_config=$TSS_FRONTEND_NODE_CONFIG
@@ -34,9 +37,9 @@ manifest_template=${repository_root}/deploy/tss-aiplatform-internal/platform/k8s
 [[ $(id -u) -eq 0 ]] || die "internal frontend deployment must run as root"
 [[ -d $repository_root/.git && -z $(git -C "$repository_root" status --porcelain) ]] \
   || die "frontend deployment repository is absent or dirty"
-[[ $(git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == backend-ops ]] \
-  || die "frontend deployment repository must use backend-ops"
-[[ $(git -C "$repository_root" rev-parse HEAD) == $(git -C "$repository_root" rev-parse refs/remotes/origin/backend-ops) ]] \
+[[ $(git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == "$TSS_FRONTEND_DEPLOYMENT_BRANCH" ]] \
+  || die "frontend deployment repository must use the configured deployment branch"
+[[ $(git -C "$repository_root" rev-parse HEAD) == $(git -C "$repository_root" rev-parse "refs/remotes/origin/${TSS_FRONTEND_DEPLOYMENT_BRANCH}") ]] \
   || die "frontend deployment repository is not the protected remote head"
 [[ $(git -C "$repository_root" remote get-url origin) =~ ^(https://github\.com/|git@github\.com:|ssh://git@ssh\.github\.com:443/)tssai-lab/TSSAIPlatform(\.git)?$ ]] \
   || die "frontend deployment repository origin differs"
@@ -44,6 +47,7 @@ manifest_template=${repository_root}/deploy/tss-aiplatform-internal/platform/k8s
 script_dir=${repository_root}/deploy/tss-aiplatform-internal/platform/scripts
 # shellcheck source=lib-platform.sh
 source "${script_dir}/lib-platform.sh"
+export TSS_DEPLOYMENT_BRANCH=$TSS_FRONTEND_DEPLOYMENT_BRANCH
 load_platform_config "$node_config" "$platform_config"
 require_control_plane_identity
 require_space_gates

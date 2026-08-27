@@ -156,7 +156,8 @@ directory stays private. Port, agent and X11 forwarding and arbitrary shells
 remain disabled.
 
 Install the gateway only after reviewing the Runner public key and the exact
-`backend-ops` source:
+deployment branch. The stable external target uses `backend-ops`; the internal
+GPU integration target uses `backend-gpu`:
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-internal-runner-gateway.sh \
@@ -164,10 +165,11 @@ sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-internal-runne
   --node-config /etc/tss-aiplatform/node.env \
   --platform-config /etc/tss-aiplatform/platform.env \
   --deployment-user REPLACE_DEPLOYMENT_USER \
+  --deployment-branch backend-gpu \
   --confirm-node REPLACE_CONTROL_PLANE_NODE_NAME
 ```
 
-The installer writes only paths and the local account name to the root-owned
+The installer writes only paths, the reviewed branch and the local account name to the root-owned
 `/etc/tss-aiplatform-deploy/backend.env`; credentials stay outside that file.
 The `tss-aiplatform-internal` GitHub Environment then needs the non-secret
 variables `CONTROL_PLANE_HOST`, `CONTROL_PLANE_DEPLOYMENT_USER`,
@@ -177,22 +179,27 @@ Runner needs the logical labels `tss-aiplatform-internal` and `deploy`; no
 physical hostname is part of the workflow. The workflow never accepts a private
 key value from GitHub.
 
-For a reviewed `backend-ops` SHA, first dispatch `export-backend-image`, then
-dispatch `deploy-backend` with that successful run ID and the same exact SHA.
-The deployment downloads only the locked backend image, verifies the GitHub
-run metadata, artifact checksum and source lock, synchronizes only the configured
-control-plane repository by
-fast-forward, and streams a bounded three-file bundle through the forced
-gateway. The root helper rechecks the lock, runtime fingerprint, disk gates,
-host identity and all four platform images before Compose may act. It snapshots
-the three non-backend platform containers, changes only the backend, runs the
-full platform verifier and writes the state file below the configured
-`TSS_PLATFORM_ROOT`. Failed switches
-restore the previous backend configuration. Successful switches keep only the
-current project backend image; no global prune is used.
+The dedicated `backend-gpu-internal-deploy.yml` reusable workflow is called only
+after the complete backend CI succeeds on `backend-gpu` and the repository
+variable `INTERNAL_GPU_AUTO_DEPLOY_ENABLED` is exactly `true`. Leave that
+variable absent or set it to `false` while preparing or repairing the internal
+Environment and gateway. Once enabled, the workflow promotes the exact
+published image digest into a small release-lock commit, exports only that
+backend image, downloads the short-lived bundle to the mechanical-disk Runner,
+and deploys through the forced gateway. The root helper rechecks the committed
+lock, runtime fingerprint, disk gates, host identity and all four platform
+images before Compose may act. It snapshots the three non-backend platform
+containers, changes only the backend, runs the full platform verifier and writes
+the state file below the configured `TSS_PLATFORM_ROOT`. Failed switches restore
+the previous backend configuration. Successful switches keep only the current
+project backend image; no global prune is used.
 
-Automatic push consumption remains disabled until the same infrastructure SHA
-and backend image have completed three consecutive manual deployments. To
+After an external `backend-ops` deployment succeeds, `backend-ci.yml` performs a
+normal, non-force merge into `backend-gpu` and explicitly starts the integrated
+GPU CI. A conflict, concurrent push or failed test stops only the internal lane.
+No workflow merges `backend-gpu` back to `backend` or deploys it to Main.
+
+To
 revoke the channel, remove only the authorized-key line ending in
 `tss-aiplatform-internal-deploy`,
 `/etc/sudoers.d/tss-aiplatform-internal-deploy` and the two exact
