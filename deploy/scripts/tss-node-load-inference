@@ -56,7 +56,7 @@ if [[ ! -f $runtime_env ]]; then
   exit 1
 fi
 
-for command_name in awk ctr curl docker flock gzip; do
+for command_name in awk ctr curl docker flock gzip python3; do
   command -v "$command_name" >/dev/null
 done
 docker compose version >/dev/null
@@ -69,7 +69,6 @@ install -d -m 755 /run/lock
 exec 9>/run/lock/tss-node-deploy.lock
 flock 9
 
-archive="$(mktemp /var/tmp/tss-inference-image.XXXXXX.tar)"
 runtime_env_backup="$(mktemp /var/tmp/tss-runtime-env.XXXXXX)"
 runtime_images_backup=""
 runtime_env_candidate=""
@@ -77,7 +76,6 @@ runtime_images_candidate=""
 
 cleanup() {
   rm -f \
-    "$archive" \
     "$runtime_env_backup" \
     "$runtime_images_backup" \
     "$runtime_env_candidate" \
@@ -85,15 +83,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-gzip -dc > "$archive"
-docker load -i "$archive" >/dev/null
-actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+gzip -dc | ctr --namespace k8s.io images import - >/dev/null
+image_target_digest="$(
+  ctr --namespace k8s.io images list \
+    | awk -v expected="$image" '$1 == expected { print $3; exit }'
+)"
+actual_image_id="$(
+  ctr --namespace k8s.io content get "$image_target_digest" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["config"]["digest"])'
+)"
 if [[ $actual_image_id != "$expected_image_id" ]]; then
-  echo "Loaded image identifier does not match the runner image." >&2
+  echo "Imported image identifier does not match the runner image." >&2
   exit 1
 fi
-
-ctr --namespace k8s.io images import "$archive" >/dev/null
 required_images=("$image")
 if [[ -n $cv_image ]]; then
   required_images+=("$cv_image" "$nlp_image")

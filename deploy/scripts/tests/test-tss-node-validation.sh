@@ -82,6 +82,14 @@ grep -F 'docker save "$image" "$cv_image" "$nlp_image"' "$runtime_workflow" >/de
 grep -F 'ServerAliveInterval=30 -o ServerAliveCountMax=20' "$runtime_workflow" >/dev/null
 grep -F 'required_images+=("$cv_image" "$nlp_image")' "$runtime_loader" >/dev/null
 grep -F 'Imported runtime image is not ready in Kubernetes containerd' "$runtime_loader" >/dev/null
+grep -F 'gzip -dc | ctr --namespace k8s.io images import -' "$runtime_loader" >/dev/null
+grep -F 'ctr --namespace k8s.io content get "$image_target_digest"' "$runtime_loader" >/dev/null
+grep -F 'json.load(sys.stdin)["config"]["digest"]' "$runtime_loader" >/dev/null
+grep -F 'Imported image identifier does not match the runner image.' "$runtime_loader" >/dev/null
+if grep -F 'docker load' "$runtime_loader" >/dev/null; then
+  echo "Runtime loader must not keep a second Docker copy of Kubernetes-only images." >&2
+  exit 1
+fi
 grep -F 'tss-node-prepare-model-cache' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-model-cache' "$bootstrap" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES' "$cache_preparer" >/dev/null
