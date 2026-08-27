@@ -159,7 +159,8 @@ const LogManagement: React.FC = () => {
       valueType: 'select',
       valueEnum: operateTypeEnum,
       fieldProps: { placeholder: '请选择操作类型', allowClear: true },
-      render: (_, record) => record.operateType || '-',
+      render: (_, record) =>
+        operateTypeEnum[record.operateType]?.text || record.operateType || '-',
     },
     {
       title: '操作时间',
