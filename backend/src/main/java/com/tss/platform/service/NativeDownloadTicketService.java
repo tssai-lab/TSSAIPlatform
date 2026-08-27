@@ -22,11 +22,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
 /**
- * Issues short-lived, single-use tickets for browser-native downloads.
+ * Issues short-lived tickets for browser-native downloads.
  *
  * <p>The ticket only transports the existing Sa-Token value to one exact GET
- * download URL. The original controller and service still perform all asset
- * ownership and role checks.</p>
+ * download URL. It may be resolved repeatedly until its fixed expiration time
+ * because browser download managers can probe or split one download into
+ * multiple requests. The original controller and service still perform all
+ * asset ownership and role checks for every request.</p>
  */
 @Service
 public class NativeDownloadTicketService {
@@ -81,15 +83,20 @@ public class NativeDownloadTicketService {
     }
 
     /**
-     * Atomically consumes a ticket and returns the original Sa-Token value.
-     * A wrong-path attempt also consumes the ticket so it cannot be probed.
+     * Resolves a ticket to the original Sa-Token value without extending its
+     * fixed lifetime. A target mismatch does not invalidate the legitimate
+     * download, while the exact target binding prevents cross-file reuse.
      */
-    public String consume(String ticket, HttpServletRequest request) {
+    public String resolve(String ticket, HttpServletRequest request) {
         if (ticket == null || ticket.isBlank()) {
             throw new IllegalArgumentException("download ticket is required");
         }
-        StoredTicket stored = tickets.remove(ticket);
-        if (stored == null || stored.expiresAtMillis() <= nowMillis.getAsLong()) {
+        StoredTicket stored = tickets.get(ticket);
+        if (stored == null) {
+            throw new IllegalArgumentException("download ticket is invalid or expired");
+        }
+        if (stored.expiresAtMillis() <= nowMillis.getAsLong()) {
+            tickets.remove(ticket, stored);
             throw new IllegalArgumentException("download ticket is invalid or expired");
         }
         DownloadTarget actual = DownloadTarget.fromRequest(request);

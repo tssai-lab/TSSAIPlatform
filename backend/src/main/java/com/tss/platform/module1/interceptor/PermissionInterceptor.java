@@ -60,7 +60,7 @@ public class PermissionInterceptor implements HandlerInterceptor {
             } else if ("GET".equalsIgnoreCase(request.getMethod())) {
                 String ticket = request.getParameter(NativeDownloadTicketService.QUERY_PARAMETER);
                 if (ticket != null && !ticket.isBlank()) {
-                    StpUtil.setTokenValue(downloadTicketService.consume(ticket, request));
+                    StpUtil.setTokenValue(downloadTicketService.resolve(ticket, request));
                 }
             }
             StpUtil.checkLogin();

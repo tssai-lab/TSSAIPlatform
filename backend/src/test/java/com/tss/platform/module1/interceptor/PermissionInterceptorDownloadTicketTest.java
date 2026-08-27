@@ -27,14 +27,14 @@ class PermissionInterceptorDownloadTicketTest {
         request.addParameter("objectName", "users/7/result.zip");
         request.addParameter(NativeDownloadTicketService.QUERY_PARAMETER, "opaque-ticket");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(ticketService.consume("opaque-ticket", request)).thenReturn("existing-sa-token");
+        when(ticketService.resolve("opaque-ticket", request)).thenReturn("existing-sa-token");
 
         try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
             assertTrue(interceptor.preHandle(request, response, new Object()));
             stp.verify(() -> StpUtil.setTokenValue("existing-sa-token"));
             stp.verify(StpUtil::checkLogin);
         }
-        verify(ticketService).consume("opaque-ticket", request);
+        verify(ticketService).resolve("opaque-ticket", request);
     }
 
     @Test
@@ -44,7 +44,7 @@ class PermissionInterceptorDownloadTicketTest {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/files/download");
         request.addParameter(NativeDownloadTicketService.QUERY_PARAMETER, "opaque-ticket");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(ticketService.consume("opaque-ticket", request)).thenReturn("expired-sa-token");
+        when(ticketService.resolve("opaque-ticket", request)).thenReturn("expired-sa-token");
 
         try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
             stp.when(StpUtil::checkLogin).thenThrow(new IllegalStateException("expired"));
