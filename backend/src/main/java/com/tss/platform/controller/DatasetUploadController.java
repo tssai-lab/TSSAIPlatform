@@ -96,7 +96,7 @@ public class DatasetUploadController {
             @RequestParam("paths") List<String> paths
     ) {
         try {
-            return ApiResponse.ok(service.uploadCvFolder(
+            Map<String, Object> result = service.uploadCvFolder(
                     assetId,
                     datasetName,
                     version,
@@ -110,11 +110,24 @@ public class DatasetUploadController {
                     parentVersionId,
                     files,
                     paths
-            ));
+            );
+            Object objectId = result.getOrDefault("assetId", result.get("id"));
+            auditHooks.upload(AuditObjectType.DATASET,
+                    objectId != null ? String.valueOf(objectId) : datasetName,
+                    "DATASET_FOLDER_UPLOAD", true, null);
+            return ApiResponse.ok(result);
         } catch (AssetNameConflictException | AssetNameValidationException exception) {
+            auditHooks.upload(AuditObjectType.DATASET, datasetName,
+                    "DATASET_FOLDER_UPLOAD", false, exception.getMessage());
             throw exception;
         } catch (IllegalArgumentException e) {
+            auditHooks.upload(AuditObjectType.DATASET, datasetName,
+                    "DATASET_FOLDER_UPLOAD", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.upload(AuditObjectType.DATASET, datasetName,
+                    "DATASET_FOLDER_UPLOAD", false, e.getMessage());
+            throw e;
         }
     }
 }

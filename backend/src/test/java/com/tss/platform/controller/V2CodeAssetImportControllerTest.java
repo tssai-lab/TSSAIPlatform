@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.controller.v2.V2CodeAssetImportController;
 import com.tss.platform.controller.v2.V2ExceptionHandler;
 import com.tss.platform.dto.v2.V2CodeAssetImportMetadata;
+import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.CodeAssetImportCommand;
 import com.tss.platform.service.CodeAssetImportException;
 import com.tss.platform.service.CodeAssetImportResult;
@@ -34,15 +35,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class V2CodeAssetImportControllerTest {
 
     private CodeAssetImportService service;
+    private AuditHooks auditHooks;
     private MockMvc mockMvc;
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         service = mock(CodeAssetImportService.class);
+        auditHooks = mock(AuditHooks.class);
         objectMapper = new ObjectMapper().findAndRegisterModules();
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new V2CodeAssetImportController(service)
+                new V2CodeAssetImportController(service, auditHooks)
         ).setControllerAdvice(new V2ExceptionHandler()).build();
     }
 

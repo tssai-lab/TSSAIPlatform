@@ -3,6 +3,8 @@ package com.tss.platform.controller.v2;
 import com.tss.platform.dto.DatasetUploadInitRequest;
 import com.tss.platform.dto.v2.V2DatasetUploadDto;
 import com.tss.platform.dto.v2.V2DatasetUploadCompleteRequest;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.V2DatasetUploadService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,9 +21,11 @@ import org.springframework.web.multipart.MultipartFile;
 public class V2DatasetUploadController {
 
     private final V2DatasetUploadService service;
+    private final AuditHooks auditHooks;
 
-    public V2DatasetUploadController(V2DatasetUploadService service) {
+    public V2DatasetUploadController(V2DatasetUploadService service, AuditHooks auditHooks) {
         this.service = service;
+        this.auditHooks = auditHooks;
     }
 
     @PostMapping("/init")
@@ -52,7 +56,15 @@ public class V2DatasetUploadController {
             @RequestBody(required = false)
             V2DatasetUploadCompleteRequest request
     ) {
-        return service.complete(uploadId, request);
+        try {
+            V2DatasetUploadDto result = service.complete(uploadId, request);
+            String objectId = result.getDatasetId() != null ? result.getDatasetId() : uploadId;
+            auditHooks.upload(AuditObjectType.DATASET, objectId, "DATASET_UPLOAD_V2", true, null);
+            return result;
+        } catch (RuntimeException exception) {
+            auditHooks.upload(AuditObjectType.DATASET, uploadId, "DATASET_UPLOAD_V2", false, exception.getMessage());
+            throw exception;
+        }
     }
 
     @PostMapping("/{uploadId}/cancel")

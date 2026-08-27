@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.tss.platform.module1.common.Result;
 import com.tss.platform.module1.dto.LogItemVO;
 import com.tss.platform.module1.dto.LogListQueryDTO;
-import com.tss.platform.module1.service.OperationLogService;
+import com.tss.platform.module1.service.AuditRecordQueryService;
 import com.tss.platform.module1.util.LogAccessScope;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,9 +24,11 @@ import java.util.Map;
 public class SystemLogController {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final int MAX_LIST_PAGE_SIZE = 200;
+    private static final int MAX_EXPORT_PAGE_SIZE = 10_000;
 
     @Resource
-    private OperationLogService operationLogService;
+    private AuditRecordQueryService auditRecordQueryService;
 
     @GetMapping("/list")
     public Result<Map<String, Object>> getLogList(
@@ -49,24 +51,27 @@ public class SystemLogController {
         }
 
         LogListQueryDTO query = new LogListQueryDTO();
-        query.setPageNum(pageNum);
-        query.setPageSize(pageSize);
+        query.setPageNum(normalizePageNum(pageNum));
+        query.setPageSize(normalizePageSize(pageSize, MAX_LIST_PAGE_SIZE));
         query.setUsername(username);
         query.setOperateType(operateType);
         query.setIp(ip);
         query.setResult(result);
         query.setLogType(logType);
         query.setContent(content);
-        parseOperateTime(operateTime, query);
+        Result<Map<String, Object>> timeError = parseOperateTime(operateTime, query);
+        if (timeError != null) {
+            return timeError;
+        }
         applyScope(query, scope, currentUsername);
 
-        IPage<LogItemVO> pageResult = operationLogService.queryLogPage(query);
+        IPage<LogItemVO> pageResult = auditRecordQueryService.queryLogPage(query);
 
         Map<String, Object> data = new HashMap<>();
         data.put("list", pageResult.getRecords());
         data.put("total", pageResult.getTotal());
-        data.put("pageNum", pageNum);
-        data.put("pageSize", pageSize);
+        data.put("pageNum", query.getPageNum());
+        data.put("pageSize", query.getPageSize());
 
         return Result.success(data, "查询成功");
     }
@@ -91,17 +96,20 @@ public class SystemLogController {
         }
 
         LogListQueryDTO query = new LogListQueryDTO();
-        query.setPageNum(pageNum);
-        query.setPageSize(Math.min(pageSize, 10000));
+        query.setPageNum(normalizePageNum(pageNum));
+        query.setPageSize(normalizePageSize(pageSize, MAX_EXPORT_PAGE_SIZE));
         query.setUsername(username);
         query.setOperateType(operateType);
         query.setIp(ip);
         query.setResult(result);
         query.setLogType(logType);
         query.setContent(content);
-        parseOperateTime(operateTime, query);
+        Result<Map<String, Object>> timeError = parseOperateTime(operateTime, query);
+        if (timeError != null) {
+            return timeError;
+        }
 
-        IPage<LogItemVO> pageResult = operationLogService.queryLogPage(query);
+        IPage<LogItemVO> pageResult = auditRecordQueryService.queryLogPage(query);
         Map<String, Object> data = new HashMap<>();
         data.put("list", pageResult.getRecords());
         data.put("total", pageResult.getTotal());
@@ -111,12 +119,12 @@ public class SystemLogController {
     @GetMapping("/types")
     public Result<List<Map<String, String>>> getLogTypes() {
         List<Map<String, String>> types = List.of(
-                Map.of("key", "1", "label", "新增"),
-                Map.of("key", "2", "label", "删除"),
-                Map.of("key", "3", "label", "修改"),
-                Map.of("key", "4", "label", "重置"),
-                Map.of("key", "5", "label", "登录"),
-                Map.of("key", "6", "label", "退出")
+                Map.of("key", "UPLOAD", "label", "上传"),
+                Map.of("key", "DELETE", "label", "删除"),
+                Map.of("key", "TRAIN", "label", "训练"),
+                Map.of("key", "INFERENCE", "label", "推理"),
+                Map.of("key", "LOGIN", "label", "登录/退出"),
+                Map.of("key", "PERMISSION_CHANGE", "label", "权限变更")
         );
         return Result.success(types, "查询成功");
     }
@@ -124,9 +132,14 @@ public class SystemLogController {
     @GetMapping("/objects")
     public Result<List<Map<String, String>>> getLogObjects() {
         List<Map<String, String>> objects = List.of(
-                Map.of("key", "users", "label", "用户"),
-                Map.of("key", "roles", "label", "角色"),
-                Map.of("key", "logs", "label", "日志")
+                Map.of("key", "USER", "label", "用户"),
+                Map.of("key", "MODEL", "label", "模型"),
+                Map.of("key", "DATASET", "label", "数据集"),
+                Map.of("key", "TRAINING_CODE", "label", "训练代码"),
+                Map.of("key", "TRAINING_PLAN", "label", "训练方案"),
+                Map.of("key", "INFERENCE_SCRIPT", "label", "推理脚本"),
+                Map.of("key", "TRAIN_TASK", "label", "训练任务"),
+                Map.of("key", "INFERENCE_TASK", "label", "推理任务")
         );
         return Result.success(objects, "查询成功");
     }
@@ -171,18 +184,36 @@ public class SystemLogController {
         }
     }
 
-    private void parseOperateTime(List<String> operateTime, LogListQueryDTO query) {
+    private Result<Map<String, Object>> parseOperateTime(List<String> operateTime, LogListQueryDTO query) {
         if (operateTime == null || operateTime.size() < 2) {
-            return;
+            return null;
         }
-        String start = operateTime.get(0);
-        String end = operateTime.get(1);
-        if (start != null && !start.isBlank()) {
-            query.setOperateTimeStart(LocalDateTime.parse(start, TIME_FORMATTER));
+        try {
+            String start = operateTime.get(0);
+            String end = operateTime.get(1);
+            if (start != null && !start.isBlank()) {
+                query.setOperateTimeStart(LocalDateTime.parse(start, TIME_FORMATTER));
+            }
+            if (end != null && !end.isBlank()) {
+                query.setOperateTimeEnd(LocalDateTime.parse(end, TIME_FORMATTER));
+            }
+            if (query.getOperateTimeStart() != null && query.getOperateTimeEnd() != null
+                    && query.getOperateTimeStart().isAfter(query.getOperateTimeEnd())) {
+                return Result.fail("开始时间不能晚于结束时间");
+            }
+            return null;
+        } catch (RuntimeException exception) {
+            return Result.fail("时间格式错误，应为 yyyy-MM-dd HH:mm:ss");
         }
-        if (end != null && !end.isBlank()) {
-            query.setOperateTimeEnd(LocalDateTime.parse(end, TIME_FORMATTER));
-        }
+    }
+
+    private int normalizePageNum(Integer pageNum) {
+        return pageNum == null || pageNum < 1 ? 1 : pageNum;
+    }
+
+    private int normalizePageSize(Integer pageSize, int max) {
+        int normalized = pageSize == null || pageSize < 1 ? 10 : pageSize;
+        return Math.min(normalized, max);
     }
 
     private LogAccessScope resolveScope() {

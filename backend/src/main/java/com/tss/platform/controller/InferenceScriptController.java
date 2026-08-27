@@ -3,6 +3,8 @@ package com.tss.platform.controller;
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.InferenceScriptUploadResultDto;
 import com.tss.platform.dto.InferenceScriptVersionDto;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditHooks;
 import com.tss.platform.service.InferenceScriptService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.http.MediaType;
@@ -22,9 +24,11 @@ import java.util.Map;
 public class InferenceScriptController {
 
     private final InferenceScriptService scriptService;
+    private final AuditHooks auditHooks;
 
-    public InferenceScriptController(InferenceScriptService scriptService) {
+    public InferenceScriptController(InferenceScriptService scriptService, AuditHooks auditHooks) {
         this.scriptService = scriptService;
+        this.auditHooks = auditHooks;
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -38,7 +42,7 @@ public class InferenceScriptController {
             @RequestParam(required = false) String remark
     ) {
         try {
-            return ApiResponse.ok(scriptService.upload(
+            InferenceScriptUploadResultDto result = scriptService.upload(
                     file,
                     scriptName,
                     version,
@@ -46,9 +50,18 @@ public class InferenceScriptController {
                     entryFile,
                     paramsSchemaJson,
                     remark
-            ));
+            );
+            auditHooks.upload(AuditObjectType.INFERENCE_SCRIPT, result.getScriptAssetId(),
+                    "INFERENCE_SCRIPT_UPLOAD", true, null);
+            return ApiResponse.ok(result);
         } catch (IllegalArgumentException e) {
+            auditHooks.upload(AuditObjectType.INFERENCE_SCRIPT, scriptName,
+                    "INFERENCE_SCRIPT_UPLOAD", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.upload(AuditObjectType.INFERENCE_SCRIPT, scriptName,
+                    "INFERENCE_SCRIPT_UPLOAD", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -69,9 +82,18 @@ public class InferenceScriptController {
     @DeleteMapping("/{versionId}")
     public ApiResponse<Map<String, Object>> delete(@PathVariable String versionId) {
         try {
-            return ApiResponse.ok(scriptService.deleteScriptVersion(versionId));
+            Map<String, Object> result = scriptService.deleteScriptVersion(versionId);
+            auditHooks.delete(AuditObjectType.INFERENCE_SCRIPT, versionId,
+                    "INFERENCE_SCRIPT_DELETE", true, null);
+            return ApiResponse.ok(result);
         } catch (IllegalArgumentException e) {
+            auditHooks.delete(AuditObjectType.INFERENCE_SCRIPT, versionId,
+                    "INFERENCE_SCRIPT_DELETE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.delete(AuditObjectType.INFERENCE_SCRIPT, versionId,
+                    "INFERENCE_SCRIPT_DELETE", false, e.getMessage());
+            throw e;
         }
     }
 }

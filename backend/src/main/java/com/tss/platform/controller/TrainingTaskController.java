@@ -37,6 +37,9 @@ public class TrainingTaskController {
         } catch (IllegalArgumentException e) {
             auditHooks.train(null, "TRAIN_CREATE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.train(null, "TRAIN_CREATE", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -67,6 +70,9 @@ public class TrainingTaskController {
         } catch (IllegalArgumentException e) {
             auditHooks.train(id, "TRAIN_STOP", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.train(id, "TRAIN_STOP", false, e.getMessage());
+            throw e;
         }
     }
 
@@ -95,9 +101,14 @@ public class TrainingTaskController {
     public ApiResponse<Object> delete(@RequestParam String id) {
         try {
             service.deleteExperiment(id);
+            auditHooks.delete(AuditObjectType.TRAIN_TASK, id, "TRAIN_TASK_DELETE", true, null);
             return ApiResponse.ok(null);
         } catch (IllegalArgumentException e) {
+            auditHooks.delete(AuditObjectType.TRAIN_TASK, id, "TRAIN_TASK_DELETE", false, e.getMessage());
             return ApiResponse.fail(e.getMessage());
+        } catch (RuntimeException e) {
+            auditHooks.delete(AuditObjectType.TRAIN_TASK, id, "TRAIN_TASK_DELETE", false, e.getMessage());
+            throw e;
         }
     }
 }
