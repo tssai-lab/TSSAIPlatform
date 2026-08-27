@@ -201,9 +201,12 @@ jobs:
           cv_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
           nlp_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
           docker pull "$image"
+          docker pull "$cv_image"
+          docker pull "$nlp_image"
           image_id="$(docker image inspect "$image" --format '{{.Id}}')"
           set -o pipefail
-          docker save "$image" \
+          docker save "$image" "$cv_image" "$nlp_image" \
             | gzip -1 \
-            | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            | ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+                "${DEPLOY_USER}@${DEPLOY_HOST}" \
                 "sudo -n /usr/local/sbin/tss-node-load-inference '$image' '$image_id' '$cv_image' '$nlp_image'"
