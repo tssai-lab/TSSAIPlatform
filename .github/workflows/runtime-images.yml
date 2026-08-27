@@ -11,6 +11,15 @@ on:
       - "deploy/scripts/tss-node-load-inference"
       - ".github/workflows/runtime-images.yml"
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Runtime images to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - gpu-workers
 
 permissions:
   contents: read
@@ -22,6 +31,7 @@ concurrency:
 
 jobs:
   mlflow:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +51,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=mlflow-lite
 
   training-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +72,7 @@ jobs:
 
   inference-worker:
     needs: training-worker
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +108,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=inference-worker-cpu
 
   cv-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all' || inputs.profile == 'gpu-workers'
     runs-on: ubuntu-latest
+    outputs:
+      manifest_digest: ${{ steps.build.outputs.digest }}
+      image_id: ${{ steps.build.outputs.imageid }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -110,22 +126,38 @@ jobs:
           registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+      - name: Select immutable and stable tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo 'value<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:${GITHUB_SHA}"
+            echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
+            if [[ "$GITHUB_REF" == refs/heads/backend-ops ]]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:latest"
+              echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: ./k8s/training-worker
           file: ./k8s/training-worker/Dockerfile.cv
           provenance: false
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/tss-cv-worker:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/tss-cv-worker:latest
-            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${{ github.sha }}
-            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest
+          tags: ${{ steps.image-tags.outputs.value }}
           cache-from: type=gha,scope=cv-worker
           cache-to: type=gha,mode=max,scope=cv-worker
 
   nlp-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all' || inputs.profile == 'gpu-workers'
     runs-on: ubuntu-latest
+    outputs:
+      manifest_digest: ${{ steps.build.outputs.digest }}
+      image_id: ${{ steps.build.outputs.imageid }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -139,19 +171,78 @@ jobs:
           registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+      - name: Select immutable and stable tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo 'value<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:${GITHUB_SHA}"
+            echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
+            if [[ "$GITHUB_REF" == refs/heads/backend-ops ]]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:latest"
+              echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: ./k8s/training-worker
           file: ./k8s/training-worker/Dockerfile.nlp
           provenance: false
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/tss-nlp-worker:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/tss-nlp-worker:latest
-            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${{ github.sha }}
-            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:latest
+          tags: ${{ steps.image-tags.outputs.value }}
           cache-from: type=gha,scope=nlp-worker
           cache-to: type=gha,mode=max,scope=nlp-worker
+
+  record-gpu-worker-lock:
+    name: Record immutable GPU worker image lock
+    needs:
+      - cv-worker
+      - nlp-worker
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'gpu-workers'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write and validate immutable image lock
+        env:
+          CV_MANIFEST_DIGEST: ${{ needs.cv-worker.outputs.manifest_digest }}
+          CV_IMAGE_ID: ${{ needs.cv-worker.outputs.image_id }}
+          NLP_MANIFEST_DIGEST: ${{ needs.nlp-worker.outputs.manifest_digest }}
+          NLP_IMAGE_ID: ${{ needs.nlp-worker.outputs.image_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          for value in "$CV_MANIFEST_DIGEST" "$CV_IMAGE_ID" "$NLP_MANIFEST_DIGEST" "$NLP_IMAGE_ID"; do
+            [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          install -d -m 0700 "$RUNNER_TEMP/tss-aiplatform-gpu-runtime-lock"
+          lock="$RUNNER_TEMP/tss-aiplatform-gpu-runtime-lock/gpu-runtime-images.lock"
+          {
+            echo '# source_ref|source_manifest_digest|linux_amd64_image_id|runtime_ref|purpose|producer_run'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:${GITHUB_SHA}|${CV_MANIFEST_DIGEST}|${CV_IMAGE_ID}|crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@${CV_MANIFEST_DIGEST}|cv-gpu-training|${GITHUB_RUN_ID}"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:${GITHUB_SHA}|${NLP_MANIFEST_DIGEST}|${NLP_IMAGE_ID}|crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@${NLP_MANIFEST_DIGEST}|nlp-gpu-training|${GITHUB_RUN_ID}"
+          } > "$lock"
+          test "$(grep -Evc '^(#|$)' "$lock")" -eq 2
+
+      - name: Upload immutable GPU worker image lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-gpu-runtime-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-gpu-runtime-lock/gpu-runtime-images.lock
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record image build result
+        run: |
+          {
+            echo '### GPU worker images'
+            echo "- Source SHA: \`${GITHUB_SHA}\`"
+            echo '- Built images: CV and NLP only'
+            echo '- Published tags: immutable commit tags only on non-backend-ops branches'
+            echo '- GPU device plugin and workloads: not enabled'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-main-inference:
     name: Deploy and validate Main runtime images
@@ -159,7 +250,9 @@ jobs:
       - inference-worker
       - cv-worker
       - nlp-worker
-    if: github.ref == 'refs/heads/backend-ops' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: >-
+      github.ref == 'refs/heads/backend-ops' &&
+      (github.event_name == 'push' || inputs.profile == 'all')
     runs-on: ubuntu-latest
     environment: main
     concurrency:
