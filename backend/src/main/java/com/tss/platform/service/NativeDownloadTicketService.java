@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +40,7 @@ public class NativeDownloadTicketService {
     private final long ttlMillis;
     private final LongSupplier nowMillis;
 
+    @Autowired
     public NativeDownloadTicketService(
             @Value("${download.ticket.ttl-seconds:60}") long ttlSeconds
     ) {
