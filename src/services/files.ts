@@ -1,5 +1,6 @@
 import { request } from '@umijs/max';
 import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 
 /**
  * 通用文件对象服务。
@@ -62,6 +63,17 @@ export async function downloadObject(objectName: string, options?: { [key: strin
     skipErrorHandler: true,
     timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
     ...(options || {}),
+  });
+}
+
+/** 由浏览器下载管理器保存对象；文件内容不进入前端内存。 */
+export async function downloadObjectWithBrowser(
+  objectName: string,
+  fileName?: string,
+) {
+  return downloadAuthFile({
+    url: getDownloadUrl(objectName),
+    fileName: fileName?.trim() || objectName.split('/').pop() || 'download',
   });
 }
 

@@ -35,14 +35,13 @@ import TrainingStatusBanner from '@/components/TrainingStatusBanner';
 import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import { getModelDetail } from '@/services/model';
 import {
-  downloadObject,
+  downloadObjectWithBrowser,
   fetchTaskDetail,
   getExperimentVersion,
   getModelVersion,
   listExperimentVersions,
   publishTaskModel,
   publishTrainingModel,
-  triggerBlobDownload,
   updateExperimentHyperParams,
 } from '@/services/platform';
 import {
@@ -1895,16 +1894,14 @@ const TrainingArtifactsList: React.FC<{
           message.warning('结果模型文件路径不可用，请先发布结果模型后再试');
           return;
         }
-        const blob = await downloadObject(resolved.objectName);
-        triggerBlobDownload(blob, resolved.fileName);
+        await downloadObjectWithBrowser(resolved.objectName, resolved.fileName);
         return;
       }
       if (!item.objectName) {
         message.warning('该产物暂无下载路径');
         return;
       }
-      const blob = await downloadObject(item.objectName);
-      triggerBlobDownload(blob, item.name);
+      await downloadObjectWithBrowser(item.objectName, item.name);
     } catch (error: any) {
       message.error(await errorMessageFromDownloadError(error));
     } finally {

@@ -41,7 +41,7 @@ import {
   createInferenceTask,
   deleteInferenceScript,
   deleteInferenceTask,
-  downloadObject,
+  downloadObjectWithBrowser,
   fetchDatasetList,
   fetchModelList,
   formatInferenceBytes,
@@ -118,17 +118,6 @@ function minioPathToResultObject(outputPath?: string | null) {
   const objectName = objectNameFromMinioPath(outputPath);
   if (!objectName) return '';
   return `${objectName.replace(/\/?$/, '/')}result.json`;
-}
-
-function triggerBlobDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 }
 
 function shortId(value?: string) {
@@ -541,15 +530,14 @@ const InferenceWorkbench: React.FC = () => {
     }
   };
 
-  /** MinIO objectName → 浏览器下载（结果 JSON、日志、可视化配图共用） */
+  /** MinIO objectName → 浏览器原生下载（结果、日志、配图共用） */
   const downloadByObjectName = async (objectName: string, filename: string) => {
     if (!objectName) {
       message.warning('暂无可下载文件');
       return;
     }
     try {
-      const blob = await downloadObject(objectName, { skipErrorHandler: true });
-      triggerBlobDownload(blob, filename);
+      await downloadObjectWithBrowser(objectName, filename);
     } catch (error: any) {
       message.error(error?.message || '下载失败');
     }

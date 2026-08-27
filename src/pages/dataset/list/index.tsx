@@ -6,8 +6,8 @@ import React from 'react';
 import {
   deleteDataset,
   downloadDatasetVersion,
+  downloadObjectWithBrowser,
   fetchDatasetList as fetchDatasetListService,
-  getDownloadUrl,
   V2_DISPLAY_STATUS_LABEL,
   type V2DatasetDisplayStatus,
 } from '@/services/platform';
@@ -171,7 +171,7 @@ const DatasetList: React.FC = () => {
           onProgress: progress.update,
         });
         progress.close();
-        message.success('下载完成');
+        message.success('已交给浏览器下载');
       } catch (error: unknown) {
         progress.close();
         const tip = getApiErrorMessage(error, '下载失败');
@@ -184,7 +184,12 @@ const DatasetList: React.FC = () => {
       message.warning('当前数据集没有可下载文件');
       return;
     }
-    window.open(getDownloadUrl(storagePath), '_blank');
+    try {
+      await downloadObjectWithBrowser(storagePath, fileName);
+      message.success('已交给浏览器下载');
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '下载失败'));
+    }
   };
 
   const columns: ProColumns<API.DatasetItem>[] = [

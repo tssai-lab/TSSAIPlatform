@@ -365,21 +365,10 @@ const TrainingPlansPage: React.FC = () => {
   const downloadTemplate = useCallback(async () => {
     setDownloading(true);
     try {
-      const blob = await downloadCvCpuTrainingPlanTemplate({
+      await downloadCvCpuTrainingPlanTemplate({
         skipErrorHandler: true,
       });
-      if (!(blob instanceof Blob) || blob.size === 0) {
-        throw new Error('服务器返回的模板为空');
-      }
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = 'cv-cpu-v2.yaml';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      message.success('CV/CPU YAML 模板已下载');
+      message.success('已交给浏览器下载 CV/CPU YAML 模板');
     } catch (error: unknown) {
       message.error(getTrainingPlanRequestError(error, '模板下载失败'));
     } finally {

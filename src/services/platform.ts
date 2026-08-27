@@ -111,8 +111,8 @@ export {
   fetchMultimodalSamples,
   fetchMultimodalSampleDetail,
   fetchMultimodalDataPreview,
-  fetchMultimodalDataDownload,
-  fetchMultimodalAnnotationDownload,
+  downloadMultimodalDataWithBrowser,
+  downloadMultimodalAnnotationWithBrowser,
   createWorkspaceDraft,
   publishDraftVersion,
   fetchWorkspaceSamples,
@@ -122,7 +122,6 @@ export {
   draftPackageUploadInit,
   draftPackageUploadComplete,
   uploadDraftAppendPackage,
-  triggerBlobDownload,
   MULTIMODAL_DATA_TYPE_LABEL,
   MULTIMODAL_IMPORT_STATUS_LABEL,
   type MultimodalImportJob,
@@ -334,7 +333,14 @@ export {
   cancelResourceQueueTask,
 } from './resourceMonitor';
 
-export { fileHealth, uploadObject, getDownloadUrl, downloadObject, deleteObject } from './files';
+export {
+  fileHealth,
+  uploadObject,
+  getDownloadUrl,
+  downloadObject,
+  downloadObjectWithBrowser,
+  deleteObject,
+} from './files';
 
 export {
   uploadInferenceScript,

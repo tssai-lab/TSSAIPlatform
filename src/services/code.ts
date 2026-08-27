@@ -37,8 +37,6 @@ import {
   getV2CodeWorkspaceTree,
   publishV2CodeWorkspace,
   validateV2CodeWorkspace,
-  downloadV2CodeWorkspaceFileBlob,
-  downloadV2CodeVersionFileBlob,
   importV2CodeAssetZip,
   listV2CodeAssets,
   deprecateV2CodeVersion,
@@ -60,7 +58,6 @@ import {
   normalizeV2ApprovalStatus,
   validateV2CodeVersion,
   errorMessageFromV2,
-  errorMessageFromV2Blob,
   getAdminCodeWorkspace,
   getAdminCodeWorkspaceFileMetadata,
   upsertAdminCodeWorkspaceFile,
@@ -69,13 +66,11 @@ import {
   abandonAdminCodeWorkspace,
   moveAdminCodeWorkspaceFile,
   validateAdminCodeWorkspace,
-  downloadAdminCodeWorkspaceFileBlob,
   listAdminCodeAssetWorkspaces,
   openAdminCodeAssetWorkspace,
   validateAdminCodeVersion,
   deprecateAdminCodeVersion,
   archiveAdminCodeVersion,
-  downloadAdminCodeVersionFileBlob,
   getAdminCodeReviewTaskTree,
   getAdminCodeReviewTaskFileContent,
   type V2CodeWorkspace,
@@ -1940,17 +1935,6 @@ export async function publishCodeWorkspaceDraft(
   }
 }
 
-function triggerBrowserDownload(blob: Blob, fileName: string) {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
-}
-
 /** 下载训练代码完整 ZIP */
 export async function downloadCodeVersionZip(
   codeVersionId: string,
@@ -2745,22 +2729,15 @@ export async function downloadAdminCodeWorkspaceFile(
   fileName?: string,
   options?: { [key: string]: any },
 ): Promise<{ success: true }> {
-  const opts = { skipErrorHandler: true, ...(options || {}) };
   try {
-    const blob = await downloadAdminCodeWorkspaceFileBlob(
-      workspaceId,
-      path,
-      opts,
-    );
-    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || path.split('/').pop() || 'file',
-    );
+    await downloadAuthFile({
+      url: `/v2/admin/code-workspaces/${encodeURIComponent(workspaceId)}/files/download?path=${encodeURIComponent(path)}`,
+      fileName: fileName?.trim() || path.split('/').pop() || 'file',
+      onProgress: options?.onProgress,
+    });
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';
@@ -2775,18 +2752,15 @@ export async function downloadAdminCodeVersionFile(
   fileName?: string,
   options?: { [key: string]: any },
 ): Promise<{ success: true }> {
-  const opts = { skipErrorHandler: true, ...(options || {}) };
   try {
-    const blob = await downloadAdminCodeVersionFileBlob(versionId, path, opts);
-    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || path.split('/').pop() || 'file',
-    );
+    await downloadAuthFile({
+      url: `/v2/admin/code-versions/${encodeURIComponent(versionId)}/files/download?path=${encodeURIComponent(path)}`,
+      fileName: fileName?.trim() || path.split('/').pop() || 'file',
+      onProgress: options?.onProgress,
+    });
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';
@@ -2930,18 +2904,15 @@ export async function downloadCodeWorkspaceFile(
   fileName?: string,
   options?: { [key: string]: any },
 ): Promise<{ success: true }> {
-  const opts = { skipErrorHandler: true, ...(options || {}) };
   try {
-    const blob = await downloadV2CodeWorkspaceFileBlob(workspaceId, path, opts);
-    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || path.split('/').pop() || 'file',
-    );
+    await downloadAuthFile({
+      url: `/v2/code-workspaces/${encodeURIComponent(workspaceId)}/files/download?path=${encodeURIComponent(path)}`,
+      fileName: fileName?.trim() || path.split('/').pop() || 'file',
+      onProgress: options?.onProgress,
+    });
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';
@@ -2956,18 +2927,15 @@ export async function downloadCodeVersionSingleFile(
   fileName?: string,
   options?: { [key: string]: any },
 ): Promise<{ success: true }> {
-  const opts = { skipErrorHandler: true, ...(options || {}) };
   try {
-    const blob = await downloadV2CodeVersionFileBlob(versionId, path, opts);
-    if (!(blob instanceof Blob)) throw new Error('下载响应不是文件流');
-    triggerBrowserDownload(
-      blob,
-      fileName?.trim() || path.split('/').pop() || 'file',
-    );
+    await downloadAuthFile({
+      url: `/v2/code-versions/${encodeURIComponent(versionId)}/files/download?path=${encodeURIComponent(path)}`,
+      fileName: fileName?.trim() || path.split('/').pop() || 'file',
+      onProgress: options?.onProgress,
+    });
     return { success: true };
   } catch (error: any) {
     const msg =
-      (await errorMessageFromV2Blob(error).catch(() => undefined)) ||
       (await errorMessageFromV2(error).catch(() => undefined)) ||
       error?.message ||
       '下载失败';

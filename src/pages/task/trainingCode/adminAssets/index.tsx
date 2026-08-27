@@ -820,7 +820,7 @@ const AdminCodeAssetsPage: React.FC = () => {
         { skipErrorHandler: true, onProgress: progress.update },
       );
       progress.close();
-      message.success('下载完成');
+      message.success('已交给浏览器下载');
     } catch (e: unknown) {
       progress.close();
       const tip = getApiErrorMessage(e, 'ZIP 下载失败');

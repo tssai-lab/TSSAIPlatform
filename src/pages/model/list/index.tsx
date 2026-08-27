@@ -72,7 +72,7 @@ const ModelList: React.FC = () => {
         onProgress: progress.update,
       });
       progress.close();
-      message.success('下载完成');
+      message.success('已交给浏览器下载');
     } catch (error: any) {
       progress.close();
       const tip = error?.info?.message || error?.message || '下载失败';

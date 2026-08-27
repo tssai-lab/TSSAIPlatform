@@ -2,6 +2,7 @@ import {
   BookOutlined,
   CloudUploadOutlined,
   DatabaseOutlined,
+  DownloadOutlined,
   ExperimentOutlined,
   FileTextOutlined,
   InfoCircleOutlined,
@@ -301,6 +302,27 @@ const tableStyle: React.CSSProperties = {
   marginTop: 12,
 };
 
+const downloadableManuals = [
+  {
+    key: 'training-plan-yaml',
+    title: '自定义训练方案 YAML 使用手册',
+    description: '说明平台固定字段、校验规则、完整示例和上线前检查项。',
+    href: '/manuals/training-plan-yaml-guide.pdf',
+  },
+  {
+    key: 'training-code',
+    title: '自定义训练代码编写手册',
+    description: '说明代码包结构、平台输入、训练指标协议和输出文件约定。',
+    href: '/manuals/training-code-user-guide.pdf',
+  },
+  {
+    key: 'inference-script',
+    title: '自定义推理脚本编写手册',
+    description: '说明统一结果协议、CV/NLP 示例和原始输入预览约定。',
+    href: '/manuals/inference-script-user-guide.pdf',
+  },
+];
+
 // ==================== 页面组件 ====================
 
 const UserManual: React.FC = () => {
@@ -365,6 +387,42 @@ const UserManual: React.FC = () => {
                 </Descriptions.Item>
               </Descriptions>
             </Card>
+          </div>
+
+          <Divider />
+
+          <div id="document-downloads" style={sectionStyle}>
+            <Title level={2}>
+              <DownloadOutlined
+                style={{ marginRight: 8, color: '#1890ff' }}
+              />
+              文档下载
+            </Title>
+            <Alert
+              type="info"
+              showIcon
+              message="下面是与当前平台版本配套的使用手册"
+              description="点击下载后由浏览器接管文件；后续新增的交付文档也统一放在这里。"
+              style={{ marginBottom: 16 }}
+            />
+            <Row gutter={[16, 16]} style={cardStyle}>
+              {downloadableManuals.map((manual) => (
+                <Col xs={24} md={8} key={manual.key}>
+                  <a href={manual.href} download style={{ color: 'inherit' }}>
+                    <Card
+                      hoverable
+                      style={{ height: '100%' }}
+                      title={manual.title}
+                      extra={<DownloadOutlined />}
+                    >
+                      <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                        {manual.description}
+                      </Paragraph>
+                    </Card>
+                  </a>
+                </Col>
+              ))}
+            </Row>
           </div>
 
           <Divider />
@@ -1284,6 +1342,11 @@ event({"type": "progress", "progress": 100})
                 offsetTop={96}
                 items={[
                   { key: 'overview', href: '#overview', title: '平台概述' },
+                  {
+                    key: 'document-downloads',
+                    href: '#document-downloads',
+                    title: '文档下载',
+                  },
                   {
                     key: 'default-assets',
                     href: '#default-assets',
