@@ -95,6 +95,10 @@ grep -F 'import_status=("${PIPESTATUS[@]}")' "$runtime_loader" >/dev/null
 grep -F 'import_status[0] != 0 && import_status[0] != 141' "$runtime_loader" >/dev/null
 grep -F 'import_status[1] != 0' "$runtime_loader" >/dev/null
 grep -F 'ctr --namespace k8s.io content get "$image_target_digest"' "$runtime_loader" >/dev/null
+if grep -F 'print $3; exit' "$runtime_loader" >/dev/null; then
+  echo "Runtime image lookup must consume the full containerd list under pipefail." >&2
+  exit 1
+fi
 grep -F 'json.load(sys.stdin)["config"]["digest"]' "$runtime_loader" >/dev/null
 grep -F 'Imported image identifier does not match the runner image.' "$runtime_loader" >/dev/null
 if grep -F 'docker load' "$runtime_loader" >/dev/null; then
