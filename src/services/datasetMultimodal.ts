@@ -1,5 +1,6 @@
 import { request } from '@umijs/max';
 import { FILE_DOWNLOAD_REQUEST_TIMEOUT } from '@/constants/request';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 import {
   datasetUploadChunk,
   type DatasetUploadProgress,
@@ -311,46 +312,28 @@ export async function fetchMultimodalDataPreview(
   );
 }
 
-/** GET /api/dataset-sample-data/{dataId}/download */
-export async function fetchMultimodalDataDownload(
+/** 浏览器原生下载样本数据；响应不进入前端内存。 */
+export async function downloadMultimodalDataWithBrowser(
   dataId: string,
-  options?: { [key: string]: unknown },
+  fileName: string,
 ) {
-  return request<Blob>(
-    `/dataset-sample-data/${encodeURIComponent(dataId)}/download`,
-    {
-      method: 'GET',
-      responseType: 'blob',
-      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
-      ...(options || {}),
-    },
-  );
+  return downloadAuthFile({
+    url: `/dataset-sample-data/${encodeURIComponent(dataId)}/download`,
+    fileName: fileName || 'data',
+  });
 }
 
-/** GET /api/dataset-annotations/{annotationId}/download */
-export async function fetchMultimodalAnnotationDownload(
+/** 浏览器原生下载样本标注；响应不进入前端内存。 */
+export async function downloadMultimodalAnnotationWithBrowser(
   annotationId: string,
-  options?: { [key: string]: unknown },
+  fileName: string,
 ) {
-  return request<Blob>(
-    `/dataset-annotations/${encodeURIComponent(annotationId)}/download`,
-    {
-      method: 'GET',
-      responseType: 'blob',
-      timeout: FILE_DOWNLOAD_REQUEST_TIMEOUT,
-      ...(options || {}),
-    },
-  );
+  return downloadAuthFile({
+    url: `/dataset-annotations/${encodeURIComponent(annotationId)}/download`,
+    fileName: fileName || 'annotation',
+  });
 }
 
-export function triggerBlobDownload(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName || 'download';
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
 
 export const MULTIMODAL_DATA_TYPE_LABEL: Record<MultimodalSampleDataType, string> =
   {

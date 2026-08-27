@@ -16,9 +16,9 @@ import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   type ConsumerManifestSample,
+  downloadMultimodalAnnotationWithBrowser,
+  downloadMultimodalDataWithBrowser,
   fetchConsumerManifest,
-  fetchMultimodalAnnotationDownload,
-  fetchMultimodalDataDownload,
   fetchMultimodalDataPreview,
   fetchMultimodalSampleDetail,
   fetchMultimodalSamples,
@@ -26,9 +26,9 @@ import {
   type MultimodalSampleDataItem,
   type MultimodalSampleDetail,
   type MultimodalSampleSummary,
-  triggerBlobDownload,
 } from '@/services/platform';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 
 function normalizeApiPath(url: string): string {
   return url.startsWith('/api') ? url.slice(4) : url;
@@ -141,14 +141,17 @@ const MultimodalDataPreview: React.FC<{
 
   const handleDownload = async () => {
     try {
-      const blob = item.downloadUrl
-        ? await fetchBlobFromApiUrl(item.downloadUrl, {
-            skipErrorHandler: true,
-          })
-        : await fetchMultimodalDataDownload(item.sampleDataId, {
-            skipErrorHandler: true,
-          });
-      triggerBlobDownload(blob, item.fileName || 'data');
+      if (item.downloadUrl) {
+        await downloadAuthFile({
+          url: item.downloadUrl,
+          fileName: item.fileName || 'data',
+        });
+      } else {
+        await downloadMultimodalDataWithBrowser(
+          item.sampleDataId,
+          item.fileName || 'data',
+        );
+      }
     } catch (e: unknown) {
       setError(getApiErrorMessage(e));
     }
@@ -501,18 +504,17 @@ const MultimodalPreviewPanel: React.FC<MultimodalPreviewPanelProps> = ({
                       icon={<DownloadOutlined />}
                       onClick={async () => {
                         try {
-                          const blob = ann.downloadUrl
-                            ? await fetchBlobFromApiUrl(ann.downloadUrl, {
-                                skipErrorHandler: true,
-                              })
-                            : await fetchMultimodalAnnotationDownload(
-                                ann.annotationId,
-                                { skipErrorHandler: true },
-                              );
-                          triggerBlobDownload(
-                            blob,
-                            ann.fileName || 'annotation',
-                          );
+                          if (ann.downloadUrl) {
+                            await downloadAuthFile({
+                              url: ann.downloadUrl,
+                              fileName: ann.fileName || 'annotation',
+                            });
+                          } else {
+                            await downloadMultimodalAnnotationWithBrowser(
+                              ann.annotationId,
+                              ann.fileName || 'annotation',
+                            );
+                          }
                         } catch (e: unknown) {
                           setDetailError(getApiErrorMessage(e));
                         }

@@ -1,4 +1,5 @@
 import { request } from '@umijs/max';
+import { downloadAuthFile } from '@/utils/authFileDownload';
 
 export type TrainingPlanCategory = 'CV' | 'NLP' | 'OTHER';
 export type TrainingPlanSource = 'BUILT_IN' | 'ONLINE';
@@ -214,14 +215,10 @@ export async function disableTrainingPlan(
 }
 
 export async function downloadCvCpuTrainingPlanTemplate(
-  options?: TrainingPlanRequestOptions,
+  _options?: TrainingPlanRequestOptions,
 ) {
-  return request<Blob>(
-    '/admin/training-plans/templates/cv-cpu-v2',
-    {
-      method: 'GET',
-      responseType: 'blob',
-      ...(options || {}),
-    },
-  );
+  return downloadAuthFile({
+    url: '/admin/training-plans/templates/cv-cpu-v2',
+    fileName: 'training-plan-cv-cpu-v2.yaml',
+  });
 }

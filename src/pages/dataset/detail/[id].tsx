@@ -39,11 +39,11 @@ import {
   deleteDataset,
   deleteDatasetVersion,
   downloadDatasetVersion,
+  downloadObjectWithBrowser,
   extractActiveImportJobId,
   fetchDatasetDetail,
   getDatasetVersionAllocation,
   getDatasetWorkspace,
-  getDownloadUrl,
   switchDatasetCurrentVersion,
   updateDatasetVersion,
   updateDatasetVersionStatus,
@@ -482,7 +482,7 @@ const DatasetDetail: React.FC = () => {
           onProgress: progress.update,
         });
         progress.close();
-        message.success('下载完成');
+        message.success('已交给浏览器下载');
       } catch (error: unknown) {
         progress.close();
         const tip = getApiErrorMessage(error, '下载失败');
@@ -495,7 +495,12 @@ const DatasetDetail: React.FC = () => {
       message.warning('当前版本没有可下载文件');
       return;
     }
-    window.open(getDownloadUrl(storagePath), '_blank');
+    try {
+      await downloadObjectWithBrowser(storagePath, fileName);
+      message.success('已交给浏览器下载');
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, '下载失败'));
+    }
   };
 
   const handleUploadNewVersion = () => {
