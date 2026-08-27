@@ -2,6 +2,7 @@ package com.tss.platform.module1.interceptor;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.tss.platform.module1.common.Result;
+import com.tss.platform.service.NativeDownloadTicketService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -34,6 +35,12 @@ public class PermissionInterceptor implements HandlerInterceptor {
             "/api/user/logout"
     );
 
+    private final NativeDownloadTicketService downloadTicketService;
+
+    public PermissionInterceptor(NativeDownloadTicketService downloadTicketService) {
+        this.downloadTicketService = downloadTicketService;
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         String requestUri = request.getRequestURI();
@@ -49,6 +56,11 @@ public class PermissionInterceptor implements HandlerInterceptor {
                 token = token.substring(7).trim();
                 if (!token.isEmpty()) {
                     StpUtil.setTokenValue(token);
+                }
+            } else if ("GET".equalsIgnoreCase(request.getMethod())) {
+                String ticket = request.getParameter(NativeDownloadTicketService.QUERY_PARAMETER);
+                if (ticket != null && !ticket.isBlank()) {
+                    StpUtil.setTokenValue(downloadTicketService.resolve(ticket, request));
                 }
             }
             StpUtil.checkLogin();

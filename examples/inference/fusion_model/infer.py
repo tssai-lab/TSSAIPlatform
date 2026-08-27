@@ -310,7 +310,9 @@ def main() -> int:
     positives = sum(predictions)
     labeled = [r for r in records if "correct" in r]
     result = {
+        "schemaVersion": "tss.inference.result/v1",
         "ok": True,
+        "view": "table_classification",
         "taskId": os.environ.get("TASK_ID"),
         "inputMode": os.environ.get("INPUT_MODE"),
         "modelFile": str(model_file),
