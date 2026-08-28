@@ -43,6 +43,7 @@ cv_image_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shangha
 nlp_image_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
 backend_health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
 cluster_name="${TSS_CLUSTER_NAME:-tss-training-${node_id}}"
+deployment_smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-}"
 server_address="${TSS_SERVER_ADDRESS:-127.0.0.1}"
 spring_profiles_active="${TSS_SPRING_PROFILES_ACTIVE:-default}"
 datasource_host="${TSS_DATASOURCE_HOST:-127.0.0.1}"
@@ -110,6 +111,14 @@ if [[ $redis_image_id != "$reviewed_redis_image_id" ]]; then
   echo "TSS_REDIS_IMAGE_ID must use the reviewed Redis image identifier." >&2
   exit 1
 fi
+if [[ -z $deployment_smoke_node ]]; then
+  echo "TSS_DEPLOYMENT_SMOKE_NODE must name the Kubernetes node used for deployment smoke tests." >&2
+  exit 1
+fi
+if [[ ! $deployment_smoke_node =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+  echo "TSS_DEPLOYMENT_SMOKE_NODE is not a valid Kubernetes node name." >&2
+  exit 1
+fi
 
 model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
 model_cache_node_path="${TSS_MODEL_CACHE_NODE_PATH:-/opt/tss-platform/model-cache}"
@@ -163,6 +172,10 @@ for required_path in \
     exit 1
   fi
 done
+
+"${platform_dir}/.tools/bin/kubectl" \
+  --kubeconfig "${platform_dir}/k8s/.kube/config" \
+  get node "$deployment_smoke_node" >/dev/null
 
 get_container_env() {
   local container="$1"
@@ -271,6 +284,7 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_CV_IMAGE_REPOSITORY=%q\n' "$cv_image_repository"
   printf 'TSS_NLP_IMAGE_REPOSITORY=%q\n' "$nlp_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
+  printf 'TSS_DEPLOYMENT_SMOKE_NODE=%q\n' "$deployment_smoke_node"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
   printf 'TSS_REDIS_IMAGE=%q\n' "$redis_image"
   printf 'TSS_REDIS_IMAGE_ID=%q\n' "$redis_image_id"
