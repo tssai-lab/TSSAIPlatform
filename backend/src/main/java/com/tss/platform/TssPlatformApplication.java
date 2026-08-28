@@ -1,5 +1,6 @@
 package com.tss.platform;
 
+import com.tss.platform.config.AuthSessionProperties;
 import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.InferenceKubernetesResourceProperties;
@@ -12,8 +13,9 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
-@SpringBootApplication
+@SpringBootApplication(excludeName = "cn.dev33.satoken.dao.SaTokenDaoRedisJackson")
 @EnableConfigurationProperties({
+        AuthSessionProperties.class,
         TrainingMlflowProperties.class,
         TrainingKubernetesProperties.class,
         ComputeProperties.class,

@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
+import com.tss.platform.security.AuthSessionStoreHealth;
 import com.tss.platform.service.MinioService;
 import com.tss.platform.training.TrainingEnvironmentService;
 import com.tss.platform.training.TrainingEnvironmentStatus;
@@ -24,6 +25,7 @@ public class SystemHealthController {
     private final MinioService minioService;
     private final TrainingEnvironmentService trainingEnvironmentService;
     private final TrainingKubernetesProperties trainingProperties;
+    private final AuthSessionStoreHealth authSessionStoreHealth;
     private final String applicationName;
     private final String nodeId;
 
@@ -32,6 +34,7 @@ public class SystemHealthController {
             MinioService minioService,
             TrainingEnvironmentService trainingEnvironmentService,
             TrainingKubernetesProperties trainingProperties,
+            AuthSessionStoreHealth authSessionStoreHealth,
             @Value("${spring.application.name:application}") String applicationName,
             @Value("${TSS_NODE_ID:unknown}") String nodeId
     ) {
@@ -39,6 +42,7 @@ public class SystemHealthController {
         this.minioService = minioService;
         this.trainingEnvironmentService = trainingEnvironmentService;
         this.trainingProperties = trainingProperties;
+        this.authSessionStoreHealth = authSessionStoreHealth;
         this.applicationName = applicationName;
         this.nodeId = nodeId;
     }
@@ -82,6 +86,10 @@ public class SystemHealthController {
             components.put("training", "DOWN");
             ready = false;
         }
+
+        String authSessionStatus = authSessionStoreHealth.readinessStatus();
+        components.put("authSession", authSessionStatus);
+        ready &= !"DOWN".equals(authSessionStatus);
 
         Map<String, Object> body = baseBody(ready ? "UP" : "DOWN");
         body.put("check", "readiness");

@@ -29,6 +29,7 @@ compose_base="${TSS_COMPOSE_BASE:-${platform_dir}/compose.yml}"
 compose_overlay="$1"
 runtime_env="${platform_dir}/backend/.env.runtime"
 backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
 postgres_container="${TSS_POSTGRES_CONTAINER:-tss-postgres}"
 minio_container="${TSS_MINIO_CONTAINER:-tss-minio}"
 backend_image_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
@@ -45,11 +46,15 @@ datasource_port="${TSS_DATASOURCE_PORT:-5432}"
 minio_endpoint="${TSS_MINIO_ENDPOINT:-http://127.0.0.1:9010}"
 minio_bucket="${TSS_MINIO_BUCKET:-models}"
 mlflow_tracking_uri="${TSS_MLFLOW_TRACKING_URI:-http://127.0.0.1:5000}"
+redis_host="${TSS_REDIS_HOST:-127.0.0.1}"
+redis_port="${TSS_REDIS_PORT:-6379}"
 training_experiment_name="${TSS_TRAINING_EXPERIMENT_NAME:-tss-training}"
 k8s_backend_service_url="${TSS_K8S_BACKEND_SERVICE_URL:-http://tss-backend:8080}"
 k8s_minio_service_url="${TSS_K8S_MINIO_SERVICE_URL:-http://tss-minio:9000}"
 k8s_mlflow_service_url="${TSS_K8S_MLFLOW_SERVICE_URL:-http://tss-mlflow:5000}"
 mlflow_image="${TSS_MLFLOW_IMAGE:-tss-platform-mlflow:local}"
+reviewed_redis_image="redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+redis_image="${TSS_REDIS_IMAGE:-$reviewed_redis_image}"
 training_worker_image="${TSS_TRAINING_WORKER_IMAGE:-tss-training-worker:local}"
 inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-tss-inference-worker-cpu:local}"
 
@@ -61,6 +66,23 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
   mlflow_image="${TSS_MLFLOW_IMAGE:-$mlflow_image}"
   training_worker_image="${TSS_TRAINING_WORKER_IMAGE:-$training_worker_image}"
   inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-$inference_worker_image}"
+fi
+
+if [[ $redis_host != 127.0.0.1 ]]; then
+  echo "TSS_REDIS_HOST must remain on 127.0.0.1 for the single-node session store." >&2
+  exit 1
+fi
+if [[ $redis_container != tss-redis ]]; then
+  echo "TSS_REDIS_CONTAINER must remain tss-redis for the restricted deployment helper." >&2
+  exit 1
+fi
+if [[ $redis_port != 6379 ]]; then
+  echo "TSS_REDIS_PORT must remain 6379 for the loopback-only session store." >&2
+  exit 1
+fi
+if [[ $redis_image != "$reviewed_redis_image" ]]; then
+  echo "TSS_REDIS_IMAGE must use the reviewed Redis 7.4.11 Alpine digest." >&2
+  exit 1
 fi
 
 model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
@@ -99,6 +121,7 @@ docker compose version >/dev/null
 docker inspect "$postgres_container" >/dev/null
 docker inspect "$minio_container" >/dev/null
 docker image inspect "$mlflow_image" >/dev/null
+docker image inspect "$redis_image" >/dev/null
 docker image inspect "$training_worker_image" >/dev/null
 docker image inspect "$inference_worker_image" >/dev/null
 id "$deploy_user" >/dev/null
@@ -137,6 +160,7 @@ done
 install -d -m 700 "${platform_dir}/backend"
 install -d -m 750 "${platform_dir}/backend/logs"
 chown 10001:10001 "${platform_dir}/backend/logs"
+install -d -m 700 -o 999 -g 1000 "${platform_dir}/redis-data"
 install -m 600 "$compose_overlay" "${platform_dir}/compose.backend.yml"
 
 umask 077
@@ -155,6 +179,11 @@ SPRING_PROFILES_ACTIVE=${spring_profiles_active}
 SPRING_DATASOURCE_URL=jdbc:postgresql://${datasource_host}:${datasource_port}/${postgres_db}
 SPRING_DATASOURCE_USERNAME=${postgres_user}
 SPRING_DATASOURCE_PASSWORD=${postgres_password}
+AUTH_SESSION_STORE=redis
+SPRING_DATA_REDIS_HOST=${redis_host}
+SPRING_DATA_REDIS_PORT=${redis_port}
+SPRING_DATA_REDIS_CONNECT_TIMEOUT=3s
+SPRING_DATA_REDIS_TIMEOUT=3s
 MINIO_ENDPOINT=${minio_endpoint}
 MINIO_ACCESS_KEY=${minio_user}
 MINIO_SECRET_KEY=${minio_password}
@@ -195,6 +224,8 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_COMPOSE_BASE=%q\n' "$compose_base"
   printf 'TSS_COMPOSE_OVERLAY=%q\n' "${platform_dir}/compose.backend.yml"
   printf 'TSS_BACKEND_CONTAINER=%q\n' "$backend_container"
+  printf 'TSS_REDIS_CONTAINER=%q\n' "$redis_container"
+  printf 'TSS_REQUIRE_REDIS_SESSION_STORE=true\n'
   printf 'TSS_BACKEND_IMAGE_REPOSITORY=%q\n' "$backend_image_repository"
   printf 'TSS_INFERENCE_IMAGE_REPOSITORY=%q\n' "$inference_image_repository"
   printf 'TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY=%q\n' "$fallback_inference_image_repository"
@@ -202,6 +233,7 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_NLP_IMAGE_REPOSITORY=%q\n' "$nlp_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
+  printf 'TSS_REDIS_IMAGE=%q\n' "$redis_image"
   printf 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=%q\n' "$model_cache_runtime_reserve_bytes"
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
@@ -244,6 +276,26 @@ visudo -cf /etc/sudoers.d/tss-node-backend-deployer >/dev/null
 
 TSS_BACKEND_IMAGE="${backend_image_repository}:0000000000000000000000000000000000000000" \
 TSS_MLFLOW_IMAGE="$mlflow_image" \
+TSS_REDIS_IMAGE="$redis_image" \
   docker compose -f "$compose_base" -f "${platform_dir}/compose.backend.yml" config --quiet
+
+TSS_BACKEND_IMAGE="${backend_image_repository}:0000000000000000000000000000000000000000" \
+TSS_MLFLOW_IMAGE="$mlflow_image" \
+TSS_REDIS_IMAGE="$redis_image" \
+  docker compose -f "$compose_base" -f "${platform_dir}/compose.backend.yml" up -d --no-deps redis
+
+redis_healthy=false
+for _ in $(seq 1 24); do
+  if [[ $(docker inspect "$redis_container" --format '{{.State.Health.Status}}' 2>/dev/null || true) == healthy ]]; then
+    redis_healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ $redis_healthy != true ]]; then
+  echo "Redis session store did not become healthy during bootstrap." >&2
+  docker logs --tail 100 "$redis_container" >&2 || true
+  exit 1
+fi
 
 echo "Node backend deployment bootstrap completed: $node_id"
