@@ -21,6 +21,7 @@ for file in \
   "$platform_root/scripts/generate-platform-secrets.sh" \
   "$platform_root/scripts/image-runtime-fingerprint.py" \
   "$platform_root/scripts/export-platform-images.sh" \
+  "$platform_root/scripts/promote-backend-image-lock.sh" \
   "$platform_root/scripts/check-platform-image-budget.sh" \
   "$platform_root/scripts/verify-platform-images.sh" \
   "$platform_root/scripts/bootstrap-platform-kubernetes.sh" \
@@ -191,6 +192,9 @@ grep -F 'state_content=$(sudo -n /usr/bin/cat "$state_file" 2>/dev/null || true)
 ! grep -F 'NOPASSWD: ALL' "$installer" >/dev/null
 grep -F 'deployment_config=/etc/tss-aiplatform-deploy/backend.env' "$gateway" >/dev/null
 grep -F 'deployment_config=/etc/tss-aiplatform-deploy/backend.env' "$deployer" >/dev/null
+grep -F 'TSS_DEPLOYMENT_BRANCH=%s' "$installer" >/dev/null
+grep -F 'refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}' "$gateway" >/dev/null
+grep -F 'refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}' "$deployer" >/dev/null
 grep -F 'TSS_INSTALL_ROOT_TO_HARDEN=$install_root harden_project_install_tree' \
   "$installer" >/dev/null
 if grep -REn 'seu4080|seu5090|/media/seu|/home/user|expected_user=user' \

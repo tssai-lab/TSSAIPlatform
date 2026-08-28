@@ -14,13 +14,16 @@ deployment_config=/etc/tss-aiplatform-deploy/backend.env
   || die "backend deployment target configuration metadata differs"
 # shellcheck disable=SC1090
 source "$deployment_config"
-for name in TSS_DEPLOYMENT_USER TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
+for name in TSS_DEPLOYMENT_USER TSS_DEPLOYMENT_BRANCH TSS_PROJECT_ROOT TSS_PLATFORM_ROOT \
   TSS_REPOSITORY_ROOT TSS_NODE_CONFIG TSS_PLATFORM_CONFIG \
   TSS_DEPLOY_STAGE_ROOT TSS_DEPLOY_STATE_FILE; do
   [[ -n ${!name:-} ]] || die "backend deployment target setting is empty: $name"
 done
 [[ $TSS_DEPLOYMENT_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
   || die "backend deployment user is invalid"
+[[ $TSS_DEPLOYMENT_BRANCH == backend-ops || $TSS_DEPLOYMENT_BRANCH == backend-gpu ]] \
+  || die "backend deployment branch is invalid"
+export TSS_DEPLOYMENT_BRANCH
 repository_root=$TSS_REPOSITORY_ROOT
 node_config=$TSS_NODE_CONFIG
 platform_config=$TSS_PLATFORM_CONFIG
@@ -34,9 +37,9 @@ compose_file=${repository_root}/deploy/tss-aiplatform-internal/platform/compose.
 [[ $(id -u) -eq 0 ]] || die "internal backend deployment must run as root"
 [[ -d $repository_root/.git ]] || die "deployment repository is absent"
 [[ -z $(/usr/bin/git -C "$repository_root" status --porcelain) ]] || die "deployment repository is not clean"
-[[ $(/usr/bin/git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == backend-ops ]] \
-  || die "internal deployment must use backend-ops"
-[[ $(/usr/bin/git -C "$repository_root" rev-parse HEAD) == $(/usr/bin/git -C "$repository_root" rev-parse refs/remotes/origin/backend-ops) ]] \
+[[ $(/usr/bin/git -C "$repository_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true) == "$TSS_DEPLOYMENT_BRANCH" ]] \
+  || die "internal deployment must use the configured deployment branch"
+[[ $(/usr/bin/git -C "$repository_root" rev-parse HEAD) == $(/usr/bin/git -C "$repository_root" rev-parse "refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}") ]] \
   || die "internal deployment repository is not the protected remote head"
 origin_url=$(/usr/bin/git -C "$repository_root" remote get-url origin)
 [[ $origin_url =~ ^(https://github\.com/|git@github\.com:|ssh://git@ssh\.github\.com:443/)tssai-lab/TSSAIPlatform(\.git)?$ ]] \
@@ -45,7 +48,7 @@ script_dir=${repository_root}/deploy/tss-aiplatform-internal/platform/scripts
 [[ -f $script_dir/lib-platform.sh && ! -L $script_dir/lib-platform.sh ]] \
   || die "versioned platform deployment library is absent or symbolic"
 # The root-owned launcher reaches versioned helpers only after the worktree is
-# clean, on protected backend-ops and at the exact fetched remote SHA.
+# clean, on the configured deployment branch and at the exact fetched remote SHA.
 # shellcheck source=lib-platform.sh
 source "${script_dir}/lib-platform.sh"
 load_platform_config "$node_config" "$platform_config"
