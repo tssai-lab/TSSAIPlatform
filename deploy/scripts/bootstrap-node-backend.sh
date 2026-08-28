@@ -22,6 +22,10 @@ if [[ -n ${TSS_NODE_CONFIG:-} ]]; then
   set +a
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy/scripts/lib-runtime-env.sh
+source "${script_dir}/lib-runtime-env.sh"
+
 node_id="${TSS_NODE_ID:-node-01}"
 platform_dir="${TSS_PLATFORM_DIR:-/opt/tss-platform}"
 deploy_user="${TSS_DEPLOY_USER:-tss-deployer}"
@@ -172,7 +176,15 @@ if [[ -z $callback_token ]]; then
   callback_token="$(openssl rand -hex 32)"
 fi
 
-cat > "$runtime_env" <<EOF
+managed_runtime_env="$(mktemp "${runtime_env}.managed.XXXXXX")"
+cleanup_managed_runtime_env() {
+  if [[ -n ${managed_runtime_env:-} ]]; then
+    rm -f -- "$managed_runtime_env"
+  fi
+}
+trap cleanup_managed_runtime_env EXIT
+
+cat > "$managed_runtime_env" <<EOF
 TSS_NODE_ID=${node_id}
 SERVER_ADDRESS=${server_address}
 SPRING_PROFILES_ACTIVE=${spring_profiles_active}
@@ -215,7 +227,10 @@ INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES=${model_cache_max_bytes}
 INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES=${model_cache_min_free_bytes}
 INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES=${model_cache_runtime_reserve_bytes}
 EOF
-chmod 600 "$runtime_env"
+chmod 600 "$managed_runtime_env"
+tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"
+rm -f -- "$managed_runtime_env"
+managed_runtime_env=""
 
 install -d -m 700 /etc/tss-platform
 {
@@ -238,7 +253,6 @@ install -d -m 700 /etc/tss-platform
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -m 700 \
   "${script_dir}/tss-node-activate-backend" \
   /usr/local/sbin/tss-node-activate-backend
