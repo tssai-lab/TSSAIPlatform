@@ -16,7 +16,6 @@ on:
       - ".github/workflows/frontend-runtime-image.yml"
   push:
     branches:
-      - frontend-dev
       - frontend-main
       - frontend-gpu
     paths:
