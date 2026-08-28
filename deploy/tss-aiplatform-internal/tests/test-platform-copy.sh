@@ -134,6 +134,8 @@ grep -F 'TRAINING_K8S_AUTO_CREATE: "false"' "$compose" >/dev/null
 grep -F 'TRAINING_K8S_FALLBACK_TO_LOCAL: "false"' "$compose" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"' "$compose" >/dev/null
 grep -F '[[ $files_health_status == 401 ]]' "$platform_root/scripts/verify-platform.sh" >/dev/null
+grep -F '[[ $flyway == "$expected_flyway" ]]' "$platform_root/scripts/verify-platform.sh" >/dev/null
+! grep -E '\[\[ \$flyway == [0-9]+' "$platform_root/scripts/verify-platform.sh" >/dev/null
 [[ $(grep -Fc 'payload.get("success") is not True' "$platform_root/scripts/smoke-platform-api.sh") -eq 2 ]]
 grep -F 'module1-schema-postgresql.sql:/docker-entrypoint-initdb.d/001-module1.sql:ro' "$compose" >/dev/null
 grep -F "psql -U \$\$POSTGRES_USER -d \$\$POSTGRES_DB -Atqc 'SELECT 1'" "$compose" >/dev/null

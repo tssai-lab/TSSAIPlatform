@@ -70,9 +70,23 @@ files_health_status="$(curl --silent --output /dev/null --write-out '%{http_code
 roles="$(docker exec tss-aiplatform-internal-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from roles"')"
 flyway="$(docker exec tss-aiplatform-internal-postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select coalesce(max(installed_rank),0) from flyway_schema_history"')"
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select coalesce(max(version::integer),0) from flyway_schema_history where success and version ~ '\''^[0-9]+$'\''"')"
+repo_root="$(cd "${script_dir}/../../../.." && pwd)"
+expected_flyway=0
+shopt -s nullglob
+for migration in "${repo_root}/backend/src/main/resources/db/migration"/V[0-9]*__*.sql; do
+  migration_version="${migration##*/V}"
+  migration_version="${migration_version%%__*}"
+  [[ $migration_version =~ ^[0-9]+$ ]] || continue
+  if (( migration_version > expected_flyway )); then
+    expected_flyway="$migration_version"
+  fi
+done
+shopt -u nullglob
+(( expected_flyway > 0 )) || die "no versioned Flyway migrations were found in the deployed source"
 [[ $roles == 3 ]] || die "module-one role initialization is incomplete"
-[[ $flyway == 62 ]] || die "Flyway schema is not at the expected application baseline: $flyway"
+[[ $flyway == "$expected_flyway" ]] \
+  || die "Flyway schema is not at the expected application baseline: actual=$flyway expected=$expected_flyway"
 if [[ $fresh == true ]]; then
   users="$(docker exec tss-aiplatform-internal-postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from users"')"
