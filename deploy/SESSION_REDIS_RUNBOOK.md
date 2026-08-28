@@ -7,10 +7,14 @@ container restart does not log out users whose 24-hour token is still valid.
 Redis is not used as the source of truth for models, datasets or training data.
 It is installed only on the application node; compute-only nodes do not need it.
 
-The production image is fixed to:
+The reviewed upstream source is Redis 7.4.11 Alpine. Main uses a local,
+content-addressed name because its network cannot reach Docker Hub reliably:
 
 ```text
-redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+upstream index:   redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+amd64 manifest:   sha256:1db42ccef14898aa29bae778452d567534b59c107129cbc1163fb552de184d3c
+runtime image:    tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60
+runtime image ID: sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb
 ```
 
 The container publishes `6379` only on `127.0.0.1`, uses append-only
@@ -29,9 +33,9 @@ public or LAN Redis listener.
   backend. An unhealthy Redis keeps the old backend in place.
 - Routine deployment never deletes the Redis directory and never falls back to
   an in-memory session store.
-- The exact Redis image is preloaded once. Routine deployment uses
-  `pull_policy: never` to prevent an unreviewed tag change or network failure
-  from changing infrastructure during an application release.
+- The exact Redis amd64 image is verified and preloaded once. Routine deployment
+  verifies both its fixed local name and image ID, then uses `pull_policy: never`
+  so network failure cannot change infrastructure during an application release.
 
 ## Read-only preflight
 
@@ -41,13 +45,13 @@ Run on Main before the first bootstrap:
 df -h /
 ss -H -ltn 'sport = :6379'
 docker ps -a --filter name='^/tss-redis$'
-docker image inspect \
-  'redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf'
+docker image inspect 'tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60' \
+  --format '{{.Id}}'
 ```
 
 The accepted first-install state is: enough node free space, no unrelated 6379
 listener and no conflicting `tss-redis` container. A missing image is expected
-before the pull below.
+before the offline import below.
 
 ## One-time controlled bootstrap
 
@@ -55,9 +59,22 @@ Use a clean checkout of the reviewed backend commit. Protect the existing node
 configuration and do not put credentials in Git.
 
 ```bash
-redis_image='redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf'
-docker pull "$redis_image"
-docker image inspect "$redis_image" --format '{{.Id}}'
+# On a trusted internet-connected linux/amd64 workstation, use a reviewed
+# go-containerregistry/crane release. The digest pins the downloaded content.
+crane pull --platform linux/amd64 --format tarball \
+  'redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf' \
+  redis-7.4.11-alpine-amd64.tar
+
+# Transfer the archive to Main over the existing trusted SSH channel, verify
+# the transfer checksum, then import and verify the upstream config image ID.
+docker load --input redis-7.4.11-alpine-amd64.tar
+docker image inspect redis:i-was-a-digest --format '{{.Id}}'
+docker tag redis:i-was-a-digest \
+  tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60
+test "$(docker image inspect \
+  tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60 \
+  --format '{{.Id}}')" = \
+  'sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb'
 
 TSS_NODE_CONFIG=/etc/tss-platform/node.env \
   sudo -E bash deploy/scripts/bootstrap-main-backend.sh \
@@ -86,7 +103,8 @@ docker exec tss-redis redis-cli ping
 curl --fail --silent http://127.0.0.1:8080/health/ready
 ```
 
-Required results are the exact image above, `running healthy`, only
+Required results are the exact local image name and image ID above,
+`running healthy`, only
 `127.0.0.1:6379`, `PONG`, and readiness component `authSession: UP`.
 
 Complete the functional restart check with a controlled test account:
@@ -109,9 +127,10 @@ writes, run `redis-cli SAVE`, stop Redis, archive
 `/opt/tss-platform/redis-data` with numeric ownership, and start Redis before
 the backend. Validate `PONG` and `/health/ready` after restoration.
 
-If the container is missing but the data directory remains, pull the same
-digest and rerun the bootstrap. Do not point Redis at a different directory or
-delete a partial AOF by hand.
+If the container or local image is missing but the data directory remains,
+repeat the same digest-pinned offline import, verify the fixed image ID, and
+rerun the bootstrap. Do not point Redis at a different directory or delete a
+partial AOF by hand.
 
 Removing `/opt/tss-platform/redis-data` invalidates active sessions and is a
 data-deletion operation. It requires explicit approval and a maintenance

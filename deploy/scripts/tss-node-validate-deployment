@@ -40,7 +40,9 @@ service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
 smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-$(hostname)}"
 redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
 redis_image="${TSS_REDIS_IMAGE:-}"
-reviewed_redis_image="redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+redis_image_id="${TSS_REDIS_IMAGE_ID:-}"
+reviewed_redis_image="tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60"
+reviewed_redis_image_id="sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb"
 require_redis_session_store="${TSS_REQUIRE_REDIS_SESSION_STORE:-false}"
 
 require_immutable_image() {
@@ -156,11 +158,15 @@ PY
 if [[ $require_redis_session_store == true ]]; then
   [[ $redis_image == "$reviewed_redis_image" ]] \
     || { echo "Redis image is not the reviewed immutable reference." >&2; exit 1; }
+  [[ $redis_image_id == "$reviewed_redis_image_id" ]] \
+    || { echo "Redis image identifier is not the reviewed value." >&2; exit 1; }
   actual_redis_image="$($docker_bin inspect "$redis_container" --format '{{.Config.Image}}')"
+  actual_redis_image_id="$($docker_bin inspect "$redis_container" --format '{{.Image}}')"
   redis_health="$($docker_bin inspect "$redis_container" --format '{{.State.Health.Status}}')"
   redis_binding="$($docker_bin port "$redis_container" 6379/tcp)"
   redis_ping="$($docker_bin exec "$redis_container" redis-cli ping)"
   if [[ $actual_redis_image != "$redis_image" \
+    || $actual_redis_image_id != "$redis_image_id" \
     || $redis_health != healthy \
     || $redis_binding != 127.0.0.1:6379 \
     || $redis_ping != PONG ]]; then

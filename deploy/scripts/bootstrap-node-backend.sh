@@ -57,8 +57,10 @@ k8s_backend_service_url="${TSS_K8S_BACKEND_SERVICE_URL:-http://tss-backend:8080}
 k8s_minio_service_url="${TSS_K8S_MINIO_SERVICE_URL:-http://tss-minio:9000}"
 k8s_mlflow_service_url="${TSS_K8S_MLFLOW_SERVICE_URL:-http://tss-mlflow:5000}"
 mlflow_image="${TSS_MLFLOW_IMAGE:-tss-platform-mlflow:local}"
-reviewed_redis_image="redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+reviewed_redis_image="tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60"
+reviewed_redis_image_id="sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb"
 redis_image="${TSS_REDIS_IMAGE:-$reviewed_redis_image}"
+redis_image_id="${TSS_REDIS_IMAGE_ID:-$reviewed_redis_image_id}"
 training_worker_image="${TSS_TRAINING_WORKER_IMAGE:-tss-training-worker:local}"
 inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-tss-inference-worker-cpu:local}"
 
@@ -85,7 +87,11 @@ if [[ $redis_port != 6379 ]]; then
   exit 1
 fi
 if [[ $redis_image != "$reviewed_redis_image" ]]; then
-  echo "TSS_REDIS_IMAGE must use the reviewed Redis 7.4.11 Alpine digest." >&2
+  echo "TSS_REDIS_IMAGE must use the reviewed offline Redis reference." >&2
+  exit 1
+fi
+if [[ $redis_image_id != "$reviewed_redis_image_id" ]]; then
+  echo "TSS_REDIS_IMAGE_ID must use the reviewed Redis image identifier." >&2
   exit 1
 fi
 
@@ -126,6 +132,10 @@ docker inspect "$postgres_container" >/dev/null
 docker inspect "$minio_container" >/dev/null
 docker image inspect "$mlflow_image" >/dev/null
 docker image inspect "$redis_image" >/dev/null
+if [[ $(docker image inspect "$redis_image" --format '{{.Id}}') != "$redis_image_id" ]]; then
+  echo "Preloaded Redis image identifier differs from the reviewed image." >&2
+  exit 1
+fi
 docker image inspect "$training_worker_image" >/dev/null
 docker image inspect "$inference_worker_image" >/dev/null
 id "$deploy_user" >/dev/null
@@ -249,6 +259,7 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
   printf 'TSS_REDIS_IMAGE=%q\n' "$redis_image"
+  printf 'TSS_REDIS_IMAGE_ID=%q\n' "$redis_image_id"
   printf 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=%q\n' "$model_cache_runtime_reserve_bytes"
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
