@@ -69,7 +69,7 @@ function approvalTag(
 
 function statusTag(status?: string) {
   if (status === 'READY') {
-    return <Tag color="success">READY</Tag>;
+    return <Tag color="success">可用</Tag>;
   }
   return <Tag>{status || '-'}</Tag>;
 }
@@ -278,7 +278,7 @@ const TrainingCodeList: React.FC = () => {
         render: (_, record) => formatDisplayDateTime(getCodeUploadedAt(record)),
       },
       {
-        title: 'codeVersionId',
+        title: '版本编号',
         dataIndex: 'codeVersionId',
         key: 'codeVersionId',
         hideInSearch: true,
@@ -336,8 +336,8 @@ const TrainingCodeList: React.FC = () => {
       title="训练代码"
       subTitle={
         isTrainingCodeAutoApproveEnabled()
-          ? '当前为自动审核：上传/发布后可由系统直接通过或拒绝'
-          : '上传后即产生列表记录。系统无法自动通过时显示 PENDING，由管理员决定 APPROVED / REJECTED；仅 APPROVED 版本可用于发起训练'
+          ? '上传后由平台自动校验和审核'
+          : '上传后由平台校验；需要人工处理时显示“待审核”，通过后才可用于训练'
       }
       extra={[
         access.isAdmin && !isTrainingCodeAutoApproveEnabled() ? (

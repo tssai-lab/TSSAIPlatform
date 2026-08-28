@@ -279,11 +279,10 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
     return (
       <div style={{ padding: 24, background: '#fafafa', borderRadius: 8 }}>
         <div style={{ marginBottom: 12, color: '#8c8c8c' }}>
-          当前任务未关联 MLflow Run，或暂无可视化指标。可手动输入 MLflow Run ID
-          进行联调：
+          当前任务暂无可视化指标。需要手动定位时，可输入运行记录编号：
         </div>
         <Input.Search
-          placeholder="输入 MLflow Run ID（如 abc123...）"
+          placeholder="运行记录编号（高级）"
           value={runIdInput}
           onChange={(e) => onRunIdInputChange?.(e.target.value)}
           onSearch={(value) => onManualRunId?.(value.trim())}
@@ -379,7 +378,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             type="secondary"
             style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
           >
-            MLflow 指标末值
+            训练指标末值
             {scalarMetricKeys.length > 0 && seriesMetricKeys.length > 0
               ? '（含终值/常数指标与过程序列末值；常数不进折线）'
               : scalarMetricKeys.length > 0
@@ -439,7 +438,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
             lineHeight: 1.6,
           }}
         >
-          当前 MLflow 指标均为终值或常数（单点、同
+          当前训练指标均为终值或常数（单点、同
           Step，或全程同一数值），已用上方卡片展示，不再绘制 Step
           过程折线，避免出现水平直线。若指标随 step/epoch
           有真实变化，刷新后会出现过程曲线。
@@ -458,12 +457,12 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
         >
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 16, marginBottom: 8 }}>
-              暂无 MLflow 指标数据
+              暂无训练指标数据
             </div>
             <div style={{ fontSize: 12 }}>
               {isActive
                 ? '训练进行中，指标写入后将自动刷新；也可点击「刷新」手动拉取'
-                : '请确保 MLflow 服务已启动，且该 run_id 下已写入 metrics'}
+                : '请确认训练指标服务可用，且该运行记录已写入指标'}
             </div>
           </div>
         </div>

@@ -163,7 +163,7 @@ const datasetConstraints = [
   },
   {
     key: 'robotFormat',
-    constraint: '机器人数据集（预留）',
+    constraint: '机器人数据集',
     specification: '.xml / .yaml / .yml / .zip',
     remark: '仅支持单个配置文件或配置类 zip',
   },
@@ -393,9 +393,7 @@ const UserManual: React.FC = () => {
 
           <div id="document-downloads" style={sectionStyle}>
             <Title level={2}>
-              <DownloadOutlined
-                style={{ marginRight: 8, color: '#1890ff' }}
-              />
+              <DownloadOutlined style={{ marginRight: 8, color: '#1890ff' }} />
               文档下载
             </Title>
             <Alert

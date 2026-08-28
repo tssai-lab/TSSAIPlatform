@@ -1,7 +1,7 @@
 import { DownloadOutlined } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { history, useAccess, useModel } from '@umijs/max';
+import { history, useAccess } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -65,18 +65,18 @@ import {
 
 function approvalTag(status?: string) {
   if (status === 'APPROVED') {
-    return <Tag color="success">APPROVED</Tag>;
+    return <Tag color="success">已通过</Tag>;
   }
   if (status === 'PENDING') {
-    return <Tag color="warning">PENDING</Tag>;
+    return <Tag color="warning">待审核</Tag>;
   }
   if (status === 'REJECTED') {
-    return <Tag color="error">REJECTED</Tag>;
+    return <Tag color="error">已拒绝</Tag>;
   }
   if (status === 'REVOKED') {
-    return <Tag color="default">REVOKED</Tag>;
+    return <Tag color="default">已撤销</Tag>;
   }
-  return <Tag>{status || 'PENDING'}</Tag>;
+  return <Tag>{status || '待审核'}</Tag>;
 }
 
 function riskLevelTag(level?: string) {
@@ -118,7 +118,6 @@ function manualRecordToRow(
 const TrainingCodePending: React.FC = () => {
   const access = useAccess();
   const ownerUsernameMap = useOwnerUsernameMap();
-  const { initialState } = useModel('@@initialState');
   const actionRef = useRef<ActionType | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm();
@@ -463,10 +462,10 @@ const TrainingCodePending: React.FC = () => {
       valueType: 'select',
       initialValue: 'PENDING',
       valueEnum: {
-        PENDING: { text: 'PENDING' },
-        APPROVED: { text: 'APPROVED' },
-        REJECTED: { text: 'REJECTED' },
-        REVOKED: { text: 'REVOKED' },
+        PENDING: { text: '待审核' },
+        APPROVED: { text: '已通过' },
+        REJECTED: { text: '已拒绝' },
+        REVOKED: { text: '已撤销' },
       },
       fieldProps: {
         onChange: (v: string) => setApprovalStatusFilter(v || 'PENDING'),
@@ -587,7 +586,7 @@ const TrainingCodePending: React.FC = () => {
       render: (_, r) => formatDisplayDateTime(r.submittedAt),
     },
     {
-      title: 'codeVersionId',
+      title: '版本编号',
       dataIndex: 'codeVersionId',
       hideInSearch: true,
       width: 220,
@@ -693,11 +692,7 @@ const TrainingCodePending: React.FC = () => {
   return (
     <PageContainer
       title="训练代码待审核"
-      subTitle={
-        isTrainingCodeAutoApproveEnabled()
-          ? '当前默认自动审核；本页保留通过/拒绝/Findings/重扫/制品升级，供运维与异常兜底'
-          : '处理 PENDING 版本：通过 / 拒绝 / Findings / 重扫 / 制品升级'
-      }
+      subTitle="处理需要人工审核的训练代码，并查看风险扫描结果"
       breadcrumb={{
         items: [
           {
@@ -710,7 +705,7 @@ const TrainingCodePending: React.FC = () => {
       }}
       extra={[
         <Button key="add" onClick={() => setAddOpen(true)}>
-          手工登记 codeVersionId
+          手工登记版本
         </Button>,
         <Button
           key="list"
@@ -725,7 +720,7 @@ const TrainingCodePending: React.FC = () => {
         type={isTrainingCodeAutoApproveEnabled() ? 'warning' : 'info'}
         showIcon
         style={{ marginBottom: 16 }}
-        message="说明"
+        message="当前审核方式"
         description={
           <span>
             {isTrainingCodeAutoApproveEnabled() ? (
@@ -742,20 +737,11 @@ const TrainingCodePending: React.FC = () => {
                 当前已开启「训练代码管理员审核」，新上传/发布的版本需在本页人工处理。{' '}
               </>
             )}
-            列表来自{' '}
-            <Typography.Text code>
-              GET /api/v2/admin/code-review-tasks
-            </Typography.Text>
-            ，队列为空时会再按代码资产名称兜底。通过/拒绝会携带四个 expected*
-            审批证据。重扫与制品升级为运维操作。若刚上传却看不到用户填写的名称，请把审核状态改成
-            APPROVED 试一次（低风险可能被自动通过），或到{' '}
+            如需查找已自动通过的版本，请切换审核状态，或到{' '}
             <a onClick={() => history.push('/task/code/admin-assets')}>
               代码资产管理
             </a>{' '}
-            按名称搜索。当前管理员：
-            {initialState?.currentUser?.name ||
-              initialState?.currentUser?.userid ||
-              '-'}
+            按名称搜索。重扫与制品升级仅用于异常处理。
           </span>
         }
       />
@@ -786,8 +772,8 @@ const TrainingCodePending: React.FC = () => {
         <Form form={addForm} layout="vertical">
           <Form.Item
             name="codeVersionId"
-            label="codeVersionId"
-            rules={[{ required: true, message: '请输入 codeVersionId' }]}
+            label="版本编号"
+            rules={[{ required: true, message: '请输入版本编号' }]}
           >
             <Input placeholder="例如：code-version-xxxx" />
           </Form.Item>
@@ -843,7 +829,7 @@ const TrainingCodePending: React.FC = () => {
                 column={2}
                 style={{ marginBottom: 16 }}
               >
-                <Descriptions.Item label="codeVersionId" span={2}>
+                <Descriptions.Item label="版本编号" span={2}>
                   <Typography.Text copyable code style={{ fontSize: 12 }}>
                     {reviewDetail.codeVersionId}
                   </Typography.Text>

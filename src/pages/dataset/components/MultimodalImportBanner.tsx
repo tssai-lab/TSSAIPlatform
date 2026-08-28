@@ -258,7 +258,7 @@ const MultimodalImportBanner: React.FC<MultimodalImportBannerProps> = ({
         type="success"
         showIcon
         message="多模态数据导入已完成"
-        description="版本已推进为 READY，可在下方浏览样本。"
+        description="版本已准备完成，可在下方浏览样本。"
         style={{ marginBottom: 16 }}
       />
     );

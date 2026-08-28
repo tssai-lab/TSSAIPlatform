@@ -182,10 +182,10 @@ const ModelUpload: React.FC = () => {
         values.commitInfo ?? values.remark ?? '',
       ).trim();
       if (!commitInfo) {
-        throw new Error('请填写 Commit 说明（commitInfo）');
+        throw new Error('请填写本次更新说明');
       }
       if (commitInfo.length > 1024) {
-        throw new Error('Commit 说明不能超过 1024 个字符');
+        throw new Error('本次更新说明不能超过 1024 个字符');
       }
 
       let hyperParams: Record<string, unknown> | undefined;
@@ -406,16 +406,7 @@ const ModelUpload: React.FC = () => {
                 showIcon
                 style={{ marginBottom: 16 }}
                 message="点云模型"
-                description="请上传 zip 权重包（包内仅允许白名单扩展名，不含 .py 脚本）。类别用于管理与 legacy 训练类型匹配；详情页可预览包内代码/文本文件。"
-              />
-            )}
-            {selectedType === 'ROBOT' && (
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="ROBOT（预留）"
-                description="机器人模型目录类型；上传规则与 CV/NLP 相同。legacy 训练需匹配 ROBOT 数据集类型。"
+                description="请上传 zip 权重包；包内只允许模型相关文件，不能包含 .py 脚本。"
               />
             )}
             <Form.Item
@@ -446,22 +437,22 @@ const ModelUpload: React.FC = () => {
         )}
         <Form.Item
           name="commitInfo"
-          label="Commit 说明"
+          label="本次更新说明"
           rules={[
-            { required: true, message: '请输入 Commit 说明' },
+            { required: true, message: '请输入本次更新说明' },
             {
               validator: async (_, value) => {
                 const text = String(value ?? '').trim();
                 if (!text) {
-                  throw new Error('Commit 说明不能为空或纯空格');
+                  throw new Error('本次更新说明不能为空或纯空格');
                 }
                 if (text.length > 1024) {
-                  throw new Error('Commit 说明不能超过 1024 个字符');
+                  throw new Error('本次更新说明不能超过 1024 个字符');
                 }
               },
             },
           ]}
-          extra="本版本提交说明：只描述「这一次上传/这个版本」改了什么（类似 Git commit message），与上方资产备注分开保存。"
+          extra="只描述这个版本相对上一版本的变化。"
         >
           <Input.TextArea
             rows={2}

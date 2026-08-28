@@ -110,10 +110,10 @@ function DefinitionSummary({
       <Descriptions.Item label="训练模式">
         {joinValues(definition.trainingModes)}
       </Descriptions.Item>
-      <Descriptions.Item label="模型规范" span={2}>
+      <Descriptions.Item label="模型兼容规范" span={2}>
         {joinValues(definition.inputs?.model?.acceptedSpecIds)}
       </Descriptions.Item>
-      <Descriptions.Item label="数据集规范" span={2}>
+      <Descriptions.Item label="数据集兼容规范" span={2}>
         {joinValues(definition.inputs?.dataset?.acceptedSpecIds)}
       </Descriptions.Item>
       <Descriptions.Item label="运行镜像" span={2}>
@@ -494,15 +494,8 @@ const TrainingPlansPage: React.FC = () => {
       <Alert
         showIcon
         type="info"
-        message="模型、数据集和训练方案是三类独立资产"
-        description="此处只管理训练方案。选择 YAML 和预览不会保存数据；确认发布后才入库。发起训练时，方案会按 acceptedSpecIds 筛选已上传的模型和数据集。"
-        style={{ marginBottom: 16 }}
-      />
-      <Alert
-        showIcon
-        type="warning"
-        message="首版只提供已验证的 CV/CPU 模板"
-        description="NLP 资产规范尚未达到 TRAINING_READY，因此不提供一个必然校验失败的 NLP 模板。后续规范和镜像验证完成后再增加。"
+        message="发布前请先预览"
+        description="选择 YAML 只会生成预览，确认发布后才会保存。发起训练时，平台会按方案筛选可用模型和数据集；当前模板库仅提供已验证的 CV/CPU 模板。"
         style={{ marginBottom: 16 }}
       />
 

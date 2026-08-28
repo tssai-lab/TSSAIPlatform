@@ -305,14 +305,6 @@ const Dashboard: React.FC = () => {
               </Col>
               <Col flex="1 1 0">
                 <Statistic
-                  title="集群平均 GPU"
-                  value={resourceSummary.avgGpu}
-                  suffix="%"
-                  {...statProps}
-                />
-              </Col>
-              <Col flex="1 1 0">
-                <Statistic
                   title="集群运行中任务"
                   value={resourceSummary.runningTasks}
                   suffix="个"

@@ -82,17 +82,17 @@ import {
 
 function approvalTag(status?: string) {
   if (status === 'APPROVED') {
-    return <Tag color="success">APPROVED</Tag>;
+    return <Tag color="success">已通过</Tag>;
   }
   if (status === 'PENDING') {
-    return <Tag color="warning">PENDING</Tag>;
+    return <Tag color="warning">待审核</Tag>;
   }
   return <Tag>{status || '-'}</Tag>;
 }
 
 function statusTag(status?: string) {
   if (status === 'READY') {
-    return <Tag color="success">READY</Tag>;
+    return <Tag color="success">可用</Tag>;
   }
   return <Tag>{status || '-'}</Tag>;
 }
@@ -968,7 +968,7 @@ const TrainingCodeDetail: React.FC = () => {
         onBack={() => history.push(backPath)}
         breadcrumb={{ items: breadcrumbItems }}
       >
-        <Empty description="缺少 codeVersionId" />
+        <Empty description="缺少训练代码版本编号" />
       </PageContainer>
     );
   }
@@ -1183,7 +1183,7 @@ const TrainingCodeDetail: React.FC = () => {
               <Descriptions.Item label="包大小">
                 {formatBytes(meta?.sizeBytes)}
               </Descriptions.Item>
-              <Descriptions.Item label="codeVersionId" span={2}>
+              <Descriptions.Item label="版本编号" span={2}>
                 <Typography.Text copyable code style={{ fontSize: 12 }}>
                   {codeVersionId}
                 </Typography.Text>

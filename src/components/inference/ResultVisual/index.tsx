@@ -89,8 +89,8 @@ function renderByView(
         <Alert
           type="warning"
           showIcon
-          message="未匹配到已实现的专业视图"
-          description="可展开上方结构化结果查看原文，或使用「下载结果」。若后端提供 result.view，将优先按协议分流。"
+          message="该结果暂不支持专用图表"
+          description="请查看结构化结果或下载结果文件。"
         />
       );
     default:
@@ -98,8 +98,8 @@ function renderByView(
         <Alert
           type="info"
           showIcon
-          message={`「${INFERENCE_VIEW_META[view].label}」视图尚未实现`}
-          description="枚举已预留，待有真实 result 样例后可继续加积木。当前请查看结构化结果或使用「下载结果」。"
+          message={`「${INFERENCE_VIEW_META[view].label}」暂不支持专用图表`}
+          description="请查看结构化结果或下载结果文件。"
         />
       );
   }

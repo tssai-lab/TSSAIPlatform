@@ -51,8 +51,8 @@ import {
   type InferenceResourceProfile,
   type InferenceScriptVersion,
   type InferenceTask,
-  listInferenceScripts,
   listInferenceResourceProfiles,
+  listInferenceScripts,
   listInferenceTasks,
   objectNameFromMinioPath,
   retryInferenceTask,
@@ -823,7 +823,7 @@ const InferenceWorkbench: React.FC = () => {
                         loading={loadingAssets}
                         options={datasetSelectOptions}
                         optionFilterProp="label"
-                        placeholder="选择 READY 数据集"
+                        placeholder="选择准备完成的数据集"
                       />
                     </Form.Item>
                   ) : (
