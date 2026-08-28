@@ -117,12 +117,12 @@ Server and optional NVIDIA files in one short-lived artifact.
 Download the artifact from the exact trusted `backend-ops` run, copy only the
 common files to the control plane and include the NVIDIA files on GPU workers.
 The import command verifies every bundle checksum and requires `sources.lock`
-to byte-match the committed 12-image lock before writing the isolated runtime.
+to byte-match the committed 13-image lock before writing the isolated runtime.
 When the operator's direct download path is unreliable, the
 `stage-airgap-bundles` task may download the exact successful export run to the
 reviewed `AIRGAP_STAGE_ROOT` on the protected internal Runner. It verifies the
 run SHA, branch, workflow, conclusion, seven files, both checksum lists and the
-12-image source lock. Because the campus artifact path is slow per connection,
+13-image source lock. Because the campus artifact path is slow per connection,
 the Runner downloads 16 strict byte ranges in parallel, then requires the
 combined archive to match GitHub's whole-artifact SHA256 before extracting it.
 This staging task does not use sudo, import images or write cluster state.
@@ -160,10 +160,12 @@ worker's isolated project containerd. GPU discovery is not an undocumented
 post-install command: after the runtime and image preconditions pass, set
 `TSS_ENABLE_GPU_WORKER=true` in the root-owned platform configuration and run
 the platform bootstrap. The bootstrap installs the committed, checksum-locked
-NVIDIA Device Plugin and `nvidia` RuntimeClass through the guarded
-`platform/scripts/install-gpu-worker.sh`. CPU-only deployments leave the same
-switch false and skip this step. The complete safety gate and removal boundary
-are documented in [`platform/README.md`](platform/README.md#optional-first-gpu-worker).
+NVIDIA Device Plugin, `nvidia` RuntimeClass and DCGM Exporter through guarded
+installers. DCGM listens only on the GPU node's reviewed InternalIP port 9400
+and exposes read-only utilization, memory and temperature metrics to the
+platform backend. CPU-only deployments leave the same switch false and skip
+both components. The complete safety gate and removal boundary are documented
+in [`platform/README.md`](platform/README.md#optional-first-gpu-worker).
 
 After the exact image import succeeds, prepare only the active control-plane
 UFW instance. The command leaves UFW enabled and preserves its defaults and
@@ -277,7 +279,7 @@ authentication, sudo, deployment or host writes.
 The same workflow resolves an artifact lock on a GitHub-hosted Runner. This
 avoids relying on the campus hosts' currently unreliable redirect from
 `registry.k8s.io` to Google Artifact Registry. The reviewed result is committed
-as `artifacts.lock`: its three manifest checksums and all 12 multi-architecture
+as `artifacts.lock`: its three manifest checksums and all 13 multi-architecture
 image digests were independently checked against the source registries. C4
 must reject a missing or mismatched artifact instead of silently using a tag.
 

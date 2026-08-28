@@ -11,14 +11,14 @@ public class ServerItem {
     private String hostname;
     private Boolean enabled = true;   // 是否参与调度（false=禁用，不分配新任务）
     private String status;         // online / warning
-    private double cpuRate;
-    private double memRate;
-    private double gpuRate;
-    private double diskRate;
-    private double gpuMemRate;
-    private double networkIn;
-    private double networkOut;
-    private double gpuTemp;
+    private Double cpuRate;
+    private Double memRate;
+    private Double gpuRate;
+    private Double diskRate;
+    private Double gpuMemRate;
+    private Double networkIn;
+    private Double networkOut;
+    private Double gpuTemp;
     private String metricsStatus;  // fresh / temporarily_unavailable / stale / unavailable
     private Instant metricsLastSuccessAt;
     private Instant metricsLastAttemptAt;

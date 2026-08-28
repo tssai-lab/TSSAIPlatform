@@ -16,11 +16,11 @@ mapfile -t nvidia_lines < <(awk '$1 == "image" && $2 ~ /^nvcr\.io\/nvidia\// {pr
 [[ ${#core_lines[@]} -eq 7 ]] || die "expected 7 Kubernetes core images"
 [[ ${#calico_lines[@]} -eq 3 ]] || die "expected 3 Calico images"
 [[ ${#metrics_lines[@]} -eq 1 ]] || die "expected 1 Metrics Server image"
-[[ ${#nvidia_lines[@]} -eq 1 ]] || die "expected 1 NVIDIA image"
-[[ $(grep -c '^image ' "$artifact_lock") -eq 12 ]] || die "expected 12 locked images"
+[[ ${#nvidia_lines[@]} -eq 2 ]] || die "expected 2 NVIDIA images"
+[[ $(grep -c '^image ' "$artifact_lock") -eq 13 ]] || die "expected 13 locked images"
 
 if [[ ${1:-} == --validate-only ]]; then
-  echo "Air-gap export contract passed: core=7 calico=3 metrics-server=1 nvidia=1"
+  echo "Air-gap export contract passed: core=7 calico=3 metrics-server=1 nvidia=2"
   exit 0
 fi
 
@@ -86,4 +86,4 @@ for output_file in \
   [[ -s ${output_dir}/${output_file} ]] || die "bundle output is empty: $output_file"
 done
 
-echo "Air-gap bundles exported from 12 immutable image digests: $output_dir"
+echo "Air-gap bundles exported from 13 immutable image digests: $output_dir"

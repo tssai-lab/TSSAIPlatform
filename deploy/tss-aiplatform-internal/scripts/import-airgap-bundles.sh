@@ -77,8 +77,8 @@ fi
 cmp <(grep '^image ' "${internal_root}/artifacts.lock") \
   "${bundle_dir}/sources.lock" >/dev/null \
   || die "bundle sources do not match the committed artifact lock"
-[[ $(grep -c '^image ' "${bundle_dir}/sources.lock") -eq 12 ]] \
-  || die "bundle source lock must contain exactly 12 images"
+[[ $(grep -c '^image ' "${bundle_dir}/sources.lock") -eq 13 ]] \
+  || die "bundle source lock must contain exactly 13 images"
 metrics_url="https://github.com/kubernetes-sigs/metrics-server/releases/download/${TSS_METRICS_SERVER_VERSION}/components.yaml"
 metrics_sha="$(awk -v url="$metrics_url" \
   '$1 == "manifest" && $2 == url {sub(/^sha256:/, "", $3); print $3}' \
@@ -105,10 +105,10 @@ system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
   || die "shared system containerd PID is invalid"
 docker_container_count="$(docker ps -q | wc -l)"
 
-echo "PASS: bundle checksums and 12 locked sources verified"
+echo "PASS: bundle checksums and 13 locked sources verified"
 echo "PLAN: import Kubernetes core, Calico and Metrics Server into node=${TSS_NODE_NAME}"
 if has_role gpu; then
-  echo "PLAN: import the NVIDIA device-plugin image for the GPU node"
+  echo "PLAN: import the NVIDIA device-plugin and DCGM Exporter images for the GPU node"
 fi
 if [[ $mode == --check ]]; then
   echo "Air-gap bundle check passed without image writes: node=${TSS_NODE_NAME}"
@@ -147,5 +147,5 @@ done <"${bundle_dir}/sources.lock"
 [[ $(docker ps -q | wc -l) == "$docker_container_count" ]] \
   || die "shared Docker container count changed during image import"
 logger -t tss-aiplatform-images \
-  "import complete node=${TSS_NODE_NAME} locked_images=12" 2>/dev/null || true
+  "import complete node=${TSS_NODE_NAME} locked_images=13" 2>/dev/null || true
 echo "Air-gap image import complete: node=${TSS_NODE_NAME}"

@@ -179,12 +179,12 @@ behind the separate GPU-worker gate and the immediate shared-host idle check.
 8. Import the locked CPU runtime images and run real CV/NLP acceptance tasks.
 9. For a GPU worker, import the locked CV/NLP GPU runtime bundle and the locked
    NVIDIA infrastructure bundle. Then enable `TSS_ENABLE_GPU_WORKER`, rerun the
-   guarded platform bootstrap, and require a positive `nvidia.com/gpu` capacity
-   before any single-GPU acceptance task.
+   guarded platform bootstrap, require a positive `nvidia.com/gpu` capacity and
+   verify the DCGM InternalIP endpoint before any single-GPU acceptance task.
 
 Steps 7 and 8 are required for a complete user-facing CPU platform. Finishing
 only the four base containers is an empty-platform milestone, not full
-acceptance. Step 9 installs GPU discovery infrastructure only. GPU business
+acceptance. Step 9 installs GPU discovery and monitoring infrastructure only. GPU business
 behavior is claimed only after the immutable workload image and the guarded
 single-GPU real test both pass; on a shared host, Kubernetes capacity never
 replaces the immediate host-level idle check.

@@ -499,7 +499,7 @@ fi
 artifact_lock="${internal_dir}/artifacts.lock"
 [[ -f $artifact_lock ]]
 [[ $(grep -c '^manifest ' "$artifact_lock") -eq 3 ]]
-[[ $(grep -c '^image ' "$artifact_lock") -eq 12 ]]
+[[ $(grep -c '^image ' "$artifact_lock") -eq 13 ]]
 if grep -Ev '^(#.*|manifest https://[^ ]+ sha256:[0-9a-f]{64}|image [^ ]+:[^ ]+ sha256:[0-9a-f]{64})$' \
   "$artifact_lock" >/dev/null; then
   echo "Artifact lock contains an invalid line." >&2
@@ -518,7 +518,8 @@ for required_image in \
   "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}" \
   "quay.io/calico/node:${TSS_CALICO_VERSION}" \
   "registry.k8s.io/metrics-server/metrics-server:${TSS_METRICS_SERVER_VERSION}" \
-  "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"; do
+  "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}" \
+  "nvcr.io/nvidia/k8s/dcgm-exporter:${TSS_DCGM_EXPORTER_VERSION}"; do
   grep -E "^image ${required_image//./\\.} sha256:[0-9a-f]{64}$" "$artifact_lock" >/dev/null
 done
 
@@ -565,6 +566,27 @@ grep -F 'nvidia.com/gpu' "$gpu_installer" >/dev/null
 grep -F 'no training Job was submitted' "$gpu_installer" >/dev/null
 bash "$gpu_installer" --self-test >/dev/null
 grep -F 'install-gpu-worker.sh' \
+  "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
+dcgm_manifest="${internal_dir}/manifests/dcgm-exporter.yaml"
+dcgm_installer="${internal_dir}/platform/scripts/install-dcgm-exporter.sh"
+[[ -f $dcgm_manifest && -f $dcgm_installer ]]
+grep -F "image: nvcr.io/nvidia/k8s/dcgm-exporter:${TSS_DCGM_EXPORTER_VERSION}" \
+  "$dcgm_manifest" >/dev/null
+grep -F 'tss.ai/accelerator: nvidia' "$dcgm_manifest" >/dev/null
+grep -F 'imagePullPolicy: Never' "$dcgm_manifest" >/dev/null
+grep -F -- '--address=$(HOST_IP):9400' "$dcgm_manifest" >/dev/null
+grep -F 'DCGM_EXPORTER_KUBERNETES' "$dcgm_manifest" >/dev/null
+grep -F 'DISABLE_STARTUP_VALIDATE' "$dcgm_manifest" >/dev/null
+grep -F 'memory: 512Mi' "$dcgm_manifest" >/dev/null
+grep -F 'SYS_ADMIN' "$dcgm_manifest" >/dev/null
+! grep -F 'privileged: true' "$dcgm_manifest" >/dev/null
+grep -F 'apply --dry-run=server' "$dcgm_installer" >/dev/null
+grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
+  "$dcgm_installer" >/dev/null
+grep -F 'DCGM_FI_DEV_GPU_TEMP' "$dcgm_installer" >/dev/null
+grep -F 'resources were preserved for diagnosis' "$dcgm_installer" >/dev/null
+bash "$dcgm_installer" --self-test >/dev/null
+grep -F 'install-dcgm-exporter.sh' \
   "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
 grep -F 'TSS_ENABLE_GPU_WORKER=false' \
   "${internal_dir}/platform/platform.env.example" >/dev/null

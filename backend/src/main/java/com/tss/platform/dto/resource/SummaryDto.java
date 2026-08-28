@@ -8,5 +8,5 @@ public class SummaryDto {
     private int online;
     private int runningTasks;
     private int queuedTasks;
-    private String avgGpu;   // 如 "62.3"
+    private String avgGpu;   // 如 "62.3"；无可用 GPU 指标时为 null
 }

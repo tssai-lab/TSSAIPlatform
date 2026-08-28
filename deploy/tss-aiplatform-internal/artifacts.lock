@@ -4,6 +4,7 @@ manifest https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifest
 manifest https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml sha256:eb2eb24099df28bdea19e620705ea62e0a226fe287ff08e285f761efe0f30f2e
 manifest https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml sha256:1cec29a5267809306a2c6ec74a3e449abbb705b4a8beed0c8a1963910f72c79b
 image nvcr.io/nvidia/k8s-device-plugin:v0.17.1 sha256:af31e2b7c7f89834c4e5219860def7ac2e49a207b3d4e8610d5a26772b7738e5
+image nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless sha256:60d3b00ac80b4ae77f94dae2f943685605585ad9e92fdccda3154d009ae317cc
 image quay.io/calico/cni:v3.32.1 sha256:bb1567e3ed81e2e8414e9a68f186e1f7ffd4067a4871a9ae90896793af0190dd
 image quay.io/calico/kube-controllers:v3.32.1 sha256:18008f781c869376dbbc4dfb1ffe3afb46f7897887d4f20e080c420ac44a6612
 image quay.io/calico/node:v3.32.1 sha256:7f874b3f0b540c2b523aea9961ef5e2f43b0af9056a47874c916d6cf348168d3

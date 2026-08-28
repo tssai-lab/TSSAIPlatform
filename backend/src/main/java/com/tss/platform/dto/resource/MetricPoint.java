@@ -8,5 +8,5 @@ public class MetricPoint {
     private String fullTime;    // "YYYY-MM-DD HH:mm:ss"
     private String time;        // display label
     private String type;        // "CPU" / "内存" / "GPU"
-    private double value;
+    private Double value;
 }

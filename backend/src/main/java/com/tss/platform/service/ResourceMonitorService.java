@@ -116,7 +116,7 @@ public class ResourceMonitorService {
         dto.setOnline(online);
         dto.setRunningTasks(runningTasks);
         dto.setQueuedTasks(queuedTasks);
-        dto.setAvgGpu(gpuCount > 0 ? String.format("%.1f", totalGpuRate / gpuCount) : "0");
+        dto.setAvgGpu(gpuCount > 0 ? String.format("%.1f", totalGpuRate / gpuCount) : null);
         return dto;
     }
 
@@ -302,11 +302,11 @@ public class ResourceMonitorService {
 
             Instant tickTime = Instant.ofEpochMilli((bucketStart + bucketEnd) / 2);
             MetricPoint cpuPoint = makePoint(i, tickTime, "CPU",
-                    bucket.isEmpty() ? 0 : bucket.stream().mapToDouble(h -> nvl(h.getCpuRate())).average().orElse(0));
+                    averageAvailable(bucket.stream().map(ServerMetricHistory::getCpuRate).toList()));
             MetricPoint memPoint = makePoint(i, tickTime, "内存",
-                    bucket.isEmpty() ? 0 : bucket.stream().mapToDouble(h -> nvl(h.getMemRate())).average().orElse(0));
+                    averageAvailable(bucket.stream().map(ServerMetricHistory::getMemRate).toList()));
             MetricPoint gpuPoint = makePoint(i, tickTime, "GPU",
-                    bucket.isEmpty() ? 0 : bucket.stream().mapToDouble(h -> nvl(h.getGpuRate())).average().orElse(0));
+                    averageAvailable(bucket.stream().map(ServerMetricHistory::getGpuRate).toList()));
 
             points.add(cpuPoint);
             points.add(memPoint);
@@ -496,14 +496,14 @@ public class ResourceMonitorService {
         item.setEnabled(server.getEnabled());
 
         if (snap != null) {
-            item.setCpuRate(nvl(snap.getCpuRate()));
-            item.setMemRate(nvl(snap.getMemRate()));
-            item.setGpuRate(nvl(snap.getGpuRate()));
-            item.setDiskRate(nvl(snap.getDiskRate()));
-            item.setGpuMemRate(nvl(snap.getGpuMemRate()));
-            item.setNetworkIn(nvl(snap.getNetworkIn()));
-            item.setNetworkOut(nvl(snap.getNetworkOut()));
-            item.setGpuTemp(nvl(snap.getGpuTemp()));
+            item.setCpuRate(snap.getCpuRate());
+            item.setMemRate(snap.getMemRate());
+            item.setGpuRate(snap.getGpuRate());
+            item.setDiskRate(snap.getDiskRate());
+            item.setGpuMemRate(snap.getGpuMemRate());
+            item.setNetworkIn(snap.getNetworkIn());
+            item.setNetworkOut(snap.getNetworkOut());
+            item.setGpuTemp(snap.getGpuTemp());
         }
 
         MetricsState metricsState = metricsState(snap);
@@ -513,7 +513,7 @@ public class ResourceMonitorService {
         boolean healthy = "fresh".equals(metricsState.status())
                 && snap != null
                 && "online".equals(snap.getStatus())
-                && nvl(snap.getDiskRate()) < 85.0
+                && (snap.getDiskRate() == null || snap.getDiskRate() < 85.0)
                 && nodeHealth != null
                 && nodeHealth.available()
                 && node != null
@@ -780,7 +780,7 @@ public class ResourceMonitorService {
                 && "fresh".equals(metricsState(snapshot).status())
                 // 告警(warning)只代表资源使用率高，节点仍在线，应计入在线数
                 && ("online".equals(snapshot.getStatus()) || "warning".equals(snapshot.getStatus()))
-                && nvl(snapshot.getDiskRate()) < 85.0
+                && (snapshot.getDiskRate() == null || snapshot.getDiskRate() < 85.0)
                 && nodeHealth != null
                 && nodeHealth.available()
                 && node != null
@@ -866,17 +866,23 @@ public class ResourceMonitorService {
     ) {
     }
 
-    private MetricPoint makePoint(int tickIndex, Instant time, String type, double value) {
+    private MetricPoint makePoint(int tickIndex, Instant time, String type, Double value) {
         MetricPoint p = new MetricPoint();
         p.setTickIndex(tickIndex);
         p.setFullTime(FMT.format(time));
         p.setTime(FMT.format(time).substring(5)); // "MM-dd HH"
         p.setType(type);
-        p.setValue(Math.round(value * 10.0) / 10.0);
+        p.setValue(value == null ? null : Math.round(value * 10.0) / 10.0);
         return p;
     }
 
-    private double nvl(Double v) { return v != null ? v : 0.0; }
+    private Double averageAvailable(List<Double> values) {
+        DoubleSummaryStatistics summary = values.stream()
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .summaryStatistics();
+        return summary.getCount() == 0 ? null : summary.getAverage();
+    }
 
     private boolean isValidIp(String ip) {
         try {

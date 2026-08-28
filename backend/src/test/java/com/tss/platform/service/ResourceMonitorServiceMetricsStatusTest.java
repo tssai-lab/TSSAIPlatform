@@ -3,6 +3,7 @@ package com.tss.platform.service;
 import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.dto.resource.KubernetesDiagnosticsDto.KubernetesNodeHealth;
 import com.tss.platform.dto.resource.ServerItem;
+import com.tss.platform.dto.resource.MetricsResponse;
 import com.tss.platform.inference.InferenceExecutorRouter;
 import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.entity.ComputeServer;
@@ -22,6 +23,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class ResourceMonitorServiceMetricsStatusTest {
 
@@ -58,6 +60,20 @@ class ResourceMonitorServiceMetricsStatusTest {
 
         assertThat(items.get("missing").getMetricsStatus()).isEqualTo("unavailable");
         assertThat(items.get("missing").getStatus()).isEqualTo("warning");
+        assertThat(items.get("missing").getCpuRate()).isNull();
+        assertThat(items.get("missing").getGpuRate()).isNull();
+    }
+
+    @Test
+    void emptyHistoryBucketsAreNullInsteadOfFakeZeros() {
+        Fixture fixture = fixture();
+        when(fixture.historyRepo.findByServerIpAndCollectedAtBetweenOrderByCollectedAtAsc(
+                any(), any(), any(), any())).thenReturn(List.of());
+
+        MetricsResponse response = fixture.service.getMetrics("node", "1hour");
+
+        assertThat(response.getPoints()).hasSize(72);
+        assertThat(response.getPoints()).allSatisfy(point -> assertThat(point.getValue()).isNull());
     }
 
     @Test
@@ -109,7 +125,7 @@ class ResourceMonitorServiceMetricsStatusTest {
                 trainingExecutorRouter,
                 inferenceExecutorRouter
         );
-        return new Fixture(service, serverRepo, snapshotRepo, diagnostics);
+        return new Fixture(service, serverRepo, snapshotRepo, historyRepo, diagnostics);
     }
 
     private static KubernetesResourceDiagnosticsService.NodeHealthCollection healthyNodes(
@@ -172,6 +188,7 @@ class ResourceMonitorServiceMetricsStatusTest {
             ResourceMonitorService service,
             ComputeServerRepository serverRepo,
             ServerMetricSnapshotRepository snapshotRepo,
+            ServerMetricHistoryRepository historyRepo,
             KubernetesResourceDiagnosticsService diagnostics
     ) {
     }

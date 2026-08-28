@@ -71,6 +71,7 @@ public class ServerMetricsCollector {
         Map<String, double[]> capacities = fetchNodeCapacities();
         Map<String, String> osInfo = fetchNodeOsInfo();
         Map<String, String> nodeLabels = fetchNodeLabelsJson();
+        Map<String, String> nodeInternalIps = fetchNodeInternalIps();
 
         Map<String, TopData> topMetrics = collectTop();
         List<ComputeServer> servers = serverRepo.findByDeletedFalse();
@@ -109,7 +110,10 @@ public class ServerMetricsCollector {
                         serverRepo.save(server);
                     }
                 }
-                collectOne(server, topMetrics.get(server.getServerIp()), cap);
+                String nodeName = server.getK8sNodeName() != null && !server.getK8sNodeName().isBlank()
+                        ? server.getK8sNodeName() : server.getServerIp();
+                collectOne(server, topMetrics.get(server.getServerIp()), cap,
+                        nodeInternalIps.getOrDefault(nodeName, server.getServerIp()));
             } catch (Exception e) {
                 LOG.debug("采集 {} 失败: {}", server.getServerIp(), e.getMessage());
             }
@@ -146,6 +150,10 @@ public class ServerMetricsCollector {
     }
 
     void collectOne(ComputeServer server, TopData top, double[] capacity) {
+        collectOne(server, top, capacity, server.getServerIp());
+    }
+
+    private void collectOne(ComputeServer server, TopData top, double[] capacity, String gpuMetricsAddress) {
         Optional<ServerMetricSnapshot> existingSnapshot = snapshotRepo.findByServerIp(server.getServerIp());
         if (top == null && existingSnapshot.isEmpty()) {
             // A missing first sample is not a real zero. Leave the snapshot absent so the API reports unavailable.
@@ -182,34 +190,33 @@ public class ServerMetricsCollector {
             snap.setDiskRate(nodeStats.diskRate());
             snap.setNetworkIn(nodeStats.networkRxRate());
             snap.setNetworkOut(nodeStats.networkTxRate());
+        } else {
+            // A failed kubelet sample is unknown, not a real zero or a reusable old value.
+            snap.setDiskRate(null);
+            snap.setNetworkIn(null);
+            snap.setNetworkOut(null);
         }
-        // 首次采集或采集失败时，保留已有值；仅在全新快照时设默认 0
-        if (snap.getDiskRate() == null) snap.setDiskRate(0.0);
-        if (snap.getNetworkIn() == null) snap.setNetworkIn(0.0);
-        if (snap.getNetworkOut() == null) snap.setNetworkOut(0.0);
 
-        // GPU：仅新快照设默认 0，已有数据保留上次的值
-        if (snap.getGpuRate() == null) snap.setGpuRate(0.0);
-        if (snap.getGpuMemRate() == null) snap.setGpuMemRate(0.0);
-        if (snap.getGpuTemp() == null) snap.setGpuTemp(0.0);
+        // GPU metrics are independently optional. Missing exporter data must stay null.
+        snap.setGpuRate(null);
+        snap.setGpuMemRate(null);
+        snap.setGpuTemp(null);
 
         // GPU metrics from DCGM exporter (overwrites defaults if available)
         String specGpu = server.getSpecGpu();
         if (specGpu != null && !specGpu.isEmpty()) {
-            collectGpu(server.getServerIp(), snap);
+            collectGpu(server.getServerIp(), gpuMetricsAddress, snap);
         }
         // Also try DCGM if the node has GPU capacity but no spec string
         if ((specGpu == null || specGpu.isEmpty()) && server.getGpuCount() != null && server.getGpuCount() > 0) {
-            collectGpu(server.getServerIp(), snap);
+            collectGpu(server.getServerIp(), gpuMetricsAddress, snap);
         }
 
         // lastHeartbeat means the last successful core Metrics API sample. updatedAt is the latest attempt.
         // Their difference lets the API distinguish stale/unavailable data without a schema change.
         if (top != null) {
-            double maxRate = Math.max(
-                    Math.max(Math.max(snap.getCpuRate(), snap.getMemRate()), snap.getGpuRate()),
-                    snap.getDiskRate()
-            );
+            double maxRate = maxAvailableRate(
+                    snap.getCpuRate(), snap.getMemRate(), snap.getGpuRate(), snap.getDiskRate());
             snap.setStatus(maxRate >= 85.0 ? "warning" : "online");
             snap.setLastHeartbeat(now);
         } else {
@@ -231,8 +238,10 @@ public class ServerMetricsCollector {
         hist.setGpuRate(snap.getGpuRate());
         hist.setGpuMemRate(snap.getGpuMemRate());
         hist.setDiskRate(snap.getDiskRate());
-        hist.setNetworkIn(nodeStats != null ? (double) nodeStats.rawRxBytes() : 0.0);
-        hist.setNetworkOut(nodeStats != null ? (double) nodeStats.rawTxBytes() : 0.0);
+        hist.setNetworkIn(nodeStats != null && nodeStats.rawRxBytes() != null
+                ? nodeStats.rawRxBytes().doubleValue() : null);
+        hist.setNetworkOut(nodeStats != null && nodeStats.rawTxBytes() != null
+                ? nodeStats.rawTxBytes().doubleValue() : null);
         hist.setGpuTemp(snap.getGpuTemp());
         hist.setCollectedAt(now);
         historyRepo.save(hist);
@@ -375,6 +384,31 @@ public class ServerMetricsCollector {
         return osMap;
     }
 
+    /** Resolve node InternalIP for node-local exporters without relying on environment-specific DNS. */
+    Map<String, String> fetchNodeInternalIps() {
+        Map<String, String> addresses = new LinkedHashMap<>();
+        try {
+            Path kubeconfig = envService.resolveKubeconfig();
+            List<String> cmd = envService.kubectlCommand(kubeconfig, "get", "nodes", "-o", "json");
+            ShellCommandRunner.CommandResult result = shellRunner.run(cmd, envService.resolveProjectRoot(), 30);
+            if (!result.success()) return addresses;
+            JsonNode root = objectMapper.readTree(result.output());
+            for (JsonNode item : root.path("items")) {
+                String name = item.path("metadata").path("name").asText();
+                for (JsonNode address : item.path("status").path("addresses")) {
+                    if ("InternalIP".equals(address.path("type").asText())) {
+                        String value = address.path("address").asText();
+                        if (!name.isBlank() && !value.isBlank()) addresses.put(name, value);
+                        break;
+                    }
+                }
+            }
+        } catch (Exception exception) {
+            LOG.warn("获取节点 InternalIP 失败: {}", exception.getMessage());
+        }
+        return addresses;
+    }
+
     // ── top / GPU ──
 
     private boolean isK8sReady() {
@@ -446,35 +480,79 @@ public class ServerMetricsCollector {
         return result;
     }
 
-    private void collectGpu(String ip, ServerMetricSnapshot snap) {
+    private void collectGpu(String nodeName, String address, ServerMetricSnapshot snap) {
         try {
-            String url = "http://" + ip + ":" + properties.getDcgmExporterPort() + "/metrics";
+            String url = "http://" + address + ":" + properties.getDcgmExporterPort() + "/metrics";
             HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(5)).GET().build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) {
-                double totalUtil = 0, totalMem = 0, totalMemCap = 0;
-                int count = 0;
-                for (String line : resp.body().split("\n")) {
-                    line = line.trim();
-                    if (line.isEmpty() || line.startsWith("#")) continue;
-                    // DCGM_FI_DEV_GPU_UTIL{gpu="0"} 65
-                    if (line.contains("DCGM_FI_DEV_GPU_UTIL{")) {
-                        totalUtil += extractValue(line);
-                        count++;
-                    } else if (line.contains("DCGM_FI_DEV_FB_USED{")) {
-                        totalMem += extractValue(line) * 1024 * 1024; // MiB -> bytes
-                    } else if (line.contains("DCGM_FI_DEV_FB_TOTAL{")) {
-                        totalMemCap += extractValue(line) * 1024 * 1024;
-                    }
-                }
-                if (count > 0) {
-                    snap.setGpuRate(Math.round(totalUtil * 10.0 / count) / 10.0);
-                    if (totalMemCap > 0) {
-                        snap.setGpuMemRate(Math.round(totalMem * 1000.0 / totalMemCap) / 10.0);
-                    }
-                }
+            if (resp.statusCode() != 200) {
+                LOG.warn("DCGM Exporter 返回异常 node={}, status={}", nodeName, resp.statusCode());
+                return;
             }
-        } catch (Exception ignored) {}
+            GpuMetrics metrics = parseGpuMetrics(resp.body());
+            snap.setGpuRate(metrics.utilizationRate());
+            snap.setGpuMemRate(metrics.memoryRate());
+            snap.setGpuTemp(metrics.temperature());
+            if (!metrics.available()) {
+                LOG.warn("DCGM Exporter 未返回可识别指标 node={}", nodeName);
+            }
+        } catch (Exception exception) {
+            LOG.warn("DCGM Exporter 采集失败 node={}: {}", nodeName, exception.getMessage());
+        }
+    }
+
+    static GpuMetrics parseGpuMetrics(String body) {
+        double totalUtil = 0;
+        int utilCount = 0;
+        double totalMem = 0;
+        int usedMemCount = 0;
+        double freeMem = 0;
+        int freeMemCount = 0;
+        double totalMemCap = 0;
+        int totalMemCount = 0;
+        double totalTemp = 0;
+        int tempCount = 0;
+
+        if (body == null) {
+            return new GpuMetrics(null, null, null);
+        }
+        for (String rawLine : body.split("\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            Double value = extractValue(line);
+            if (value == null) continue;
+            if (isMetric(line, "DCGM_FI_DEV_GPU_UTIL")) {
+                totalUtil += value;
+                utilCount++;
+            } else if (isMetric(line, "DCGM_FI_DEV_FB_USED")) {
+                totalMem += value;
+                usedMemCount++;
+            } else if (isMetric(line, "DCGM_FI_DEV_FB_FREE")) {
+                freeMem += value;
+                freeMemCount++;
+            } else if (isMetric(line, "DCGM_FI_DEV_FB_TOTAL")) {
+                totalMemCap += value;
+                totalMemCount++;
+            } else if (isMetric(line, "DCGM_FI_DEV_GPU_TEMP")) {
+                totalTemp += value;
+                tempCount++;
+            }
+        }
+
+        Double utilization = utilCount > 0 ? roundOneDecimal(totalUtil / utilCount) : null;
+        Double memory = null;
+        if (usedMemCount > 0 && usedMemCount == totalMemCount && totalMemCap > 0) {
+            memory = roundOneDecimal(totalMem * 100.0 / totalMemCap);
+        } else if (usedMemCount > 0 && usedMemCount == freeMemCount
+                && totalMem + freeMem > 0) {
+            memory = roundOneDecimal(totalMem * 100.0 / (totalMem + freeMem));
+        }
+        Double temperature = tempCount > 0 ? roundOneDecimal(totalTemp / tempCount) : null;
+        return new GpuMetrics(utilization, memory, temperature);
+    }
+
+    private static boolean isMetric(String line, String metric) {
+        return line.startsWith(metric + "{") || line.startsWith(metric + " ");
     }
 
     /** 通过 kubelet stats summary API 采集节点磁盘和网络指标 */
@@ -504,28 +582,37 @@ public class ServerMetricsCollector {
 
             // 磁盘：fs used / capacity → 百分比
             JsonNode fs = nodeStats.path("fs");
-            long fsUsed = fs.path("usedBytes").asLong(0);
-            long fsCapacity = fs.path("capacityBytes").asLong(0);
-            double diskRate = fsCapacity > 0
-                    ? Math.round(fsUsed * 1000.0 / fsCapacity) / 10.0 : 0;
+            Long fsCapacity = jsonLong(fs, "capacityBytes");
+            Long fsUsed = jsonLong(fs, "usedBytes");
+            Long fsAvailable = jsonLong(fs, "availableBytes");
+            if (fsUsed == null && fsCapacity != null && fsAvailable != null) {
+                fsUsed = Math.max(0, fsCapacity - fsAvailable);
+            }
+            Double diskRate = fsCapacity != null && fsCapacity > 0 && fsUsed != null
+                    ? roundOneDecimal(fsUsed * 100.0 / fsCapacity) : null;
 
             // 网络：累计字节 → 计算速率
             JsonNode net = nodeStats.path("network");
-            long rxBytes = net.path("rxBytes").asLong(0);
-            long txBytes = net.path("txBytes").asLong(0);
-            double rxRate = 0, txRate = 0;
+            Long rxBytes = jsonLong(net, "rxBytes");
+            Long txBytes = jsonLong(net, "txBytes");
+            Double rxRate = null;
+            Double txRate = null;
 
-            if (rxBytes > 0 || txBytes > 0) {
+            if (rxBytes != null || txBytes != null) {
                 Instant now = Instant.now();
                 ServerMetricHistory prev = historyRepo.findFirstByServerIpOrderByCollectedAtDesc(serverIp);
                 if (prev != null && prev.getCollectedAt() != null) {
                     // history 中 networkIn/Out 存的是上次的累计字节。
-                    long prevRx = (long)(prev.getNetworkIn() != null ? prev.getNetworkIn() : 0);
-                    long prevTx = (long)(prev.getNetworkOut() != null ? prev.getNetworkOut() : 0);
                     double elapsedSec = Math.max(1,
                             (now.toEpochMilli() - prev.getCollectedAt().toEpochMilli()) / 1000.0);
-                    rxRate = networkRate(rxBytes, prevRx, elapsedSec);
-                    txRate = networkRate(txBytes, prevTx, elapsedSec);
+                    if (rxBytes != null) {
+                        Long prevRx = prev.getNetworkIn() != null ? prev.getNetworkIn().longValue() : null;
+                        rxRate = networkRate(rxBytes, prevRx, elapsedSec);
+                    }
+                    if (txBytes != null) {
+                        Long prevTx = prev.getNetworkOut() != null ? prev.getNetworkOut().longValue() : null;
+                        txRate = networkRate(txBytes, prevTx, elapsedSec);
+                    }
                 }
             }
 
@@ -539,11 +626,36 @@ public class ServerMetricsCollector {
         }
     }
 
-    private double extractValue(String line) {
-        int lastSpace = line.lastIndexOf(' ');
-        if (lastSpace < 0) return 0;
-        try { return Double.parseDouble(line.substring(lastSpace + 1).trim()); }
-        catch (NumberFormatException e) { return 0; }
+    private static Double extractValue(String line) {
+        int metricEnd = line.lastIndexOf('}');
+        int valueStart = metricEnd >= 0 ? metricEnd + 1 : line.indexOf(' ');
+        if (valueStart < 0) return null;
+        String valuePart = line.substring(valueStart).trim();
+        if (valuePart.isEmpty()) return null;
+        String token = valuePart.split("\\s+", 2)[0];
+        try {
+            double value = Double.parseDouble(token);
+            return Double.isFinite(value) ? value : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Long jsonLong(JsonNode parent, String field) {
+        JsonNode value = parent.get(field);
+        return value != null && value.isNumber() ? value.longValue() : null;
+    }
+
+    private static double roundOneDecimal(double value) {
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private static double maxAvailableRate(Double... rates) {
+        return Arrays.stream(rates)
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0.0);
     }
 
     void cleanupHistory() {
@@ -561,14 +673,20 @@ public class ServerMetricsCollector {
         return KubernetesQuantityParser.memoryBytes(s);
     }
 
-    static double networkRate(long currentBytes, long previousBytes, double elapsedSeconds) {
-        if (currentBytes <= previousBytes || previousBytes <= 0 || elapsedSeconds <= 0) {
-            return 0;
+    static Double networkRate(long currentBytes, Long previousBytes, double elapsedSeconds) {
+        if (previousBytes == null || previousBytes < 0 || currentBytes < previousBytes || elapsedSeconds <= 0) {
+            return null;
+        }
+        if (currentBytes == previousBytes) {
+            return 0.0;
+        }
+        if (previousBytes == 0) {
+            return null;
         }
         // Versions before G1 stored MiB in this column. Skip one transition sample instead of
         // reporting a huge false spike; the current full-byte value is persisted for the next run.
         if (previousBytes < currentBytes / 1024L) {
-            return 0;
+            return null;
         }
         return Math.round((currentBytes - previousBytes) * 10.0
                 / (1024 * 1024 * elapsedSeconds)) / 10.0;
@@ -581,6 +699,12 @@ public class ServerMetricsCollector {
 
     record TopData(double cpuUsed, long memBytes, double cpuPct, double memPct, long diskBytes) {}
 
-    record NodeStats(double diskRate, double networkRxRate, double networkTxRate,
-                     long rawRxBytes, long rawTxBytes) {}
+    record NodeStats(Double diskRate, Double networkRxRate, Double networkTxRate,
+                     Long rawRxBytes, Long rawTxBytes) {}
+
+    record GpuMetrics(Double utilizationRate, Double memoryRate, Double temperature) {
+        boolean available() {
+            return utilizationRate != null || memoryRate != null || temperature != null;
+        }
+    }
 }

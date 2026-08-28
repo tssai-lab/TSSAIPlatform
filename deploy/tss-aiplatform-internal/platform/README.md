@@ -84,11 +84,23 @@ root-owned `platform.env` only after all of the following are true:
   one GPU but cannot safely choose around unmanaged host processes.
 
 The guarded Kubernetes bootstrap then installs the digest-locked NVIDIA Device
-Plugin and the `nvidia` RuntimeClass from committed artifacts. It adds only the
-separate label `tss.ai/accelerator=nvidia`; it deliberately preserves
+Plugin, the `nvidia` RuntimeClass and the standalone DCGM Exporter from
+committed artifacts. It adds only the separate label
+`tss.ai/accelerator=nvidia`; it deliberately preserves
 `tss.ai/node-pool=cpu`, because the same worker must remain available for CPU
-jobs. Check mode performs the manifest checksum, cluster identity and
-server-side dry-run without changing the cluster:
+jobs. DCGM Exporter is scheduled only on that NVIDIA-labelled node, binds its
+read-only endpoint to the reviewed InternalIP on port 9400 and does not require
+Prometheus or the full GPU Operator. The container is not privileged and
+receives only the NVIDIA-required `SYS_ADMIN` capability; it has no Kubernetes
+service-account token or host-directory mounts. Check mode performs artifact, cluster
+identity and server-side dry-run validation without changing the cluster:
+
+On the reviewed GeForce worker, NVIDIA's exporter startup validator exits with
+status 1 and no diagnostic even though embedded DCGM can read both GPUs. The
+committed manifest explicitly disables that preflight only; the guarded
+installer compensates by failing unless the live endpoint returns the four
+exact GPU metrics required by this platform. The 512 MiB memory limit is based
+on a reproduced 256 MiB `OOMKilled` result on this node.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-gpu-worker.sh \
@@ -97,20 +109,32 @@ sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-gpu-worker.sh 
 sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-gpu-worker.sh \
   --apply /etc/tss-aiplatform/node.env /etc/tss-aiplatform/platform.env \
   --confirm-node tss-ai-control-01
+
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-dcgm-exporter.sh \
+  --check /etc/tss-aiplatform/node.env /etc/tss-aiplatform/platform.env
+
+sudo bash deploy/tss-aiplatform-internal/platform/scripts/install-dcgm-exporter.sh \
+  --apply /etc/tss-aiplatform/node.env /etc/tss-aiplatform/platform.env \
+  --confirm-node tss-ai-control-01
 ```
 
 Successful installation means the worker reports a positive allocatable
-`nvidia.com/gpu` value. That proves Kubernetes can discover the device; it does
-not prove that an unmanaged host process is absent. On these shared laboratory
-servers, every real GPU acceptance run still requires an immediate host-level
-idle check. Never stop another user's process or submit a second test merely
-because Kubernetes reports capacity.
+`nvidia.com/gpu` value and its InternalIP endpoint exposes
+`DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, either
+`DCGM_FI_DEV_FB_FREE` or `DCGM_FI_DEV_FB_TOTAL`, and
+`DCGM_FI_DEV_GPU_TEMP`. The former proves Kubernetes can discover the device;
+the latter proves monitoring is available. Neither proves that an unmanaged
+host process is absent. On these shared laboratory servers, every real GPU
+acceptance run still requires an immediate host-level idle check. Never stop
+another user's process or submit a second test merely because Kubernetes
+reports capacity.
 
-If the optional component must be removed, first ensure no project GPU Job is
-running, then delete only `nvidia-device-plugin-daemonset`, the `nvidia`
-RuntimeClass and the worker's `tss.ai/accelerator` label. Do not reset the
-cluster, change the CPU node-pool label, prune shared images or remove the host
-driver/runtime. Preserve failed Pod logs before any cleanup.
+If the optional components must be removed, first ensure no project GPU Job is
+running, then delete only `tss-dcgm-exporter`,
+`nvidia-device-plugin-daemonset`, the `nvidia` RuntimeClass and the worker's
+`tss.ai/accelerator` label. Do not reset the cluster, change the CPU node-pool
+label, prune shared images or remove the host driver/runtime. Preserve failed
+Pod logs before any cleanup.
 
 ## Credential and permission boundary
 

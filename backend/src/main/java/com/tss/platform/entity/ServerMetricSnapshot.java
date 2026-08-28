@@ -20,28 +20,28 @@ public class ServerMetricSnapshot {
     private String serverIp;
 
     @Column(name = "cpu_rate")
-    private Double cpuRate = 0.0;
+    private Double cpuRate;
 
     @Column(name = "mem_rate")
-    private Double memRate = 0.0;
+    private Double memRate;
 
     @Column(name = "gpu_rate")
-    private Double gpuRate = 0.0;
+    private Double gpuRate;
 
     @Column(name = "gpu_mem_rate")
-    private Double gpuMemRate = 0.0;
+    private Double gpuMemRate;
 
     @Column(name = "disk_rate")
-    private Double diskRate = 0.0;
+    private Double diskRate;
 
     @Column(name = "network_in")
-    private Double networkIn = 0.0;
+    private Double networkIn;
 
     @Column(name = "network_out")
-    private Double networkOut = 0.0;
+    private Double networkOut;
 
     @Column(name = "gpu_temp")
-    private Double gpuTemp = 0.0;
+    private Double gpuTemp;
 
     @Column(name = "status", length = 16)
     private String status = "online";

@@ -10,6 +10,7 @@ mode="${1:-resolve}"
 calico_url="https://raw.githubusercontent.com/projectcalico/calico/${TSS_CALICO_VERSION}/manifests/calico.yaml"
 nvidia_url="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}/deployments/static/nvidia-device-plugin.yml"
 metrics_url="https://github.com/kubernetes-sigs/metrics-server/releases/download/${TSS_METRICS_SERVER_VERSION}/components.yaml"
+dcgm_image="nvcr.io/nvidia/k8s/dcgm-exporter:${TSS_DCGM_EXPORTER_VERSION}"
 
 die() {
   echo "ERROR: $*" >&2
@@ -110,6 +111,7 @@ mapfile -t images < <(
       cat "${workdir}/calico.yaml" "${workdir}/nvidia-device-plugin.yaml" \
         "${workdir}/metrics-server-components.yaml"
     )
+    printf '%s\n' "$dcgm_image"
   } | sort -u
 )
 (( ${#images[@]} >= 9 )) || die "resolved image set is unexpectedly small"
@@ -119,6 +121,7 @@ required_manifest_images=(
   "quay.io/calico/kube-controllers:${TSS_CALICO_VERSION}"
   "quay.io/calico/node:${TSS_CALICO_VERSION}"
   "nvcr.io/nvidia/k8s-device-plugin:${TSS_NVIDIA_DEVICE_PLUGIN_VERSION}"
+  "$dcgm_image"
   "registry.k8s.io/metrics-server/metrics-server:${TSS_METRICS_SERVER_VERSION}"
 )
 for required_image in "${required_manifest_images[@]}"; do

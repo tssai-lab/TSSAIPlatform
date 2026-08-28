@@ -70,6 +70,7 @@ for manifest in \
 done
 if [[ $mode == --check ]]; then
   "${script_dir}/install-gpu-worker.sh" --check "$node_config" "$platform_config"
+  "${script_dir}/install-dcgm-exporter.sh" --check "$node_config" "$platform_config"
   echo "PASS: internal Kubernetes platform manifests and target identity passed without writes"
   exit 0
 fi
@@ -83,6 +84,8 @@ install -d -m 0700 -o root -g root "${TSS_PLATFORM_ROOT}/config"
 "${admin[@]}" apply -f "${TSS_REPOSITORY_ROOT}/deploy/tss-aiplatform-internal/platform/k8s/backend-access.yaml" >/dev/null
 "${admin[@]}" apply -f "$host_manifest" >/dev/null
 "${script_dir}/install-gpu-worker.sh" --apply "$node_config" "$platform_config" \
+  --confirm-node "$TSS_NODE_NAME"
+"${script_dir}/install-dcgm-exporter.sh" --apply "$node_config" "$platform_config" \
   --confirm-node "$TSS_NODE_NAME"
 
 token_b64=''

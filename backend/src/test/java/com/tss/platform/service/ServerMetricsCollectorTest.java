@@ -58,6 +58,21 @@ class ServerMetricsCollectorTest {
     }
 
     @Test
+    void resolvesNodeInternalIpWithoutDependingOnHostnameDns() {
+        Fixture fixture = fixture();
+        when(fixture.shellRunner.run(any(), any(), anyInt()))
+                .thenReturn(ShellCommandRunner.CommandResult.success("""
+                        {"items":[{"metadata":{"name":"tss-ai-worker-01"},"status":{"addresses":[
+                          {"type":"Hostname","address":"tss-ai-worker-01"},
+                          {"type":"InternalIP","address":"10.201.96.67"}
+                        ]}}]}
+                        """));
+
+        assertThat(fixture.collector.fetchNodeInternalIps())
+                .containsEntry("tss-ai-worker-01", "10.201.96.67");
+    }
+
+    @Test
     void oneInvalidNodeMetricDoesNotDiscardHealthyNodes() {
         Fixture fixture = fixture();
         String metrics = """
@@ -117,13 +132,15 @@ class ServerMetricsCollectorTest {
 
     @Test
     void networkRateSkipsLegacyMegabyteSampleThenUsesByteDelta() {
-        assertThat(ServerMetricsCollector.networkRate(10_485_760, 10, 30)).isZero();
-        assertThat(ServerMetricsCollector.networkRate(12_582_912, 10_485_760, 2)).isEqualTo(1.0);
-        assertThat(ServerMetricsCollector.networkRate(10_000, 10_000, 30)).isZero();
+        assertThat(ServerMetricsCollector.networkRate(10_485_760, 10L, 30)).isNull();
+        assertThat(ServerMetricsCollector.networkRate(12_582_912, 10_485_760L, 2)).isEqualTo(1.0);
+        assertThat(ServerMetricsCollector.networkRate(10_000, 10_000L, 30)).isZero();
+        assertThat(ServerMetricsCollector.networkRate(10_000, null, 30)).isNull();
+        assertThat(ServerMetricsCollector.networkRate(9_000, 10_000L, 30)).isNull();
     }
 
     @Test
-    void successfulZeroDiskAndNetworkSampleReplacesOldValues() {
+    void successfulZeroDiskAndFirstNetworkSampleDistinguishZeroFromUnknown() {
         Fixture fixture = fixture();
         ComputeServer server = server("zero-node");
         ServerMetricSnapshot snapshot = new ServerMetricSnapshot();
@@ -145,12 +162,12 @@ class ServerMetricsCollectorTest {
         );
 
         assertThat(snapshot.getDiskRate()).isZero();
-        assertThat(snapshot.getNetworkIn()).isZero();
-        assertThat(snapshot.getNetworkOut()).isZero();
+        assertThat(snapshot.getNetworkIn()).isNull();
+        assertThat(snapshot.getNetworkOut()).isNull();
     }
 
     @Test
-    void diskUsageAtThresholdMarksSnapshotAsWarning() {
+    void failedDiskSampleBecomesUnknownInsteadOfKeepingOldWarning() {
         Fixture fixture = fixture();
         ComputeServer server = server("disk-node");
         ServerMetricSnapshot snapshot = new ServerMetricSnapshot();
@@ -166,7 +183,64 @@ class ServerMetricsCollectorTest {
                 new double[]{4, 16}
         );
 
-        assertThat(snapshot.getStatus()).isEqualTo("warning");
+        assertThat(snapshot.getDiskRate()).isNull();
+        assertThat(snapshot.getStatus()).isEqualTo("online");
+    }
+
+    @Test
+    void parsesIndependentDcgmUtilizationMemoryAndTemperatureMetrics() {
+        ServerMetricsCollector.GpuMetrics metrics = ServerMetricsCollector.parseGpuMetrics("""
+                # HELP ignored
+                DCGM_FI_DEV_GPU_UTIL{gpu="0"} 0
+                DCGM_FI_DEV_GPU_UTIL{gpu="1"} 20
+                DCGM_FI_DEV_FB_USED{gpu="0"} 100
+                DCGM_FI_DEV_FB_USED{gpu="1"} 300
+                DCGM_FI_DEV_FB_TOTAL{gpu="0"} 1000
+                DCGM_FI_DEV_FB_TOTAL{gpu="1"} 1000
+                DCGM_FI_DEV_GPU_TEMP{gpu="0"} 40
+                DCGM_FI_DEV_GPU_TEMP{gpu="1"} 50
+                """);
+
+        assertThat(metrics.utilizationRate()).isEqualTo(10.0);
+        assertThat(metrics.memoryRate()).isEqualTo(20.0);
+        assertThat(metrics.temperature()).isEqualTo(45.0);
+        assertThat(metrics.available()).isTrue();
+    }
+
+    @Test
+    void calculatesDcgmMemoryRateFromDefaultUsedAndFreeMetrics() {
+        ServerMetricsCollector.GpuMetrics metrics = ServerMetricsCollector.parseGpuMetrics("""
+                DCGM_FI_DEV_FB_USED{gpu="0"} 100
+                DCGM_FI_DEV_FB_USED{gpu="1"} 300
+                DCGM_FI_DEV_FB_FREE{gpu="0"} 900
+                DCGM_FI_DEV_FB_FREE{gpu="1"} 700
+                """);
+
+        assertThat(metrics.memoryRate()).isEqualTo(20.0);
+    }
+
+    @Test
+    void incompleteDcgmMemoryPairsRemainUnavailable() {
+        ServerMetricsCollector.GpuMetrics metrics = ServerMetricsCollector.parseGpuMetrics("""
+                DCGM_FI_DEV_FB_USED{gpu="0"} 100
+                DCGM_FI_DEV_FB_USED{gpu="1"} 300
+                DCGM_FI_DEV_FB_FREE{gpu="0"} 900
+                """);
+
+        assertThat(metrics.memoryRate()).isNull();
+    }
+
+    @Test
+    void malformedOrMissingDcgmMetricsRemainUnavailable() {
+        ServerMetricsCollector.GpuMetrics metrics = ServerMetricsCollector.parseGpuMetrics("""
+                DCGM_FI_DEV_GPU_UTIL{gpu="0"} NaN
+                unrelated_metric 0
+                """);
+
+        assertThat(metrics.utilizationRate()).isNull();
+        assertThat(metrics.memoryRate()).isNull();
+        assertThat(metrics.temperature()).isNull();
+        assertThat(metrics.available()).isFalse();
     }
 
     private static ComputeServer server(String name) {

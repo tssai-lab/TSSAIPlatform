@@ -215,7 +215,7 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 1. **获取节点容量**：`kubectl get nodes -o json`；
 2. **获取实时用量**：调用 K8s Metrics API `/apis/metrics.k8s.io/v1beta1/nodes`，解析 CPU（支持 nanocores `n` 和 millicores `m` 两种格式）与内存用量；失败时回退 `kubectl top nodes`；
 3. **计算百分比**：`CPU 用量 / CPU 总核数 × 100`，`内存用量 / 内存总量 × 100`；
-4. **采集 GPU**（节点有 GPU 时）：查询 NVIDIA **DCGM Exporter** 的 Prometheus 端点（默认端口 9400），解析 `DCGM_FI_DEV_GPU_UTIL`、`DCGM_FI_DEV_FB_USED`、`DCGM_FI_DEV_FB_TOTAL`；
+4. **采集 GPU**（节点有 GPU 时）：通过 Kubernetes Node 的 `InternalIP` 查询 NVIDIA **DCGM Exporter** 的 Prometheus 端点（默认端口 9400），解析 `DCGM_FI_DEV_GPU_UTIL`、`DCGM_FI_DEV_FB_USED`、`DCGM_FI_DEV_FB_FREE`（兼容 `DCGM_FI_DEV_FB_TOTAL`）、`DCGM_FI_DEV_GPU_TEMP`；
 5. **写快照**：更新 `server_metric_snapshot`；
 6. **写历史**：追加 `server_metric_history`（用于趋势图）；
 7. **状态判定**：任一指标使用率 ≥ 85% → `warning`，否则 `online`；
@@ -238,7 +238,7 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 
 1. **Metrics Server**：资源监控采集 CPU/内存必需。验证：`kubectl top nodes` 能正常输出；
 2. **RBAC 权限**：后端 ServiceAccount 需要 `metrics.k8s.io` 读取权限；
-3. **GPU 监控**（可选）：需部署 NVIDIA **DCGM Exporter**（DaemonSet）；纯 CPU 集群可跳过。
+3. **GPU 监控**（可选）：需部署 NVIDIA **DCGM Exporter**（DaemonSet）；纯 CPU 集群可跳过。标准内网部署使用 `deploy/tss-aiplatform-internal/platform/scripts/install-dcgm-exporter.sh`，不安装完整 GPU Operator。
 
 ### 5.2 集群现状
 
@@ -248,7 +248,7 @@ docker save tss-cv-worker:local | ctr -n k8s.io images import -
 | `k8s-node1` | worker | 4 核 8G | Ready，v1.28.2 |
 
 - **Metrics Server**：已在 master 部署（镜像 `registry.aliyuncs.com/google_containers/metrics-server:v0.7.2`，加 `--kubelet-insecure-tls` 参数）；
-- **GPU**：当前集群为纯 CPU 节点，未部署 DCGM Exporter；接入 GPU 节点后按第 3 节操作并部署 DCGM Exporter；
+- **GPU**：没有 DCGM Exporter 或某项指标缺失时，接口返回 `null`，前端显示“无数据”，不得用 `0` 代替；真实采样值为零时仍显示 `0%`；
 - **后端部署**：Docker 容器运行在 `k8s-master`，GitHub Actions 自动构建推送。
 
 ---
