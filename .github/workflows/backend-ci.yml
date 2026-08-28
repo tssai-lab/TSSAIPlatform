@@ -5,7 +5,6 @@ on:
     paths:
       - "backend/**"
       - "deploy/**"
-      - "!deploy/tss-aiplatform-internal/**"
       - "k8s/**"
       - "examples/acceptance/minirbt_text_classification/**"
       - "examples/inference/yolov11n/**"
@@ -17,7 +16,6 @@ on:
     paths:
       - "backend/**"
       - "deploy/**"
-      - "!deploy/tss-aiplatform-internal/**"
       - "k8s/**"
       - "examples/inference/yolov11n/**"
       - ".github/workflows/**"

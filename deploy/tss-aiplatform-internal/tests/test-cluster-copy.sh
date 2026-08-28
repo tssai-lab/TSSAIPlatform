@@ -184,7 +184,7 @@ classifier="${internal_dir}/ci/classify-backend-deploy-scope.sh"
 
 backend_workflow="${root_dir}/.github/workflows/backend-ci.yml"
 internal_workflow="${root_dir}/.github/workflows/tss-aiplatform-internal-validation.yml"
-grep -F '!deploy/tss-aiplatform-internal/**' "$backend_workflow" >/dev/null
+! grep -F '!deploy/tss-aiplatform-internal/**' "$backend_workflow" >/dev/null
 grep -F "needs.verify-and-build.outputs.deploy_main == 'true'" "$backend_workflow" >/dev/null
 grep -F "steps.scope.outputs.deploy_main == 'true'" "$backend_workflow" >/dev/null
 grep -F 'github.event_name }}" == "workflow_dispatch"' "$backend_workflow" >/dev/null
