@@ -20,7 +20,10 @@ grep -F 'source_sha: ${{ needs.sync-tested-frontend-to-gpu.outputs.merged_sha }}
 grep -F 'deploy_internal: true' "$external_workflow" >/dev/null
 ! grep -F -- '--force' "$external_workflow" >/dev/null
 
-grep -F -- '- frontend-gpu' "$runtime_workflow" >/dev/null
+runtime_push_block=$(awk '/^  push:/{capture=1} /^  workflow_call:/{capture=0} capture' \
+  "$runtime_workflow")
+grep -F -- '- frontend-gpu' <<<"$runtime_push_block" >/dev/null
+! grep -F -- '- frontend-dev' <<<"$runtime_push_block" >/dev/null
 grep -F '"$GITHUB_REF" == refs/heads/frontend-gpu' "$runtime_workflow" >/dev/null
 grep -F "needs.resolve-source.outputs.deploy_internal == 'true'" \
   "$runtime_workflow" >/dev/null
