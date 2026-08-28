@@ -91,6 +91,10 @@ The backend runtime file is merged atomically: bootstrap-owned keys are
 updated, while independently managed settings such as SMS provider parameters
 are preserved without being sourced or printed.
 
+On an existing node, the active training and inference image references are
+also preserved. Those Kubernetes-only worker images remain in containerd; the
+Redis bootstrap does not create duplicate Docker copies merely to pass setup.
+
 ## Verification
 
 After the first Redis-backed backend release:

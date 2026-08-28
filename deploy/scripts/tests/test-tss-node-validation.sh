@@ -104,6 +104,13 @@ grep -F 'AUTH_SESSION_STORE=redis' "$bootstrap" >/dev/null
 grep -F 'tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"' "$bootstrap" >/dev/null
 grep -F 'TSS_REQUIRE_REDIS_SESSION_STORE=true' "$bootstrap" >/dev/null
 grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
+grep -F 'active_inference_worker_image' "$bootstrap" >/dev/null
+grep -F 'INFERENCE_KUBERNETES_WORKER_IMAGE' "$bootstrap" >/dev/null
+if grep -F 'docker image inspect "$training_worker_image"' "$bootstrap" >/dev/null \
+  || grep -F 'docker image inspect "$inference_worker_image"' "$bootstrap" >/dev/null; then
+  echo "Backend bootstrap must not require duplicate Docker copies of Kubernetes-only worker images." >&2
+  exit 1
+fi
 grep -F 'redis_image != "$reviewed_redis_image"' "$bootstrap" >/dev/null
 grep -F 'redis_image_id != "$reviewed_redis_image_id"' "$bootstrap" >/dev/null
 grep -F "docker image inspect \"\$redis_image\" --format '{{.Id}}'" "$bootstrap" >/dev/null

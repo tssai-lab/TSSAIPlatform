@@ -74,6 +74,22 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
   inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-$inference_worker_image}"
 fi
 
+# Runtime releases update the active backend environment after Kubernetes-only
+# images are imported. On an existing node, preserve those exact active refs
+# instead of replacing them with stale bootstrap defaults from node.env.
+if [[ -f $runtime_env ]]; then
+  active_training_worker_image="$(
+    awk -F= '$1 == "TRAINING_K8S_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_inference_worker_image="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  training_worker_image="${active_training_worker_image:-$training_worker_image}"
+  inference_worker_image="${active_inference_worker_image:-$inference_worker_image}"
+fi
+
 if [[ $redis_host != 127.0.0.1 ]]; then
   echo "TSS_REDIS_HOST must remain on 127.0.0.1 for the single-node session store." >&2
   exit 1
@@ -136,8 +152,6 @@ if [[ $(docker image inspect "$redis_image" --format '{{.Id}}') != "$redis_image
   echo "Preloaded Redis image identifier differs from the reviewed image." >&2
   exit 1
 fi
-docker image inspect "$training_worker_image" >/dev/null
-docker image inspect "$inference_worker_image" >/dev/null
 id "$deploy_user" >/dev/null
 
 for required_path in \
