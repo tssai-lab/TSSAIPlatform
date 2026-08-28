@@ -12,7 +12,7 @@ usage() {
 
 [[ $# -eq 12 && $1 == --public-key && $3 == --node-config \
   && $5 == --platform-config && $7 == --deployment-user \
-  && $9 == --deployment-branch && $11 == --confirm-node ]] || usage
+  && $9 == --deployment-branch && ${11} == --confirm-node ]] || usage
 public_key_file=$2
 node_config=$4
 platform_config=$6

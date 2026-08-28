@@ -25,6 +25,20 @@ bash -n "$platform_scripts/deploy-internal-backend.sh"
 bash -n "$platform_scripts/install-internal-frontend-deployer.sh"
 bash -n "$platform_scripts/deploy-internal-frontend.sh"
 
+argument_probe=$(mktemp)
+trap 'rm -f "$argument_probe"' EXIT
+if bash "$platform_scripts/install-internal-runner-gateway.sh" \
+  --public-key /nonexistent/reviewed-key \
+  --node-config /nonexistent/node.env \
+  --platform-config /nonexistent/platform.env \
+  --deployment-user reviewed-user \
+  --deployment-branch backend-gpu \
+  --confirm-node reviewed-node >"$argument_probe" 2>&1; then
+  echo 'gateway installer unexpectedly accepted nonexistent reviewed inputs' >&2
+  exit 1
+fi
+! grep -F 'usage:' "$argument_probe" >/dev/null
+
 grep -F -- '- backend-gpu' "$backend_workflow" >/dev/null
 grep -F "github.ref == 'refs/heads/backend-ops'" "$backend_workflow" >/dev/null
 grep -F "github.ref == 'refs/heads/backend-gpu'" "$backend_workflow" >/dev/null
