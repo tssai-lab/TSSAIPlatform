@@ -7,6 +7,13 @@ on:
     branches:
       - frontend-dev
       - frontend-main
+    paths-ignore:
+      - ".github/workflows/**"
+      - "scripts/promote-internal-frontend-lock.sh"
+      - "scripts/test-frontend-deployment-lanes.sh"
+
+permissions:
+  contents: read
 
 jobs:
   build-and-deploy:
@@ -36,3 +43,70 @@ jobs:
           source: "dist/*"
           target: "/var/www/"
           strip_components: 1
+
+  sync-tested-frontend-to-gpu:
+    name: Sync deployed frontend-dev into frontend-gpu
+    needs: build-and-deploy
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/frontend-dev' &&
+      needs.build-and-deploy.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      merged_sha: ${{ steps.merge.outputs.merged_sha }}
+    steps:
+      - name: Check out the current frontend-gpu integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: frontend-gpu
+          fetch-depth: 0
+
+      - name: Merge only the exact externally deployed frontend baseline
+        id: merge
+        env:
+          DEPLOYED_FRONTEND_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$DEPLOYED_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin \
+            refs/heads/frontend-dev:refs/remotes/origin/frontend-dev \
+            refs/heads/frontend-gpu:refs/remotes/origin/frontend-gpu
+          [[ "$(git rev-parse refs/remotes/origin/frontend-dev)" == "$DEPLOYED_FRONTEND_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse refs/remotes/origin/frontend-gpu)" ]]
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git merge --no-edit "$DEPLOYED_FRONTEND_SHA"
+          merged_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/frontend-gpu"
+          echo "MERGED_FRONTEND_GPU_SHA=${merged_sha}" >> "$GITHUB_ENV"
+          echo "merged_sha=${merged_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Record one-way synchronization result
+        run: |
+          {
+            echo "### Frontend baseline synchronized to frontend-gpu"
+            echo "- Externally deployed frontend-dev: \`${GITHUB_SHA}\`"
+            echo "- Integrated frontend-gpu: \`${MERGED_FRONTEND_GPU_SHA}\`"
+            echo "- Push mode: normal push only; no force and no automatic conflict resolution"
+            echo "- Reverse GPU-to-external synchronization: disabled"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-synchronized-frontend-to-internal:
+    name: Build and deploy the integrated frontend-gpu commit internally
+    needs:
+      - build-and-deploy
+      - sync-tested-frontend-to-gpu
+    if: >-
+      needs.build-and-deploy.result == 'success' &&
+      needs.sync-tested-frontend-to-gpu.result == 'success'
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/frontend-runtime-image.yml
+    with:
+      source_sha: ${{ needs.sync-tested-frontend-to-gpu.outputs.merged_sha }}
+      deploy_internal: true
+    secrets: inherit
