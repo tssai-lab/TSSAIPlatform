@@ -38,6 +38,10 @@ platform_url="${TSS_PLATFORM_URL:-http://127.0.0.1:8080}"
 namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
 service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
 smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-$(hostname)}"
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
+redis_image="${TSS_REDIS_IMAGE:-}"
+reviewed_redis_image="redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+require_redis_session_store="${TSS_REQUIRE_REDIS_SESSION_STORE:-false}"
 
 require_immutable_image() {
   local label="$1"
@@ -128,7 +132,9 @@ if [[ -z $readiness_body ]]; then
   exit 1
 fi
 
-READINESS_BODY="$readiness_body" "$python_bin" - <<'PY'
+READINESS_BODY="$readiness_body" \
+REQUIRE_REDIS_SESSION_STORE="$require_redis_session_store" \
+  "$python_bin" - <<'PY'
 import json
 import os
 
@@ -139,7 +145,32 @@ components = body.get("components") or {}
 expected = {"database": "UP", "objectStorage": "UP", "training": "UP"}
 if any(components.get(key) != value for key, value in expected.items()):
     raise SystemExit("one or more readiness components are not UP")
+auth_session = components.get("authSession")
+if os.environ["REQUIRE_REDIS_SESSION_STORE"] == "true":
+    if auth_session != "UP":
+        raise SystemExit("Redis-backed auth session readiness is not UP")
+elif auth_session not in {"UP", "MEMORY"}:
+    raise SystemExit("auth session readiness is invalid")
 PY
+
+if [[ $require_redis_session_store == true ]]; then
+  [[ $redis_image == "$reviewed_redis_image" ]] \
+    || { echo "Redis image is not the reviewed immutable reference." >&2; exit 1; }
+  actual_redis_image="$($docker_bin inspect "$redis_container" --format '{{.Config.Image}}')"
+  redis_health="$($docker_bin inspect "$redis_container" --format '{{.State.Health.Status}}')"
+  redis_binding="$($docker_bin port "$redis_container" 6379/tcp)"
+  redis_ping="$($docker_bin exec "$redis_container" redis-cli ping)"
+  if [[ $actual_redis_image != "$redis_image" \
+    || $redis_health != healthy \
+    || $redis_binding != 127.0.0.1:6379 \
+    || $redis_ping != PONG ]]; then
+    echo "Redis session store runtime identity, binding or health differs." >&2
+    exit 1
+  fi
+elif [[ $require_redis_session_store != false ]]; then
+  echo "TSS_REQUIRE_REDIS_SESSION_STORE must be true or false." >&2
+  exit 1
+fi
 
 expect_http_status() {
   local label="$1"
@@ -163,6 +194,15 @@ read_container_env() {
     $1 == wanted { print substr($0, index($0, "=") + 1); exit }
   '
 }
+
+if [[ $require_redis_session_store == true ]]; then
+  if [[ $(read_container_env AUTH_SESSION_STORE) != redis \
+    || $(read_container_env SPRING_DATA_REDIS_HOST) != 127.0.0.1 \
+    || $(read_container_env SPRING_DATA_REDIS_PORT) != 6379 ]]; then
+    echo "Backend is not configured for the required loopback Redis session store." >&2
+    exit 1
+  fi
+fi
 
 kubectl_bin="$(read_container_env TRAINING_K8S_KUBECTL_PATH)"
 kubeconfig="$(read_container_env TRAINING_K8S_KUBECONFIG)"

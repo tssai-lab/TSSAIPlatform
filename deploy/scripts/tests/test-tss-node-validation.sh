@@ -9,6 +9,8 @@ backend_loader="${root_dir}/deploy/scripts/tss-node-load-backend"
 runtime_loader="${root_dir}/deploy/scripts/tss-node-load-inference"
 cache_preparer="${root_dir}/deploy/scripts/tss-node-prepare-model-cache"
 cache_validator="${root_dir}/deploy/scripts/tss-node-validate-model-cache"
+redis_compose="${root_dir}/deploy/main/compose.backend.yml"
+redis_runbook="${root_dir}/deploy/SESSION_REDIS_RUNBOOK.md"
 runtime_workflow="${root_dir}/.github/workflows/runtime-images.yml"
 cv_dockerfile="${root_dir}/k8s/training-worker/Dockerfile.cv"
 inference_dockerfile="${root_dir}/k8s/inference-worker/Dockerfile"
@@ -71,7 +73,23 @@ grep -F 'trap cleanup EXIT' "$validator" >/dev/null
 grep -F 'tss-node-activate-backend' "$bootstrap" >/dev/null
 grep -F 'tss-node-load-backend' "$bootstrap" >/dev/null
 grep -F 'tss-node-validate-deployment "$image" "$expected_image_id"' "$backend_activator" >/dev/null
+grep -F 'up -d --no-deps redis mlflow' "$backend_activator" >/dev/null
+grep -F 'Redis session store is unavailable; keeping the current backend.' "$backend_activator" >/dev/null
 grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_loader" >/dev/null
+grep -F 'AUTH_SESSION_STORE=redis' "$bootstrap" >/dev/null
+grep -F 'TSS_REQUIRE_REDIS_SESSION_STORE=true' "$bootstrap" >/dev/null
+grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
+grep -F 'redis_image != "$reviewed_redis_image"' "$bootstrap" >/dev/null
+grep -F 'install -d -m 700 -o 999 -g 1000 "${platform_dir}/redis-data"' "$bootstrap" >/dev/null
+grep -F '127.0.0.1:6379:6379' "$redis_compose" >/dev/null
+grep -F 'pull_policy: never' "$redis_compose" >/dev/null
+grep -F './redis-data:/data' "$redis_compose" >/dev/null
+grep -F 'appendonly' "$redis_compose" >/dev/null
+grep -F 'noeviction' "$redis_compose" >/dev/null
+grep -F 'Redis-backed auth session readiness is not UP' "$validator" >/dev/null
+grep -F 'redis_image == "$reviewed_redis_image"' "$validator" >/dev/null
+grep -F 'docker_bin port "$redis_container" 6379/tcp' "$validator" >/dev/null
+grep -F 'Application rollback must never remove it.' "$redis_runbook" >/dev/null
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"' "$runtime_loader" >/dev/null
 grep -F 'Deploy and validate Main runtime images' "$runtime_workflow" >/dev/null
