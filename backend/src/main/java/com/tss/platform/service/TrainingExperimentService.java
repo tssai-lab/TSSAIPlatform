@@ -426,7 +426,7 @@ public class TrainingExperimentService {
                             req.getTrainingOutputSizeBytes()
                     ));
                 }
-                applyModelArtifact(version, req.getModelArtifact());
+                applyLegacyModelArtifact(version, req.getModelArtifact());
                 prepareModelPublish(version, req.getModelArtifact() != null);
                 version.setUpdatedAt(Instant.now());
                 return toDto(repo.save(version));
@@ -667,7 +667,7 @@ public class TrainingExperimentService {
         if (req.getOutputPath() != null) {
             version.setOutputPath(blankToNull(req.getOutputPath()));
         }
-        applyModelArtifact(version, req.getModelArtifact());
+        applyLegacyModelArtifact(version, req.getModelArtifact());
         if ("success".equals(nextStatus)) {
             prepareModelPublish(version, false);
         }
@@ -772,6 +772,16 @@ public class TrainingExperimentService {
         if (artifact.getSizeBytes() != null && artifact.getSizeBytes() > 0) {
             version.setModelArtifactSizeBytes(artifact.getSizeBytes());
         }
+    }
+
+    private void applyLegacyModelArtifact(
+            TrainingExperimentVersion version,
+            TrainingModelArtifactDto artifact
+    ) {
+        if (version.getRunSpecJson() != null && !version.getRunSpecJson().isBlank()) {
+            return;
+        }
+        applyModelArtifact(version, artifact);
     }
 
     private void prepareModelPublish(

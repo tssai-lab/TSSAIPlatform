@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tss.platform.dto.TrainingModelArtifactDto;
 import com.tss.platform.dto.UpdateTrainingResultRequest;
 import com.tss.platform.dto.UpdateHyperParamsRequest;
 import com.tss.platform.entity.TrainingExperimentVersion;
@@ -19,9 +20,11 @@ import com.tss.platform.training.plan.TrainingRunSpecFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -37,12 +40,14 @@ class TrainingExperimentServiceApplyResultTest {
     private TrainingExperimentService service;
     private AuthContext authContext;
     private TrainingFailureDiagnosticService failureDiagnosticService;
+    private TrainingOutputValidator trainingOutputValidator;
 
     @BeforeEach
     void setUp() {
         repo = mock(TrainingExperimentVersionRepository.class);
         authContext = mock(AuthContext.class);
         failureDiagnosticService = mock(TrainingFailureDiagnosticService.class);
+        trainingOutputValidator = mock(TrainingOutputValidator.class);
         doNothing().when(authContext).requireOwnerAccess(anyInt(), anyString());
         service = new TrainingExperimentService(
                 repo,
@@ -55,7 +60,7 @@ class TrainingExperimentServiceApplyResultTest {
                 mock(CodeAssetRepository.class),
                 mock(CodeVersionService.class),
                 mock(TrainingRunSpecFactory.class),
-                mock(TrainingOutputValidator.class),
+                trainingOutputValidator,
                 mock(TrainingExecutorRouter.class),
                 mock(JobScheduler.class),
                 new org.springframework.transaction.support.TransactionTemplate(
@@ -95,6 +100,62 @@ class TrainingExperimentServiceApplyResultTest {
         service.updateResultInternal("train-2", req);
 
         assertEquals(100, version.getProgress());
+    }
+
+    @Test
+    void runSpecSuccessIgnoresLegacyInnerArchiveDigest() {
+        TrainingExperimentVersion version = runningVersion("train-runspec", 80);
+        version.setRunSpecJson("{\"outputs\":{\"artifacts\":[{\"path\":\"model.zip\",\"publishAsModel\":true}]}}");
+        when(repo.findById("train-runspec")).thenReturn(Optional.of(version));
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(trainingOutputValidator.validate(any(), any(), any(), any(), any())).thenReturn(
+                new TrainingOutputValidator.ValidatedOutput(
+                        "{}",
+                        new ObjectMapper().createObjectNode(),
+                        Instant.parse("2026-08-28T16:00:00Z"),
+                        Instant.parse("2026-08-28T16:01:00Z"),
+                        "training-results/train-runspec/training-output.json",
+                        "a".repeat(64),
+                        128L
+                )
+        );
+
+        TrainingModelArtifactDto legacy = new TrainingModelArtifactDto();
+        legacy.setObjectName("training-results/train-runspec/artifacts/model.zip");
+        legacy.setSha256("b".repeat(64));
+        legacy.setSizeBytes(4096L);
+        UpdateTrainingResultRequest req = new UpdateTrainingResultRequest();
+        req.setStatus("success");
+        req.setProgress(100);
+        req.setModelArtifact(legacy);
+
+        service.updateResultInternal("train-runspec", req);
+
+        assertEquals("training-results/train-runspec/artifacts/model.zip", version.getModelArtifactPath());
+        assertNull(version.getModelArtifactSha256());
+        assertNull(version.getModelArtifactSizeBytes());
+        assertEquals(TrainingModelPublishService.STATUS_PENDING, version.getModelPublishStatus());
+    }
+
+    @Test
+    void legacySuccessStillRecordsLegacyModelArtifact() {
+        TrainingExperimentVersion version = runningVersion("train-legacy", 80);
+        when(repo.findById("train-legacy")).thenReturn(Optional.of(version));
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TrainingModelArtifactDto legacy = new TrainingModelArtifactDto();
+        legacy.setObjectName("training-results/train-legacy/artifacts/model.zip");
+        legacy.setSha256("c".repeat(64));
+        legacy.setSizeBytes(4096L);
+        UpdateTrainingResultRequest req = new UpdateTrainingResultRequest();
+        req.setStatus("success");
+        req.setProgress(100);
+        req.setModelArtifact(legacy);
+
+        service.updateResultInternal("train-legacy", req);
+
+        assertEquals("c".repeat(64), version.getModelArtifactSha256());
+        assertEquals(4096L, version.getModelArtifactSizeBytes());
     }
 
     @Test
