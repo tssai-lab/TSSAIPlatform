@@ -105,6 +105,8 @@ grep -F 'tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"' "$boo
 grep -F 'TSS_REQUIRE_REDIS_SESSION_STORE=true' "$bootstrap" >/dev/null
 grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
 grep -F 'redis_image != "$reviewed_redis_image"' "$bootstrap" >/dev/null
+grep -F 'redis_image_id != "$reviewed_redis_image_id"' "$bootstrap" >/dev/null
+grep -F "docker image inspect \"\$redis_image\" --format '{{.Id}}'" "$bootstrap" >/dev/null
 grep -F 'install -d -m 700 -o 999 -g 1000 "${platform_dir}/redis-data"' "$bootstrap" >/dev/null
 grep -F '127.0.0.1:6379:6379' "$redis_compose" >/dev/null
 grep -F 'pull_policy: never' "$redis_compose" >/dev/null
@@ -113,7 +115,9 @@ grep -F 'appendonly' "$redis_compose" >/dev/null
 grep -F 'noeviction' "$redis_compose" >/dev/null
 grep -F 'Redis-backed auth session readiness is not UP' "$validator" >/dev/null
 grep -F 'redis_image == "$reviewed_redis_image"' "$validator" >/dev/null
+grep -F 'actual_redis_image_id != "$redis_image_id"' "$validator" >/dev/null
 grep -F 'docker_bin port "$redis_container" 6379/tcp' "$validator" >/dev/null
+grep -F 'actual_redis_image_id != "$TSS_REDIS_IMAGE_ID"' "$backend_activator" >/dev/null
 grep -F 'Application rollback must never remove it.' "$redis_runbook" >/dev/null
 grep -F 'tss-node-validate-deployment "${validation_args[@]}"' "$runtime_loader" >/dev/null
 grep -F 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"' "$runtime_loader" >/dev/null
