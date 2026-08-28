@@ -58,6 +58,11 @@ before the offline import below.
 Use a clean checkout of the reviewed backend commit. Protect the existing node
 configuration and do not put credentials in Git.
 
+Before running the bootstrap, set `TSS_DEPLOYMENT_SMOKE_NODE` in the protected
+node configuration to an exact name returned by the backend kubeconfig. Main's
+current value is `tss-training-control-plane`. The bootstrap rejects a missing
+or stale node name so routine releases do not guess from the Linux hostname.
+
 ```bash
 # On a trusted internet-connected linux/amd64 workstation, use a reviewed
 # go-containerregistry/crane release. The digest pins the downloaded content.

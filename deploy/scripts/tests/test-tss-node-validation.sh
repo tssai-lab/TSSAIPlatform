@@ -103,6 +103,9 @@ grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_load
 grep -F 'AUTH_SESSION_STORE=redis' "$bootstrap" >/dev/null
 grep -F 'tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"' "$bootstrap" >/dev/null
 grep -F 'TSS_REQUIRE_REDIS_SESSION_STORE=true' "$bootstrap" >/dev/null
+grep -F 'TSS_DEPLOYMENT_SMOKE_NODE must name the Kubernetes node used for deployment smoke tests.' "$bootstrap" >/dev/null
+grep -F 'get node "$deployment_smoke_node"' "$bootstrap" >/dev/null
+grep -F "printf 'TSS_DEPLOYMENT_SMOKE_NODE=%q\\n'" "$bootstrap" >/dev/null
 grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
 grep -F 'active_inference_worker_image' "$bootstrap" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_WORKER_IMAGE' "$bootstrap" >/dev/null
