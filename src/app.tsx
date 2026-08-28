@@ -9,6 +9,10 @@ import { AvatarDropdown, AvatarName, Question } from '@/components';
 import { GuideProvider } from '@/components/Guide/GuideContext';
 import { syncTrainingCodeReviewConfigFromServer } from '@/constants/trainingCode';
 import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
+import {
+  createUnauthorizedOnceGate,
+  isUnauthorizedResponse,
+} from '@/utils/authFailure.mjs';
 import { redirectToLogin } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import defaultSettings from '../config/defaultSettings';
@@ -27,6 +31,7 @@ function roleIdToAccessRole(roleId?: number): API.UserRole | undefined {
 
 // 创建全局message实例引用
 let messageInstance: any;
+const unauthorizedOnceGate = createUnauthorizedOnceGate();
 
 /**
  * @see https://umijs.org/docs/api/runtime-config#getinitialstate
@@ -211,6 +216,15 @@ export const request: RequestConfig = {
     },
 
     errorHandler: (error: any, opts: any) => {
+      if (isUnauthorizedResponse(error)) {
+        const expiredToken = storage.get<string>(STORAGE_KEYS.TOKEN);
+        unauthorizedOnceGate.run(expiredToken, () => {
+          storage.remove(STORAGE_KEYS.TOKEN);
+          notification.error({ message: '登录已失效，请重新登录' });
+          redirectToLogin({ replace: true });
+        });
+        return;
+      }
       if (opts?.skipErrorHandler) return;
       const msgApi = messageInstance ?? message;
 
@@ -223,11 +237,6 @@ export const request: RequestConfig = {
       } else if (error.name === 'BizError') {
         const { code } = error.info ?? {};
         switch (code) {
-          case 401:
-            notification.error({ message: '登录失效，请重新登录' });
-            storage.remove(STORAGE_KEYS.TOKEN);
-            redirectToLogin({ replace: true });
-            break;
           case 403:
             msgApi.warning('暂无操作权限，请联系管理员');
             break;
