@@ -32,6 +32,7 @@ deploy_user="${TSS_DEPLOY_USER:-tss-deployer}"
 compose_base="${TSS_COMPOSE_BASE:-${platform_dir}/compose.yml}"
 compose_overlay="$1"
 runtime_env="${platform_dir}/backend/.env.runtime"
+node_runtime_env="${TSS_NODE_RUNTIME_ENV:-/etc/tss-platform/node-runtime.env}"
 backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
 redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
 postgres_container="${TSS_POSTGRES_CONTAINER:-tss-postgres}"
@@ -44,6 +45,8 @@ nlp_image_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shang
 backend_health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
 cluster_name="${TSS_CLUSTER_NAME:-tss-training-${node_id}}"
 deployment_smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-}"
+k8s_kubeconfig="${TSS_K8S_KUBECONFIG:-/opt/tss-platform/k8s/.kube/config}"
+k8s_verify_script="${TSS_K8S_VERIFY_SCRIPT:-/opt/tss-platform/backend/scripts/k8s/verify-local-kind.sh}"
 server_address="${TSS_SERVER_ADDRESS:-127.0.0.1}"
 spring_profiles_active="${TSS_SPRING_PROFILES_ACTIVE:-default}"
 datasource_host="${TSS_DATASOURCE_HOST:-127.0.0.1}"
@@ -79,6 +82,18 @@ fi
 # images are imported. On an existing node, preserve those exact active refs
 # instead of replacing them with stale bootstrap defaults from node.env.
 if [[ -f $runtime_env ]]; then
+  active_cluster_name="$(
+    awk -F= '$1 == "TRAINING_K8S_CLUSTER_NAME" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_k8s_kubeconfig="$(
+    awk -F= '$1 == "TRAINING_K8S_KUBECONFIG" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_k8s_verify_script="$(
+    awk -F= '$1 == "TRAINING_K8S_VERIFY_SCRIPT" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
   active_training_worker_image="$(
     awk -F= '$1 == "TRAINING_K8S_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
       "$runtime_env"
@@ -87,8 +102,43 @@ if [[ -f $runtime_env ]]; then
     awk -F= '$1 == "INFERENCE_KUBERNETES_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
       "$runtime_env"
   )"
+  active_model_cache_enabled="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_model_cache_node_path="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_model_cache_mount_path="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_model_cache_max_bytes="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_model_cache_min_free_bytes="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_model_cache_runtime_reserve_bytes="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  cluster_name="${active_cluster_name:-$cluster_name}"
+  k8s_kubeconfig="${active_k8s_kubeconfig:-$k8s_kubeconfig}"
+  k8s_verify_script="${active_k8s_verify_script:-$k8s_verify_script}"
   training_worker_image="${active_training_worker_image:-$training_worker_image}"
   inference_worker_image="${active_inference_worker_image:-$inference_worker_image}"
+fi
+
+if [[ -f $node_runtime_env ]]; then
+  active_deployment_smoke_node="$(
+    awk -F= '$1 == "TSS_DEPLOYMENT_SMOKE_NODE" { print substr($0, index($0, "=") + 1); exit }' \
+      "$node_runtime_env"
+  )"
+  deployment_smoke_node="${active_deployment_smoke_node:-$deployment_smoke_node}"
 fi
 
 if [[ $redis_host != 127.0.0.1 ]]; then
@@ -127,6 +177,15 @@ model_cache_max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
 model_cache_min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
 model_cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
 
+if [[ -f $runtime_env ]]; then
+  model_cache_enabled="${active_model_cache_enabled:-$model_cache_enabled}"
+  model_cache_node_path="${active_model_cache_node_path:-$model_cache_node_path}"
+  model_cache_mount_path="${active_model_cache_mount_path:-$model_cache_mount_path}"
+  model_cache_max_bytes="${active_model_cache_max_bytes:-$model_cache_max_bytes}"
+  model_cache_min_free_bytes="${active_model_cache_min_free_bytes:-$model_cache_min_free_bytes}"
+  model_cache_runtime_reserve_bytes="${active_model_cache_runtime_reserve_bytes:-$model_cache_runtime_reserve_bytes}"
+fi
+
 if [[ $model_cache_enabled != true && $model_cache_enabled != false ]]; then
   echo "TSS_MODEL_CACHE_ENABLED must be true or false." >&2
   exit 1
@@ -164,9 +223,9 @@ fi
 id "$deploy_user" >/dev/null
 
 for required_path in \
-  "${platform_dir}/k8s/.kube/config" \
+  "$k8s_kubeconfig" \
   "${platform_dir}/.tools/bin/kubectl" \
-  "${platform_dir}/backend/scripts/k8s/verify-local-kind.sh"; do
+  "$k8s_verify_script"; do
   if [[ ! -e $required_path ]]; then
     echo "Required node training runtime path is missing: $required_path" >&2
     exit 1
@@ -174,7 +233,7 @@ for required_path in \
 done
 
 "${platform_dir}/.tools/bin/kubectl" \
-  --kubeconfig "${platform_dir}/k8s/.kube/config" \
+  --kubeconfig "$k8s_kubeconfig" \
   get node "$deployment_smoke_node" >/dev/null
 
 get_container_env() {
@@ -246,9 +305,9 @@ TRAINING_K8S_VERIFY_ON_STARTUP=true
 TRAINING_K8S_FALLBACK_TO_LOCAL=false
 TRAINING_K8S_CLUSTER_NAME=${cluster_name}
 TRAINING_K8S_PROJECT_ROOT=/opt/tss-platform
-TRAINING_K8S_KUBECONFIG=/opt/tss-platform/k8s/.kube/config
+TRAINING_K8S_KUBECONFIG=${k8s_kubeconfig}
 TRAINING_K8S_KUBECTL_PATH=/opt/tss-platform/.tools/bin/kubectl
-TRAINING_K8S_VERIFY_SCRIPT=/opt/tss-platform/backend/scripts/k8s/verify-local-kind.sh
+TRAINING_K8S_VERIFY_SCRIPT=${k8s_verify_script}
 TRAINING_K8S_WORKER_IMAGE=${training_worker_image}
 TRAINING_K8S_WORKER_IMAGE_PULL_POLICY=IfNotPresent
 TRAINING_K8S_BACKEND_SERVICE_URL=${k8s_backend_service_url}
@@ -289,8 +348,8 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_REDIS_IMAGE=%q\n' "$redis_image"
   printf 'TSS_REDIS_IMAGE_ID=%q\n' "$redis_image_id"
   printf 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=%q\n' "$model_cache_runtime_reserve_bytes"
-} > /etc/tss-platform/node-runtime.env
-chmod 600 /etc/tss-platform/node-runtime.env
+} > "$node_runtime_env"
+chmod 600 "$node_runtime_env"
 
 install -m 700 \
   "${script_dir}/tss-node-activate-backend" \

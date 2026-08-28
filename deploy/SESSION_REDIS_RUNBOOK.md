@@ -60,8 +60,12 @@ configuration and do not put credentials in Git.
 
 Before running the bootstrap, set `TSS_DEPLOYMENT_SMOKE_NODE` in the protected
 node configuration to an exact name returned by the backend kubeconfig. Main's
-current value is `tss-training-control-plane`. The bootstrap rejects a missing
-or stale node name so routine releases do not guess from the Linux hostname.
+physical kubeadm baseline uses `k8s-master`, `/opt/tss-platform/k8s/.kube/admin.conf`
+and `verify-kubeadm.sh`. The retired `tss-training-control-plane` kind cluster
+must not be recreated or used as a deployment target. The bootstrap rejects a
+missing or stale node name so routine releases do not guess from the Linux
+hostname. On an existing node it preserves the active cluster, smoke node and
+model-cache settings while adding or repairing the Redis session store.
 
 ```bash
 # On a trusted internet-connected linux/amd64 workstation, use a reviewed
