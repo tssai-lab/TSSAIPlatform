@@ -388,14 +388,14 @@ declare namespace API {
     hostname: string;
     enabled?: boolean;
     status: 'online' | 'warning';
-    cpuRate: number;
-    memRate: number;
-    gpuRate: number;
-    diskRate?: number;
-    networkIn?: number;
-    networkOut?: number;
-    gpuMemRate?: number;
-    gpuTemp?: number;
+    cpuRate: number | null;
+    memRate: number | null;
+    gpuRate: number | null;
+    diskRate?: number | null;
+    networkIn?: number | null;
+    networkOut?: number | null;
+    gpuMemRate?: number | null;
+    gpuTemp?: number | null;
     metricsStatus:
       | 'fresh'
       | 'temporarily_unavailable'
@@ -422,7 +422,7 @@ declare namespace API {
     online: number;
     runningTasks: number;
     queuedTasks: number;
-    avgGpu: string | number;
+    avgGpu: string | number | null;
   };
 
   type ResourceMonitorMetricPoint = {
@@ -430,7 +430,7 @@ declare namespace API {
     fullTime: string;
     time: string;
     type: string;
-    value: number;
+    value: number | null;
   };
 
   type ResourceMonitorMetrics = {

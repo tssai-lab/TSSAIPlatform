@@ -33,7 +33,7 @@ type ResourceSummary = {
   online: number;
   runningTasks: number;
   queuedTasks: number;
-  avgGpu: number | string;
+  avgGpu: number | string | null;
 };
 
 type DashboardStats = {

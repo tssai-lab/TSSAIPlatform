@@ -36,6 +36,7 @@ import {
   getUsageColor,
   TIME_INTERVAL_OPTIONS,
 } from '../constants';
+import { formatMetric, isMetricAvailable } from '../metricDisplay.mjs';
 import { getMetricsStatusMeta, getNodeWarnings } from '../monitorStatus.mjs';
 import ResourceTrendChart from '../ResourceTrendChart';
 
@@ -386,13 +387,13 @@ const ServerDetail = () => {
             {server.specs?.os || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="GPU 温度">
-            {server.gpuTemp > 0 ? `${server.gpuTemp} °C` : '-'}
+            {formatMetric(server.gpuTemp, ' °C')}
           </Descriptions.Item>
           <Descriptions.Item label="网络入站">
-            {server.networkIn > 0 ? `${server.networkIn} MB/s` : '-'}
+            {formatMetric(server.networkIn, ' MB/s')}
           </Descriptions.Item>
           <Descriptions.Item label="网络出站">
-            {server.networkOut > 0 ? `${server.networkOut} MB/s` : '-'}
+            {formatMetric(server.networkOut, ' MB/s')}
           </Descriptions.Item>
           <Descriptions.Item label="节点 Ready">
             {server.nodeReady === true
@@ -417,9 +418,13 @@ const ServerDetail = () => {
             <Card size="small">
               <Text type="secondary">{item.label}</Text>
               <Progress
-                percent={item.value}
-                strokeColor={getUsageColor(item.value)}
-                format={() => `${item.value}%`}
+                percent={isMetricAvailable(item.value) ? item.value : 0}
+                strokeColor={
+                  isMetricAvailable(item.value)
+                    ? getUsageColor(item.value)
+                    : '#d9d9d9'
+                }
+                format={() => formatMetric(item.value, '%')}
                 style={{ marginTop: 8 }}
               />
             </Card>
@@ -428,28 +433,21 @@ const ServerDetail = () => {
       </Row>
 
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
-          <Card>
-            <Statistic title="运行中任务" value={server.runTask} suffix="个" />
-          </Card>
-        </Col>
-        <Col span={8}>
+        <Col span={12}>
           <Card>
             <Statistic
-              title="待启动任务"
-              value={server.waitTask}
+              title="平台运行中任务"
+              value={server.runTask}
               suffix="个"
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={12}>
           <Card>
             <Statistic
-              title="综合负载"
-              value={Math.round(
-                (server.cpuRate + server.memRate + server.gpuRate) / 3,
-              )}
-              suffix="%"
+              title="平台待启动任务"
+              value={server.waitTask}
+              suffix="个"
             />
           </Card>
         </Col>

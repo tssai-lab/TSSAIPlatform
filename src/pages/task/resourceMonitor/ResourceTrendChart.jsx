@@ -1,5 +1,6 @@
 import { Line } from '@ant-design/plots';
 import React, { useMemo } from 'react';
+import { isMetricAvailable } from './metricDisplay.mjs';
 
 /** Grafana / 监控面板常用配色 */
 export const SERIES_COLOR_MAP = {
@@ -117,6 +118,7 @@ export const getResourceTrendChartConfig = (data = [], options = {}) => {
     autoFit: true,
     padding: [40, 32, 48, 56],
     style: { lineWidth: 2 },
+    connectNulls: false,
     area: { style: { fillOpacity: 0.08 } },
     scale: {
       x: {
@@ -170,13 +172,16 @@ const ResourceTrendChart = ({
   interval = '1hour',
 }) => {
   const safeData = Array.isArray(data) ? data : [];
+  const hasAvailableData = safeData.some((point) =>
+    isMetricAvailable(point?.value),
+  );
 
   const config = useMemo(
     () => getResourceTrendChartConfig(safeData, { height, interval }),
     [safeData, height, interval],
   );
 
-  if (!safeData.length) {
+  if (!hasAvailableData) {
     return (
       <div
         style={{
