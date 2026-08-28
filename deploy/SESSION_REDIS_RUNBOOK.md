@@ -70,6 +70,10 @@ restricted helpers, preserves the existing internal callback token, writes
 the persistent directory as Redis uid/gid `999:1000`, and waits for container
 health. It does not restart the running backend by itself.
 
+The backend runtime file is merged atomically: bootstrap-owned keys are
+updated, while independently managed settings such as SMS provider parameters
+are preserved without being sourced or printed.
+
 ## Verification
 
 After the first Redis-backed backend release:

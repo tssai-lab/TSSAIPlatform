@@ -11,6 +11,7 @@ cache_preparer="${root_dir}/deploy/scripts/tss-node-prepare-model-cache"
 cache_validator="${root_dir}/deploy/scripts/tss-node-validate-model-cache"
 redis_compose="${root_dir}/deploy/main/compose.backend.yml"
 redis_runbook="${root_dir}/deploy/SESSION_REDIS_RUNBOOK.md"
+runtime_env_lib="${root_dir}/deploy/scripts/lib-runtime-env.sh"
 runtime_workflow="${root_dir}/.github/workflows/runtime-images.yml"
 cv_dockerfile="${root_dir}/k8s/training-worker/Dockerfile.cv"
 inference_dockerfile="${root_dir}/k8s/inference-worker/Dockerfile"
@@ -32,6 +33,29 @@ TSS_NLP_IMAGE_REPOSITORY=registry.example/tss-nlp-worker
 TSS_PLATFORM_DIR=/nonexistent/tss-platform
 TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=10737418240
 EOF
+
+# A bootstrap may update its own keys, but it must not erase independently
+# managed features such as the SMS provider configuration.
+existing_runtime_env="${workdir}/existing-runtime.env"
+managed_runtime_env="${workdir}/managed-runtime.env"
+cat >"$existing_runtime_env" <<'EOF'
+SPRING_DATASOURCE_URL=jdbc:old
+SMS_PROVIDER=aliyun
+SMS_SIGN_SECRET=keep-this-value
+EOF
+cat >"$managed_runtime_env" <<'EOF'
+SPRING_DATASOURCE_URL=jdbc:new
+AUTH_SESSION_STORE=redis
+EOF
+# shellcheck source=deploy/scripts/lib-runtime-env.sh
+source "$runtime_env_lib"
+tss_merge_runtime_env_file "$existing_runtime_env" "$managed_runtime_env"
+[[ $(grep -Fc 'SPRING_DATASOURCE_URL=' "$existing_runtime_env") -eq 1 ]]
+grep -Fx 'SPRING_DATASOURCE_URL=jdbc:new' "$existing_runtime_env" >/dev/null
+grep -Fx 'AUTH_SESSION_STORE=redis' "$existing_runtime_env" >/dev/null
+grep -Fx 'SMS_PROVIDER=aliyun' "$existing_runtime_env" >/dev/null
+grep -Fx 'SMS_SIGN_SECRET=keep-this-value' "$existing_runtime_env" >/dev/null
+[[ $(stat -c '%a' "$existing_runtime_env") == 600 ]]
 
 fail_case() {
   local expected_message="$1"
@@ -77,6 +101,7 @@ grep -F 'up -d --no-deps redis mlflow' "$backend_activator" >/dev/null
 grep -F 'Redis session store is unavailable; keeping the current backend.' "$backend_activator" >/dev/null
 grep -F 'tss-node-activate-backend "$image" "$expected_image_id"' "$backend_loader" >/dev/null
 grep -F 'AUTH_SESSION_STORE=redis' "$bootstrap" >/dev/null
+grep -F 'tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"' "$bootstrap" >/dev/null
 grep -F 'TSS_REQUIRE_REDIS_SESSION_STORE=true' "$bootstrap" >/dev/null
 grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
 grep -F 'redis_image != "$reviewed_redis_image"' "$bootstrap" >/dev/null
