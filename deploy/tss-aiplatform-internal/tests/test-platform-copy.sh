@@ -181,6 +181,9 @@ grep -F 'deploy-backend' "$workflow" >/dev/null
 gateway="$platform_root/scripts/internal-runner-gateway.sh"
 deployer="$platform_root/scripts/deploy-internal-backend.sh"
 installer="$platform_root/scripts/install-internal-runner-gateway.sh"
+grep -F 'current_project_id=$(docker image inspect --format' "$deployer" >/dev/null
+grep -F 'candidate_id=$(docker image inspect --format' "$deployer" >/dev/null
+grep -F 'if [[ $candidate_id != "$current_project_id" ]]; then' "$deployer" >/dev/null
 grep -F 'command_text=${SSH_ORIGINAL_COMMAND:-}' "$gateway" >/dev/null
 grep -F 'exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-backend' "$gateway" >/dev/null
 grep -F 'command is not permitted by the internal Runner gateway' "$gateway" >/dev/null

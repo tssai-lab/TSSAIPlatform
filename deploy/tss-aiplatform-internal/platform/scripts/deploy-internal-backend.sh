@@ -225,11 +225,19 @@ configuration_changed=false
 
 # The accepted storage policy keeps one useful backend image locally. Delete
 # only exact project backend tags with no container references, after verify.
+current_project_id=$(docker image inspect --format '{{.Id}}' "$project_ref")
 while IFS= read -r candidate; do
   [[ -n $candidate && $candidate != "$project_ref" ]] || continue
   [[ $candidate =~ ^tss-aiplatform-internal/backend:[0-9a-f]{8}-[0-9a-f]{12}$ ]] || continue
-  [[ -z $(docker ps -aq --filter "ancestor=${candidate}") ]] \
-    || die "old project backend image is still referenced: ${candidate}"
+  candidate_id=$(docker image inspect --format '{{.Id}}' "$candidate")
+  # Infrastructure-only commits can produce a new immutable tag for the exact
+  # same image ID. In that case a running container also matches the old tag's
+  # ancestor filter, but removing the old tag is only an untag operation. Keep
+  # the reference guard for genuinely different image content.
+  if [[ $candidate_id != "$current_project_id" ]]; then
+    [[ -z $(docker ps -aq --filter "ancestor=${candidate}") ]] \
+      || die "old project backend image is still referenced: ${candidate}"
+  fi
   docker image rm "$candidate" >/dev/null
 done < <(docker images --format '{{.Repository}}:{{.Tag}}' tss-aiplatform-internal/backend)
 
