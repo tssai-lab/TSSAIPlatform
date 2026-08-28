@@ -3,7 +3,7 @@ export const MODEL_BACKEND_TYPE_OPTIONS = [
   { value: 'CV', label: 'CV' },
   { value: 'NLP', label: 'NLP' },
   { value: 'POINT_CLOUD', label: '点云' },
-  { value: 'ROBOT', label: 'ROBOT（预留）' },
+  { value: 'ROBOT', label: '机器人' },
 ] as const;
 
 export type ModelBackendType =

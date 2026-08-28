@@ -171,7 +171,7 @@ function formatImprovementTooltipHtml(
     .filter(Boolean)
     .join(' · ');
   const detail = [
-    task.experimentId ? `实验 ${shortId(task.experimentId, 14)}` : null,
+    task.experimentId ? `训练 ${shortId(task.experimentId, 14)}` : null,
     task.createTime ? formatDisplayDateTime(task.createTime) : null,
   ]
     .filter(Boolean)
@@ -216,7 +216,7 @@ function TaskIdentityCell(props: {
   const tipLines = [
     taskName ? `名称：${taskName}` : null,
     versionNo != null ? `训练版本：第 ${versionNo} 版` : null,
-    experimentId ? `实验 ID：${experimentId}` : null,
+    experimentId ? `训练编号：${experimentId}` : null,
     taskId ? `任务 ID：${taskId}` : null,
     createTime ? `创建时间：${formatDisplayDateTime(createTime)}` : null,
     modelName && modelName !== '-' ? `模型：${modelName}` : null,
@@ -535,7 +535,7 @@ const TaskCompare: React.FC = () => {
   const handleLoadExperiment = async () => {
     const expId = experimentIdInput.trim();
     if (!expId) {
-      message.warning('请输入实验ID');
+      message.warning('请输入训练编号');
       return;
     }
     history.push(`/task/compare?experimentId=${encodeURIComponent(expId)}`);
@@ -572,7 +572,7 @@ const TaskCompare: React.FC = () => {
         const withRunId = details.filter((d) => d.runId);
         if (withRunId.length === 0) {
           setMetricsData([]);
-          message.warning('所选任务均无 Run ID，无法拉取 MLflow 指标');
+          message.warning('所选任务没有可用的训练指标');
           return;
         }
         if (withRunId.length < ids.length) {
@@ -1092,7 +1092,7 @@ const TaskCompare: React.FC = () => {
       render: (v: number | undefined) => formatVersionNo(v),
     },
     {
-      title: '实验 ID',
+      title: '训练编号',
       dataIndex: 'experimentId',
       key: 'experimentId',
       width: 120,
@@ -1189,18 +1189,18 @@ const TaskCompare: React.FC = () => {
   return (
     <PageContainer
       title="模型性能对比"
-      subTitle="对单值指标做多维对照，过程序列看曲线。同名任务看「任务」列副文案（版本 / 短 ID / 时间），悬停可看完整实验 ID、模型与数据集。同一训练不同版本或同模型+同数据集可看性能提升。"
+      subTitle="选择训练记录和指标，查看数值、曲线及性能变化"
       onBack={() => history.push('/task/list')}
       extra={
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
       }
     >
-      <Card title="按实验ID加载版本" style={{ marginBottom: 16 }}>
+      <Card title="按训练编号加载版本（高级）" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Input
             value={experimentIdInput}
             onChange={(e) => setExperimentIdInput(e.target.value)}
-            placeholder="输入 experimentId（对比同一训练的多个版本）"
+            placeholder="输入训练编号"
             style={{ width: 420 }}
           />
           <Button
@@ -1220,8 +1220,7 @@ const TaskCompare: React.FC = () => {
           </Button>
         </Space>
         <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-          说明：任务列表接口默认只返回每个实验的最新版本；想对比同一训练的不同版本，请在此输入
-          experimentId 加载版本历史。
+          任务列表默认显示每次训练的最新版本；需要查看历史版本时，可输入训练编号加载。
         </div>
       </Card>
 
@@ -1305,8 +1304,7 @@ const TaskCompare: React.FC = () => {
         )}
         <Divider style={{ margin: '12px 0' }} />
         <div style={{ color: '#8c8c8c', fontSize: 12 }}>
-          对比池只保存版本/训练的 ID（本地存储）。进入对比页时会尽量补全这些 ID
-          对应的行，并拉取真实 MLflow 指标。
+          对比池只在当前浏览器保存所选记录编号，并加载对应的真实训练指标。
         </div>
       </Card>
       <Card title="选择训练任务" style={{ marginBottom: 16 }}>
@@ -1331,8 +1329,7 @@ const TaskCompare: React.FC = () => {
             </Button>
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
               已选 {selectedRowKeys.length}{' '}
-              个任务。性能提升曲线适用于：同一训练不同版本，或具有相同模型/数据集稳定资产标识且
-              ≥2 条
+              个任务。性能提升曲线适用于同一训练的不同版本，或使用相同模型和数据集的至少两条记录。
             </span>
           </Space>
         </div>
@@ -1372,8 +1369,7 @@ const TaskCompare: React.FC = () => {
       {metricsData.length > 0 && displayedSameModelGroups.length === 0 && (
         <Card style={{ marginBottom: 16 }}>
           <div style={{ color: '#8c8c8c' }}>
-            未形成性能提升分组。请选择同一训练（同一
-            experimentId）的不同版本，或具有相同模型和数据集稳定资产标识的多条任务。名称相同但资产标识不同的任务不会被误判为同一模型。
+            未形成可比较的版本组。请选择同一训练的不同版本，或使用相同模型和数据集的多条训练记录。
           </div>
         </Card>
       )}
@@ -1398,9 +1394,8 @@ const TaskCompare: React.FC = () => {
           }
         >
           <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 16 }}>
-            分组条件：① 同一训练不同版本；②
-            或模型与数据集的稳定资产标识均相同。左图比较各版本训练结束时的指标；右图展示相对首个版本的提升幅度（loss
-            下降计为提升；首版指标为 0 时不伪造百分比）。
+            左图比较各版本训练结束时的指标；右图展示相对首个版本的提升幅度。损失值下降计为提升；首版指标为
+            0 时不计算百分比。
           </div>
           {displayedSameModelGroups.map((group) => {
             const { slug, title, kind, modelName, datasetName } = group;
@@ -1536,8 +1531,7 @@ const TaskCompare: React.FC = () => {
 
       {metricsData.length > 0 && (
         <div style={{ marginTop: 16, color: '#8c8c8c', fontSize: 12 }}>
-          提示：对比数据来自
-          MLflow。「性能提升」适用于同一训练不同版本，或具有相同模型和数据集稳定资产标识的任务。
+          “性能提升”适用于同一训练的不同版本，或使用相同模型和数据集的训练记录。
         </div>
       )}
     </PageContainer>

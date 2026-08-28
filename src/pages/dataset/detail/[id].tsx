@@ -635,7 +635,7 @@ const DatasetDetail: React.FC = () => {
     }
 
     if (record.status && record.status !== 'READY') {
-      message.warning('仅正式版本（READY）可创建版本工作区');
+      message.warning('仅准备完成的正式版本可在线编辑');
       return;
     }
 
@@ -1123,18 +1123,10 @@ const DatasetDetail: React.FC = () => {
             <>
               <strong>上传新版本</strong>：替换整包数据，适合大批量更换。
               <br />
-              <strong>创建/继续版本工作区</strong>：基于所点 zip
-              正式版创建或继续版本工作区（请求会传 baseVersionId），可删除/恢复
+              <strong>创建/继续在线编辑</strong>：基于所选正式版本删除或恢复
               {isMultimodal ? '样本' : '文件'}、追加 zip
               {isMultimodal ? '新增样本' : '新增文件'}
-              ，完成后「发布为新版本」才生效。同一资产同时只能有一个活动工作区；基线不同时请先发布或放弃后再开。
-              <br />
-              <Typography.Text type="secondary">
-                基线规则：显式传入的 baseVersionId
-                即为工作区基线（不会静默改用「当前」正式版）。若已有其它基线的活动工作区，后端返回
-                WORKSPACE_BASE_CONFLICT；发布时若资产当前指针已变，可能返回
-                BASE_VERSION_STALE，需放弃后重建。
-              </Typography.Text>
+              ，完成后发布为新版本。同一数据集同时只能有一个未发布的编辑版本。
             </>
           }
         />
@@ -1308,7 +1300,7 @@ const DatasetDetail: React.FC = () => {
                             compact
                           />
                         ) : (
-                          <Empty description="该版本正在后台导入样本，导入完成并变为 READY 后可浏览；导入期间无法编辑删除。" />
+                          <Empty description="该版本正在后台导入样本。导入完成后可浏览；导入期间无法编辑或删除。" />
                         )
                       ) : supportsInlinePreview ? (
                         <>
@@ -1317,8 +1309,8 @@ const DatasetDetail: React.FC = () => {
                               type="info"
                               showIcon
                               style={{ marginBottom: 12 }}
-                              message="本版本来自工作区发布"
-                              description="预览只展示本版本样本清单（含 APPEND 追加）。样本接口不可用时不会回退到主包 ZIP，避免把未合并追加包的主包当成当前版本内容。"
+                              message="本版本由在线编辑发布"
+                              description="当前展示发布时合并后的文件或样本。"
                             />
                           ) : null}
                           <DatasetPreviewPanel
@@ -1705,17 +1697,8 @@ const DatasetDetail: React.FC = () => {
             <Alert
               type="info"
               showIcon
-              message="将基于所选正式版本创建版本工作区"
-              description={
-                <>
-                  请求会携带所点版本的 <strong>baseVersionId</strong>
-                  ，基线即为该 READY
-                  版内容。版本号在创建时写入目标草稿，资产内唯一；
-                  <strong>已取消/软删的草稿标签仍占用</strong>
-                  ，列表里可能看不到。若提示被占用，请改用 v3、v1.0.3
-                  等更大号；前端也会自动尝试跳号。同一资产同时只能有一个活动工作区；若已有其它基线的工作区，请先发布或放弃。
-                </>
-              }
+              message="将基于所选正式版本开始在线编辑"
+              description="请填写未使用的新版本号。若已有未发布的编辑版本，请先发布或放弃。"
             />
           )}
         </Form>

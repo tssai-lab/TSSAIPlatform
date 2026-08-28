@@ -303,28 +303,19 @@ const ModelCachePage: React.FC = () => {
         </Button>,
       ]}
     >
-      {!overview?.enabled ? (
-        <Alert
-          showIcon
-          type="warning"
-          message="模型缓存当前关闭"
-          description="代码能力已安装，但必须先在维护窗口为 kubeadm 物理节点准备本地目录，通过真实 worker 探针并完成节点验证，才能安全启用。"
-          style={{ marginBottom: 16 }}
-        />
-      ) : null}
       <Alert
         showIcon
-        type="info"
-        message="内存与磁盘保护"
-        description={`权重以流式方式下载和校验，不会整体读入内存；缓存上限 ${formatBytes(
-          overview?.maxBytes,
-        )}，至少保留 ${formatBytes(
-          overview?.minFreeBytes,
-        )} 空闲空间，并为运行镜像预留 ${formatBytes(
-          overview?.runtimeReserveBytes,
-        )}。空缓存节点保护门合计 ${formatBytes(
-          overview?.emptyCacheGateBytes,
-        )}；清理不会中断正在运行的任务。`}
+        type={overview?.enabled ? 'info' : 'warning'}
+        message={overview?.enabled ? '缓存保护已启用' : '模型缓存当前关闭'}
+        description={
+          overview?.enabled
+            ? `缓存上限 ${formatBytes(overview.maxBytes)}，至少保留 ${formatBytes(
+                overview.minFreeBytes,
+              )} 空闲空间，并为运行镜像预留 ${formatBytes(
+                overview.runtimeReserveBytes,
+              )}；清理不会中断正在运行的任务。`
+            : '请先完成计算节点缓存目录初始化和节点验证，再在维护窗口启用。保护参数可在下方设置。'
+        }
         style={{ marginBottom: 16 }}
       />
 
@@ -338,7 +329,7 @@ const ModelCachePage: React.FC = () => {
             showIcon
             type="warning"
             message="保存时按真实节点磁盘情况做安全校验"
-            description="三个数值均按整数 GiB 设置。任何缓存就绪节点空间不足、检查失败，或当前缓存已超过新上限时，后端都会拒绝保存，不会套用前端临时值。"
+            description="三个数值均按整数 GiB 设置。任一节点空间不足、检查失败或现有缓存超过新上限时，平台会拒绝保存。"
             style={{ marginBottom: 16 }}
           />
           <Form<ModelCachePolicyForm>

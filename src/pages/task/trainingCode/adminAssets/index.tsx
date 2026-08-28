@@ -861,7 +861,7 @@ const AdminCodeAssetsPage: React.FC = () => {
     const state: BrowseState = {
       mode: 'version',
       title: `版本快照 · ${label}`,
-      subtitle: `versionId=${versionId} · 生命周期=${version.status || '-'} · 审核=${version.approvalStatus || '-'}（只读）`,
+      subtitle: `版本编号：${versionId}（只读）`,
       targetId: versionId,
     };
     setBrowse(state);
@@ -988,10 +988,10 @@ const AdminCodeAssetsPage: React.FC = () => {
         width: 110,
         render: (v: string | undefined) => {
           const s = String(v || '').toUpperCase();
-          if (s === 'APPROVED') return <Tag color="success">APPROVED</Tag>;
-          if (s === 'PENDING') return <Tag color="warning">PENDING</Tag>;
-          if (s === 'REJECTED') return <Tag color="error">REJECTED</Tag>;
-          if (s === 'REVOKED') return <Tag>REVOKED</Tag>;
+          if (s === 'APPROVED') return <Tag color="success">已通过</Tag>;
+          if (s === 'PENDING') return <Tag color="warning">待审核</Tag>;
+          if (s === 'REJECTED') return <Tag color="error">已拒绝</Tag>;
+          if (s === 'REVOKED') return <Tag>已撤销</Tag>;
           return <Tag>{v || '-'}</Tag>;
         },
       },
@@ -1272,8 +1272,8 @@ const AdminCodeAssetsPage: React.FC = () => {
       }
       subTitle={
         activeAsset
-          ? `跨 owner 维护 · owner=${formatOwnerUserLabel(activeAsset.ownerUserId, ownerUsernameMap)}（不授予训练消费权）`
-          : '跨 owner 维护；不授予训练消费权。点「管理」进入详情，在同一页改元数据、版本与文件。'
+          ? `管理用户 ${formatOwnerUserLabel(activeAsset.ownerUserId, ownerUsernameMap)} 的代码资产`
+          : '查看和维护所有用户的代码资产；管理权限不会自动获得训练使用权。'
       }
       onBack={activeAsset ? exitDetail : undefined}
       extra={

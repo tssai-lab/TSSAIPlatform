@@ -949,11 +949,11 @@ const TaskCreate: React.FC = () => {
       }
       const codeVersionId = res?.data?.codeVersionId;
       if (!codeVersionId) {
-        throw new Error('训练代码上传成功但未返回 codeVersionId');
+        throw new Error('训练代码上传成功，但未返回版本编号');
       }
       let approvalStatus = res?.data?.approvalStatus;
       if (approvalStatus === 'APPROVED') {
-        message.success(`训练代码已上传并审核通过：${codeVersionId}`);
+        message.success('训练代码已上传并审核通过');
       } else if (isTrainingCodeAutoApproveEnabled()) {
         try {
           const approved = await autoApproveCodeVersionIfEnabled(
@@ -965,7 +965,7 @@ const TaskCreate: React.FC = () => {
             },
           );
           approvalStatus = approved?.approvalStatus || 'APPROVED';
-          message.success(`训练代码已上传并自动审核通过：${codeVersionId}`);
+          message.success('训练代码已上传并自动审核通过');
         } catch (approveError: any) {
           message.warning(
             getApiErrorMessage(
@@ -975,7 +975,7 @@ const TaskCreate: React.FC = () => {
           );
         }
       } else {
-        message.success(`训练代码已上传，正在执行准入校验：${codeVersionId}`);
+        message.success('训练代码已上传，正在执行准入校验');
       }
       setSelectedCodeVersionId(codeVersionId);
       setSelectedCodeApprovalStatus(approvalStatus);
@@ -1006,7 +1006,7 @@ const TaskCreate: React.FC = () => {
           showIcon
           style={{ marginTop: 12 }}
           message="训练代码校验通过且已审核"
-          description={`审核状态：${codeCheck.approvalStatus}。准入校验只代表结构与固定入口检查通过，不代表代码安全审计。`}
+          description="训练代码已通过结构与固定入口校验，并已审核通过。"
         />
       );
     }
@@ -1023,8 +1023,8 @@ const TaskCreate: React.FC = () => {
           }
           description={
             isTrainingCodeAutoApproveEnabled()
-              ? `审核状态：${codeCheck.approvalStatus || 'PENDING'}。当前系统为自动审核模式，可刷新后重试，或到训练代码页处理。`
-              : `审核状态：${codeCheck.approvalStatus || 'PENDING'}。校验与审批已分离，需管理员审核通过后方可提交训练${codeCheck.validationStatus ? `；validationStatus=${codeCheck.validationStatus}` : ''}。`
+              ? '训练代码尚未通过审核。可刷新后重试，或到训练代码页处理。'
+              : '训练代码结构校验和人工审核均通过后，才可以提交训练。'
           }
         />
       );
@@ -1105,8 +1105,8 @@ const TaskCreate: React.FC = () => {
       Modal.warning({
         title: '训练代码尚未审核通过',
         content: isTrainingCodeAutoApproveEnabled()
-          ? '当前版本尚未 APPROVED。自动审核可能失败，请刷新后重试，或到训练代码页处理。'
-          : '当前版本已通过结构校验，但 approvalStatus 不是 APPROVED。请等待管理员在「训练代码」列表中审核，或改选已审核版本。',
+          ? '当前版本尚未审核通过。请刷新后重试，或到训练代码页处理。'
+          : '当前版本尚未审核通过。请等待管理员审核，或改选已审核版本。',
       });
       throw new Error('approval pending');
     }
@@ -1145,7 +1145,7 @@ const TaskCreate: React.FC = () => {
           (item) => item.id === selectedBaseModelVersionId,
         )
       ) {
-        message.error('所选模型未通过当前训练方案的规格与 READY 状态校验');
+        message.error('所选模型与当前训练方案不兼容，或尚未准备完成');
         throw new Error('model is incompatible with training plan');
       }
       return;
@@ -1168,7 +1168,7 @@ const TaskCreate: React.FC = () => {
           (item) => item.versionId === selectedDatasetVersionId,
         )
       ) {
-        message.error('所选数据集未通过当前训练方案的规格与 READY 状态校验');
+        message.error('所选数据集与当前训练方案不兼容，或尚未准备完成');
         throw new Error('dataset is incompatible with training plan');
       }
       return;
@@ -1216,8 +1216,8 @@ const TaskCreate: React.FC = () => {
       Modal.warning({
         title: '训练代码尚未审核通过',
         content: isTrainingCodeAutoApproveEnabled()
-          ? '自动审核可能失败，请回到训练配置步骤刷新后重试，或改选已 APPROVED 的版本。'
-          : '请等待管理员审核通过后提交，或改选已 APPROVED 的训练代码版本。',
+          ? '请回到训练配置步骤刷新后重试，或改选已审核通过的版本。'
+          : '请等待管理员审核通过后提交，或改选已审核通过的训练代码版本。',
       });
       setCurrentStep(3);
       return;
@@ -1263,9 +1263,7 @@ const TaskCreate: React.FC = () => {
           throw new Error(res?.errorMessage || '创建实验新版本失败');
         }
         data = res?.data;
-        message.success(
-          `已在实验 ${experimentId} 下创建 v${data?.versionNo ?? '?'}`,
-        );
+        message.success(`已创建第 ${data?.versionNo ?? '?'} 版训练`);
       } else {
         const taskPayload = {
           ...payload,
@@ -1300,7 +1298,7 @@ const TaskCreate: React.FC = () => {
   return (
     <PageContainer
       title={isExperimentContinue ? '基于此版本继续训练' : '发起训练'}
-      subTitle="选择或上传基础模型权重、训练数据集与训练代码，通过 Kubernetes 提交固定训练方案"
+      subTitle="选择训练方案、模型、数据集、训练代码和资源规格"
       onBack={() => {
         if (isExperimentContinue) {
           history.push(`/task/detail/${encodeURIComponent(experimentId)}`);
@@ -1324,26 +1322,9 @@ const TaskCreate: React.FC = () => {
           showIcon
           style={{ marginBottom: 16 }}
           message="基于此版本继续训练"
-          description="已预填该版本的结果模型（producedModelVersionId）、训练代码与数据集。若结果模型尚未发布，会尝试自动发布；提交后将在同一 experimentId 下创建下一版。"
+          description="已带入该版本使用的模型、数据集、训练代码和参数；提交后会保留原版本并生成新版本。"
         />
       )}
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="三类资产拆分（推荐流程）"
-        description={
-          <span>
-            平台将训练输入拆分为：
-            <strong>基础模型权重</strong>
-            （model_asset/model_version）、<strong>训练数据集</strong>、
-            <strong>训练代码</strong>（codeVersionId + training-check）。
-            创建任务时，训练方案会校验三类资产格式并生成不可变运行规格；Worker
-            会分别挂载到
-            /workspace/job/model、/workspace/job/data、/workspace/job/code。
-          </span>
-        }
-      />
 
       <Form
         form={form}
@@ -1451,13 +1432,6 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 1 && (
             <>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="训练时只选择已经上传完成的模型版本"
-                description="需要新模型时，请先到模型管理独立上传；上传分类与训练方案分开，训练方案只负责筛选真正兼容的版本。"
-              />
               <Form.Item
                 label="基础模型权重版本"
                 required={isExperimentContinue}
@@ -1465,8 +1439,8 @@ const TaskCreate: React.FC = () => {
                   isExperimentContinue
                     ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
                     : specDrivenModel
-                      ? `只显示 READY 且规格属于：${acceptedModelSpecIds.join('、')}`
-                      : '这里只显示当前训练方案允许且状态为 READY 的已有模型版本'
+                      ? `只显示与当前方案兼容且准备完成的模型：${acceptedModelSpecIds.join('、')}`
+                      : '这里只显示与当前训练方案兼容且准备完成的模型版本'
                 }
               >
                 <Select
@@ -1477,7 +1451,7 @@ const TaskCreate: React.FC = () => {
                   disabled={!selectedTrainingPlanId}
                   notFoundContent={
                     selectedTrainingPlanId
-                      ? '没有通过该方案规格校验且状态为 READY 的模型'
+                      ? '没有与该方案兼容且准备完成的模型'
                       : '请先选择训练方案'
                   }
                   optionFilterProp="label"
@@ -1536,40 +1510,32 @@ const TaskCreate: React.FC = () => {
                   showIcon
                   style={{ marginBottom: 16 }}
                   message="请先选择基础模型权重"
-                  description="请返回上一步完成选择；随后平台会按训练方案 YAML 筛选可用数据集。"
+                  description="请返回上一步完成选择，平台随后会筛选可用数据集。"
                 />
               ) : specDrivenDataset ? (
                 <Alert
                   type="info"
                   showIcon
                   style={{ marginBottom: 16 }}
-                  message="数据集由训练方案规格筛选"
-                  description={`只显示 READY 且服务器验证规格属于：${acceptedDatasetSpecIds.join('、')}`}
+                  message="仅显示与当前方案兼容且可用的数据集"
                 />
               ) : (
                 <Alert
                   type="info"
                   showIcon
                   style={{ marginBottom: 16 }}
-                  message={`当前须选择 ${requiredDatasetType} 类型数据集`}
-                  description={`已选模型：${selectedModel?.name ?? '-'}（${requiredDatasetType}）。后端创建训练任务时要求模型与数据集类型一致。`}
+                  message={`仅显示与已选模型匹配的 ${requiredDatasetType} 数据集`}
+                  description={`已选模型：${selectedModel?.name ?? '-'}`}
                 />
               )}
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="训练发起页只选择已有数据集"
-                description="数据集上传和版本维护统一在“数据集管理”完成；上传后返回本页刷新列表并选择。"
-              />
               <Form.Item
                 name="datasetVersionId"
                 label="数据集版本"
                 extra={
                   specDrivenDataset
-                    ? `YAML 允许规格：${acceptedDatasetSpecIds.join('、')}`
+                    ? '平台已按当前方案筛选'
                     : requiredDatasetType
-                      ? `旧版方案按 ${requiredDatasetType} 类型和 READY 状态筛选`
+                      ? `平台已按 ${requiredDatasetType} 类型筛选`
                       : '请先在第一步选择基础模型权重'
                 }
               >
@@ -1587,7 +1553,7 @@ const TaskCreate: React.FC = () => {
                   disabled={!datasetSelectionReady}
                   notFoundContent={
                     datasetSelectionReady
-                      ? '没有通过该方案规格校验且状态为 READY 的数据集'
+                      ? '没有兼容且可用的数据集'
                       : '请先选择基础模型权重'
                   }
                   value={selectedDatasetVersionId}
@@ -1602,7 +1568,7 @@ const TaskCreate: React.FC = () => {
                       return [
                         {
                           value: versionId,
-                          label: `${d.name} / ${d.version || 'v?'} / ${d.artifactSpecId || d.type} / ${versionId}`,
+                          label: `${d.name} / ${d.version || 'v?'} / ${d.type || '未分类'}`,
                         },
                       ];
                     },
@@ -1629,13 +1595,6 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 3 && (
             <>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="通用训练配置"
-                description="通用训练需要同时选择训练方案、填写参数并选择已审核训练代码。"
-              />
               <Form.Item name="name" label="任务名称（可选）">
                 <Input placeholder="例如：fusion-k8s-train" />
               </Form.Item>
@@ -1674,17 +1633,6 @@ const TaskCreate: React.FC = () => {
               >
                 <Input.TextArea rows={6} />
               </Form.Item>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 16 }}
-                message="训练代码文件"
-                description={
-                  isTrainingCodeAutoApproveEnabled()
-                    ? '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行准入校验，并在管理员审核关闭时自动审核通过。'
-                    : '选择已审核（APPROVED）的训练代码版本，或上传新的训练代码 zip。上传后将自动执行 V2 准入校验；校验通过后仍需管理员审批。'
-                }
-              />
               <Radio.Group
                 value={codeInputMode}
                 onChange={(e) => setCodeInputMode(e.target.value)}
@@ -1697,7 +1645,7 @@ const TaskCreate: React.FC = () => {
                 <Form.Item
                   name="codeVersionId"
                   label="训练代码版本"
-                  extra="仅展示已审核（APPROVED）的训练代码版本"
+                  extra="仅展示已审核通过的训练代码版本"
                 >
                   <Select
                     placeholder="请选择训练代码版本"
@@ -1712,7 +1660,7 @@ const TaskCreate: React.FC = () => {
                     }}
                     options={filteredCodeOptions.map((item: any) => ({
                       value: item.codeVersionId,
-                      label: `${item.codeAssetName} / ${item.codeVersionId}`,
+                      label: `${item.codeAssetName} / ${item.version || item.codeVersionId}`,
                     }))}
                   />
                 </Form.Item>
@@ -1801,7 +1749,7 @@ const TaskCreate: React.FC = () => {
                   bordered
                   style={{ marginTop: 16 }}
                 >
-                  <Descriptions.Item label="codeVersionId">
+                  <Descriptions.Item label="代码版本编号">
                     <Typography.Text copyable code>
                       {selectedCode.codeVersionId}
                     </Typography.Text>
@@ -1841,7 +1789,7 @@ const TaskCreate: React.FC = () => {
                 showIcon
                 style={{ marginBottom: 16 }}
                 message="为本次训练选择资源规格"
-                description="当前平台只启用 CPU 训练。这里选择的是训练方案 YAML 中由平台审核过的资源档位，用户不能直接填写任意 CPU、内存或 GPU 数值。"
+                description="当前只开放 CPU 训练，资源规格由平台预先配置。"
               />
               {!resourceProfiles.length && (
                 <Alert
@@ -1905,7 +1853,7 @@ const TaskCreate: React.FC = () => {
                   description={
                     !codeCheck.passed
                       ? (codeCheck.reasons || []).join('；')
-                      : `approvalStatus=${selectedCodeApprovalStatus || codeCheck.approvalStatus || 'PENDING'}，请等待管理员审核。`
+                      : '请等待管理员审核通过，或改选其他训练代码。'
                   }
                 />
               )}
@@ -1932,7 +1880,7 @@ const TaskCreate: React.FC = () => {
                     {selectedDatasetVersionId || '-'}
                   </Typography.Text>
                 </Descriptions.Item>
-                <Descriptions.Item label="codeVersionId">
+                <Descriptions.Item label="代码版本编号">
                   <Typography.Text copyable code>
                     {selectedCodeVersionId || '-'}
                   </Typography.Text>

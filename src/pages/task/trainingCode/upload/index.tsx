@@ -306,7 +306,7 @@ const TrainingCodeUpload: React.FC = () => {
       }
       const data = res?.data;
       if (!data?.codeVersionId) {
-        message.error('上传成功但未返回 codeVersionId');
+        message.error('上传成功，但未返回版本编号');
         return;
       }
       const reviewDisposition = String(
@@ -341,11 +341,7 @@ const TrainingCodeUpload: React.FC = () => {
       if (initialStatus === 'APPROVED') {
         markPendingCodeApproved(data.codeVersionId);
         announcedApprovedRef.current = data.codeVersionId;
-        message.success(
-          reviewConfigSynced && adminReviewEnabled
-            ? `训练代码已上传，低风险已由策略自动通过：${data.codeVersionId}`
-            : `训练代码已上传并审核通过：${data.codeVersionId}`,
-        );
+        message.success('训练代码已上传并审核通过');
         return;
       }
 
@@ -374,9 +370,7 @@ const TrainingCodeUpload: React.FC = () => {
           );
           markPendingCodeApproved(data.codeVersionId);
           announcedApprovedRef.current = data.codeVersionId;
-          message.success(
-            `训练代码已上传并自动审核通过：${data.codeVersionId}`,
-          );
+          message.success('训练代码已上传并自动审核通过');
           return;
         } catch {
           // 不向用户展示审批接口错误，改为对账真实状态
@@ -403,8 +397,8 @@ const TrainingCodeUpload: React.FC = () => {
       }
       message.success(
         initialStatus === 'REJECTED'
-          ? `训练代码已上传：${data.codeVersionId}，状态 REJECTED`
-          : `训练代码已上传：${data.codeVersionId}，状态 PENDING`,
+          ? '训练代码已上传，但未通过审核'
+          : '训练代码已上传，正在等待审核',
       );
       // 人工审核模式下也立即对账一次（后端可能已默认通过）
       void refreshUploadStatus(data.codeVersionId, { silent: true });
@@ -496,7 +490,7 @@ const TrainingCodeUpload: React.FC = () => {
   return (
     <PageContainer
       title="上传训练代码"
-      subTitle="上传 zip 训练代码包，创建 code_asset 与 code_version 记录"
+      subTitle="上传 zip 训练代码包，校验通过后可用于训练"
       onBack={() => history.push('/task/code/list')}
       breadcrumb={{
         items: [
@@ -515,46 +509,13 @@ const TrainingCodeUpload: React.FC = () => {
         style={{ marginBottom: 16 }}
         message="上传说明"
         description={
-          !access.isAdmin || !reviewConfigSynced ? (
-            <span>
-              zip 须包含入口脚本{' '}
-              <Typography.Text code>
-                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
-              </Typography.Text>
-              。上传成功后会在训练代码列表产生记录。低风险可能自动通过；系统无法自动通过的版本状态为
-              PENDING，等待管理员处理。请以列表中的审核状态为准。
-            </span>
-          ) : adminReviewEnabled ? (
-            <span>
-              zip 须包含入口脚本{' '}
-              <Typography.Text code>
-                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
-              </Typography.Text>
-              。当前已开启<strong>管理员审核</strong>
-              （STANDARD_REVIEW）：
-              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-                <li>
-                  低风险可由策略自动通过（
-                  <Typography.Text code>AUTO_POLICY</Typography.Text>）
-                </li>
-                <li>
-                  系统无法自动通过的版本保持
-                  PENDING，由管理员决定通过（APPROVED）或拒绝（REJECTED）；前端不会把系统自动拒绝展示成
-                  REJECTED 终态
-                </li>
-              </ul>
-            </span>
-          ) : (
-            <span>
-              zip 须包含入口脚本{' '}
-              <Typography.Text code>
-                {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
-              </Typography.Text>
-              。当前为自动审核（
-              <Typography.Text code>DIRECT_PASS</Typography.Text>
-              ）：不跑人工待审；结构校验通过后由系统直接批准，系统也可直接拒绝。
-            </span>
-          )
+          <span>
+            zip 须包含入口脚本{' '}
+            <Typography.Text code>
+              {selectedPlan?.execution?.entrypoint || '请先选择训练方案'}
+            </Typography.Text>
+            。上传后平台会自动校验；需要人工处理时会显示“待审核”。
+          </span>
         }
       />
 
@@ -566,7 +527,7 @@ const TrainingCodeUpload: React.FC = () => {
               showIcon
               style={{ marginBottom: 16 }}
               message="该训练代码版本未通过审核"
-              description="审核状态为 REJECTED，不能用于发起训练。可到训练代码列表查看该记录。"
+              description="该版本不能用于训练，可到训练代码列表查看详情。"
             />
           )}
           {isRevoked && (
@@ -575,7 +536,7 @@ const TrainingCodeUpload: React.FC = () => {
               showIcon
               style={{ marginBottom: 16 }}
               message="该版本的批准已被撤销"
-              description="审核状态为 REVOKED，不能用于发起训练。"
+              description="该版本不能用于训练。"
             />
           )}
           {!isSettled && (
@@ -583,8 +544,8 @@ const TrainingCodeUpload: React.FC = () => {
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
-              message="当前为 PENDING，等待审核结果"
-              description="可先返回训练代码列表继续其他操作；列表中已有本条记录。管理员通过后变为 APPROVED，拒绝后变为 REJECTED。"
+              message="等待审核结果"
+              description="可先返回训练代码列表继续其他操作。"
             />
           )}
           {isApproved && (
@@ -602,7 +563,7 @@ const TrainingCodeUpload: React.FC = () => {
             column={1}
             style={{ marginBottom: 16 }}
           >
-            <Descriptions.Item label="codeVersionId">
+            <Descriptions.Item label="版本编号">
               <Typography.Text copyable code>
                 {uploadResult.codeVersionId}
               </Typography.Text>
@@ -752,14 +713,9 @@ const TrainingCodeUpload: React.FC = () => {
             name="trainingProfile"
             label="训练方案"
             extra={
-              <span>
-                {selectedPlan?.description || '训练方案由后端统一配置'}
-                <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                  {selectedPlan
-                    ? `入口：${selectedPlan.execution.entrypoint}`
-                    : ''}
-                </Typography.Text>
-              </span>
+              selectedPlan
+                ? `入口脚本：${selectedPlan.execution.entrypoint}`
+                : '训练方案由平台统一配置'
             }
             rules={[{ required: true, message: '请选择训练方案' }]}
           >

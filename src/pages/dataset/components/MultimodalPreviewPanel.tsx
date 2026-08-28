@@ -377,7 +377,7 @@ const MultimodalPreviewPanel: React.FC<MultimodalPreviewPanelProps> = ({
   ];
 
   if (!versionId) {
-    return <Empty description="请选择 READY 状态的数据集版本" />;
+    return <Empty description="请选择准备完成的数据集版本" />;
   }
 
   return (

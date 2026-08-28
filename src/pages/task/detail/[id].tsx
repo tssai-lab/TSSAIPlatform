@@ -30,9 +30,9 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import TrainingStatusBanner from '@/components/TrainingStatusBanner';
-import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import { getModelDetail } from '@/services/model';
 import {
   downloadObjectWithBrowser,
@@ -692,7 +692,7 @@ const TaskDetail: React.FC = () => {
     record?: API.TrainingExperimentVersion,
   ) => {
     if (!experimentId) {
-      message.warning('缺少 experimentId');
+      message.warning('缺少训练编号');
       return;
     }
     let base =
@@ -807,7 +807,7 @@ const TaskDetail: React.FC = () => {
   const submitRemarkModal = async () => {
     const expId = experimentId || remarkBase?.experimentId;
     if (!expId || !remarkBase) {
-      message.warning('缺少 experimentId，无法操作');
+      message.warning('缺少训练编号，无法操作');
       return;
     }
     try {
@@ -968,7 +968,7 @@ const TaskDetail: React.FC = () => {
   return (
     <PageContainer
       title="训练结果详情"
-      subTitle="按 experimentId 追溯各次训练：基础模型权重、训练代码、数据集版本与超参数为只读快照"
+      subTitle="查看训练配置、版本、指标、日志和产出文件"
       onBack={() => history.push(listBackPath)}
       extra={
         <Space wrap>
@@ -1058,7 +1058,7 @@ const TaskDetail: React.FC = () => {
           <Descriptions.Item label="任务名称">
             <strong>{taskInfo.name}</strong>
           </Descriptions.Item>
-          <Descriptions.Item label="实验ID">
+          <Descriptions.Item label="训练编号">
             <Space>
               <span style={{ fontFamily: 'monospace' }}>
                 {experimentId || '-'}
@@ -1069,7 +1069,7 @@ const TaskDetail: React.FC = () => {
                   size="small"
                   onClick={() => {
                     navigator.clipboard?.writeText(experimentId);
-                    message.success('已复制 experimentId');
+                    message.success('已复制训练编号');
                   }}
                 >
                   复制
@@ -1224,7 +1224,7 @@ const TaskDetail: React.FC = () => {
             </Descriptions.Item>
           )}
           {runId && (
-            <Descriptions.Item label="MLflow Run ID" span={2}>
+            <Descriptions.Item label="运行记录编号（高级）" span={2}>
               <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
                 {runId}
               </span>
@@ -1328,11 +1328,11 @@ const TaskDetail: React.FC = () => {
 
       <Card
         id="version-history"
-        title="版本历史（按 experimentId）"
+        title="版本历史"
         extra={
           experimentId ? (
             <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-              共 {versions.length} 个版本 · experimentId={experimentId}
+              共 {versions.length} 个版本
             </span>
           ) : null
         }
@@ -1342,7 +1342,7 @@ const TaskDetail: React.FC = () => {
           <Alert
             type="warning"
             showIcon
-            message="当前记录缺少 experimentId，无法加载版本历史"
+            message="当前记录缺少训练编号，无法加载版本历史"
           />
         )}
         {experimentId && (
@@ -1364,7 +1364,7 @@ const TaskDetail: React.FC = () => {
             record.id === taskInfo.id ? 'ant-table-row-selected' : ''
           }
           locale={{
-            emptyText: experimentId ? '暂无版本记录' : '缺少 experimentId',
+            emptyText: experimentId ? '暂无版本记录' : '缺少训练编号',
           }}
           columns={[
             {
@@ -1515,18 +1515,16 @@ const TaskDetail: React.FC = () => {
       </Modal>
 
       <Card
-        title="同一实验 · 多版本对比"
+        title="同一训练 · 多版本对比"
         extra={
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-            与上方「版本历史」同源：按 experimentId 聚合的各次迭代记录
+            与上方“版本历史”使用同一组记录
           </span>
         }
         style={{ marginBottom: 16 }}
       >
         <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 12 }}>
-          勾选本实验下至少 2
-          个版本，跳转到「模型性能对比」查看曲线与指标差异（各版本对应一条训练记录
-          id）。
+          勾选至少 2 个版本，前往“模型性能对比”查看曲线和指标差异。
         </div>
         <Table<API.TrainingExperimentVersion>
           size="small"
@@ -1598,10 +1596,10 @@ const TaskDetail: React.FC = () => {
       )}
 
       <Card
-        title="训练指标可视化（MLflow）"
+        title="训练指标"
         extra={
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-            优先使用后端返回的 runId；无数据时可手动输入
+            无数据时可使用高级方式指定运行记录
           </span>
         }
         style={{ marginBottom: 16 }}

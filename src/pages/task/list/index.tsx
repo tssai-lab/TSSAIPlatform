@@ -145,7 +145,7 @@ const TaskList: React.FC = () => {
 
   const columns: ProColumns<API.TaskItem>[] = [
     {
-      title: '实验ID',
+      title: '训练编号',
       dataIndex: 'experimentId',
       key: 'experimentId',
       width: 220,

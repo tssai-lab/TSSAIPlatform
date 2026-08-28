@@ -475,11 +475,6 @@ const DatasetUpload: React.FC = () => {
   return (
     <PageContainer
       title={isNewVersionUpload ? '上传新版本' : '上传数据集'}
-      subTitle={
-        isNewVersionUpload
-          ? '为已有数据集资产上传新版本文件，版本号可用 vN / vX.Y.Z 且不可重复'
-          : '首次上传将创建数据集资产；版本号可用 vN（如 v2）或 vX.Y.Z（如 v1.0.0）'
-      }
       onBack={() => history.push(backPath)}
     >
       {isNewVersionUpload && inheritedIdentity && (
@@ -517,19 +512,6 @@ const DatasetUpload: React.FC = () => {
           style={{ marginBottom: 16 }}
         />
       )}
-      <Alert
-        type="info"
-        showIcon
-        message="版本命名规范"
-        description={
-          <>
-            {DATASET_VERSION_FORMAT_HINT}
-            。每个版本须填写「版本描述」，说明更新原因与内容（存入后端 remark
-            字段）。
-          </>
-        }
-        style={{ marginBottom: 16 }}
-      />
       <Form
         form={form}
         onFinish={handleSubmit}
