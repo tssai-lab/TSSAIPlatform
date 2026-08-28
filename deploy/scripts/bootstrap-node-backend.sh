@@ -22,6 +22,10 @@ if [[ -n ${TSS_NODE_CONFIG:-} ]]; then
   set +a
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy/scripts/lib-runtime-env.sh
+source "${script_dir}/lib-runtime-env.sh"
+
 node_id="${TSS_NODE_ID:-node-01}"
 platform_dir="${TSS_PLATFORM_DIR:-/opt/tss-platform}"
 deploy_user="${TSS_DEPLOY_USER:-tss-deployer}"
@@ -29,6 +33,7 @@ compose_base="${TSS_COMPOSE_BASE:-${platform_dir}/compose.yml}"
 compose_overlay="$1"
 runtime_env="${platform_dir}/backend/.env.runtime"
 backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
 postgres_container="${TSS_POSTGRES_CONTAINER:-tss-postgres}"
 minio_container="${TSS_MINIO_CONTAINER:-tss-minio}"
 backend_image_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
@@ -38,6 +43,7 @@ cv_image_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shangha
 nlp_image_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
 backend_health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
 cluster_name="${TSS_CLUSTER_NAME:-tss-training-${node_id}}"
+deployment_smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-}"
 server_address="${TSS_SERVER_ADDRESS:-127.0.0.1}"
 spring_profiles_active="${TSS_SPRING_PROFILES_ACTIVE:-default}"
 datasource_host="${TSS_DATASOURCE_HOST:-127.0.0.1}"
@@ -45,12 +51,18 @@ datasource_port="${TSS_DATASOURCE_PORT:-5432}"
 minio_endpoint="${TSS_MINIO_ENDPOINT:-http://127.0.0.1:9010}"
 minio_bucket="${TSS_MINIO_BUCKET:-models}"
 mlflow_tracking_uri="${TSS_MLFLOW_TRACKING_URI:-http://127.0.0.1:5000}"
+redis_host="${TSS_REDIS_HOST:-127.0.0.1}"
+redis_port="${TSS_REDIS_PORT:-6379}"
 training_experiment_name="${TSS_TRAINING_EXPERIMENT_NAME:-tss-training}"
 training_k8s_client_mode="${TSS_TRAINING_K8S_CLIENT_MODE:-kubectl}"
 k8s_backend_service_url="${TSS_K8S_BACKEND_SERVICE_URL:-http://tss-backend:8080}"
 k8s_minio_service_url="${TSS_K8S_MINIO_SERVICE_URL:-http://tss-minio:9000}"
 k8s_mlflow_service_url="${TSS_K8S_MLFLOW_SERVICE_URL:-http://tss-mlflow:5000}"
 mlflow_image="${TSS_MLFLOW_IMAGE:-tss-platform-mlflow:local}"
+reviewed_redis_image="tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60"
+reviewed_redis_image_id="sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb"
+redis_image="${TSS_REDIS_IMAGE:-$reviewed_redis_image}"
+redis_image_id="${TSS_REDIS_IMAGE_ID:-$reviewed_redis_image_id}"
 training_worker_image="${TSS_TRAINING_WORKER_IMAGE:-tss-training-worker:local}"
 inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-tss-inference-worker-cpu:local}"
 
@@ -62,6 +74,51 @@ if [[ -f ${platform_dir}/runtime-images.env ]]; then
   mlflow_image="${TSS_MLFLOW_IMAGE:-$mlflow_image}"
   training_worker_image="${TSS_TRAINING_WORKER_IMAGE:-$training_worker_image}"
   inference_worker_image="${TSS_INFERENCE_WORKER_IMAGE:-$inference_worker_image}"
+fi
+
+# Runtime releases update the active backend environment after Kubernetes-only
+# images are imported. On an existing node, preserve those exact active refs
+# instead of replacing them with stale bootstrap defaults from node.env.
+if [[ -f $runtime_env ]]; then
+  active_training_worker_image="$(
+    awk -F= '$1 == "TRAINING_K8S_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  active_inference_worker_image="$(
+    awk -F= '$1 == "INFERENCE_KUBERNETES_WORKER_IMAGE" { print substr($0, index($0, "=") + 1); exit }' \
+      "$runtime_env"
+  )"
+  training_worker_image="${active_training_worker_image:-$training_worker_image}"
+  inference_worker_image="${active_inference_worker_image:-$inference_worker_image}"
+fi
+
+if [[ $redis_host != 127.0.0.1 ]]; then
+  echo "TSS_REDIS_HOST must remain on 127.0.0.1 for the single-node session store." >&2
+  exit 1
+fi
+if [[ $redis_container != tss-redis ]]; then
+  echo "TSS_REDIS_CONTAINER must remain tss-redis for the restricted deployment helper." >&2
+  exit 1
+fi
+if [[ $redis_port != 6379 ]]; then
+  echo "TSS_REDIS_PORT must remain 6379 for the loopback-only session store." >&2
+  exit 1
+fi
+if [[ $redis_image != "$reviewed_redis_image" ]]; then
+  echo "TSS_REDIS_IMAGE must use the reviewed offline Redis reference." >&2
+  exit 1
+fi
+if [[ $redis_image_id != "$reviewed_redis_image_id" ]]; then
+  echo "TSS_REDIS_IMAGE_ID must use the reviewed Redis image identifier." >&2
+  exit 1
+fi
+if [[ -z $deployment_smoke_node ]]; then
+  echo "TSS_DEPLOYMENT_SMOKE_NODE must name the Kubernetes node used for deployment smoke tests." >&2
+  exit 1
+fi
+if [[ ! $deployment_smoke_node =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+  echo "TSS_DEPLOYMENT_SMOKE_NODE is not a valid Kubernetes node name." >&2
+  exit 1
 fi
 
 model_cache_enabled="${TSS_MODEL_CACHE_ENABLED:-false}"
@@ -105,8 +162,11 @@ docker compose version >/dev/null
 docker inspect "$postgres_container" >/dev/null
 docker inspect "$minio_container" >/dev/null
 docker image inspect "$mlflow_image" >/dev/null
-docker image inspect "$training_worker_image" >/dev/null
-docker image inspect "$inference_worker_image" >/dev/null
+docker image inspect "$redis_image" >/dev/null
+if [[ $(docker image inspect "$redis_image" --format '{{.Id}}') != "$redis_image_id" ]]; then
+  echo "Preloaded Redis image identifier differs from the reviewed image." >&2
+  exit 1
+fi
 id "$deploy_user" >/dev/null
 
 for required_path in \
@@ -118,6 +178,10 @@ for required_path in \
     exit 1
   fi
 done
+
+"${platform_dir}/.tools/bin/kubectl" \
+  --kubeconfig "${platform_dir}/k8s/.kube/config" \
+  get node "$deployment_smoke_node" >/dev/null
 
 get_container_env() {
   local container="$1"
@@ -143,6 +207,7 @@ done
 install -d -m 700 "${platform_dir}/backend"
 install -d -m 750 "${platform_dir}/backend/logs"
 chown 10001:10001 "${platform_dir}/backend/logs"
+install -d -m 700 -o 999 -g 1000 "${platform_dir}/redis-data"
 install -m 600 "$compose_overlay" "${platform_dir}/compose.backend.yml"
 
 umask 077
@@ -154,13 +219,26 @@ if [[ -z $callback_token ]]; then
   callback_token="$(openssl rand -hex 32)"
 fi
 
-cat > "$runtime_env" <<EOF
+managed_runtime_env="$(mktemp "${runtime_env}.managed.XXXXXX")"
+cleanup_managed_runtime_env() {
+  if [[ -n ${managed_runtime_env:-} ]]; then
+    rm -f -- "$managed_runtime_env"
+  fi
+}
+trap cleanup_managed_runtime_env EXIT
+
+cat > "$managed_runtime_env" <<EOF
 TSS_NODE_ID=${node_id}
 SERVER_ADDRESS=${server_address}
 SPRING_PROFILES_ACTIVE=${spring_profiles_active}
 SPRING_DATASOURCE_URL=jdbc:postgresql://${datasource_host}:${datasource_port}/${postgres_db}
 SPRING_DATASOURCE_USERNAME=${postgres_user}
 SPRING_DATASOURCE_PASSWORD=${postgres_password}
+AUTH_SESSION_STORE=redis
+SPRING_DATA_REDIS_HOST=${redis_host}
+SPRING_DATA_REDIS_PORT=${redis_port}
+SPRING_DATA_REDIS_CONNECT_TIMEOUT=3s
+SPRING_DATA_REDIS_TIMEOUT=3s
 MINIO_ENDPOINT=${minio_endpoint}
 MINIO_ACCESS_KEY=${minio_user}
 MINIO_SECRET_KEY=${minio_password}
@@ -193,7 +271,10 @@ INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES=${model_cache_max_bytes}
 INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES=${model_cache_min_free_bytes}
 INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES=${model_cache_runtime_reserve_bytes}
 EOF
-chmod 600 "$runtime_env"
+chmod 600 "$managed_runtime_env"
+tss_merge_runtime_env_file "$runtime_env" "$managed_runtime_env"
+rm -f -- "$managed_runtime_env"
+managed_runtime_env=""
 
 install -d -m 700 /etc/tss-platform
 {
@@ -202,18 +283,22 @@ install -d -m 700 /etc/tss-platform
   printf 'TSS_COMPOSE_BASE=%q\n' "$compose_base"
   printf 'TSS_COMPOSE_OVERLAY=%q\n' "${platform_dir}/compose.backend.yml"
   printf 'TSS_BACKEND_CONTAINER=%q\n' "$backend_container"
+  printf 'TSS_REDIS_CONTAINER=%q\n' "$redis_container"
+  printf 'TSS_REQUIRE_REDIS_SESSION_STORE=true\n'
   printf 'TSS_BACKEND_IMAGE_REPOSITORY=%q\n' "$backend_image_repository"
   printf 'TSS_INFERENCE_IMAGE_REPOSITORY=%q\n' "$inference_image_repository"
   printf 'TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY=%q\n' "$fallback_inference_image_repository"
   printf 'TSS_CV_IMAGE_REPOSITORY=%q\n' "$cv_image_repository"
   printf 'TSS_NLP_IMAGE_REPOSITORY=%q\n' "$nlp_image_repository"
   printf 'TSS_BACKEND_HEALTH_URL=%q\n' "$backend_health_url"
+  printf 'TSS_DEPLOYMENT_SMOKE_NODE=%q\n' "$deployment_smoke_node"
   printf 'TSS_MLFLOW_IMAGE=%q\n' "$mlflow_image"
+  printf 'TSS_REDIS_IMAGE=%q\n' "$redis_image"
+  printf 'TSS_REDIS_IMAGE_ID=%q\n' "$redis_image_id"
   printf 'TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES=%q\n' "$model_cache_runtime_reserve_bytes"
 } > /etc/tss-platform/node-runtime.env
 chmod 600 /etc/tss-platform/node-runtime.env
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -m 700 \
   "${script_dir}/tss-node-activate-backend" \
   /usr/local/sbin/tss-node-activate-backend
@@ -251,6 +336,26 @@ visudo -cf /etc/sudoers.d/tss-node-backend-deployer >/dev/null
 
 TSS_BACKEND_IMAGE="${backend_image_repository}:0000000000000000000000000000000000000000" \
 TSS_MLFLOW_IMAGE="$mlflow_image" \
+TSS_REDIS_IMAGE="$redis_image" \
   docker compose -f "$compose_base" -f "${platform_dir}/compose.backend.yml" config --quiet
+
+TSS_BACKEND_IMAGE="${backend_image_repository}:0000000000000000000000000000000000000000" \
+TSS_MLFLOW_IMAGE="$mlflow_image" \
+TSS_REDIS_IMAGE="$redis_image" \
+  docker compose -f "$compose_base" -f "${platform_dir}/compose.backend.yml" up -d --no-deps redis
+
+redis_healthy=false
+for _ in $(seq 1 24); do
+  if [[ $(docker inspect "$redis_container" --format '{{.State.Health.Status}}' 2>/dev/null || true) == healthy ]]; then
+    redis_healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ $redis_healthy != true ]]; then
+  echo "Redis session store did not become healthy during bootstrap." >&2
+  docker logs --tail 100 "$redis_container" >&2 || true
+  exit 1
+fi
 
 echo "Node backend deployment bootstrap completed: $node_id"

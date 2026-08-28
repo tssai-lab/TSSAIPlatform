@@ -1,6 +1,7 @@
 package com.tss.platform.controller;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
+import com.tss.platform.security.AuthSessionStoreHealth;
 import com.tss.platform.service.MinioService;
 import com.tss.platform.training.TrainingEnvironmentService;
 import com.tss.platform.training.TrainingEnvironmentStatus;
@@ -26,6 +27,7 @@ class SystemHealthControllerTest {
     private MinioService minioService;
     private TrainingEnvironmentService trainingEnvironmentService;
     private TrainingKubernetesProperties trainingProperties;
+    private AuthSessionStoreHealth authSessionStoreHealth;
     private SystemHealthController controller;
 
     @BeforeEach
@@ -36,11 +38,14 @@ class SystemHealthControllerTest {
         trainingProperties = new TrainingKubernetesProperties();
         trainingProperties.setEnabled(true);
         trainingProperties.setFallbackToLocal(false);
+        authSessionStoreHealth = mock(AuthSessionStoreHealth.class);
+        when(authSessionStoreHealth.readinessStatus()).thenReturn("UP");
         controller = new SystemHealthController(
                 jdbcTemplate,
                 minioService,
                 trainingEnvironmentService,
                 trainingProperties,
+                authSessionStoreHealth,
                 "test-application",
                 "test-node"
         );
@@ -53,7 +58,7 @@ class SystemHealthControllerTest {
         assertEquals("UP", body.get("status"));
         assertEquals("liveness", body.get("check"));
         assertEquals("test-node", body.get("nodeId"));
-        verifyNoInteractions(jdbcTemplate, minioService, trainingEnvironmentService);
+        verifyNoInteractions(jdbcTemplate, minioService, trainingEnvironmentService, authSessionStoreHealth);
     }
 
     @Test
@@ -73,6 +78,7 @@ class SystemHealthControllerTest {
         assertEquals("UP", components.get("database"));
         assertEquals("UP", components.get("objectStorage"));
         assertEquals("UP", components.get("training"));
+        assertEquals("UP", components.get("authSession"));
     }
 
     @Test
@@ -119,6 +125,23 @@ class SystemHealthControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> components = (Map<String, Object>) response.getBody().get("components");
         assertEquals("DOWN", components.get("training"));
+    }
+
+    @Test
+    void readinessIsUnavailableWhenRedisSessionStoreIsDown() throws Exception {
+        when(jdbcTemplate.queryForObject(eq("SELECT 1"), eq(Integer.class))).thenReturn(1);
+        when(trainingEnvironmentService.getStatus()).thenReturn(trainingStatus(
+                TrainingEnvironmentStatus.State.READY
+        ));
+        when(authSessionStoreHealth.readinessStatus()).thenReturn("DOWN");
+
+        ResponseEntity<Map<String, Object>> response = controller.ready();
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertNotNull(response.getBody());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> components = (Map<String, Object>) response.getBody().get("components");
+        assertEquals("DOWN", components.get("authSession"));
     }
 
     private TrainingEnvironmentStatus trainingStatus(TrainingEnvironmentStatus.State state) {

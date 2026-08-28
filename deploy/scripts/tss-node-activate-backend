@@ -36,6 +36,9 @@ fi
 previous_image="$(docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)"
 export TSS_BACKEND_IMAGE="$image"
 export TSS_MLFLOW_IMAGE
+export TSS_REDIS_IMAGE
+
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
 
 rollback_backend() {
   if [[ -n $previous_image ]]; then
@@ -46,7 +49,25 @@ rollback_backend() {
   fi
 }
 
-docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps mlflow
+actual_redis_image_id="$(docker image inspect "$TSS_REDIS_IMAGE" --format '{{.Id}}')"
+if [[ $actual_redis_image_id != "$TSS_REDIS_IMAGE_ID" ]]; then
+  echo "Redis image identifier differs from the reviewed offline image; keeping the current backend." >&2
+  exit 1
+fi
+docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps redis mlflow
+redis_healthy=false
+for _ in $(seq 1 24); do
+  if [[ $(docker inspect "$redis_container" --format '{{.State.Health.Status}}' 2>/dev/null || true) == healthy ]]; then
+    redis_healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ $redis_healthy != true ]]; then
+  echo "Redis session store is unavailable; keeping the current backend." >&2
+  docker logs --tail 100 "$redis_container" >&2 || true
+  exit 1
+fi
 if ! docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend; then
   echo "New backend failed to start; restoring the previous image." >&2
   docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true

@@ -120,7 +120,7 @@ else
 fi
 
 if [[ $allow_occupied_ports != true ]]; then
-  for port_variable in TSS_BACKEND_LISTEN_PORT TSS_MLFLOW_LISTEN_PORT; do
+  for port_variable in TSS_BACKEND_LISTEN_PORT TSS_MLFLOW_LISTEN_PORT TSS_REDIS_LISTEN_PORT; do
     port="${!port_variable:-}"
     [[ -z $port ]] && continue
     require_positive_integer "$port_variable" "$port"

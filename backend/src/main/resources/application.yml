@@ -69,6 +69,12 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:3s}
+      timeout: ${SPRING_DATA_REDIS_TIMEOUT:3s}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -112,6 +118,13 @@ sa-token:
   is-share: false
   token-style: uuid
   is-log: false
+
+auth:
+  session:
+    # Main sets this to redis during the controlled infrastructure bootstrap.
+    # Other environments keep the current single-process memory behavior unless
+    # they provision and explicitly enable their own Redis service.
+    store: ${AUTH_SESSION_STORE:memory}
 
 training:
   mlflow:
