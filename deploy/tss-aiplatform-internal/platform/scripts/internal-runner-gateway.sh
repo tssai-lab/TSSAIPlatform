@@ -97,7 +97,8 @@ case "$command_text" in
       || die "deployment repository is not on the configured branch"
     origin_url=$(/usr/bin/git -C "$repository_root" remote get-url origin)
     [[ $origin_url =~ $origin_pattern ]] || die "deployment repository origin differs"
-    /usr/bin/git -C "$repository_root" fetch --prune origin "$TSS_DEPLOYMENT_BRANCH"
+    /usr/bin/git -C "$repository_root" fetch --no-tags --prune origin \
+      "refs/heads/${TSS_DEPLOYMENT_BRANCH}:refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}"
     [[ $(/usr/bin/git -C "$repository_root" rev-parse "refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}") == "$requested_sha" ]] \
       || die "requested SHA is not the current configured deployment branch head"
     /usr/bin/git -C "$repository_root" merge --ff-only "$requested_sha"

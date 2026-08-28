@@ -54,6 +54,9 @@ grep -F 'backend-ops || $deployment_branch == backend-gpu' \
   "$platform_scripts/install-internal-runner-gateway.sh" >/dev/null
 grep -F 'refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}' \
   "$platform_scripts/internal-runner-gateway.sh" >/dev/null
+grep -F 'refs/heads/${TSS_DEPLOYMENT_BRANCH}:refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}' \
+  "$platform_scripts/internal-runner-gateway.sh" >/dev/null
+! grep -F '!deploy/tss-aiplatform-internal/**' "$backend_workflow" >/dev/null
 grep -F 'refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}' \
   "$platform_scripts/deploy-internal-backend.sh" >/dev/null
 grep -F 'TSS_FRONTEND_DEPLOYMENT_BRANCH=%s' \
