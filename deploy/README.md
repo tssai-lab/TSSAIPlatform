@@ -12,7 +12,7 @@ application releases.
   not automatically deploy until the complete multi-node route is accepted.
 - CI builds one immutable backend image tagged with the 40-character Git commit
   SHA. The target node does not pull source code or rebuild the application.
-- PostgreSQL, MinIO, MLflow and the worker runtime are node dependencies. A
+- PostgreSQL, MinIO, MLflow, the Main Redis session store and the worker runtime are node dependencies. A
   normal backend release only replaces the backend container.
 - Application rollback never automatically restores database data.
 
@@ -30,6 +30,7 @@ See `BRANCH_GOVERNANCE.md` for branch and promotion rules.
 | `scripts/bootstrap-node-backend.sh` | One-time backend runtime and restricted deploy-command bootstrap |
 | `scripts/smoke-test-node.sh` | Repeatable non-destructive node smoke checks |
 | `scripts/bootstrap-main-*.sh` | Compatibility entry points for the current Main node |
+| `SESSION_REDIS_RUNBOOK.md` | Main Redis first bootstrap, routine automation, verification and recovery |
 
 ## New node procedure
 
@@ -81,7 +82,10 @@ TSS_NODE_CONFIG=/path/to/node.env \
 
 The backend bootstrap reads existing PostgreSQL and MinIO credentials directly
 from their local containers, writes the backend runtime file with mode `600`,
-and grants the deploy user permission to run only the image-load helper.
+starts the pinned loopback-only Redis session store, and grants the deploy user
+permission to run only the image-load helper. Follow
+[`SESSION_REDIS_RUNBOOK.md`](SESSION_REDIS_RUNBOOK.md) before enabling a backend
+build that requires Redis on an existing node.
 
 ## GitHub Environment
 
@@ -107,8 +111,9 @@ deployment job. Verify the host key through an existing trusted channel first.
 2. `Backend CI and Image` runs the complete Maven verification.
 3. CI publishes `ghcr.io/tssai-lab/tssai-backend:<commit-sha>`.
 4. The reusable deployment workflow streams that exact image to Main.
-5. Main waits for `/health/ready`; failure prints backend logs and restores the
-   previously running image.
+5. Main ensures the pinned Redis container is healthy, then waits for
+   `/health/ready`; failure prints backend logs and restores the previously
+   running backend image. Redis data is not removed by application rollback.
 6. Run the node smoke test and archive its result:
 
 ```bash
