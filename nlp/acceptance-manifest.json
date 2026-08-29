@@ -1,6 +1,6 @@
 {
   "schemaVersion": "tss.acceptance.bundle/v1",
-  "name": "MiniRBT-H288 MASSIVE zh-CN intent classification CPU acceptance",
+  "name": "MiniRBT-H288 MASSIVE zh-CN intent classification CPU and single-GPU acceptance",
   "upstream": {
     "model": "hfl/minirbt-h288",
     "modelRevision": "dc4eebb0cf6f9e7094142ac28fbf971517c6a366",
@@ -26,6 +26,26 @@
       "test": 48
     }
   },
+  "verification": {
+    "verifiedAt": "2026-08-29",
+    "scope": "internal single-GPU training and CPU inference",
+    "gpu": "NVIDIA GeForce RTX 4080",
+    "gpuTrainingRepeats": 3,
+    "allTrainingRunsSucceeded": true,
+    "allTrainingRunsSingleCuda": true,
+    "jobTtlSecondsAfterFinished": 180,
+    "persistentEvidenceReadableAfterTtl": true,
+    "trainingIds": [
+      "train-ver-584a1b40b1604995b345823a5a57270a",
+      "train-ver-3de65a2187944e9a918817f689d52cb3",
+      "train-ver-f6ac7c8f9dfc4bae99b0c505a7d49843"
+    ],
+    "inferenceTaskId": "infer-task-f0f3179cd6ee419196cff82720f9bc75",
+    "inferenceSampleCount": 20,
+    "cpuTrainingVerified": false,
+    "multiGpuVerified": false,
+    "performanceVerified": false
+  },
   "artifacts": [
     {
       "file": "massive-zhcn-intent-dataset.zip",
@@ -44,8 +64,8 @@
     },
     {
       "file": "minirbt-training-code.zip",
-      "sizeBytes": 4284,
-      "sha256": "5f57ce723ce2d9b85fa369c21632344315e7a17149e60889d2ccf82f187e76a8"
+      "sizeBytes": 4830,
+      "sha256": "6eda990e5f6f7b105d01428c59db629656379e80efb0a452202cdf7a2cdcc5f1"
     },
     {
       "file": "minirbt_text_classification-v1.yaml",
@@ -53,9 +73,14 @@
       "sha256": "47721453130fb45656f45a5e427d3099e9de4714dbe28aa0f95334391b60bdb8"
     },
     {
+      "file": "minirbt_text_classification_gpu-v1.yaml",
+      "sizeBytes": 3888,
+      "sha256": "611028fcada810caf0d8567de9cac950a17cd8c59279666d93c63bb003771395"
+    },
+    {
       "file": "README.md",
-      "sizeBytes": 3052,
-      "sha256": "a43d4c6f8c22b653d1fc35bf44af7c5cc07779dc61366240079a260f2cdb4c07"
+      "sizeBytes": 3720,
+      "sha256": "399ff9e8589136fde62259ba4ce223d500a4fd811d1c8b128a688498b3f01482"
     }
   ]
 }
