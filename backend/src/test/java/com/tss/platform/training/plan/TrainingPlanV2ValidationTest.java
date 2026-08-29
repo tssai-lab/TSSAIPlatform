@@ -4,7 +4,10 @@ import com.tss.platform.asset.spec.ArtifactSpecRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -95,6 +98,31 @@ class TrainingPlanV2ValidationTest {
         assertViolation(replace(gpuYaml,
                         "tss.ai/accelerator: nvidia", "tss.ai/node-pool: gpu"),
                 "nodeSelector 必须为 tss.ai/accelerator=nvidia");
+    }
+
+    @Test
+    void acceptsVersionedMiniRbtSingleGpuAcceptancePlan() throws IOException {
+        Path planPath = Path.of(
+                "..",
+                "examples",
+                "acceptance",
+                "minirbt_text_classification",
+                "minirbt_text_classification_gpu-v1.yaml"
+        );
+        TrainingPlanDefinition plan = parser.parse(
+                Files.readAllBytes(planPath),
+                planPath.getFileName().toString()
+        );
+
+        validator.validate(plan, planPath.getFileName().toString());
+
+        assertEquals(TrainingPlanDefinition.PlanCategory.NLP, plan.category());
+        assertEquals(TrainingPlanDefinition.DeviceType.NVIDIA_GPU,
+                plan.runtimes().get(0).deviceType());
+        assertEquals(1, plan.runtimes().get(0).resourceProfiles().get(0).gpuCount());
+        assertEquals("nvidia",
+                plan.runtimes().get(0).resourceProfiles().get(0)
+                        .nodeSelector().get("tss.ai/accelerator"));
     }
 
     @Test

@@ -164,6 +164,74 @@ class DatasetContractTest(unittest.TestCase):
                 split="../../secret", max_texts=10, batch_size=8, max_length=64
             )
 
+    def test_training_device_accepts_cpu_and_one_visible_cuda_device(self):
+        class FakeDevice:
+            def __init__(self, value):
+                self.value = value
+                self.type = value.split(":", 1)[0]
+
+            def __str__(self):
+                return self.value
+
+        class FakeCuda:
+            def __init__(self):
+                self.available = True
+                self.count = 1
+                self.selected = None
+
+            def is_available(self):
+                return self.available
+
+            def device_count(self):
+                return self.count
+
+            def set_device(self, index):
+                self.selected = index
+
+        class FakeTorch:
+            def __init__(self):
+                self.cuda = FakeCuda()
+
+            @staticmethod
+            def device(value):
+                return FakeDevice(value)
+
+        fake_torch = FakeTorch()
+        self.assertEqual("cpu", str(train.resolve_torch_device(fake_torch, "cpu")))
+        self.assertEqual("cuda:0", str(train.resolve_torch_device(fake_torch, "0")))
+        self.assertEqual(0, fake_torch.cuda.selected)
+
+    def test_training_device_rejects_missing_multiple_or_unapproved_cuda_devices(self):
+        class FakeCuda:
+            available = False
+            count = 0
+
+            def is_available(self):
+                return self.available
+
+            def device_count(self):
+                return self.count
+
+            @staticmethod
+            def set_device(_index):
+                raise AssertionError("unavailable or ambiguous CUDA must not be selected")
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+            @staticmethod
+            def device(value):
+                return value
+
+        with self.assertRaisesRegex(RuntimeError, "CUDA is unavailable"):
+            train.resolve_torch_device(FakeTorch(), "0")
+        FakeTorch.cuda.available = True
+        FakeTorch.cuda.count = 2
+        with self.assertRaisesRegex(RuntimeError, "exactly one visible CUDA device"):
+            train.resolve_torch_device(FakeTorch(), "0")
+        with self.assertRaisesRegex(ValueError, "device must be cpu"):
+            train.resolve_torch_device(FakeTorch(), "1")
+
     def test_long_inference_text_is_kept_in_bounded_task_output_preview_box(self):
         short_text = "短文本"
         long_text = "长" * (infer.INLINE_TEXT_PREVIEW_CHARS + 1)

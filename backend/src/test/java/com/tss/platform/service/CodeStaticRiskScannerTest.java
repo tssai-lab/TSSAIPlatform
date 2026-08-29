@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -13,6 +15,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CodeStaticRiskScannerTest {
 
     private final CodeStaticRiskScanner scanner = new CodeStaticRiskScanner(new ObjectMapper());
+
+    @Test
+    void miniRbtAcceptanceTrainingCodePassesTheRealStaticRiskGate() throws Exception {
+        Path script = Path.of(
+                "..",
+                "examples",
+                "acceptance",
+                "minirbt_text_classification",
+                "train.py"
+        );
+
+        CodeRiskScanResult result = scanner.scan(Map.of("train.py", Files.readAllBytes(script)));
+
+        assertEquals("LOW", result.riskLevel());
+        assertEquals("AUTO_APPROVE", result.disposition());
+        assertTrue(result.findings().isEmpty());
+    }
 
     @Test
     void cleanTextOnlyArtifactIsEligibleForAutomaticApproval() {

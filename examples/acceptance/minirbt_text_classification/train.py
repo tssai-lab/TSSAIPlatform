@@ -52,11 +52,12 @@ def load_dataset_package(data_dir: Path) -> tuple[list[str], dict[str, list[dict
     if manifest.get("schemaVersion") != DATASET_SCHEMA:
         raise ValueError(f"dataset schemaVersion must be {DATASET_SCHEMA}")
     labels = manifest.get("labels")
-    if (
-        not isinstance(labels, list)
-        or len(labels) < 2
-        or not all(isinstance(label, str) and label.strip() for label in labels)
-    ):
+    labels_are_valid = (
+        isinstance(labels, list)
+        and len(labels) >= 2
+        and all(isinstance(label, str) and label.strip() for label in labels)
+    )
+    if not labels_are_valid:
         raise ValueError("dataset labels must contain at least two non-empty strings")
     normalized_labels = [label.strip() for label in labels]
     if len(set(normalized_labels)) != len(normalized_labels):
@@ -83,9 +84,7 @@ def load_dataset_package(data_dir: Path) -> tuple[list[str], dict[str, list[dict
     return normalized_labels, result
 
 
-def limit_records(
-    records: list[dict[str, str]], maximum: int, labels: list[str], split: str
-) -> list[dict[str, str]]:
+def limit_records(records: list[dict[str, str]], maximum: int, labels: list[str], split: str) -> list[dict[str, str]]:
     limited = records if maximum <= 0 else records[:maximum]
     if not limited:
         raise ValueError(f"{split} is empty after applying sample limit")
@@ -115,17 +114,36 @@ def emit_event(event: dict[str, Any]) -> None:
     print("TSS_EVENT " + json.dumps(event, ensure_ascii=False), flush=True)
 
 
-def validate_training_parameters(
-    *,
-    epochs: int,
-    batch_size: int,
-    learning_rate: float,
-    weight_decay: float,
-    max_length: int,
-    seed: int,
-    max_train: int,
-    max_eval: int,
-) -> None:
+def resolve_torch_device(torch_module: Any, requested: str) -> Any:
+    normalized = requested.strip().lower()
+    if normalized == "cpu":
+        return torch_module.device("cpu")
+    if normalized not in {"0", "cuda:0"}:
+        raise ValueError("device must be cpu or the single visible CUDA device 0")
+    if not torch_module.cuda.is_available():
+        raise RuntimeError("CUDA device 0 was requested but CUDA is unavailable")
+    visible_devices = int(torch_module.cuda.device_count())
+    if visible_devices != 1:
+        raise RuntimeError(
+            "single-GPU acceptance requires exactly one visible CUDA device, "
+            f"got {visible_devices}"
+        )
+    torch_module.cuda.set_device(0)
+    return torch_module.device("cuda:0")
+
+
+def configure_reproducibility(torch_module: Any, seed: int, device: Any) -> None:
+    torch_module.manual_seed(seed)
+    if getattr(device, "type", str(device).split(":", 1)[0]) != "cuda":
+        return
+    torch_module.cuda.manual_seed_all(seed)
+    cudnn = getattr(getattr(torch_module, "backends", None), "cudnn", None)
+    if cudnn is not None:
+        cudnn.benchmark = False
+        cudnn.deterministic = True
+
+
+def validate_training_parameters(*, epochs: int, batch_size: int, learning_rate: float, weight_decay: float, max_length: int, seed: int, max_train: int, max_eval: int) -> None:
     ranges = {
         "epochs": (epochs, 1, 20),
         "batchSize": (batch_size, 1, 64),
@@ -166,8 +184,11 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
 
-    if args.device.lower() != "cpu":
-        raise ValueError("MiniRBT acceptance plan currently supports CPU only")
+    requested_device = args.device.strip().lower()
+    if requested_device not in {"cpu", "0", "cuda:0"}:
+        raise ValueError("device must be cpu or the single visible CUDA device 0")
+    if requested_device != "cpu":
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     params = read_json(args.params_file)
     epochs = int(params.get("epochs", 2))
     batch_size = int(params.get("batchSize", 8))
@@ -194,7 +215,8 @@ def main() -> int:
     from torch.utils.data import DataLoader, TensorDataset
     from transformers import BertForSequenceClassification, BertTokenizer
 
-    torch.manual_seed(seed)
+    device = resolve_torch_device(torch, requested_device)
+    configure_reproducibility(torch, seed, device)
     torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
     labels, splits = load_dataset_package(args.data_dir)
     splits["train"] = limit_records(splits["train"], max_train, labels, "train")
@@ -213,7 +235,6 @@ def main() -> int:
         id2label=id_to_label,
         local_files_only=True,
     )
-    device = torch.device("cpu")
     model.to(device)
 
     def loader(records: list[dict[str, str]], shuffle: bool) -> DataLoader:
@@ -258,9 +279,10 @@ def main() -> int:
                 confidences.extend(confidence.cpu().tolist())
                 truths.extend(batch_labels.tolist())
         rows = []
-        for record, truth, predicted, confidence in zip(
+        evaluated_rows = zip(
             records, truths, predictions, confidences, strict=True
-        ):
+        )
+        for record, truth, predicted, confidence in evaluated_rows:
             rows.append(
                 {
                     "id": record["id"],
@@ -324,10 +346,17 @@ def main() -> int:
     zip_model(saved_model_dir, args.out_dir / "minirbt_text_classifier.zip")
     write_predictions(args.out_dir / "validation_predictions.csv", validation_rows)
     write_predictions(args.out_dir / "test_predictions.csv", test_rows)
+    device_name = (
+        torch.cuda.get_device_name(0)
+        if getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
+        else "CPU"
+    )
     metrics = {
         "task": "chinese_text_classification",
         "model": "MiniRBT-H288",
-        "device": "cpu",
+        "device": str(device),
+        "deviceName": device_name,
+        "visibleCudaDevices": int(torch.cuda.device_count()) if str(device).startswith("cuda") else 0,
         "epochs": epochs,
         "batchSize": batch_size,
         "learningRate": learning_rate,

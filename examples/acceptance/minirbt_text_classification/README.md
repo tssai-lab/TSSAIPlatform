@@ -1,4 +1,4 @@
-# MiniRBT-H288 中文文本分类 CPU 验收包
+# MiniRBT-H288 中文文本分类 CPU / 单卡 GPU 验收代码
 
 本目录生成一套小型、离线、可复现的 NLP 验收资产。目标是验证“上传 → 训练 → 指标/日志 → 结果模型 → 推理 → 原文与预测展示”，不承诺生产精度或吞吐。
 
@@ -23,7 +23,7 @@ python examples/acceptance/minirbt_text_classification/prepare.py \
 
 - `minirbt-h288-base.zip`：上传为 NLP 模型；
 - `minirbt-sentiment-dataset.zip`：上传为 NLP 数据集；
-- `minirbt-training-code.zip`：上传为训练代码，入口 `train.py`，方案选择 `minirbt_text_classification`；
+- `minirbt-training-code.zip`：上传为训练代码，入口 `train.py`；CPU 方案选择 `minirbt_text_classification`，单卡 GPU 方案使用同目录的 `minirbt_text_classification_gpu-v1.yaml`；
 - `minirbt-inference-script.zip`：上传为推理脚本，入口 `infer.py`；
 - `acceptance-manifest.json`：记录每个文件的大小和 SHA-256。
 
@@ -89,4 +89,5 @@ data/test.jsonl
    输入预览目录，结果中只保存摘要和相对路径。单条弹窗预览最多 2 MiB，
    超出时明确标记截断，避免大段文本挤占结果 JSON 和节点磁盘。
 4. Job/Pod 被 TTL 清理后，训练日志、指标和结果模型仍应能从对象存储查看或下载。
-5. 该小包只证明 CPU 功能闭环；精度、并发、GPU 和大数据性能另行测试。
+5. GPU 模式只允许平台传入设备 `0`，并要求容器内恰好只暴露一张 CUDA GPU；CUDA 不可用、看见多张卡或请求其他编号都会失败关闭。
+6. 该小包只证明 CPU 或单卡 GPU 功能闭环；不承诺精度、吞吐、并发、多卡或大数据性能。
