@@ -28,6 +28,10 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
         tss.ai/accelerator: nvidia
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: dcgm-exporter
           image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless

@@ -19,6 +19,10 @@ cluster.
 - seu5090 is the control-plane/platform/storage host. Its control-plane etcd
   remains on NVMe; bulk platform data may use only the separately approved
   `tss-AIplatform` filesystem on the 8 TB disk.
+- The reviewed seu5090 host also contains one RTX 5090. Its isolated project
+  containerd enables the NVIDIA runtime, and the Device Plugin/DCGM exporter
+  may report that GPU. The standard control-plane `NoSchedule` taint is kept,
+  so ordinary training Jobs cannot consume the shared control-plane GPU.
 - The current seu5090 project root is `/srv/tss-AIplatform`, mounted from
   `/dev/sda1`. `/media/user/data` is on the nearly-full root filesystem and is
   not a valid project target.
@@ -32,8 +36,8 @@ cluster.
   `/usr/local/lib/tss-aiplatform-internal`; the storage guard intentionally
   depends on its sibling `lib.sh` and pinned `versions.env`.
 - CPU remains the default runtime. GPU Pods explicitly select the `nvidia`
-  RuntimeClass, so the same manifests stay valid on Main hosts reporting zero
-  GPUs.
+  RuntimeClass. Monitoring components tolerate the reviewed control-plane
+  taint, while ordinary training Pods do not.
 
 ## Stages and gates
 

@@ -14,7 +14,7 @@ uuid=11111111-2222-3333-4444-555555555555
 cat >"${workdir}/control.env" <<EOF
 TSS_CLUSTER_ID=tss-aiplatform-internal
 TSS_NODE_NAME=tss-ai-control-01
-TSS_NODE_ROLES=control-plane,platform,storage
+TSS_NODE_ROLES=control-plane,platform,storage,gpu
 TSS_NODE_IP=192.0.2.10
 TSS_CONTROL_PLANE_ENDPOINT=192.0.2.10:6443
 TSS_ADDRESS_STABILITY_CONFIRMED=true
@@ -22,7 +22,7 @@ TSS_CONTAINERD_CONFIG_VERSION=3
 TSS_CONTAINERD_ROOT=/srv/tss-AIplatform/containerd
 TSS_CONTAINERD_STATE_DIR=/run/tss-aiplatform/containerd
 TSS_CONTAINERD_SOCKET=/run/tss-aiplatform/containerd/containerd.sock
-TSS_ENABLE_NVIDIA_RUNTIME=false
+TSS_ENABLE_NVIDIA_RUNTIME=true
 TSS_STORAGE_MOUNT_POINT=/srv/tss-AIplatform
 TSS_EXPECTED_STORAGE_UUID=${uuid}
 TSS_PROJECT_ROOT=/srv/tss-AIplatform
@@ -85,10 +85,10 @@ bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/control.e
 grep -F 'version = 3' "${workdir}/containerd-v3.toml" >/dev/null
 grep -F "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]" "${workdir}/containerd-v3.toml" >/dev/null
 grep -F "sandbox = 'registry.k8s.io/pause:3.10.1'" "${workdir}/containerd-v3.toml" >/dev/null
-if grep -F 'runtimes.nvidia' "${workdir}/containerd-v3.toml" >/dev/null; then
-  echo "Control-plane runtime must remain CPU-only." >&2
-  exit 1
-fi
+grep -F "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]" \
+  "${workdir}/containerd-v3.toml" >/dev/null
+grep -F "BinaryName = '/usr/bin/nvidia-container-runtime'" \
+  "${workdir}/containerd-v3.toml" >/dev/null
 
 bash "${internal_dir}/scripts/render-containerd-config.sh" "${workdir}/worker.env" >"${workdir}/containerd-v2.toml"
 grep -F 'version = 2' "${workdir}/containerd-v2.toml" >/dev/null
@@ -556,6 +556,8 @@ nvidia_sha="$(awk -v url="$nvidia_url" \
 [[ $nvidia_sha =~ ^[0-9a-f]{64}$ ]]
 [[ $(sha256sum "$nvidia_manifest" | awk '{print $1}') == "$nvidia_sha" ]]
 grep -F 'runtimeClassName: nvidia' "$gpu_installer" >/dev/null
+grep -F 'node-role.kubernetes.io/control-plane' "$gpu_installer" >/dev/null
+grep -F 'GPU control plane must retain its NoSchedule taint' "$gpu_installer" >/dev/null
 grep -F 'tss.ai/accelerator: nvidia' "$gpu_installer" >/dev/null
 grep -F 'tss.ai/node-pool=cpu' "$gpu_installer" >/dev/null
 grep -F 'imagePullPolicy: Never' "$gpu_installer" >/dev/null
@@ -573,6 +575,7 @@ dcgm_installer="${internal_dir}/platform/scripts/install-dcgm-exporter.sh"
 grep -F "image: nvcr.io/nvidia/k8s/dcgm-exporter:${TSS_DCGM_EXPORTER_VERSION}" \
   "$dcgm_manifest" >/dev/null
 grep -F 'tss.ai/accelerator: nvidia' "$dcgm_manifest" >/dev/null
+grep -F 'node-role.kubernetes.io/control-plane' "$dcgm_manifest" >/dev/null
 grep -F 'imagePullPolicy: Never' "$dcgm_manifest" >/dev/null
 grep -F -- '--address=$(HOST_IP):9400' "$dcgm_manifest" >/dev/null
 grep -F 'DCGM_EXPORTER_KUBERNETES' "$dcgm_manifest" >/dev/null
@@ -584,6 +587,7 @@ grep -F 'apply --dry-run=server' "$dcgm_installer" >/dev/null
 grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
   "$dcgm_installer" >/dev/null
 grep -F 'DCGM_FI_DEV_GPU_TEMP' "$dcgm_installer" >/dev/null
+grep -F 'GPU control plane must retain its NoSchedule taint' "$dcgm_installer" >/dev/null
 grep -F 'resources were preserved for diagnosis' "$dcgm_installer" >/dev/null
 bash "$dcgm_installer" --self-test >/dev/null
 grep -F 'install-dcgm-exporter.sh' \

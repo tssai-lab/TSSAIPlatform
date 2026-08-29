@@ -85,12 +85,14 @@ root-owned `platform.env` only after all of the following are true:
 
 The guarded Kubernetes bootstrap then installs the digest-locked NVIDIA Device
 Plugin, the `nvidia` RuntimeClass and the standalone DCGM Exporter from
-committed artifacts. It adds only the separate label
-`tss.ai/accelerator=nvidia`; it deliberately preserves
-`tss.ai/node-pool=cpu`, because the same worker must remain available for CPU
-jobs. DCGM Exporter is scheduled only on that NVIDIA-labelled node, binds its
-read-only endpoint to the reviewed InternalIP on port 9400 and does not require
-Prometheus or the full GPU Operator. The container is not privileged and
+committed artifacts. It labels every GPU-capable node declared by the reviewed
+node configurations with `tss.ai/accelerator=nvidia`; the worker keeps
+`tss.ai/node-pool=cpu`, while the control plane keeps its `NoSchedule` taint.
+The Device Plugin and DCGM exporter tolerate that taint only to advertise and
+observe the RTX 5090; ordinary training Jobs do not inherit the toleration.
+DCGM Exporter binds each NVIDIA node's read-only endpoint to its reviewed
+InternalIP on port 9400 and does not require Prometheus or the full GPU
+Operator. The container is not privileged and
 receives only the NVIDIA-required `SYS_ADMIN` capability; it has no Kubernetes
 service-account token or host-directory mounts. Check mode performs artifact, cluster
 identity and server-side dry-run validation without changing the cluster:

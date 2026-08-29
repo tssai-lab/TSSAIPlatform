@@ -77,6 +77,8 @@ expected_image_digest="$(awk -v image="$expected_image" \
   || die "DCGM Exporter manifest image differs from the version contract"
 grep -F '        tss.ai/accelerator: nvidia' "$manifest" >/dev/null \
   || die "DCGM Exporter must target only reviewed NVIDIA nodes"
+grep -F '        - key: node-role.kubernetes.io/control-plane' "$manifest" >/dev/null \
+  || die "DCGM Exporter must tolerate the reviewed GPU control plane"
 grep -F '          imagePullPolicy: Never' "$manifest" >/dev/null \
   || die "DCGM Exporter must use the offline project image"
 grep -F '            - --address=$(HOST_IP):9400' "$manifest" >/dev/null \
@@ -94,21 +96,40 @@ mapfile -t nodes < <("${admin[@]}" get nodes \
 [[ " ${nodes[*]} " != *" k8s-master "* && " ${nodes[*]} " != *" k8s-node1 "* ]] \
   || die "refusing a kubeconfig that resembles the Main/Second cluster"
 
-ready="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"
-[[ $ready == True ]] || die "GPU Worker node is not Ready: $TSS_PLATFORM_WORKER_NODE"
-accelerator="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{.metadata.labels.tss\.ai/accelerator}' 2>/dev/null || true)"
-[[ $accelerator == nvidia ]] \
-  || die "GPU Worker does not have the reviewed NVIDIA label"
-gpu_count="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)"
-[[ $gpu_count =~ ^[1-9][0-9]*$ ]] \
-  || die "GPU Worker does not advertise nvidia.com/gpu"
-worker_ip="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{range .status.addresses[?(@.type=="InternalIP")]}{.address}{end}')"
-[[ $worker_ip == "$TSS_PLATFORM_WORKER_IP" ]] \
-  || die "GPU Worker InternalIP differs from the reviewed platform configuration"
+gpu_nodes=("$TSS_PLATFORM_WORKER_NODE")
+if has_role gpu; then
+  gpu_nodes+=("$TSS_NODE_NAME")
+  control_taints="$("${admin[@]}" get node "$TSS_NODE_NAME" \
+    -o jsonpath='{range .spec.taints[*]}{.key}:{.effect}{"\n"}{end}')"
+  grep -Fx 'node-role.kubernetes.io/control-plane:NoSchedule' \
+    <<<"$control_taints" >/dev/null \
+    || die "GPU control plane must retain its NoSchedule taint"
+fi
+mapfile -t gpu_nodes < <(printf '%s\n' "${gpu_nodes[@]}" | sort -u)
+gpu_ips=()
+for gpu_node in "${gpu_nodes[@]}"; do
+  ready="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"
+  [[ $ready == True ]] || die "GPU node is not Ready: $gpu_node"
+  accelerator="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{.metadata.labels.tss\.ai/accelerator}' 2>/dev/null || true)"
+  [[ $accelerator == nvidia ]] \
+    || die "GPU node does not have the reviewed NVIDIA label: $gpu_node"
+  gpu_count="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)"
+  [[ $gpu_count =~ ^[1-9][0-9]*$ ]] \
+    || die "GPU node does not advertise nvidia.com/gpu: $gpu_node"
+  gpu_ip="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{range .status.addresses[?(@.type=="InternalIP")]}{.address}{end}')"
+  if [[ $gpu_node == "$TSS_PLATFORM_WORKER_NODE" ]]; then
+    [[ $gpu_ip == "$TSS_PLATFORM_WORKER_IP" ]] \
+      || die "GPU Worker InternalIP differs from the reviewed platform configuration"
+  else
+    [[ $gpu_ip == "$TSS_NODE_IP" ]] \
+      || die "GPU control-plane InternalIP differs from the reviewed node configuration"
+  fi
+  gpu_ips+=("$gpu_ip")
+done
 existing_image="$("${admin[@]}" -n kube-system get daemonset tss-dcgm-exporter \
   -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 [[ -z $existing_image || $existing_image == "$expected_image" ]] \
@@ -134,13 +155,18 @@ fi
 
 metrics_file="$(mktemp)"
 trap 'rm -f "$metrics_file"' EXIT
-for _attempt in $(seq 1 30); do
-  if curl --connect-timeout 2 --max-time 5 --fail --silent \
-    "http://${worker_ip}:9400/metrics" >"$metrics_file" \
-    && metrics_complete "$metrics_file"; then
-    echo "PASS: DCGM Exporter reports GPU utilization, memory and temperature from ${TSS_PLATFORM_WORKER_NODE}"
-    exit 0
-  fi
-  sleep 5
+for index in "${!gpu_nodes[@]}"; do
+  metrics_ready=false
+  for _attempt in $(seq 1 30); do
+    if curl --connect-timeout 2 --max-time 5 --fail --silent \
+      "http://${gpu_ips[$index]}:9400/metrics" >"$metrics_file" \
+      && metrics_complete "$metrics_file"; then
+      metrics_ready=true
+      break
+    fi
+    sleep 5
+  done
+  [[ $metrics_ready == true ]] \
+    || die "DCGM Exporter endpoint did not expose required GPU metrics: ${gpu_nodes[$index]}; resources were preserved for diagnosis"
 done
-die "DCGM Exporter endpoint did not expose the required GPU metrics; resources were preserved for diagnosis"
+echo "PASS: DCGM Exporter reports GPU utilization, memory and temperature from ${gpu_nodes[*]}"

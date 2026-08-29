@@ -15,6 +15,13 @@ render_plugin_manifest() {
       print "        tss.ai/accelerator: nvidia"
       next
     }
+    $0 == "        effect: NoSchedule" {
+      print
+      print "      - key: node-role.kubernetes.io/control-plane"
+      print "        operator: Exists"
+      print "        effect: NoSchedule"
+      next
+    }
     $0 == "      - image: nvcr.io/nvidia/k8s-device-plugin:v0.17.1" {
       print
       print "        imagePullPolicy: Never"
@@ -42,6 +49,7 @@ if [[ $mode == --self-test ]]; then
   trap 'rm -f "$rendered_manifest"' EXIT
   render_plugin_manifest "$source_manifest" >"$rendered_manifest"
   [[ $(grep -Fc '      runtimeClassName: nvidia' "$rendered_manifest") -eq 1 ]]
+  [[ $(grep -Fc '      - key: node-role.kubernetes.io/control-plane' "$rendered_manifest") -eq 1 ]]
   [[ $(grep -Fc '        tss.ai/accelerator: nvidia' "$rendered_manifest") -eq 1 ]]
   [[ $(grep -Fc '        imagePullPolicy: Never' "$rendered_manifest") -eq 1 ]]
   [[ $(grep -Fc '            value: "true"' "$rendered_manifest") -eq 1 ]]
@@ -99,6 +107,7 @@ trap 'rm -f "$rendered_manifest" "$runtime_manifest"' EXIT
 render_plugin_manifest "$source_manifest" >"$rendered_manifest"
 bash "${internal_root}/scripts/render-runtime-class.sh" >"$runtime_manifest"
 [[ $(grep -Fc '      runtimeClassName: nvidia' "$rendered_manifest") -eq 1 \
+  && $(grep -Fc '      - key: node-role.kubernetes.io/control-plane' "$rendered_manifest") -eq 1 \
   && $(grep -Fc '        tss.ai/accelerator: nvidia' "$rendered_manifest") -eq 1 \
   && $(grep -Fc '        imagePullPolicy: Never' "$rendered_manifest") -eq 1 \
   && $(grep -Fc '            value: "true"' "$rendered_manifest") -eq 1 ]] \
@@ -118,17 +127,32 @@ mapfile -t nodes < <("${admin[@]}" get nodes \
 [[ $TSS_PLATFORM_WORKER_NODE != "$TSS_NODE_NAME" ]] \
   || die "the reviewed first GPU Worker must not be the control-plane node"
 
-ready="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"
-[[ $ready == True ]] || die "GPU Worker node is not Ready: $TSS_PLATFORM_WORKER_NODE"
-existing_accelerator="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{.metadata.labels.tss\.ai/accelerator}' 2>/dev/null || true)"
-[[ -z $existing_accelerator || $existing_accelerator == nvidia ]] \
-  || die "GPU Worker has a conflicting accelerator label: $existing_accelerator"
-existing_node_pool="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-  -o jsonpath='{.metadata.labels.tss\.ai/node-pool}' 2>/dev/null || true)"
-[[ $existing_node_pool == cpu ]] \
-  || die "GPU Worker must preserve the reviewed tss.ai/node-pool=cpu label"
+gpu_nodes=("$TSS_PLATFORM_WORKER_NODE")
+if has_role gpu; then
+  gpu_nodes+=("$TSS_NODE_NAME")
+  control_taints="$("${admin[@]}" get node "$TSS_NODE_NAME" \
+    -o jsonpath='{range .spec.taints[*]}{.key}:{.effect}{"\n"}{end}')"
+  grep -Fx 'node-role.kubernetes.io/control-plane:NoSchedule' \
+    <<<"$control_taints" >/dev/null \
+    || die "GPU control plane must retain its NoSchedule taint"
+fi
+mapfile -t gpu_nodes < <(printf '%s\n' "${gpu_nodes[@]}" | sort -u)
+
+for gpu_node in "${gpu_nodes[@]}"; do
+  ready="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"
+  [[ $ready == True ]] || die "GPU node is not Ready: $gpu_node"
+  existing_accelerator="$("${admin[@]}" get node "$gpu_node" \
+    -o jsonpath='{.metadata.labels.tss\.ai/accelerator}' 2>/dev/null || true)"
+  [[ -z $existing_accelerator || $existing_accelerator == nvidia ]] \
+    || die "GPU node has a conflicting accelerator label: ${gpu_node}=${existing_accelerator}"
+  if [[ $gpu_node == "$TSS_PLATFORM_WORKER_NODE" ]]; then
+    existing_node_pool="$("${admin[@]}" get node "$gpu_node" \
+      -o jsonpath='{.metadata.labels.tss\.ai/node-pool}' 2>/dev/null || true)"
+    [[ $existing_node_pool == cpu ]] \
+      || die "GPU Worker must preserve the reviewed tss.ai/node-pool=cpu label"
+  fi
+done
 existing_runtime_handler="$("${admin[@]}" get runtimeclass nvidia \
   -o jsonpath='{.handler}' 2>/dev/null || true)"
 [[ -z $existing_runtime_handler || $existing_runtime_handler == nvidia ]] \
@@ -147,8 +171,10 @@ fi
 
 exec 9>/run/lock/tss-aiplatform-gpu-worker.lock
 flock -n 9 || die "another GPU Worker installation is running"
-"${admin[@]}" label node "$TSS_PLATFORM_WORKER_NODE" \
-  tss.ai/accelerator=nvidia --overwrite >/dev/null
+for gpu_node in "${gpu_nodes[@]}"; do
+  "${admin[@]}" label node "$gpu_node" \
+    tss.ai/accelerator=nvidia --overwrite >/dev/null
+done
 [[ $("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
   -o jsonpath='{.metadata.labels.tss\.ai/node-pool}') == cpu ]] \
   || die "GPU Worker CPU node-pool label changed unexpectedly"
@@ -163,14 +189,18 @@ if ! "${admin[@]}" -n kube-system rollout status \
   die "NVIDIA Device Plugin rollout failed; resources were preserved for diagnosis"
 fi
 
-gpu_count=''
-for _attempt in $(seq 1 30); do
-  gpu_count="$("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
-    -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)"
-  [[ $gpu_count =~ ^[1-9][0-9]*$ ]] && break
+advertised=()
+for gpu_node in "${gpu_nodes[@]}"; do
   gpu_count=''
-  sleep 5
+  for _attempt in $(seq 1 30); do
+    gpu_count="$("${admin[@]}" get node "$gpu_node" \
+      -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)"
+    [[ $gpu_count =~ ^[1-9][0-9]*$ ]] && break
+    gpu_count=''
+    sleep 5
+  done
+  [[ -n $gpu_count ]] \
+    || die "GPU node did not advertise nvidia.com/gpu: ${gpu_node}; resources were preserved for diagnosis"
+  advertised+=("${gpu_node}=${gpu_count}")
 done
-[[ -n $gpu_count ]] \
-  || die "GPU Worker did not advertise nvidia.com/gpu; resources were preserved for diagnosis"
-echo "PASS: GPU Worker advertises ${gpu_count} GPU(s); no training Job was submitted"
+echo "PASS: GPU nodes advertise ${advertised[*]}; no training Job was submitted"
