@@ -214,7 +214,11 @@ export async function uploadInferenceScript(
   if (body.remark?.trim()) {
     formData.append('remark', body.remark.trim());
   }
-  return request<{ data: InferenceScriptUploadResult }>('/inference/scripts/upload', {
+  return request<{
+    success?: boolean;
+    data: InferenceScriptUploadResult;
+    errorMessage?: string;
+  }>('/inference/scripts/upload', {
     method: 'POST',
     data: formData,
     ...(options || {}),

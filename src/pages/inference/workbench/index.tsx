@@ -64,6 +64,7 @@ import {
   defaultInferenceResourceProfileId,
   listUsableCpuInferenceProfiles,
 } from './resourceProfilePresentation.mjs';
+import { requireSavedInferenceScriptVersion } from './inferenceScriptUploadResult.mjs';
 
 /**
  * 推理工作台
@@ -360,14 +361,13 @@ const InferenceWorkbench: React.FC = () => {
         },
         { skipErrorHandler: true },
       );
-      message.success('推理脚本已上传');
+      const scriptVersionId = requireSavedInferenceScriptVersion(res);
+      message.success('推理脚本已上传并保存到脚本列表');
       setScriptModalOpen(false);
       scriptForm.resetFields();
       setScriptFileList([]);
       await reloadAssets();
-      if (res?.data?.scriptVersionId) {
-        taskForm.setFieldValue('scriptVersionId', res.data.scriptVersionId);
-      }
+      taskForm.setFieldValue('scriptVersionId', scriptVersionId);
     } catch (error: any) {
       message.error(error?.message || '脚本上传失败');
     } finally {

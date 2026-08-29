@@ -43,6 +43,7 @@ import {
 } from '@/services/platform';
 import type { TrainingPlan } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
+import { markPendingCodeStatus } from '@/utils/pendingCodeVersions';
 import {
   firstCpuTrainingResourceProfileId,
   isCpuTrainingResourceProfileIdAllowed,
@@ -953,7 +954,7 @@ const TaskCreate: React.FC = () => {
       }
       let approvalStatus = res?.data?.approvalStatus;
       if (approvalStatus === 'APPROVED') {
-        message.success('训练代码已上传并审核通过');
+        message.success('训练代码已上传、保存到列表并审核通过');
       } else if (isTrainingCodeAutoApproveEnabled()) {
         try {
           const approved = await autoApproveCodeVersionIfEnabled(
@@ -965,7 +966,7 @@ const TaskCreate: React.FC = () => {
             },
           );
           approvalStatus = approved?.approvalStatus || 'APPROVED';
-          message.success('训练代码已上传并自动审核通过');
+          message.success('训练代码已上传、保存到列表并自动审核通过');
         } catch (approveError: any) {
           message.warning(
             getApiErrorMessage(
@@ -975,8 +976,9 @@ const TaskCreate: React.FC = () => {
           );
         }
       } else {
-        message.success('训练代码已上传，正在执行准入校验');
+        message.success('训练代码已上传并保存到列表，正在执行准入校验');
       }
+      markPendingCodeStatus(codeVersionId, approvalStatus || 'PENDING');
       setSelectedCodeVersionId(codeVersionId);
       setSelectedCodeApprovalStatus(approvalStatus);
       form.setFieldValue('codeVersionId', codeVersionId);

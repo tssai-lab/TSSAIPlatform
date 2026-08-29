@@ -9,6 +9,7 @@ import {
   removePendingCodeVersion,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
+import { persistSuccessfulCodeUpload } from '@/utils/codeUploadReceipt.mjs';
 import {
   approveV2CodeVersion,
   buildV2ApprovalRequest,
@@ -161,7 +162,7 @@ export async function uploadCodeZip(
     if (!codeVersionId) {
       throw new Error('V2 导入成功但未返回 codeVersionId');
     }
-    return {
+    const response = {
       success: true,
       data: {
         codeAssetId:
@@ -182,8 +183,28 @@ export async function uploadCodeZip(
         approvalStatus: mapped.approvalStatus || 'PENDING',
       },
     };
+    persistSuccessfulCodeUpload(
+      response,
+      {
+        codeName: params.codeName,
+        fileName: params.file.name,
+        trainingProfile: params.trainingProfile,
+      },
+      upsertPendingCodeVersion,
+    );
+    return response;
   } catch {
-    return legacyUpload();
+    const response = await legacyUpload();
+    persistSuccessfulCodeUpload(
+      response,
+      {
+        codeName: params.codeName,
+        fileName: params.file.name,
+        trainingProfile: params.trainingProfile,
+      },
+      upsertPendingCodeVersion,
+    );
+    return response;
   }
 }
 
