@@ -59,28 +59,8 @@ public class SystemUserController {
                 item.put("phone", item.get("mobile"));
             }
             
-            // 将 role_name 设置为 role 字段（前端期望的角色名称）
-            String roleName = "";
-            if (item.containsKey("role_name")) {
-                roleName = String.valueOf(item.get("role_name"));
-            } else if (item.containsKey("role_id")) {
-                Integer roleId = (Integer) item.get("role_id");
-                if (roleId == 1) {
-                    roleName = "超管";
-                } else if (roleId == 2) {
-                    roleName = "普通管理员";
-                } else {
-                    roleName = "普通用户";
-                }
-            }
-            
-            // 统一角色名称格式，确保与前端一致
-            if ("超级管理员".equals(roleName)) {
-                roleName = "超管";
-            } else if (!"普通管理员".equals(roleName) && !"普通用户".equals(roleName)) {
-                roleName = "普通用户";
-            }
-            item.put("role", roleName);
+            // role_id 是权限判断使用的权威字段；role_name 仅用于兼容旧数据和旧查询结果。
+            item.put("role", resolveRoleDisplay(item));
             
             // 将 created_at 复制到 createdAt 字段
             if (item.containsKey("created_at") && !item.containsKey("createdAt")) {
@@ -94,6 +74,24 @@ public class SystemUserController {
         result.put("total", list.size());
         
         return Result.success(result, "查询成功");
+    }
+
+    private String resolveRoleDisplay(Map<String, Object> item) {
+        Object roleIdValue = item.get("role_id");
+        if (roleIdValue instanceof Number roleId) {
+            return switch (roleId.intValue()) {
+                case 1 -> "超管";
+                case 2 -> "普通管理员";
+                default -> "普通用户";
+            };
+        }
+
+        String roleName = Objects.toString(item.get("role_name"), "");
+        return switch (roleName) {
+            case "super_admin", "超级管理员", "超管" -> "超管";
+            case "admin", "normal_admin", "普通管理员" -> "普通管理员";
+            default -> "普通用户";
+        };
     }
 
     @PostMapping("/add")
