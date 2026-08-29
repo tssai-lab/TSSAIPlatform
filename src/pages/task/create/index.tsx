@@ -1479,7 +1479,11 @@ const TaskCreate: React.FC = () => {
                 >
                   刷新模型列表
                 </Button>
-                <Button href="/model/upload" target="_blank">
+                <Button
+                  href={history.createHref({ pathname: '/model/upload' })}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   去模型管理上传
                 </Button>
               </Space>
@@ -1588,7 +1592,11 @@ const TaskCreate: React.FC = () => {
                 >
                   刷新数据集列表
                 </Button>
-                <Button href="/dataset/upload" target="_blank">
+                <Button
+                  href={history.createHref({ pathname: '/dataset/upload' })}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   去数据集管理上传
                 </Button>
               </Space>
