@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "tss.acceptance.bundle/v1",
+  "name": "MiniRBT-H288 MASSIVE zh-CN intent classification CPU acceptance",
+  "upstream": {
+    "model": "hfl/minirbt-h288",
+    "modelRevision": "dc4eebb0cf6f9e7094142ac28fbf971517c6a366",
+    "modelLicense": "Apache-2.0",
+    "dataset": "MASSIVE",
+    "datasetVersion": "1.1",
+    "datasetArchiveSha256": "4cba5faa11c71437928e17cb1b9b3d8b8e727e7ea363a3a9a8045e19c0491577",
+    "datasetLicense": "CC BY 4.0"
+  },
+  "dataset": {
+    "locale": "zh-CN",
+    "intents": [
+      "alarm_set",
+      "weather_query",
+      "play_music",
+      "news_query",
+      "calendar_set",
+      "transport_taxi"
+    ],
+    "splits": {
+      "train": 144,
+      "validation": 48,
+      "test": 48
+    }
+  },
+  "artifacts": [
+    {
+      "file": "massive-zhcn-intent-dataset.zip",
+      "sizeBytes": 14304,
+      "sha256": "f353a7984604dcc6c006010bcfc5e8def6d74fd5093d6346a66f48d4a38b4f8a"
+    },
+    {
+      "file": "minirbt-h288-base.zip",
+      "sizeBytes": 45862644,
+      "sha256": "b5a3aeedf6c529501c57630ea1f0e4e9de50426a2bb90d27939d35dbe0ab36b6"
+    },
+    {
+      "file": "minirbt-inference-script.zip",
+      "sizeBytes": 3658,
+      "sha256": "1194777edf77a16edfe5abb1408e45a81784b7517f9eb92410c1c6f907161a10"
+    },
+    {
+      "file": "minirbt-training-code.zip",
+      "sizeBytes": 4284,
+      "sha256": "5f57ce723ce2d9b85fa369c21632344315e7a17149e60889d2ccf82f187e76a8"
+    },
+    {
+      "file": "minirbt_text_classification-v1.yaml",
+      "sizeBytes": 4005,
+      "sha256": "47721453130fb45656f45a5e427d3099e9de4714dbe28aa0f95334391b60bdb8"
+    },
+    {
+      "file": "README.md",
+      "sizeBytes": 3052,
+      "sha256": "a43d4c6f8c22b653d1fc35bf44af7c5cc07779dc61366240079a260f2cdb4c07"
+    }
+  ]
+}

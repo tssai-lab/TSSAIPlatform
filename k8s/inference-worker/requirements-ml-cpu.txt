@@ -1,4 +1,0 @@
-# Common CPU inference dependencies. Heavy packages are baked into the worker
-# image so user jobs do not spend pod-local storage installing them at runtime.
-transformers>=4.36,<5
-pillow>=10,<12

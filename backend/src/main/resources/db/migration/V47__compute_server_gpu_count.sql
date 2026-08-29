@@ -1,1 +1,0 @@
-ALTER TABLE compute_server ADD COLUMN IF NOT EXISTS gpu_count INT DEFAULT 0;
