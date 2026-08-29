@@ -894,7 +894,7 @@ event({"type": "progress", "progress": 100})
                     children: (
                       <>
                         <Text strong>审核</Text> →{' '}
-                        自动审核模式（DIRECT_PASS）下立即通过；人工审核模式（STANDARD_REVIEW）需管理员在"待审核"页操作
+                        审核关闭（DIRECT_PASS）时基础校验通过后直接批准；自动审核（STANDARD_REVIEW）按风险策略处理并由人工兜底；仅人工审核（MANUAL_ONLY）时全部进入“待审核”
                       </>
                     ),
                   },
@@ -1001,7 +1001,7 @@ event({"type": "progress", "progress": 100})
 
             <Card style={cardStyle} title="系统配置">
               <Paragraph>
-                系统配置页面（仅超级管理员可访问）可管理训练代码审核开关、平台全局参数等。切换审核模式为「自动审核」后，上传的训练代码将自动通过，无需人工审核。
+                系统配置页面（仅超级管理员可访问）可分别控制训练代码审核和自动审核。开启自动审核后，低风险代码可自动通过、阻断项可自动拒绝，其余仍需管理员处理；关闭自动审核后，所有新代码进入人工待审。
               </Paragraph>
             </Card>
 
