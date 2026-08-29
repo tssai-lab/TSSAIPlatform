@@ -3415,8 +3415,9 @@ ZIP 导入同时适用于 V2 与委托同一服务的 legacy 上传。ZIP 条目
 | --- | --- |
 | `DIRECT_PASS` | 新的通过校验证据不运行静态风险扫描、不等待管理员审核，写入 `UNKNOWN + DIRECT_PASS` 风险证据和 `decisionSource=SYSTEM_CONFIG` 的系统批准后直接成为 `APPROVED` |
 | `STANDARD_REVIEW` | 保持现有审核链路，继续按 `CODE_ASSET_RISK_MODE` 的 `MANUAL_ONLY/SHADOW/ENFORCE` 行为分流 |
+| `MANUAL_ONLY` | 新的通过校验证据不触发自动扫描判定，写入 `UNKNOWN + MANUAL_REVIEW` 证据并进入人工待审；管理员仍可显式重新扫描作为人工判断依据 |
 
-`DIRECT_PASS` 只跳过代码风险扫描和人工决策，不跳过 ZIP 路径/扩展名/入口脚本校验，也不跳过实际对象名、SHA-256、长度和消费时重新读取核对。配置变更只影响此后产生的成功校验证据：不会批量批准既有 `PENDING` 版本，切回 `STANDARD_REVIEW` 也不会自动撤销此前证据完整的系统直通批准。两个配置接口均仅管理员可用；未登录返回 HTTP `401`，非管理员返回 HTTP `403`。
+`DIRECT_PASS` 只跳过代码风险扫描和人工决策，不跳过 ZIP 路径/扩展名/入口脚本校验，也不跳过实际对象名、SHA-256、长度和消费时重新读取核对。配置变更只影响此后产生的成功校验证据：不会批量批准既有 `PENDING` 版本，也不会自动撤销此前证据完整的批准。已排队或运行中的扫描允许收尾；切到 `MANUAL_ONLY` 后，最终自动决策会在事务内再次核对配置，因此不得再自动批准、拒绝或撤销既有批准。配置变更写入统一的 `PERMISSION_CHANGE + TRAINING_CODE` 审计记录。两个配置接口均仅超级管理员可用；未登录返回 HTTP `401`，权限不足返回 HTTP `403`。
 
 V2 `validate` 和 legacy `training-check` 都先读取实际对象并核对 objectName、SHA-256 和长度。若当前策略、实际对象证据、版本的 `PASSED` 摘要和最新通过的 validation run 完全一致，响应 `reused=true`，不新增 validation run、不重复排队风险扫描、不写重复审计，也不改变既有 `APPROVED`。只有制品或策略证据确实变化时才创建新校验记录；新证据会把旧审批绑定置为 `PENDING`，通过后进入新的风险分流。失败结果不会自动放行。前端对已经批准且校验策略未变化的版本应隐藏普通“准入校验”按钮，或至少增加二次确认；即使误触等价校验，后端幂等保证状态不变。
 

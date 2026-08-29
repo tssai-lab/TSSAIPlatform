@@ -231,9 +231,10 @@ Flyway repair 或重新基线化。
 
 增加面向前端管理页的训练代码审核模式，并为无需人工审核的直通模式保留可追踪证据。
 
-- 创建单例 `platform_system_config`，默认 `training_code_review_mode=STANDARD_REVIEW`，只允许 `DIRECT_PASS` 或 `STANDARD_REVIEW`。
+- 创建单例 `platform_system_config`，默认 `training_code_review_mode=STANDARD_REVIEW`；V63 起允许 `DIRECT_PASS`、`STANDARD_REVIEW` 或 `MANUAL_ONLY`。
 - `STANDARD_REVIEW` 保持现有 `CODE_ASSET_RISK_MODE` 风险扫描、自动策略和管理员审核流程。
 - `DIRECT_PASS` 仍要求 ZIP 结构、固定入口、实际对象名、SHA-256 和长度校验通过；只跳过静态风险扫描及人工审核。
+- `MANUAL_ONLY` 保留不可变基础校验，但新版本不触发自动扫描判定，统一进入管理员人工待审；管理员仍可显式重新扫描获取辅助证据。
 - 扩展风险分流约束以支持 `DIRECT_PASS`，并扩展审批来源约束以支持 `SYSTEM_CONFIG`。
 - 系统直通批准必须绑定 validation run、制品 SHA、显式 direct-pass risk assessment 和固定审批策略版本，不能伪造管理员 reviewer。
 

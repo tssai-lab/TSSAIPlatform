@@ -4,6 +4,9 @@ import com.tss.platform.dto.SystemConfigDto;
 import com.tss.platform.dto.SystemConfigUpdateRequest;
 import com.tss.platform.entity.PlatformSystemConfig;
 import com.tss.platform.model.TrainingCodeReviewMode;
+import com.tss.platform.module1.common.AuditActionType;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.repository.PlatformSystemConfigRepository;
 import com.tss.platform.security.AuthContext;
 import jakarta.persistence.EntityManager;
@@ -25,22 +28,33 @@ public class SystemConfigService {
 
     private final PlatformSystemConfigRepository repository;
     private final AuthContext authContext;
-
     private final EntityManager entityManager;
+    private final AuditRecordService auditRecordService;
 
     public SystemConfigService(
             PlatformSystemConfigRepository repository,
             AuthContext authContext,
-            EntityManager entityManager
+            EntityManager entityManager,
+            AuditRecordService auditRecordService
     ) {
         this.repository = repository;
         this.authContext = authContext;
         this.entityManager = entityManager;
+        this.auditRecordService = auditRecordService;
     }
 
     @Transactional(readOnly = true)
     public TrainingCodeReviewMode currentTrainingCodeReviewMode() {
         return repository.findById(PlatformSystemConfig.GLOBAL_ID)
+                .map(PlatformSystemConfig::getTrainingCodeReviewMode)
+                .map(SystemConfigService::storedModeOrFailClosed)
+                .orElse(TrainingCodeReviewMode.STANDARD_REVIEW);
+    }
+
+    /** Serializes automatic decisions with review-mode updates. */
+    @Transactional
+    public TrainingCodeReviewMode currentTrainingCodeReviewModeForUpdate() {
+        return repository.findByIdForUpdate(PlatformSystemConfig.GLOBAL_ID)
                 .map(PlatformSystemConfig::getTrainingCodeReviewMode)
                 .map(SystemConfigService::storedModeOrFailClosed)
                 .orElse(TrainingCodeReviewMode.STANDARD_REVIEW);
@@ -75,11 +89,17 @@ public class SystemConfigService {
         PlatformSystemConfig config = repository
                 .findByIdForUpdate(PlatformSystemConfig.GLOBAL_ID)
                 .orElseGet(() -> newConfig(now));
+        String previousReviewMode = null;
+        String updatedReviewMode = null;
 
         if (request != null && request.trainingCodeReviewMode() != null && !request.trainingCodeReviewMode().isBlank()) {
             TrainingCodeReviewMode requested = TrainingCodeReviewMode.fromApiValue(request.trainingCodeReviewMode());
-            String previous = config.getTrainingCodeReviewMode();
+            String previous = storedModeOrFailClosed(config.getTrainingCodeReviewMode()).name();
             config.setTrainingCodeReviewMode(requested.name());
+            if (!previous.equals(requested.name())) {
+                previousReviewMode = previous;
+                updatedReviewMode = requested.name();
+            }
             log.info(
                     "Training code review mode updated: previous={}, current={}, operatorUserId={}",
                     previous,
@@ -104,6 +124,14 @@ public class SystemConfigService {
         config.setUpdatedAt(now);
         PlatformSystemConfig saved = repository.saveAndFlush(config);
         trimAllUsersToLimitMb(currentUserLogLimitMb());
+        if (updatedReviewMode != null) {
+            auditRecordService.recordSuccess(
+                    AuditActionType.PERMISSION_CHANGE,
+                    AuditObjectType.TRAINING_CODE,
+                    PlatformSystemConfig.GLOBAL_ID,
+                    "trainingCodeReviewMode: " + previousReviewMode + " -> " + updatedReviewMode
+            );
+        }
         return toDto(saved);
     }
 
@@ -197,7 +225,7 @@ public class SystemConfigService {
         try {
             return TrainingCodeReviewMode.fromApiValue(value);
         } catch (IllegalArgumentException exception) {
-            return TrainingCodeReviewMode.STANDARD_REVIEW;
+            return TrainingCodeReviewMode.MANUAL_ONLY;
         }
     }
 

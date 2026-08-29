@@ -9,6 +9,7 @@ import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.model.CodeApprovalDecisionSource;
 import com.tss.platform.model.CodeRiskDisposition;
 import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewMode;
 import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
@@ -50,6 +51,7 @@ class CodeApprovalServiceTest {
             mock(CodeArtifactStorageService.class);
     private final CodeAssetAuditService auditService = mock(CodeAssetAuditService.class);
     private final AuthContext authContext = mock(AuthContext.class);
+    private final SystemConfigService systemConfigService = mock(SystemConfigService.class);
 
     private CodeApprovalService service;
     private CodeVersion version;
@@ -66,10 +68,13 @@ class CodeApprovalServiceTest {
                 approvalRepository,
                 storageService,
                 auditService,
-                authContext
+                authContext,
+                systemConfigService
         );
         when(authContext.isAdmin()).thenReturn(true);
         when(authContext.currentUserId()).thenReturn(99);
+        when(systemConfigService.currentTrainingCodeReviewModeForUpdate())
+                .thenReturn(TrainingCodeReviewMode.STANDARD_REVIEW);
         version = version();
         validation = validation("validation-1");
         riskAssessment = riskAssessment();
@@ -274,7 +279,28 @@ class CodeApprovalServiceTest {
     }
 
     @Test
+    void automaticDecisionFailsClosedWhenAutomaticReviewWasDisabled() {
+        when(riskAssessmentRepository.findByIdAndVersionIdForUpdate("risk-1", "version-1"))
+                .thenReturn(Optional.of(riskAssessment));
+        when(validationRepository.findById("validation-1"))
+                .thenReturn(Optional.of(validation));
+        when(systemConfigService.currentTrainingCodeReviewModeForUpdate())
+                .thenReturn(TrainingCodeReviewMode.MANUAL_ONLY);
+
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                () -> service.decideAutomatically("version-1", "risk-1", true)
+        );
+
+        assertEquals("AUTO_REVIEW_DISABLED", error.getReasonCode());
+        assertEquals(CodeApprovalStatus.PENDING, version.getApprovalStatus());
+        verify(approvalRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
     void systemConfigurationDirectPassPersistsExplicitBypassEvidence() {
+        when(systemConfigService.currentTrainingCodeReviewModeForUpdate())
+                .thenReturn(TrainingCodeReviewMode.DIRECT_PASS);
         riskAssessment.setRiskPolicyVersion(
                 TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
         );
@@ -321,6 +347,37 @@ class CodeApprovalServiceTest {
                 TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION,
                 CodeApprovalDecisionSource.SYSTEM_CONFIG
         );
+    }
+
+    @Test
+    void directPassDecisionFailsClosedWhenReviewWasReenabled() {
+        riskAssessment.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        riskAssessment.setScannerVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_SCANNER_VERSION
+        );
+        riskAssessment.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        riskAssessment.setDisposition(CodeRiskDisposition.DIRECT_PASS);
+        version.setRiskLevel(CodeRiskLevel.UNKNOWN);
+        version.setReviewDisposition(CodeRiskDisposition.DIRECT_PASS);
+        version.setRiskPolicyVersion(
+                TrainingCodeReviewPolicy.DIRECT_PASS_RISK_POLICY_VERSION
+        );
+        when(riskAssessmentRepository.findByIdAndVersionIdForUpdate(
+                "risk-1", "version-1"
+        )).thenReturn(Optional.of(riskAssessment));
+        when(validationRepository.findById("validation-1"))
+                .thenReturn(Optional.of(validation));
+
+        CodeValidationException error = assertThrows(
+                CodeValidationException.class,
+                () -> service.approveBySystemConfiguration("version-1", "risk-1")
+        );
+
+        assertEquals("DIRECT_PASS_DISABLED", error.getReasonCode());
+        assertEquals(CodeApprovalStatus.PENDING, version.getApprovalStatus());
+        verify(approvalRepository, never()).saveAndFlush(any());
     }
 
     @Test

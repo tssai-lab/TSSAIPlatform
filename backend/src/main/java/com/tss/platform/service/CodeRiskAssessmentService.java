@@ -106,8 +106,9 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
                         "VALIDATION_EVIDENCE_MISSING", "Validation evidence is missing"
                 ));
         requireEvidence(version, validationRun);
-        if (systemConfigService.currentTrainingCodeReviewMode()
-                == TrainingCodeReviewMode.DIRECT_PASS) {
+        TrainingCodeReviewMode reviewMode =
+                systemConfigService.currentTrainingCodeReviewMode();
+        if (reviewMode == TrainingCodeReviewMode.DIRECT_PASS) {
             CodeRiskAssessment assessment = createDirectPassAssessment(
                     version,
                     validationRun,
@@ -119,7 +120,13 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             );
             return assessment;
         }
-        return createAssessment(version, validationRun, requestedByUserId, false);
+        return createAssessment(
+                version,
+                validationRun,
+                requestedByUserId,
+                false,
+                reviewMode == TrainingCodeReviewMode.MANUAL_ONLY
+        );
     }
 
     @Override
@@ -156,7 +163,7 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
                     || CodeRiskAssessmentStatus.RUNNING.equals(latest.getStatus()))) {
                 return latest;
             }
-            return createAssessment(version, validationRun, requester, true);
+            return createAssessment(version, validationRun, requester, true, false);
         });
         if (assessment == null) {
             throw new IllegalStateException("Risk assessment transaction failed");
@@ -177,7 +184,9 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
         for (CodeRiskAssessment candidate : queued) {
             processOne(candidate.getId());
         }
-        if (properties.getMode() == CodeRiskProperties.Mode.ENFORCE) {
+        if (properties.getMode() == CodeRiskProperties.Mode.ENFORCE
+                && systemConfigService.currentTrainingCodeReviewMode()
+                .automaticDecisionsEnabled()) {
             reconcileAutomaticDecisions();
         }
     }
@@ -224,7 +233,8 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             CodeVersion version,
             CodeValidationRun validationRun,
             Integer requestedByUserId,
-            boolean explicitRescan
+            boolean explicitRescan,
+            boolean forceManualReview
     ) {
         Instant now = Instant.now();
         CodeRiskAssessment assessment = new CodeRiskAssessment();
@@ -245,7 +255,8 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             assessment.setErrorCode(VALIDATION_ERROR_CODE);
             assessment.setErrorMessage("Code validation did not pass");
             assessment.setCompletedAt(now);
-        } else if (properties.getMode() == CodeRiskProperties.Mode.MANUAL_ONLY) {
+        } else if (forceManualReview
+                || properties.getMode() == CodeRiskProperties.Mode.MANUAL_ONLY) {
             assessment.setScannerVersion(MANUAL_SCANNER_VERSION);
             assessment.setStatus(CodeRiskAssessmentStatus.COMPLETED);
             assessment.setRiskLevel(CodeRiskLevel.UNKNOWN);
@@ -412,7 +423,9 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             if (properties.getMode() == CodeRiskProperties.Mode.ENFORCE
                     && (CodeRiskDisposition.MANUAL_REVIEW.equals(result.disposition())
                     || CodeRiskDisposition.BLOCK.equals(result.disposition()))
-                    && CodeApprovalStatus.APPROVED.equals(version.getApprovalStatus())) {
+                    && CodeApprovalStatus.APPROVED.equals(version.getApprovalStatus())
+                    && systemConfigService.currentTrainingCodeReviewModeForUpdate()
+                    .automaticDecisionsEnabled()) {
                 // Fail closed in the same transaction that publishes the new
                 // risk summary. The follow-up AUTO_POLICY rejection may be
                 // retried, but no resolver can consume the old approval meanwhile.
@@ -427,7 +440,9 @@ public class CodeRiskAssessmentService implements CodeRiskAssessmentRescanServic
             return Boolean.TRUE;
         });
         if (Boolean.TRUE.equals(completed)
-                && properties.getMode() == CodeRiskProperties.Mode.ENFORCE) {
+                && properties.getMode() == CodeRiskProperties.Mode.ENFORCE
+                && systemConfigService.currentTrainingCodeReviewMode()
+                .automaticDecisionsEnabled()) {
             applyAutomaticDecision(snapshot.versionId(), snapshot.assessmentId(), result);
         }
     }
