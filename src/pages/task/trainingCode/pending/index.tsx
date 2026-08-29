@@ -725,7 +725,7 @@ const TrainingCodePending: React.FC = () => {
           <span>
             {isTrainingCodeAutoApproveEnabled() ? (
               <>
-                当前系统配置中「训练代码管理员审核」为关闭：日常上传/发布会自动审核通过。
+                当前系统配置中「训练代码审核」为关闭：新上传/发布的代码在基础校验通过后直接批准。
                 本页仍保留完整人工审核与运维能力；若要启用强制人工审核，请到{' '}
                 <a onClick={() => history.push('/system/config')}>
                   系统管理 · 系统配置
@@ -733,9 +733,7 @@ const TrainingCodePending: React.FC = () => {
                 打开该开关。{' '}
               </>
             ) : (
-              <>
-                当前已开启「训练代码管理员审核」，新上传/发布的版本需在本页人工处理。{' '}
-              </>
+              <>当前已开启「训练代码审核」；需要人工处理的版本会进入本页。 </>
             )}
             如需查找已自动通过的版本，请切换审核状态，或到{' '}
             <a onClick={() => history.push('/task/code/admin-assets')}>

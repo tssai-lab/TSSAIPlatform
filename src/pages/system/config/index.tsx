@@ -36,11 +36,18 @@ import {
   updateKubernetesResourcePolicy,
   updateSystemConfig,
 } from '@/services/system/config';
+import {
+  automaticReviewSelectedFromMode,
+  normalizeTrainingCodeReviewMode,
+  reviewEnabledFromMode,
+  reviewModeFromSwitches,
+} from '@/services/system/trainingCodeReviewPolicy';
 import { storage } from '@/utils/storage';
 
 const DEFAULT_CONFIG: SystemConfig = {
-  enableTrainingCodeAdminReview: false,
-  trainingCodeReviewMode: 'DIRECT_PASS',
+  enableTrainingCodeAdminReview: true,
+  enableTrainingCodeAutoReview: true,
+  trainingCodeReviewMode: 'STANDARD_REVIEW',
   userLogStorageLimitMb: DEFAULT_USER_LOG_LIMIT_MB,
   logMaxSize: DEFAULT_USER_LOG_LIMIT_MB,
 };
@@ -65,26 +72,29 @@ function readLocalSystemConfig(): SystemConfig {
     cached?.userLogStorageLimitMb ??
     cached?.logMaxSize ??
     DEFAULT_USER_LOG_LIMIT_MB;
-  const enableReview =
-    cached?.enableTrainingCodeAdminReview ??
-    review.enableTrainingCodeAdminReview ??
-    false;
+  const mode = normalizeTrainingCodeReviewMode(
+    cached?.trainingCodeReviewMode || review.trainingCodeReviewMode,
+  );
   return {
-    enableTrainingCodeAdminReview: enableReview,
-    trainingCodeReviewMode: enableReview ? 'STANDARD_REVIEW' : 'DIRECT_PASS',
+    enableTrainingCodeAdminReview: reviewEnabledFromMode(mode),
+    enableTrainingCodeAutoReview: automaticReviewSelectedFromMode(mode),
+    trainingCodeReviewMode: mode,
     userLogStorageLimitMb: limitMb,
     logMaxSize: limitMb,
     updatedAt: cached?.updatedAt,
   };
 }
 
-function writeLocalSystemConfig(config: SystemConfig) {
+function writeLocalSystemConfig(
+  config: SystemConfig,
+  syncedFromServer: boolean,
+) {
   storage.set(LOCAL_SYSTEM_CONFIG_KEY, config);
   setTrainingCodeReviewLocalConfig({
-    enableTrainingCodeAdminReview:
-      config.enableTrainingCodeAdminReview ?? false,
+    enableTrainingCodeAdminReview: config.enableTrainingCodeAdminReview ?? true,
+    enableTrainingCodeAutoReview: config.enableTrainingCodeAutoReview ?? true,
     trainingCodeReviewMode: config.trainingCodeReviewMode,
-    syncedFromServer: true,
+    syncedFromServer,
   });
 }
 
@@ -110,6 +120,7 @@ const SystemConfigPage: React.FC = () => {
   const [resourcePolicy, setResourcePolicy] =
     useState<KubernetesResourcePolicy>();
   const [resourceError, setResourceError] = useState<string>();
+  const reviewEnabled = Form.useWatch('enableTrainingCodeAdminReview', form);
 
   useEffect(() => {
     if (!access.canAccessSystemConfig) {
@@ -118,10 +129,10 @@ const SystemConfigPage: React.FC = () => {
   }, [access.canAccessSystemConfig]);
 
   const applyConfig = useCallback(
-    (next: SystemConfig) => {
+    (next: SystemConfig, syncedFromServer = true) => {
       form.setFieldsValue(next);
       setUpdatedAt(next.updatedAt);
-      writeLocalSystemConfig(next);
+      writeLocalSystemConfig(next, syncedFromServer);
     },
     [form],
   );
@@ -135,10 +146,10 @@ const SystemConfigPage: React.FC = () => {
         setUsingLocalFallback(false);
         return;
       }
-      applyConfig(readLocalSystemConfig());
+      applyConfig(readLocalSystemConfig(), false);
       setUsingLocalFallback(true);
     } catch (error: unknown) {
-      applyConfig(readLocalSystemConfig());
+      applyConfig(readLocalSystemConfig(), false);
       setUsingLocalFallback(true);
       if (!isNotFoundError(error)) {
         message.warning('系统配置接口暂不可用，已加载本机缓存');
@@ -188,41 +199,54 @@ const SystemConfigPage: React.FC = () => {
       values.logMaxSize ??
       DEFAULT_USER_LOG_LIMIT_MB;
     const enableReview = values.enableTrainingCodeAdminReview ?? false;
+    const enableAutomaticReview = values.enableTrainingCodeAutoReview ?? true;
     return {
       enableTrainingCodeAdminReview: enableReview,
-      trainingCodeReviewMode: enableReview ? 'STANDARD_REVIEW' : 'DIRECT_PASS',
+      enableTrainingCodeAutoReview: enableAutomaticReview,
+      trainingCodeReviewMode: reviewModeFromSwitches(
+        enableReview,
+        enableAutomaticReview,
+      ),
       userLogStorageLimitMb: limitMb,
       logMaxSize: limitMb,
     };
   };
 
   const handleSubmit = async () => {
+    if (usingLocalFallback) {
+      message.error('后端系统配置接口不可用，无法修改全局审核策略');
+      return;
+    }
+    let values: SystemConfig;
     try {
-      const values = await form.validateFields();
-      const payload = buildPayload(values);
-      setSaving(true);
-      try {
-        const res = await updateSystemConfig(payload, {
-          skipErrorHandler: true,
-        });
-        if (res.code === 200) {
-          applyConfig(res.data ?? payload);
-          setUsingLocalFallback(false);
-          message.success(res.message || '保存成功');
-          return;
-        }
-      } catch (error: unknown) {
-        if (!isNotFoundError(error)) {
-          throw error;
-        }
-      }
-      applyConfig(payload);
-      setUsingLocalFallback(true);
-      message.success('已保存（当前后端未提供系统配置接口，已写入本机）');
+      values = await form.validateFields();
     } catch {
-      applyConfig(buildPayload(form.getFieldsValue()));
-      setUsingLocalFallback(true);
-      message.success('已保存到本机缓存');
+      return;
+    }
+    const payload = buildPayload(values);
+    setSaving(true);
+    try {
+      const res = await updateSystemConfig(payload, {
+        skipErrorHandler: true,
+      });
+      if (res.code !== 200) {
+        throw new Error(res.message || '保存失败');
+      }
+      const verified = await fetchSystemConfig({ skipErrorHandler: true });
+      if (
+        verified.code !== 200 ||
+        !verified.data ||
+        verified.data.trainingCodeReviewMode !== payload.trainingCodeReviewMode
+      ) {
+        throw new Error('后端未返回刚保存的审核策略，请重新加载后重试');
+      }
+      applyConfig(verified.data, true);
+      setUsingLocalFallback(false);
+      message.success(res.message || '保存成功');
+    } catch (error: unknown) {
+      message.error(
+        error instanceof Error ? error.message : '保存失败，请稍后重试',
+      );
     } finally {
       setSaving(false);
     }
@@ -285,7 +309,7 @@ const SystemConfigPage: React.FC = () => {
         <Spin spinning={loading}>
           {usingLocalFallback ? (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              后端系统配置接口暂不可用，当前使用本机缓存；「训练代码管理员审核」开关仍会立即影响前端行为。
+              后端系统配置接口暂不可用，当前只展示最近一次缓存；恢复连接前不能修改全局审核策略。
             </Typography.Paragraph>
           ) : null}
           <Form
@@ -296,11 +320,31 @@ const SystemConfigPage: React.FC = () => {
           >
             <Form.Item
               name="enableTrainingCodeAdminReview"
-              label="训练代码管理员审核"
+              label="启用训练代码审核"
               valuePropName="checked"
-              extra="关闭：校验通过后由系统直接批准，可直接用于训练。开启：进入标准审核，中高风险需管理员在「待审核」中通过；低风险（LOW）仍可能被策略自动通过，不一定出现在待审列表。"
+              extra="关闭：基础校验通过后直接批准。开启：按下方自动审核设置进入自动审核或全部人工待审。"
             >
-              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              <Switch
+                checkedChildren="开启"
+                unCheckedChildren="关闭"
+                disabled={usingLocalFallback}
+              />
+            </Form.Item>
+            <Form.Item
+              name="enableTrainingCodeAutoReview"
+              label="启用自动审核"
+              valuePropName="checked"
+              extra={
+                reviewEnabled
+                  ? '开启：自动扫描，低风险自动通过、阻断项自动拒绝，其余人工审核。关闭：所有新代码通过基础校验后进入人工待审。'
+                  : '训练代码审核关闭时不生效；重新开启审核时默认选择自动审核，可再手动关闭。'
+              }
+            >
+              <Switch
+                checkedChildren="开启"
+                unCheckedChildren="关闭"
+                disabled={!reviewEnabled || usingLocalFallback}
+              />
             </Form.Item>
             <Form.Item
               name="userLogStorageLimitMb"
@@ -324,6 +368,7 @@ const SystemConfigPage: React.FC = () => {
                 addonAfter="MB"
                 style={{ width: 240 }}
                 placeholder={String(DEFAULT_USER_LOG_LIMIT_MB)}
+                disabled={usingLocalFallback}
               />
             </Form.Item>
             <Form.Item label="最近更新时间">
@@ -332,7 +377,12 @@ const SystemConfigPage: React.FC = () => {
               </Typography.Text>
             </Form.Item>
             <Form.Item>
-              <Button type="primary" onClick={handleSubmit} loading={saving}>
+              <Button
+                type="primary"
+                onClick={handleSubmit}
+                loading={saving}
+                disabled={usingLocalFallback}
+              >
                 保存配置
               </Button>
               <Button
