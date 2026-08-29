@@ -9,7 +9,10 @@ import {
   removePendingCodeVersion,
   upsertPendingCodeVersion,
 } from '@/utils/pendingCodeVersions';
-import { persistSuccessfulCodeUpload } from '@/utils/codeUploadReceipt.mjs';
+import {
+  persistSuccessfulCodeUpload,
+  shouldFallbackToLegacyCodeUpload,
+} from '@/utils/codeUploadReceipt.mjs';
 import {
   approveV2CodeVersion,
   buildV2ApprovalRequest,
@@ -193,7 +196,10 @@ export async function uploadCodeZip(
       upsertPendingCodeVersion,
     );
     return response;
-  } catch {
+  } catch (error) {
+    if (!shouldFallbackToLegacyCodeUpload(error)) {
+      throw error;
+    }
     const response = await legacyUpload();
     persistSuccessfulCodeUpload(
       response,

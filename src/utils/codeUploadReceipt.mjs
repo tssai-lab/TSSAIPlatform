@@ -46,3 +46,16 @@ export function persistSuccessfulCodeUpload(response, metadata, persist) {
   }
   return receipt;
 }
+
+/**
+ * Legacy upload is a compatibility path, not a retry path. Only fall back
+ * when the server explicitly says that the V2 endpoint is unavailable.
+ * Timeouts and 5xx responses are ambiguous: the V2 request may already have
+ * persisted the asset, so replaying the ZIP could create a duplicate.
+ */
+export function shouldFallbackToLegacyCodeUpload(error) {
+  const status = Number(
+    error?.response?.status ?? error?.info?.status ?? error?.status,
+  );
+  return status === 404 || status === 405 || status === 501;
+}

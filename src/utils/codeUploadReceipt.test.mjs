@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildCodeUploadReceipt,
   persistSuccessfulCodeUpload,
+  shouldFallbackToLegacyCodeUpload,
 } from './codeUploadReceipt.mjs';
 
 test('successful training-page upload is recorded for the code list', () => {
@@ -100,4 +101,28 @@ test('browser storage failure never turns a saved upload into a retry', () => {
       },
     ),
   );
+});
+
+test('legacy upload is used only when the V2 endpoint is explicitly unavailable', () => {
+  assert.equal(
+    shouldFallbackToLegacyCodeUpload({ response: { status: 404 } }),
+    true,
+  );
+  assert.equal(
+    shouldFallbackToLegacyCodeUpload({ info: { status: 405 } }),
+    true,
+  );
+  assert.equal(shouldFallbackToLegacyCodeUpload({ status: 501 }), true);
+});
+
+test('ambiguous failures never replay an upload through the legacy endpoint', () => {
+  for (const error of [
+    new Error('timeout'),
+    { response: { status: 400 } },
+    { response: { status: 409 } },
+    { response: { status: 500 } },
+    { response: { status: 503 } },
+  ]) {
+    assert.equal(shouldFallbackToLegacyCodeUpload(error), false);
+  }
 });

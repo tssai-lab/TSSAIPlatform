@@ -37,3 +37,5 @@ export function persistSuccessfulCodeUpload(
   metadata: Parameters<typeof buildCodeUploadReceipt>[1],
   persist: (receipt: CodeUploadReceipt) => unknown,
 ): CodeUploadReceipt | undefined;
+
+export function shouldFallbackToLegacyCodeUpload(error: unknown): boolean;
