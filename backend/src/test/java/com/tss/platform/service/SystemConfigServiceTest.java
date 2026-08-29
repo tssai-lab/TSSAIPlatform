@@ -4,6 +4,9 @@ import com.tss.platform.dto.SystemConfigDto;
 import com.tss.platform.dto.SystemConfigUpdateRequest;
 import com.tss.platform.entity.PlatformSystemConfig;
 import com.tss.platform.model.TrainingCodeReviewMode;
+import com.tss.platform.module1.common.AuditActionType;
+import com.tss.platform.module1.common.AuditObjectType;
+import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.repository.PlatformSystemConfigRepository;
 import com.tss.platform.security.AuthContext;
 import jakarta.persistence.EntityManager;
@@ -29,9 +32,15 @@ class SystemConfigServiceTest {
             mock(PlatformSystemConfigRepository.class);
     private final AuthContext authContext = mock(AuthContext.class);
     private final EntityManager entityManager = mock(EntityManager.class);
+    private final AuditRecordService auditRecordService = mock(AuditRecordService.class);
     private final Query nativeQuery = mock(Query.class);
     private final SystemConfigService service =
-            new SystemConfigService(repository, authContext, entityManager);
+            new SystemConfigService(
+                    repository,
+                    authContext,
+                    entityManager,
+                    auditRecordService
+            );
 
     @BeforeEach
     void setUp() {
@@ -48,7 +57,7 @@ class SystemConfigServiceTest {
     }
 
     @Test
-    void missingOrInvalidStoredModeFailsClosedToStandardReview() {
+    void missingModeUsesDefaultAndInvalidStoredModeFailsClosedToManualReview() {
         when(repository.findById(PlatformSystemConfig.GLOBAL_ID))
                 .thenReturn(Optional.empty());
         assertEquals(
@@ -60,13 +69,13 @@ class SystemConfigServiceTest {
         when(repository.findById(PlatformSystemConfig.GLOBAL_ID))
                 .thenReturn(Optional.of(invalid));
         assertEquals(
-                TrainingCodeReviewMode.STANDARD_REVIEW,
+                TrainingCodeReviewMode.MANUAL_ONLY,
                 service.currentTrainingCodeReviewMode()
         );
     }
 
     @Test
-    void superAdministratorCanSwitchBetweenTheTwoPublicModes() {
+    void superAdministratorCanSwitchBetweenTheThreePublicModes() {
         PlatformSystemConfig config = config(
                 TrainingCodeReviewMode.STANDARD_REVIEW.name()
         );
@@ -83,6 +92,20 @@ class SystemConfigServiceTest {
                 config.getTrainingCodeReviewMode());
         assertEquals(9, config.getUpdatedByUserId());
         verify(repository).saveAndFlush(config);
+        verify(auditRecordService).recordSuccess(
+                AuditActionType.PERMISSION_CHANGE,
+                AuditObjectType.TRAINING_CODE,
+                PlatformSystemConfig.GLOBAL_ID,
+                "trainingCodeReviewMode: STANDARD_REVIEW -> DIRECT_PASS"
+        );
+
+        SystemConfigDto manualOnly = service.updateForAdministration(
+                new SystemConfigUpdateRequest("manual_only", null)
+        );
+        assertEquals(TrainingCodeReviewMode.MANUAL_ONLY.name(),
+                manualOnly.trainingCodeReviewMode());
+        assertEquals(TrainingCodeReviewMode.MANUAL_ONLY.name(),
+                config.getTrainingCodeReviewMode());
     }
 
     @Test

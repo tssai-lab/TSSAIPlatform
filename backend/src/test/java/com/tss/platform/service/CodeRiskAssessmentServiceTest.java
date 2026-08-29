@@ -89,6 +89,8 @@ class CodeRiskAssessmentServiceTest {
         )).thenReturn(List.of());
         when(systemConfigService.currentTrainingCodeReviewMode())
                 .thenReturn(TrainingCodeReviewMode.STANDARD_REVIEW);
+        when(systemConfigService.currentTrainingCodeReviewModeForUpdate())
+                .thenReturn(TrainingCodeReviewMode.STANDARD_REVIEW);
         asset = asset();
         version = version();
         validation = validation();
@@ -111,8 +113,10 @@ class CodeRiskAssessmentServiceTest {
     }
 
     @Test
-    void manualOnlyCreatesCompletedManualReviewEvidenceInCallingTransaction() {
-        properties.setMode(CodeRiskProperties.Mode.MANUAL_ONLY);
+    void dynamicManualOnlyCreatesCompletedManualReviewEvidenceWithoutAutoDecision() {
+        properties.setMode(CodeRiskProperties.Mode.ENFORCE);
+        when(systemConfigService.currentTrainingCodeReviewMode())
+                .thenReturn(TrainingCodeReviewMode.MANUAL_ONLY);
         when(versionRepository.findByIdAndDeletedFalseForUpdate("version-1"))
                 .thenReturn(Optional.of(version));
         when(validationRepository.findById("validation-1"))
@@ -130,6 +134,8 @@ class CodeRiskAssessmentServiceTest {
                 CodeRiskLevel.UNKNOWN, CodeRiskDisposition.MANUAL_REVIEW,
                 "manual-review-only", 0
         );
+        verify(approvalService, never()).approveBySystemConfiguration(any(), any());
+        verify(approvalService, never()).decideAutomatically(any(), any(), any(Boolean.class));
     }
 
     @Test
@@ -222,6 +228,57 @@ class CodeRiskAssessmentServiceTest {
         assertEquals("ARTIFACT_SHA256_MISMATCH", queued.getErrorCode());
         verify(approvalService, never()).decideAutomatically(any(), any(), eq(true));
         verify(approvalService, never()).decideAutomatically(any(), any(), eq(false));
+    }
+
+    @Test
+    void queuedScanCanFinishButCannotDecideAfterAutomaticReviewIsDisabled() {
+        properties.setMode(CodeRiskProperties.Mode.ENFORCE);
+        when(systemConfigService.currentTrainingCodeReviewMode())
+                .thenReturn(TrainingCodeReviewMode.MANUAL_ONLY);
+        byte[] archive = zipService.writeDeterministic(Map.of(
+                "train.py", "def train(x):\n    return x + 1\n"
+                        .getBytes(StandardCharsets.UTF_8)
+        ));
+        configureArtifact(archive);
+        CodeRiskAssessment queued = queuedAssessment();
+        configureQueuedProcessing(queued);
+        when(storageService.read(version.getStoragePath())).thenReturn(new StoredCodeArtifact(
+                version.getStoragePath(), archive, version.getArtifactSha256(), archive.length
+        ));
+
+        service.processPendingBatch();
+
+        assertEquals(CodeRiskAssessmentStatus.COMPLETED, queued.getStatus());
+        assertEquals(CodeRiskDisposition.AUTO_APPROVE, queued.getDisposition());
+        assertEquals("PENDING", version.getApprovalStatus());
+        verify(approvalService, never()).decideAutomatically(any(), any(), any(Boolean.class));
+    }
+
+    @Test
+    void disablingAutomaticReviewDoesNotRevokeAnExistingApprovalWhenScanFinishes() {
+        properties.setMode(CodeRiskProperties.Mode.ENFORCE);
+        when(systemConfigService.currentTrainingCodeReviewMode())
+                .thenReturn(TrainingCodeReviewMode.MANUAL_ONLY);
+        when(systemConfigService.currentTrainingCodeReviewModeForUpdate())
+                .thenReturn(TrainingCodeReviewMode.MANUAL_ONLY);
+        version.setApprovalStatus("APPROVED");
+        byte[] archive = zipService.writeDeterministic(Map.of(
+                "train.py", ("KEY = '''-----BEGIN PRIVATE KEY-----\n"
+                        + "sensitive\n-----END PRIVATE KEY-----'''\n")
+                        .getBytes(StandardCharsets.UTF_8)
+        ));
+        configureArtifact(archive);
+        CodeRiskAssessment queued = queuedAssessment();
+        configureQueuedProcessing(queued);
+        when(storageService.read(version.getStoragePath())).thenReturn(new StoredCodeArtifact(
+                version.getStoragePath(), archive, version.getArtifactSha256(), archive.length
+        ));
+
+        service.processPendingBatch();
+
+        assertEquals(CodeRiskDisposition.BLOCK, queued.getDisposition());
+        assertEquals("APPROVED", version.getApprovalStatus());
+        verify(approvalService, never()).decideAutomatically(any(), any(), any(Boolean.class));
     }
 
     @Test
