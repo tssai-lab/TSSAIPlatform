@@ -61,6 +61,58 @@ class SystemLogControllerTest {
     }
 
     @Test
+    void normalAdministratorCanOnlyReadNormalUserLogsAndCannotFilterByIp() {
+        when(queryService.queryLogPage(any())).thenReturn(new Page<LogItemVO>(1, 10, 0));
+        try (MockedStatic<StpUtil> stp = userSession(2, 2, "manager")) {
+            Result<?> result = list(null, null, null);
+
+            assertThat(result.getCode()).isEqualTo(Result.SUCCESS_CODE);
+            ArgumentCaptor<LogListQueryDTO> captor = ArgumentCaptor.forClass(LogListQueryDTO.class);
+            verify(queryService).queryLogPage(captor.capture());
+            assertThat(captor.getValue().getForceUserId()).isNull();
+            assertThat(captor.getValue().getForceNormalUsersOnly()).isTrue();
+            assertThat(captor.getValue().getIp()).isNull();
+            assertThat(captor.getValue().getHideIp()).isTrue();
+        }
+    }
+
+    @Test
+    void superAdministratorCanReadAllLogsAndKeepIpFilterVisible() {
+        when(queryService.queryLogPage(any())).thenReturn(new Page<LogItemVO>(1, 10, 0));
+        try (MockedStatic<StpUtil> stp = userSession(1, 1, "admin")) {
+            Result<?> result = list(null, null, null);
+
+            assertThat(result.getCode()).isEqualTo(Result.SUCCESS_CODE);
+            ArgumentCaptor<LogListQueryDTO> captor = ArgumentCaptor.forClass(LogListQueryDTO.class);
+            verify(queryService).queryLogPage(captor.capture());
+            assertThat(captor.getValue().getForceUserId()).isNull();
+            assertThat(captor.getValue().getForceNormalUsersOnly()).isFalse();
+            assertThat(captor.getValue().getIp()).isEqualTo("198.51.100.8");
+            assertThat(captor.getValue().getHideIp()).isFalse();
+        }
+    }
+
+    @Test
+    void onlySuperAdministratorCanExportLogs() {
+        try (MockedStatic<StpUtil> stp = userSession(2, 2, "manager")) {
+            Result<?> denied = export(999_999);
+
+            assertThat(denied.getCode()).isEqualTo(Result.NO_AUTH_CODE);
+            verify(queryService, never()).queryLogPage(any());
+        }
+
+        when(queryService.queryLogPage(any())).thenReturn(new Page<LogItemVO>(1, 10_000, 0));
+        try (MockedStatic<StpUtil> stp = userSession(1, 1, "admin")) {
+            Result<?> allowed = export(999_999);
+
+            assertThat(allowed.getCode()).isEqualTo(Result.SUCCESS_CODE);
+            ArgumentCaptor<LogListQueryDTO> captor = ArgumentCaptor.forClass(LogListQueryDTO.class);
+            verify(queryService).queryLogPage(captor.capture());
+            assertThat(captor.getValue().getPageSize()).isEqualTo(10_000);
+        }
+    }
+
+    @Test
     void invalidTimeRangeIsRejectedBeforeDatabaseQuery() {
         try (MockedStatic<StpUtil> stp = userSession(1, 1, "admin")) {
             Result<?> result = list(null, null,
@@ -83,6 +135,13 @@ class SystemLogControllerTest {
         return controller.getLogList(
                 1, 10, username, null, operateTime, "198.51.100.8",
                 null, null, null, currentUsername, null
+        );
+    }
+
+    private Result<?> export(Integer pageSize) {
+        return controller.exportLogs(
+                1, pageSize, null, null, null, null,
+                null, null, null, null, null
         );
     }
 
