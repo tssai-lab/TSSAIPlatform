@@ -146,9 +146,13 @@ manifest is versioned below `manifests/` and byte-matches the SHA-256 in
 `artifacts.lock`. After both node imports, install it only from the reviewed
 control plane. The installer adds the laboratory kubelet-certificate override,
 forces offline `imagePullPolicy: Never`, rejects Main/Second node names and
-requires the Metrics API to report every reviewed node. The platform bootstrap
-calls the same installer, so a clean redeployment cannot silently omit CPU and
-memory metrics.
+requires the Metrics API to report every reviewed node. It also selects the
+standard `node-role.kubernetes.io/control-plane` label and tolerates only that
+role's `NoSchedule` taint. This keeps the single Metrics Server replica on the
+stable control plane, so a worker shutdown does not also remove control-plane
+CPU and memory metrics. No host name or internal IP is embedded in the rule.
+The platform bootstrap calls the same installer, so a clean redeployment cannot
+silently omit CPU and memory metrics or place their only collector on a worker.
 
 ```bash
 sudo bash deploy/tss-aiplatform-internal/scripts/install-metrics-server.sh \
