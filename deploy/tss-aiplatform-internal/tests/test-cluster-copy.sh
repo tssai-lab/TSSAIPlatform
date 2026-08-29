@@ -536,6 +536,10 @@ grep -F 'image: registry.k8s.io/metrics-server/metrics-server:v0.9.0' \
   "$metrics_manifest" >/dev/null
 grep -F 'imagePullPolicy: Never' "$metrics_installer" >/dev/null
 grep -F -- '--kubelet-insecure-tls' "$metrics_installer" >/dev/null
+grep -F 'node-role.kubernetes.io/control-plane: ""' "$metrics_installer" >/dev/null
+grep -F 'key: node-role.kubernetes.io/control-plane' "$metrics_installer" >/dev/null
+grep -F 'Metrics Server is not running on a control-plane node' \
+  "$metrics_installer" >/dev/null
 grep -F 'apply --dry-run=server' "$metrics_installer" >/dev/null
 grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \
   "$metrics_installer" >/dev/null

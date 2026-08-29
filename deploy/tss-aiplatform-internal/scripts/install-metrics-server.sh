@@ -98,6 +98,10 @@ expected_image_digest="$(awk -v image="$expected_image" \
   || die "Metrics Server manifest sampling anchor differs"
 [[ $(grep -Fc '        imagePullPolicy: IfNotPresent' "$source_manifest") -eq 1 ]] \
   || die "Metrics Server manifest pull-policy anchor differs"
+[[ $(grep -Fc '        kubernetes.io/os: linux' "$source_manifest") -eq 1 ]] \
+  || die "Metrics Server manifest node-selector anchor differs"
+[[ $(grep -Fc '      priorityClassName: system-cluster-critical' "$source_manifest") -eq 1 ]] \
+  || die "Metrics Server manifest priority-class anchor differs"
 if grep -F -- '--kubelet-insecure-tls' "$source_manifest" >/dev/null; then
   die "the locked upstream manifest unexpectedly contains the local TLS override"
 fi
@@ -117,10 +121,25 @@ awk '
     print "        imagePullPolicy: Never"
     next
   }
+  $0 == "        kubernetes.io/os: linux" {
+    print
+    print "        node-role.kubernetes.io/control-plane: \"\""
+    next
+  }
+  $0 == "      priorityClassName: system-cluster-critical" {
+    print "      tolerations:"
+    print "      - effect: NoSchedule"
+    print "        key: node-role.kubernetes.io/control-plane"
+    print "        operator: Exists"
+    print
+    next
+  }
   { print }
 ' "$source_manifest" >"$rendered_manifest"
 [[ $(grep -Fc '        - --kubelet-insecure-tls' "$rendered_manifest") -eq 1 \
-  && $(grep -Fc '        imagePullPolicy: Never' "$rendered_manifest") -eq 1 ]] \
+  && $(grep -Fc '        imagePullPolicy: Never' "$rendered_manifest") -eq 1 \
+  && $(grep -Fc '        node-role.kubernetes.io/control-plane: ""' "$rendered_manifest") -eq 1 \
+  && $(grep -Fc '        key: node-role.kubernetes.io/control-plane' "$rendered_manifest") -eq 1 ]] \
   || die "rendered Metrics Server manifest does not contain the reviewed offline overrides"
 
 admin=("$KUBECTL" --kubeconfig "$KUBECONFIG_PATH" --request-timeout=15s)
@@ -154,6 +173,13 @@ if ! "${admin[@]}" -n kube-system rollout status deployment/metrics-server --tim
 fi
 "${admin[@]}" wait --for=condition=Available \
   apiservice/v1beta1.metrics.k8s.io --timeout=120s >/dev/null
+metrics_node="$("${admin[@]}" -n kube-system get pods \
+  -l k8s-app=metrics-server --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].spec.nodeName}')"
+[[ -n $metrics_node ]] || die "Metrics Server has no running pod"
+"${admin[@]}" get node "$metrics_node" \
+  -l node-role.kubernetes.io/control-plane -o name | grep -q . \
+  || die "Metrics Server is not running on a control-plane node"
 
 top_output=''
 for _attempt in $(seq 1 30); do
