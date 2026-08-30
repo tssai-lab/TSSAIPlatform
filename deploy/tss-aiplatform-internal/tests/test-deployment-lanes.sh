@@ -61,6 +61,11 @@ grep -F 'ssh_with_retry "sync ${RELEASE_SHA}"' "$internal_workflow" >/dev/null
 grep -F 'ssh_with_retry probe' "$internal_workflow" >/dev/null
 ! grep -F 'ssh_with_retry deploy-backend' "$internal_workflow" >/dev/null
 ! grep -F 'ssh_with_retry stage-backend' "$internal_workflow" >/dev/null
+grep -F 'stage_backend_with_retry() {' "$internal_workflow" >/dev/null
+grep -F 'stage_backend_with_retry' "$internal_workflow" >/dev/null
+grep -F 'sleep $((attempt * 5))' "$internal_workflow" >/dev/null
+grep -F 'already promoted identical bundle is accepted by its digest' \
+  "$internal_workflow" >/dev/null
 grep -F 'git merge-base --is-ancestor "$APPLICATION_SHA" "$current_head"' \
   "$internal_workflow" >/dev/null
 grep -F "allowed_post_test_file='deploy/tss-aiplatform-internal/platform/frontend-image.lock'" \

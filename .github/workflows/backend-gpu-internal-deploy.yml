@@ -214,13 +214,27 @@ jobs:
               sleep $((attempt * 2))
             done
           }
+          stage_backend_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              # The gateway writes into a temporary file and only promotes a
+              # complete bundle. Replaying this stage is therefore safe; an
+              # already promoted identical bundle is accepted by its digest.
+              if tar -C "$bundle_root" -cf - \
+                backend-image-amd64.tar backend-image.sha256 sources.lock \
+                | ssh "${ssh_options[@]}" \
+                    "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-backend; then
+                return 0
+              fi
+              (( attempt < 4 )) || return 1
+              sleep $((attempt * 5))
+            done
+          }
           ssh_with_retry probe
           sleep 2
           ssh_with_retry "sync ${RELEASE_SHA}"
           sleep 2
-          tar -C "$bundle_root" -cf - \
-            backend-image-amd64.tar backend-image.sha256 sources.lock \
-            | ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-backend
+          stage_backend_with_retry
           sleep 2
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-backend
           sleep 2
