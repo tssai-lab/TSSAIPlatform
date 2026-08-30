@@ -538,7 +538,7 @@ jobs:
       inputs.task == 'stage-cpu-runtime-images'
     runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
     environment: tss-aiplatform-internal
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out trusted backend-ops source
         uses: actions/checkout@v4
