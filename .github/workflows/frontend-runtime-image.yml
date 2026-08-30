@@ -52,7 +52,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: frontend-runtime-image-${{ github.ref }}
+  group: tss-aiplatform-internal-deploy
   cancel-in-progress: false
 
 jobs:
