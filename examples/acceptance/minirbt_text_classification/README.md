@@ -23,7 +23,7 @@ python examples/acceptance/minirbt_text_classification/prepare.py \
 
 - `minirbt-h288-base.zip`：上传为 NLP 模型；
 - `minirbt-sentiment-dataset.zip`：上传为 NLP 数据集；
-- `minirbt-training-code.zip`：上传为训练代码，入口 `train.py`；CPU 方案选择 `minirbt_text_classification`，单卡 GPU 方案使用同目录的 `minirbt_text_classification_gpu-v1.yaml`；
+- `minirbt-training-code.zip`：上传为训练代码，入口 `train.py`；统一选择 `minirbt_text_classification`，再在资源步骤选择 CPU 或单卡 GPU。`minirbt_text_classification_gpu-v1.yaml` 只保留为历史验收依据，不应再发布；
 - `minirbt-inference-script.zip`：上传为推理脚本，入口 `infer.py`；
 - `acceptance-manifest.json`：记录每个文件的大小和 SHA-256。
 

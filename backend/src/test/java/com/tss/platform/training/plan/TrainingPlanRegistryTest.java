@@ -43,6 +43,20 @@ class TrainingPlanRegistryTest {
                 .filter(artifact -> Boolean.TRUE.equals(artifact.publishAsModel()))
                 .findFirst().orElseThrow().path());
         assertTrue(huggingFace.inputs().dataset().annotationFormats().contains("FOLDER_CLASSIFICATION"));
+
+        TrainingPlanDefinition miniRbt = registry.requireEnabled(
+                "minirbt_text_classification", "v2"
+        );
+        assertEquals("MiniRBT 中文文本分类", miniRbt.displayName());
+        assertEquals(2, miniRbt.runtimes().size());
+        assertEquals(TrainingPlanDefinition.DeviceType.CPU,
+                registry.resolveRuntime(miniRbt, "cpu-minirbt-small").runtime().deviceType());
+        assertEquals(TrainingPlanDefinition.DeviceType.NVIDIA_GPU,
+                registry.resolveRuntime(miniRbt, "gpu-minirbt-small").runtime().deviceType());
+
+        assertTrue(registry.listLatest(false).stream()
+                .noneMatch(plan -> "hf_image_classification".equals(plan.id())),
+                "the replaced legacy image classification plan must not be offered for new tasks");
     }
 
     @Test

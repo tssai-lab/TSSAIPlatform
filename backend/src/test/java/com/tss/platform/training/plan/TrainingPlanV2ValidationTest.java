@@ -126,6 +126,25 @@ class TrainingPlanV2ValidationTest {
     }
 
     @Test
+    void acceptsConsolidatedOnlinePlansWithCpuAndGpuResourceProfiles() throws IOException {
+        Path root = Path.of("..", "examples", "acceptance", "training_plan_consolidation");
+        Path cv = root.resolve("custom_cv_image_classification-v2.yaml");
+        Path yolo = root.resolve("yolov11n_object_detection-v11.yaml");
+
+        TrainingPlanDefinition cvPlan = parser.parse(Files.readAllBytes(cv), cv.getFileName().toString());
+        TrainingPlanDefinition yoloPlan = parser.parse(Files.readAllBytes(yolo), yolo.getFileName().toString());
+        validator.validate(cvPlan, cv.getFileName().toString());
+        validator.validate(yoloPlan, yolo.getFileName().toString());
+
+        assertEquals("图像分类", cvPlan.displayName());
+        assertEquals(1, cvPlan.runtimes().size());
+        assertEquals("YOLO11n 目标检测", yoloPlan.displayName());
+        assertEquals(2, yoloPlan.runtimes().size());
+        assertEquals(TrainingPlanDefinition.DeviceType.CPU, yoloPlan.runtimes().get(0).deviceType());
+        assertEquals(TrainingPlanDefinition.DeviceType.NVIDIA_GPU, yoloPlan.runtimes().get(1).deviceType());
+    }
+
+    @Test
     void rejectsUnapprovedMutableImagesAndResourcesOutsideCpuSafetyEnvelope() {
         assertViolation(replace(validYaml(),
                         "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

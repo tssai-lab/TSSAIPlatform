@@ -1,11 +1,10 @@
 schemaVersion: tss.training.plan/v2
-id: minirbt_text_classification_gpu
-version: v1
-displayName: MiniRBT 中文文本分类（单卡 GPU）
-description: 使用离线 MiniRBT-H288 模型和三段 JSONL 数据，在一张 NVIDIA GPU 上完成小型中文文本分类微调。
+id: minirbt_text_classification
+version: v2
+displayName: MiniRBT 中文文本分类
+description: 使用同一套模型、数据集和训练代码，可按需选择 CPU 或单卡 NVIDIA GPU 完成中文文本分类微调。
 category: NLP
-enabled: false
-unavailableReason: 已合并到 minirbt_text_classification v2 的 GPU 资源档位；本文件仅保留历史验收依据。
+enabled: true
 trainingModes: [FULL_FINETUNE]
 
 execution:
@@ -43,7 +42,7 @@ parameters:
     displayName: 训练轮数
     type: INTEGER
     required: false
-    defaultValue: 1
+    defaultValue: 2
     minimum: 1
     maximum: 20
   - name: batchSize
@@ -52,7 +51,7 @@ parameters:
     required: false
     defaultValue: 8
     minimum: 1
-    maximum: 32
+    maximum: 64
   - name: lr
     displayName: 学习率
     type: NUMBER
@@ -97,6 +96,21 @@ parameters:
     maximum: 200000
 
 runtimes:
+  - id: nlp-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@sha256:cbfd669caf6ce70367b7eb6f0407242f4e537e8863fd26a84826ceb6ff8cc391
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-minirbt-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
   - id: nlp-gpu
     deviceType: NVIDIA_GPU
     image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@sha256:ec0a51b0cd287f77e9d885ca8ae38b436b428f553e0fe9cfa60f4ef4a1ddf174
@@ -150,4 +164,4 @@ security:
   runAsNonRoot: true
   allowPrivilegeEscalation: false
   automountServiceAccountToken: false
-  maxRuntimeSeconds: 1800
+  maxRuntimeSeconds: 28800
