@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
 public class JobScheduler {
 
     private static final Logger LOG = LoggerFactory.getLogger(JobScheduler.class);
+    static final String PLATFORM_SCHEDULABLE_LABEL = "tss.ai/platform-schedulable";
 
     private final ComputeServerRepository computeServerRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
@@ -200,6 +201,7 @@ public class JobScheduler {
     ) {
         List<ComputeServer> candidates = computeServerRepo.findByDeletedFalse().stream()
                 .filter(n -> "online".equals(n.getStatus()) && Boolean.TRUE.equals(n.getEnabled()))
+                .filter(this::isPlatformSchedulable)
                 .collect(Collectors.toList());
         if (modelCacheProperties.isEnabled()) {
             candidates = candidates.stream()
@@ -379,6 +381,27 @@ public class JobScheduler {
                     labels.path("tss.ai/model-cache-ready").asText());
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    /**
+     * Exclude nodes that Kubernetes has explicitly made unavailable to ordinary
+     * platform workloads. Missing or malformed historical label data keeps the
+     * previous behavior so upgrading an existing CPU cluster cannot stall all
+     * work before the metrics collector has refreshed once.
+     */
+    boolean isPlatformSchedulable(ComputeServer node) {
+        String labelsJson = node.getK8sLabelsJson();
+        if (labelsJson == null || labelsJson.isBlank()) {
+            return true;
+        }
+        try {
+            JsonNode labels = new ObjectMapper().readTree(labelsJson);
+            JsonNode schedulable = labels.path(PLATFORM_SCHEDULABLE_LABEL);
+            return schedulable.isMissingNode()
+                    || !"false".equalsIgnoreCase(schedulable.asText());
+        } catch (Exception ignored) {
+            return true;
         }
     }
 

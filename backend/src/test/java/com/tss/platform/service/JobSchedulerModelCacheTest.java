@@ -111,6 +111,38 @@ class JobSchedulerModelCacheTest {
                 fixture.scheduler.assignNodeForInference(new InferenceTask(), null));
     }
 
+    @Test
+    void explicitlyUnschedulableNodeIsExcludedWithoutUsingHostNamesOrRoles() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer blocked = gpuNode("10.0.0.10", """
+                {"tss.ai/accelerator":"nvidia","tss.ai/platform-schedulable":"false"}
+                """);
+        ComputeServer worker = gpuNode("10.0.0.11", """
+                {"tss.ai/accelerator":"nvidia","tss.ai/platform-schedulable":"true"}
+                """);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(blocked, worker));
+        TrainingExperimentVersion task = new TrainingExperimentVersion();
+        task.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":1}}
+                """);
+
+        assertEquals("10.0.0.11", fixture.scheduler.assignNodeForTraining(
+                task, Map.of("tss.ai/accelerator", "nvidia")));
+        assertFalse(fixture.scheduler.isPlatformSchedulable(blocked));
+        assertTrue(fixture.scheduler.isPlatformSchedulable(worker));
+    }
+
+    @Test
+    void missingSchedulableMarkerPreservesExistingCpuClusterBehavior() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer existing = node("10.0.0.12", false);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(existing));
+
+        assertEquals("10.0.0.12",
+                fixture.scheduler.assignNodeForInference(new InferenceTask(), null));
+        assertTrue(fixture.scheduler.isPlatformSchedulable(existing));
+    }
+
     private static ComputeServer node(String serverIp, boolean cacheReady) {
         ComputeServer node = new ComputeServer();
         node.setServerIp(serverIp);
