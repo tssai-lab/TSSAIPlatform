@@ -16,6 +16,7 @@ import com.tss.platform.training.plan.TrainingPlanValidator;
 import com.tss.platform.training.plan.TrainingPlanYamlParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
@@ -35,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -266,6 +268,27 @@ class TrainingPlanAdministrationServiceTest {
         assertEquals(importedAt, result.summary().importedAt());
         assertEquals(new String(validYaml, StandardCharsets.UTF_8), result.yamlContent());
         assertNotNull(result.summary().publishedAt());
+    }
+
+    @Test
+    void publishingNewVersionFlushesOldActiveVersionBeforeInsert() {
+        TrainingPlanDefinitionEntity oldActive = entity(validYaml, true);
+        byte[] versionTwo = new String(validYaml, StandardCharsets.UTF_8)
+                .replace("version: v1", "version: v2")
+                .getBytes(StandardCharsets.UTF_8);
+        when(repository.findActiveByPlanIdForUpdate("custom_image_plan"))
+                .thenReturn(List.of(oldActive));
+
+        TrainingPlanAdminDtos.Detail result = service.publish(
+                file(versionTwo), TrainingPlanContent.sha256(versionTwo)
+        );
+
+        assertEquals("v2", result.summary().planVersion());
+        assertEquals(TrainingPlanDefinitionEntity.STATUS_DISABLED, oldActive.getStatus());
+        InOrder persistenceOrder = inOrder(repository);
+        persistenceOrder.verify(repository).save(oldActive);
+        persistenceOrder.verify(repository).flush();
+        persistenceOrder.verify(repository).saveAndFlush(any(TrainingPlanDefinitionEntity.class));
     }
 
     @Test

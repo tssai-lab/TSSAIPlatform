@@ -410,11 +410,18 @@ public class TrainingPlanAdministrationService implements ApplicationRunner {
             return exact.get();
         }
 
-        for (TrainingPlanDefinitionEntity active : repository.findActiveByPlanIdForUpdate(candidate.id())) {
+        List<TrainingPlanDefinitionEntity> activePlans =
+                repository.findActiveByPlanIdForUpdate(candidate.id());
+        for (TrainingPlanDefinitionEntity active : activePlans) {
             active.setStatus(TrainingPlanDefinitionEntity.STATUS_DISABLED);
             active.setDisabledByUserId(actorUserId);
             active.setDisabledAt(now);
             repository.save(active);
+        }
+        if (!activePlans.isEmpty()) {
+            // PostgreSQL enforces one ACTIVE row per plan ID with a partial unique index.
+            // Hibernate may otherwise insert the new ACTIVE version before flushing these updates.
+            repository.flush();
         }
 
         TrainingPlanDefinitionEntity entity = exact.orElseGet(TrainingPlanDefinitionEntity::new);
