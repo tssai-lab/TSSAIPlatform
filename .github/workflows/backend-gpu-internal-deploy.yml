@@ -203,13 +203,28 @@ jobs:
             -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
             -o ConnectTimeout=10
           )
-          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe
-          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${RELEASE_SHA}"
+          ssh_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              if ssh "${ssh_options[@]}" \
+                "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "$@"; then
+                return 0
+              fi
+              (( attempt < 4 )) || return 1
+              sleep $((attempt * 2))
+            done
+          }
+          ssh_with_retry probe
+          sleep 2
+          ssh_with_retry "sync ${RELEASE_SHA}"
+          sleep 2
           tar -C "$bundle_root" -cf - \
             backend-image-amd64.tar backend-image.sha256 sources.lock \
             | ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-backend
+          sleep 2
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-backend
-          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe \
+          sleep 2
+          ssh_with_retry probe \
             | tee "$RUNNER_TEMP/internal-backend-deployment-state.txt"
           grep -Fx "TSS_APPLICATION_SOURCE_SHA=${APPLICATION_SHA}" \
             "$RUNNER_TEMP/internal-backend-deployment-state.txt"
