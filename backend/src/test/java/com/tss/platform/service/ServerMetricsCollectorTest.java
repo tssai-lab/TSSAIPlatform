@@ -80,7 +80,11 @@ class ServerMetricsCollectorTest {
                         {"items":[
                           {"metadata":{"name":"control","labels":{"node-role.kubernetes.io/control-plane":""}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
-                          {"metadata":{"name":"control-cpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true"}},
+                          {"metadata":{"name":"control-cpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"control-with-gpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/accelerator":"nvidia","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"control-without-cap","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true"}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
                           {"metadata":{"name":"control-maintenance","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/platform-schedulable":"true"}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"},{"key":"maintenance","effect":"NoSchedule"}]}},
@@ -101,6 +105,10 @@ class ServerMetricsCollectorTest {
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("control-cpu"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
+        assertThat(mapper.readTree(labels.get("control-with-gpu"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
+        assertThat(mapper.readTree(labels.get("control-without-cap"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("control-maintenance"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("control-evicted"))

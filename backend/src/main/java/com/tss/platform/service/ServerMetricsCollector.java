@@ -325,7 +325,9 @@ public class ServerMetricsCollector {
                 return false;
             }
             if ("NoSchedule".equals(effect)
-                    && !(explicitlyEnabled && isControlPlaneTaint(taint))) {
+                    && !(explicitlyEnabled
+                    && isControlPlaneTaint(taint)
+                    && isSafeControlPlaneCpuFallback(node))) {
                 return false;
             }
         }
@@ -336,6 +338,23 @@ public class ServerMetricsCollector {
         String key = taint.path("key").asText();
         return "node-role.kubernetes.io/control-plane".equals(key)
                 || "node-role.kubernetes.io/master".equals(key);
+    }
+
+    private static boolean isSafeControlPlaneCpuFallback(JsonNode node) {
+        JsonNode labels = node.path("metadata").path("labels");
+        if (!"cpu".equals(labels.path("tss.ai/node-pool").asText())) {
+            return false;
+        }
+        if (!labels.path("tss.ai/accelerator").asText("").isBlank()) {
+            return false;
+        }
+        try {
+            int maxActiveTasks = Integer.parseInt(
+                    labels.path(JobScheduler.PLATFORM_MAX_ACTIVE_TASKS_LABEL).asText());
+            return maxActiveTasks >= 1 && maxActiveTasks <= 4;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     void syncNodeLabels(List<ComputeServer> servers, Map<String, String> labelsByNode) {

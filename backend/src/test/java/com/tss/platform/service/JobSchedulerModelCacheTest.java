@@ -136,7 +136,7 @@ class JobSchedulerModelCacheTest {
     void cpuOnlyFallbackCanRunCpuButNeverReceivesGpuOverflow() {
         Fixture fixture = new Fixture(false);
         ComputeServer control = gpuNode("tss-ai-control-01", """
-                {"tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true"}
+                {"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}
                 """);
         when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(control));
 
@@ -153,6 +153,29 @@ class JobSchedulerModelCacheTest {
                 """);
         assertNull(fixture.scheduler.assignNodeForTraining(
                 gpuTask, Map.of("tss.ai/accelerator", "nvidia")));
+    }
+
+    @Test
+    void perNodeActiveTaskCapProtectsCpuFallback() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer control = node("tss-ai-control-01", false);
+        control.setK8sLabelsJson("""
+                {"tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}
+                """);
+        TrainingExperimentVersion existing = new TrainingExperimentVersion();
+        existing.setServerIp("tss-ai-control-01");
+        existing.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":0}}
+                """);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(control));
+        when(fixture.trainingTasks.findByStatus("scheduled")).thenReturn(List.of(existing));
+
+        TrainingExperimentVersion next = new TrainingExperimentVersion();
+        next.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":0}}
+                """);
+        assertNull(fixture.scheduler.assignNodeForTraining(
+                next, Map.of("tss.ai/node-pool", "cpu")));
     }
 
     @Test

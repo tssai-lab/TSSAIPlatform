@@ -37,6 +37,7 @@ public class JobScheduler {
 
     private static final Logger LOG = LoggerFactory.getLogger(JobScheduler.class);
     static final String PLATFORM_SCHEDULABLE_LABEL = "tss.ai/platform-schedulable";
+    static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = "tss.ai/platform-max-active-tasks";
 
     private final ComputeServerRepository computeServerRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
@@ -222,6 +223,7 @@ public class JobScheduler {
         Map<String, Double> allocatedCpu = new LinkedHashMap<>();
         Map<String, Double> allocatedMemGib = new LinkedHashMap<>();
         Map<String, Integer> allocatedGpu = new LinkedHashMap<>();
+        Map<String, Integer> allocatedTasks = new LinkedHashMap<>();
         for (TrainingExperimentVersion t : trainingRepo.findByStatus("running")) {
             String ip = t.getServerIp();
             if (ip != null) {
@@ -229,6 +231,7 @@ public class JobScheduler {
                 allocatedCpu.merge(ip, req[0], Double::sum);
                 allocatedMemGib.merge(ip, req[1], Double::sum);
                 if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+                allocatedTasks.merge(ip, 1, Integer::sum);
             }
         }
         for (InferenceTask t : inferenceRepo.findByStatus("running")) {
@@ -238,6 +241,7 @@ public class JobScheduler {
                 allocatedCpu.merge(ip, req[0], Double::sum);
                 allocatedMemGib.merge(ip, req[1], Double::sum);
                 if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+                allocatedTasks.merge(ip, 1, Integer::sum);
             }
         }
         // scheduled 状态的任务已经预留资源，也要计入已分配
@@ -248,6 +252,7 @@ public class JobScheduler {
                 allocatedCpu.merge(ip, req[0], Double::sum);
                 allocatedMemGib.merge(ip, req[1], Double::sum);
                 if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+                allocatedTasks.merge(ip, 1, Integer::sum);
             }
         }
         for (InferenceTask t : inferenceRepo.findByStatus("scheduled")) {
@@ -257,6 +262,7 @@ public class JobScheduler {
                 allocatedCpu.merge(ip, req[0], Double::sum);
                 allocatedMemGib.merge(ip, req[1], Double::sum);
                 if (req[2] > 0) allocatedGpu.merge(ip, (int) req[2], Integer::sum);
+                allocatedTasks.merge(ip, 1, Integer::sum);
             }
         }
 
@@ -265,6 +271,11 @@ public class JobScheduler {
         double bestRemaining = -1;
         long bestAffinity = 0;
         for (ComputeServer node : candidates) {
+            Integer maxActiveTasks = maxActiveTasks(node);
+            if (maxActiveTasks != null
+                    && allocatedTasks.getOrDefault(node.getServerIp(), 0) >= maxActiveTasks) {
+                continue;
+            }
             double usedCpu = allocatedCpu.getOrDefault(node.getServerIp(), 0.0);
             double usedMem = allocatedMemGib.getOrDefault(node.getServerIp(), 0.0);
             int usedGpu = allocatedGpu.getOrDefault(node.getServerIp(), 0);
@@ -402,6 +413,24 @@ public class JobScheduler {
                     || !"false".equalsIgnoreCase(schedulable.asText());
         } catch (Exception ignored) {
             return true;
+        }
+    }
+
+    private Integer maxActiveTasks(ComputeServer node) {
+        String labelsJson = node.getK8sLabelsJson();
+        if (labelsJson == null || labelsJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode value = new ObjectMapper().readTree(labelsJson)
+                    .path(PLATFORM_MAX_ACTIVE_TASKS_LABEL);
+            if (value.isMissingNode()) {
+                return null;
+            }
+            int parsed = Integer.parseInt(value.asText());
+            return parsed > 0 ? parsed : 0;
+        } catch (Exception ignored) {
+            return 0;
         }
     }
 
