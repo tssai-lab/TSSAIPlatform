@@ -9,7 +9,7 @@ on:
         type: string
 
 concurrency:
-  group: backend-gpu-internal-deploy
+  group: tss-aiplatform-internal-deploy
   cancel-in-progress: false
 
 jobs:

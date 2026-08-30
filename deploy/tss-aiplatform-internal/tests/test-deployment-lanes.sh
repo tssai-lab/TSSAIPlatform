@@ -53,6 +53,7 @@ grep -F "vars.INTERNAL_GPU_AUTO_DEPLOY_ENABLED == 'true'" "$backend_workflow" >/
 
 grep -F 'name: 内网 GPU 分支部署' "$internal_workflow" >/dev/null
 grep -F 'workflow_call:' "$internal_workflow" >/dev/null
+grep -F 'group: tss-aiplatform-internal-deploy' "$internal_workflow" >/dev/null
 grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
 grep -F 'runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]' \
   "$internal_workflow" >/dev/null
