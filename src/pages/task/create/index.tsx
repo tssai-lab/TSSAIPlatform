@@ -119,14 +119,9 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
             <div style={{ marginTop: 8 }}>
               {dataset?.acceptedSpecIds?.length ? (
                 <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                  <Typography.Text>服务器验证规格：</Typography.Text>
-                  <Space wrap>
-                    {dataset.acceptedSpecIds.map((specId) => (
-                      <Tag key={specId} color="blue">
-                        {specId}
-                      </Tag>
-                    ))}
-                  </Space>
+                  <Typography.Text type="secondary">
+                    平台会自动筛选兼容的数据集
+                  </Typography.Text>
                   {dataset.formatGuide ? (
                     <pre style={PRE_STYLE}>{dataset.formatGuide.trim()}</pre>
                   ) : null}
@@ -164,14 +159,9 @@ const PlanFormatHint: React.FC<{ plan: TrainingPlan }> = ({ plan }) => {
             <div style={{ marginTop: 8 }}>
               {model?.acceptedSpecIds?.length ? (
                 <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                  <Typography.Text>服务器验证规格：</Typography.Text>
-                  <Space wrap>
-                    {model.acceptedSpecIds.map((specId) => (
-                      <Tag key={specId} color="purple">
-                        {specId}
-                      </Tag>
-                    ))}
-                  </Space>
+                  <Typography.Text type="secondary">
+                    平台会自动筛选兼容的模型
+                  </Typography.Text>
                   {model.formatGuide ? (
                     <pre style={PRE_STYLE}>{model.formatGuide.trim()}</pre>
                   ) : null}
@@ -1431,10 +1421,8 @@ const TaskCreate: React.FC = () => {
                 required={isExperimentContinue}
                 extra={
                   isExperimentContinue
-                    ? '继续训练默认选中该版本发布的结果模型（producedModelVersionId）'
-                    : specDrivenModel
-                      ? `只显示与当前方案兼容且准备完成的模型：${acceptedModelSpecIds.join('、')}`
-                      : '这里只显示与当前训练方案兼容且准备完成的模型版本'
+                    ? '继续训练默认选中该版本发布的结果模型'
+                    : '只显示与当前训练方案兼容且准备完成的模型'
                 }
               >
                 <Select
@@ -1456,7 +1444,7 @@ const TaskCreate: React.FC = () => {
                   }}
                   options={filteredModelSelectOptions.map((item) => ({
                     value: item.id,
-                    label: `${item.name} / ${item.version || 'v?'} / ${item.artifactSpecId || item.type} / ${item.id}`,
+                    label: `${item.name} / ${item.version || 'v?'}`,
                   }))}
                 />
               </Form.Item>
@@ -1481,19 +1469,11 @@ const TaskCreate: React.FC = () => {
               </Space>
               {selectedModel && (
                 <Descriptions size="small" column={1} bordered>
-                  <Descriptions.Item label="baseModelVersionId">
-                    <Typography.Text copyable code>
-                      {selectedModel.id}
-                    </Typography.Text>
-                  </Descriptions.Item>
                   <Descriptions.Item label="名称">
                     {selectedModel.name}
                   </Descriptions.Item>
                   <Descriptions.Item label="版本">
                     {selectedModel.version}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="服务器验证规格">
-                    {selectedModel.artifactSpecId ?? '无'}
                   </Descriptions.Item>
                 </Descriptions>
               )}
@@ -1540,7 +1520,7 @@ const TaskCreate: React.FC = () => {
                 <Select
                   placeholder={
                     specDrivenDataset
-                      ? '请选择符合 YAML 规格的数据集版本'
+                      ? '请选择兼容的数据集版本'
                       : requiredDatasetType
                         ? `请选择 ${requiredDatasetType} 数据集版本`
                         : '请先选择基础模型权重'
