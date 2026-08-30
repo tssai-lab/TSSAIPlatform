@@ -27,15 +27,20 @@ jobs:
           ref: backend-gpu
           fetch-depth: 0
 
-      - name: Verify the tested commit is still the branch head
+      - name: Verify only the reviewed frontend lock followed the tested backend
         env:
           APPLICATION_SHA: ${{ inputs.application_sha }}
         run: |
           set -Eeuo pipefail
           [[ "$APPLICATION_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$(git rev-parse HEAD)" == "$APPLICATION_SHA" ]]
-          git fetch origin backend-gpu
-          [[ "$(git rev-parse refs/remotes/origin/backend-gpu)" == "$APPLICATION_SHA" ]]
+          git fetch --no-tags origin \
+            refs/heads/backend-gpu:refs/remotes/origin/backend-gpu
+          current_head="$(git rev-parse refs/remotes/origin/backend-gpu)"
+          [[ "$(git rev-parse HEAD)" == "$current_head" ]]
+          git merge-base --is-ancestor "$APPLICATION_SHA" "$current_head"
+          changed_after_test="$(git diff --name-only "$APPLICATION_SHA..$current_head" | sort -u)"
+          allowed_post_test_file='deploy/tss-aiplatform-internal/platform/frontend-image.lock'
+          [[ -z "$changed_after_test" || "$changed_after_test" == "$allowed_post_test_file" ]]
 
       - name: Log in to the project image registry
         uses: docker/login-action@v3

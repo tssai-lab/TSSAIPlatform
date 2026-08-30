@@ -54,6 +54,25 @@ grep -F "vars.INTERNAL_GPU_AUTO_DEPLOY_ENABLED == 'true'" "$backend_workflow" >/
 grep -F 'name: 内网 GPU 分支部署' "$internal_workflow" >/dev/null
 grep -F 'workflow_call:' "$internal_workflow" >/dev/null
 grep -F 'group: tss-aiplatform-internal-deploy' "$internal_workflow" >/dev/null
+grep -F 'git merge-base --is-ancestor "$APPLICATION_SHA" "$current_head"' \
+  "$internal_workflow" >/dev/null
+grep -F "allowed_post_test_file='deploy/tss-aiplatform-internal/platform/frontend-image.lock'" \
+  "$internal_workflow" >/dev/null
+grep -F '[[ -z "$changed_after_test" || "$changed_after_test" == "$allowed_post_test_file" ]]' \
+  "$internal_workflow" >/dev/null
+allowed_post_test_file='deploy/tss-aiplatform-internal/platform/frontend-image.lock'
+for allowed_change in '' "$allowed_post_test_file"; do
+  [[ -z $allowed_change || $allowed_change == "$allowed_post_test_file" ]] \
+    || { echo 'reviewed frontend lock was rejected after backend testing' >&2; exit 1; }
+done
+for rejected_change in \
+  'backend/src/main/java/Unexpected.java' \
+  "$allowed_post_test_file"$'\nbackend/src/main/java/Unexpected.java'; do
+  if [[ -z $rejected_change || $rejected_change == "$allowed_post_test_file" ]]; then
+    echo 'non-frontend change was accepted after backend testing' >&2
+    exit 1
+  fi
+done
 grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
 grep -F 'runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]' \
   "$internal_workflow" >/dev/null
