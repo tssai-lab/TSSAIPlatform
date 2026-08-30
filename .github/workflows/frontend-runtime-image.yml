@@ -413,7 +413,9 @@ jobs:
             frontend-image-amd64.tar frontend-image.sha256 sources.lock \
             | ssh "${ssh_options[@]}" \
                 "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-frontend
-          sleep 2
+          # Keep the real deployment single-shot, but let sshd's transient
+          # connection throttle settle after the completed staging stream.
+          sleep 10
           ssh "${ssh_options[@]}" \
             "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-frontend
           sleep 2

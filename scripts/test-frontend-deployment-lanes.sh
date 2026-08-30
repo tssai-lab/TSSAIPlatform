@@ -35,6 +35,10 @@ grep -F 'remote_frontend_sha=' "$runtime_workflow" >/dev/null
 grep -F '[[ "$RUNNER_TEMP" == "${runner_work_root}/"* ]]' "$runtime_workflow" >/dev/null
 grep -F 'stage-frontend' "$runtime_workflow" >/dev/null
 grep -F 'deploy-frontend' "$runtime_workflow" >/dev/null
+grep -F "connection throttle settle after the completed staging stream" \
+  "$runtime_workflow" >/dev/null
+grep -F 'sleep 10' "$runtime_workflow" >/dev/null
+! grep -F 'ssh_with_retry deploy-frontend' "$runtime_workflow" >/dev/null
 ! grep -F 'MAIN_SERVER_' "$runtime_workflow" >/dev/null
 ! grep -F -- '--force' "$runtime_workflow" >/dev/null
 bash -n "$promoter"
