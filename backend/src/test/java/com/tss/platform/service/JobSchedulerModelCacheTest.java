@@ -133,6 +133,29 @@ class JobSchedulerModelCacheTest {
     }
 
     @Test
+    void cpuOnlyFallbackCanRunCpuButNeverReceivesGpuOverflow() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer control = gpuNode("tss-ai-control-01", """
+                {"tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true"}
+                """);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(control));
+
+        TrainingExperimentVersion cpuTask = new TrainingExperimentVersion();
+        cpuTask.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":0}}
+                """);
+        assertEquals("tss-ai-control-01", fixture.scheduler.assignNodeForTraining(
+                cpuTask, Map.of("tss.ai/node-pool", "cpu")));
+
+        TrainingExperimentVersion gpuTask = new TrainingExperimentVersion();
+        gpuTask.setRunSpecJson("""
+                {"resources":{"cpuRequest":"1","memoryRequest":"1Gi","gpuCount":1}}
+                """);
+        assertNull(fixture.scheduler.assignNodeForTraining(
+                gpuTask, Map.of("tss.ai/accelerator", "nvidia")));
+    }
+
+    @Test
     void missingSchedulableMarkerPreservesExistingCpuClusterBehavior() {
         Fixture fixture = new Fixture(false);
         ComputeServer existing = node("10.0.0.12", false);

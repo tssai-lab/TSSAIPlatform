@@ -313,13 +313,29 @@ public class ServerMetricsCollector {
         if (spec.path("unschedulable").asBoolean(false)) {
             return false;
         }
+        String explicitPolicy = node.path("metadata").path("labels")
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText("");
+        if ("false".equalsIgnoreCase(explicitPolicy)) {
+            return false;
+        }
+        boolean explicitlyEnabled = "true".equalsIgnoreCase(explicitPolicy);
         for (JsonNode taint : spec.path("taints")) {
             String effect = taint.path("effect").asText();
-            if ("NoSchedule".equals(effect) || "NoExecute".equals(effect)) {
+            if ("NoExecute".equals(effect)) {
+                return false;
+            }
+            if ("NoSchedule".equals(effect)
+                    && !(explicitlyEnabled && isControlPlaneTaint(taint))) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean isControlPlaneTaint(JsonNode taint) {
+        String key = taint.path("key").asText();
+        return "node-role.kubernetes.io/control-plane".equals(key)
+                || "node-role.kubernetes.io/master".equals(key);
     }
 
     void syncNodeLabels(List<ComputeServer> servers, Map<String, String> labelsByNode) {

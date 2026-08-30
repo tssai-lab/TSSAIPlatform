@@ -73,16 +73,23 @@ class ServerMetricsCollectorTest {
     }
 
     @Test
-    void derivesPlatformSchedulabilityFromCordonAndBlockingTaints() throws Exception {
+    void derivesPlatformSchedulabilityFromExplicitPolicyCordonAndBlockingTaints() throws Exception {
         Fixture fixture = fixture();
         when(fixture.shellRunner.run(any(), any(), anyInt()))
                 .thenReturn(ShellCommandRunner.CommandResult.success("""
                         {"items":[
                           {"metadata":{"name":"control","labels":{"node-role.kubernetes.io/control-plane":""}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"control-cpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true"}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"control-maintenance","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/platform-schedulable":"true"}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"},{"key":"maintenance","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"control-evicted","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/platform-schedulable":"true"}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"},{"key":"offline","effect":"NoExecute"}]}},
                           {"metadata":{"name":"cordoned","labels":{}},"spec":{"unschedulable":true}},
                           {"metadata":{"name":"preferred","labels":{}},
                            "spec":{"taints":[{"key":"shared","effect":"PreferNoSchedule"}]}},
+                          {"metadata":{"name":"worker-disabled","labels":{"tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"false"}},"spec":{}},
                           {"metadata":{"name":"worker","labels":{"tss.ai/node-pool":"cpu"}},"spec":{}}
                         ]}
                         """));
@@ -92,10 +99,18 @@ class ServerMetricsCollectorTest {
         ObjectMapper mapper = new ObjectMapper();
         assertThat(mapper.readTree(labels.get("control"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
+        assertThat(mapper.readTree(labels.get("control-cpu"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
+        assertThat(mapper.readTree(labels.get("control-maintenance"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
+        assertThat(mapper.readTree(labels.get("control-evicted"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("cordoned"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("preferred"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
+        assertThat(mapper.readTree(labels.get("worker-disabled"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
         assertThat(mapper.readTree(labels.get("worker"))
                 .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
     }
