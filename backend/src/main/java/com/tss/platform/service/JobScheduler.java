@@ -38,6 +38,7 @@ public class JobScheduler {
     private static final Logger LOG = LoggerFactory.getLogger(JobScheduler.class);
     static final String PLATFORM_SCHEDULABLE_LABEL = "tss.ai/platform-schedulable";
     static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = "tss.ai/platform-max-active-tasks";
+    static final String GPU_SCHEDULABLE_LABEL = "tss.ai/gpu-schedulable";
 
     private final ComputeServerRepository computeServerRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
@@ -218,6 +219,11 @@ public class JobScheduler {
                     .filter(n -> matchesNodeSelector(n, nodeSelector))
                     .collect(Collectors.toList());
         }
+        if (gpuReq != null && gpuReq > 0) {
+            candidates = candidates.stream()
+                    .filter(this::isGpuSchedulable)
+                    .collect(Collectors.toList());
+        }
 
         // 统计每个节点的已分配资源（从每个 running 任务的 runSpecJson 读取）
         Map<String, Double> allocatedCpu = new LinkedHashMap<>();
@@ -367,6 +373,11 @@ public class JobScheduler {
             if (labelsJson == null || labelsJson.isBlank()) return !acceleratorRequired;
             JsonNode labels = new ObjectMapper().readTree(labelsJson);
             if (!labels.isObject()) return !acceleratorRequired;
+            if (acceleratorRequired
+                    && "false".equalsIgnoreCase(
+                    labels.path(GPU_SCHEDULABLE_LABEL).asText())) {
+                return false;
+            }
             for (Map.Entry<String, String> e : selector.entrySet()) {
                 String val = labels.has(e.getKey()) ? labels.get(e.getKey()).asText() : null;
                 if (!e.getValue().equals(val)) return false;
@@ -412,6 +423,21 @@ public class JobScheduler {
             return schedulable.isMissingNode()
                     || !"false".equalsIgnoreCase(schedulable.asText());
         } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private boolean isGpuSchedulable(ComputeServer node) {
+        try {
+            String labelsJson = node.getK8sLabelsJson();
+            if (labelsJson == null || labelsJson.isBlank()) return true;
+            JsonNode labels = new ObjectMapper().readTree(labelsJson);
+            if (!labels.isObject()) return true;
+            return !"false".equalsIgnoreCase(
+                    labels.path(GPU_SCHEDULABLE_LABEL).asText());
+        } catch (Exception ignored) {
+            // Preserve existing GPU-cluster behavior until the collector has
+            // refreshed labels; an explicit false marker always fails closed.
             return true;
         }
     }

@@ -87,7 +87,11 @@ The guarded Kubernetes bootstrap then installs the digest-locked NVIDIA Device
 Plugin, the `nvidia` RuntimeClass and the standalone DCGM Exporter from
 committed artifacts. It labels every GPU-capable node declared by the reviewed
 node configurations with `tss.ai/accelerator=nvidia`; the worker keeps
-`tss.ai/node-pool=cpu`, while the control plane keeps its `NoSchedule` taint.
+`tss.ai/node-pool=cpu` and `tss.ai/gpu-schedulable=true`. The control plane
+keeps its `NoSchedule` taint and uses `tss.ai/gpu-schedulable=false`, so DCGM
+can observe the RTX 5090 without making it a GPU overflow target. A reviewed
+CPU fallback opts in separately with `tss.ai/platform-schedulable=true` and a
+bounded `tss.ai/platform-max-active-tasks` value.
 The Device Plugin and DCGM exporter tolerate that taint only to advertise and
 observe the RTX 5090; ordinary training Jobs do not inherit the toleration.
 DCGM Exporter binds each NVIDIA node's read-only endpoint to its reviewed

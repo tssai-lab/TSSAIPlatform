@@ -345,7 +345,10 @@ public class ServerMetricsCollector {
         if (!"cpu".equals(labels.path("tss.ai/node-pool").asText())) {
             return false;
         }
-        if (!labels.path("tss.ai/accelerator").asText("").isBlank()) {
+        String accelerator = labels.path("tss.ai/accelerator").asText("");
+        if (!accelerator.isBlank()
+                && !"false".equalsIgnoreCase(
+                labels.path(JobScheduler.GPU_SCHEDULABLE_LABEL).asText())) {
             return false;
         }
         try {

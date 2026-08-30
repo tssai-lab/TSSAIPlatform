@@ -174,10 +174,22 @@ flock -n 9 || die "another GPU Worker installation is running"
 for gpu_node in "${gpu_nodes[@]}"; do
   "${admin[@]}" label node "$gpu_node" \
     tss.ai/accelerator=nvidia --overwrite >/dev/null
+  if [[ $gpu_node == "$TSS_NODE_NAME" ]]; then
+    "${admin[@]}" label node "$gpu_node" \
+      tss.ai/gpu-schedulable=false --overwrite >/dev/null
+  else
+    "${admin[@]}" label node "$gpu_node" \
+      tss.ai/gpu-schedulable=true --overwrite >/dev/null
+  fi
 done
 [[ $("${admin[@]}" get node "$TSS_PLATFORM_WORKER_NODE" \
   -o jsonpath='{.metadata.labels.tss\.ai/node-pool}') == cpu ]] \
   || die "GPU Worker CPU node-pool label changed unexpectedly"
+if has_role gpu; then
+  [[ $("${admin[@]}" get node "$TSS_NODE_NAME" \
+    -o jsonpath='{.metadata.labels.tss\.ai/gpu-schedulable}') == false ]] \
+    || die "GPU control plane must remain excluded from GPU scheduling"
+fi
 "${admin[@]}" apply -f "$runtime_manifest" >/dev/null
 "${admin[@]}" apply -f "$rendered_manifest" >/dev/null
 if ! "${admin[@]}" -n kube-system rollout status \

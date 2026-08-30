@@ -564,6 +564,10 @@ grep -F 'node-role.kubernetes.io/control-plane' "$gpu_installer" >/dev/null
 grep -F 'GPU control plane must retain its NoSchedule taint' "$gpu_installer" >/dev/null
 grep -F 'tss.ai/accelerator: nvidia' "$gpu_installer" >/dev/null
 grep -F 'tss.ai/node-pool=cpu' "$gpu_installer" >/dev/null
+grep -F 'tss.ai/gpu-schedulable=false' "$gpu_installer" >/dev/null
+grep -F 'tss.ai/gpu-schedulable=true' "$gpu_installer" >/dev/null
+grep -F 'GPU control plane must remain excluded from GPU scheduling' \
+  "$gpu_installer" >/dev/null
 grep -F 'imagePullPolicy: Never' "$gpu_installer" >/dev/null
 grep -F 'apply --dry-run=server' "$gpu_installer" >/dev/null
 grep -F 'refusing a kubeconfig that resembles the Main/Second cluster' \

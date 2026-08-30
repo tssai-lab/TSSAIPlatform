@@ -80,7 +80,7 @@ class ServerMetricsCollectorTest {
                         {"items":[
                           {"metadata":{"name":"control","labels":{"node-role.kubernetes.io/control-plane":""}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
-                          {"metadata":{"name":"control-cpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}},
+                          {"metadata":{"name":"control-cpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/accelerator":"nvidia","tss.ai/gpu-schedulable":"false","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
                           {"metadata":{"name":"control-with-gpu","labels":{"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/accelerator":"nvidia","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}},
                            "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},

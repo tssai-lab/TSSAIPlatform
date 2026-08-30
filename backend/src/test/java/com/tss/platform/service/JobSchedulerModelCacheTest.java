@@ -136,7 +136,7 @@ class JobSchedulerModelCacheTest {
     void cpuOnlyFallbackCanRunCpuButNeverReceivesGpuOverflow() {
         Fixture fixture = new Fixture(false);
         ComputeServer control = gpuNode("tss-ai-control-01", """
-                {"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}
+                {"node-role.kubernetes.io/control-plane":"","tss.ai/node-pool":"cpu","tss.ai/accelerator":"nvidia","tss.ai/gpu-schedulable":"false","tss.ai/platform-schedulable":"true","tss.ai/platform-max-active-tasks":"1"}
                 """);
         when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(control));
 
@@ -153,6 +153,8 @@ class JobSchedulerModelCacheTest {
                 """);
         assertNull(fixture.scheduler.assignNodeForTraining(
                 gpuTask, Map.of("tss.ai/accelerator", "nvidia")));
+        assertNull(fixture.scheduler.assignNodeForTraining(
+                gpuTask, Map.of("tss.ai/node-pool", "cpu")));
     }
 
     @Test
