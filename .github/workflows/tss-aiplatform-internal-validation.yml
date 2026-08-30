@@ -639,7 +639,7 @@ jobs:
             cmp "$RUNNER_TEMP/exported-cpu-runtime-images.lock" sources.lock
             cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
               sources.lock
-            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 2
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 3
           )
 
       - name: Record staged CPU runtime result
@@ -653,7 +653,7 @@ jobs:
             echo "- Export run: \`${RUNTIME_RUN_ID}\`"
             echo "- Source SHA: \`${RUNTIME_HEAD_SHA}\`"
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}\`"
-            echo "- Checksums and two-source lock: passed"
+            echo "- Checksums and three-source lock: passed"
             echo "- sudo, containerd import and workload scheduling: not attempted"
           } >> "$GITHUB_STEP_SUMMARY"
 

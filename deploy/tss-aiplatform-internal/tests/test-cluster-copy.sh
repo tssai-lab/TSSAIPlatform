@@ -403,8 +403,8 @@ fi
   "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 2 ]]
 
 cpu_runtime_lock="${internal_dir}/reproducible/cpu-runtime-images.lock"
-[[ $(grep -Evc '^(#|$)' "$cpu_runtime_lock") -eq 2 ]]
-[[ $(awk -F'|' '!/^#/ {print $5}' "$cpu_runtime_lock" | sort) == $'cpu-inference\ncv-training' ]]
+[[ $(grep -Evc '^(#|$)' "$cpu_runtime_lock") -eq 3 ]]
+[[ $(awk -F'|' '!/^#/ {print $5}' "$cpu_runtime_lock" | sort) == $'cpu-inference\ncv-training\nnlp-training' ]]
 if grep -F ':latest' "$cpu_runtime_lock" >/dev/null; then
   echo "CPU runtime image lock must not use latest tags." >&2
   exit 1

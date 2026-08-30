@@ -12,7 +12,7 @@ offline bundle is needed.
 | Kubernetes, Calico, Metrics Server and NVIDIA bootstrap | `../versions.env`, `../artifacts.lock` and repository scripts | Run the existing `export-airgap-bundles` workflow task, or pull the locked digests directly. |
 | PostgreSQL, Redis, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
 | Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
-| Minimal C6 CPU training and inference images | `cpu-runtime-images.lock` | Export and stage only the two locked images with the internal validation workflow. |
+| Minimal CPU training and inference images | `cpu-runtime-images.lock` | Export and stage the locked CV training, NLP training and CPU inference images with the internal validation workflow. |
 | Minimal GPU training images | `gpu-runtime-images.lock` | Export and stage only the digest-locked CV/NLP GPU workers from `backend-gpu`; this does not enable GPU discovery or submit workloads. |
 | Frontend source | `frontend-source.lock` | Check out the exact `frontend-dev` commit and build from its lock file. Do not copy `/var/www` from Main. |
 | Public Nginx routes | `nginx/frontend.conf.template` | Replace the five `REPLACE_*` values, review, run `nginx -t`, then install it for that environment. |
@@ -94,8 +94,8 @@ manually dispatched long transfer.
 ## Stage the minimal C6 CPU runtime bundle
 
 C6 does not import all four historical runtime images. It locks and exports
-only the currently exercised CV/CPU training image and CPU inference image in
-`cpu-runtime-images.lock`. The lock also records the exact names that Kubernetes
+the CV training, NLP training and CPU inference images currently referenced by
+the platform in `cpu-runtime-images.lock`. The lock also records the exact names that Kubernetes
 must resolve after import. This prevents a worker from silently pulling a
 different image and avoids using the laboratory's shared Docker image store.
 
@@ -119,14 +119,14 @@ import:
 
 ```bash
 sudo /srv/tss-AIplatform/repository/deploy/tss-aiplatform-internal/scripts/import-cpu-runtime-images.sh \
-  --check /etc/tss-aiplatform-internal/node.env /absolute/staged/bundle
+  --check /etc/tss-aiplatform/node.env /absolute/staged/bundle
 sudo /srv/tss-AIplatform/repository/deploy/tss-aiplatform-internal/scripts/import-cpu-runtime-images.sh \
-  --apply /etc/tss-aiplatform-internal/node.env /absolute/staged/bundle \
-  --confirm-node tss-ai-worker-01
+  --apply /etc/tss-aiplatform/node.env /absolute/staged/bundle \
+  --confirm-node REPLACE_CPU_CAPABLE_NODE
 ```
 
 The exporter verifies source registry manifest digests and linux/amd64 image
-IDs. The importer verifies bundle checksums, the committed two-image lock,
+IDs. The importer verifies bundle checksums, the committed three-image lock,
 imported config digests and Kubernetes runtime aliases. The split is required
 because `docker image save` can reserialize a platform image under a different
 local OCI manifest descriptor while preserving its locked config and layers.

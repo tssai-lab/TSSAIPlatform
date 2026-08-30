@@ -11,7 +11,7 @@ die() {
 
 [[ -f $lock_file ]] || die "CPU runtime image lock is missing"
 mapfile -t lock_lines < <(grep -Ev '^(#|$)' "$lock_file")
-[[ ${#lock_lines[@]} -eq 2 ]] || die "CPU runtime lock must contain exactly two images"
+[[ ${#lock_lines[@]} -eq 3 ]] || die "CPU runtime lock must contain exactly three images"
 
 declare -A seen_purposes=()
 for line in "${lock_lines[@]}"; do
@@ -25,11 +25,14 @@ for line in "${lock_lines[@]}"; do
     || die "invalid linux/amd64 image ID: $source_ref"
   [[ $runtime_ref != *:latest && $runtime_ref != *@sha256:*:* ]] \
     || die "unsafe runtime image reference: $runtime_ref"
-  [[ $purpose == cv-training || $purpose == cpu-inference ]] \
+  [[ $purpose == cv-training || $purpose == nlp-training || $purpose == cpu-inference ]] \
     || die "unknown CPU runtime image purpose: $purpose"
   if [[ $purpose == cv-training ]]; then
     [[ $runtime_ref == crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@"${manifest_digest}" ]] \
       || die "CV runtime reference must match the published training plan digest"
+  elif [[ $purpose == nlp-training ]]; then
+    [[ $runtime_ref == crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@"${manifest_digest}" ]] \
+      || die "NLP runtime reference must match the published training plan digest"
   else
     [[ $runtime_ref == docker.io/library/tss-inference-worker:local ]] \
       || die "CPU inference runtime reference must match the backend default"
@@ -38,11 +41,12 @@ for line in "${lock_lines[@]}"; do
   [[ $producer_run =~ ^[1-9][0-9]*$ ]] || die "invalid producer run: $source_ref"
   seen_purposes[$purpose]=1
 done
-[[ ${seen_purposes[cv-training]:-} == 1 && ${seen_purposes[cpu-inference]:-} == 1 ]] \
-  || die "CPU runtime lock must contain CV training and CPU inference"
+[[ ${seen_purposes[cv-training]:-} == 1 && ${seen_purposes[nlp-training]:-} == 1 \
+  && ${seen_purposes[cpu-inference]:-} == 1 ]] \
+  || die "CPU runtime lock must contain CV training, NLP training and CPU inference"
 
 if [[ ${1:-} == --validate-only ]]; then
-  echo "CPU runtime export contract passed: cv-training=1 cpu-inference=1"
+  echo "CPU runtime export contract passed: cv-training=1 nlp-training=1 cpu-inference=1"
   exit 0
 fi
 
@@ -82,4 +86,4 @@ cp -- "$lock_file" "${output_dir}/sources.lock"
 for output_file in cpu-runtime-amd64.tar sources.lock cpu-runtime.sha256; do
   [[ -s ${output_dir}/${output_file} ]] || die "bundle output is empty: $output_file"
 done
-echo "CPU runtime bundle exported from two immutable linux/amd64 images: $output_dir"
+echo "CPU runtime bundle exported from three immutable linux/amd64 images: $output_dir"

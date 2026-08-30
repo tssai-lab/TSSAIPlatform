@@ -52,8 +52,8 @@ done
 )
 cmp "${internal_root}/reproducible/cpu-runtime-images.lock" "${bundle_dir}/sources.lock" >/dev/null \
   || die "CPU runtime bundle sources do not match the committed lock"
-[[ $(grep -Evc '^(#|$)' "${bundle_dir}/sources.lock") -eq 2 ]] \
-  || die "CPU runtime source lock must contain exactly two images"
+[[ $(grep -Evc '^(#|$)' "${bundle_dir}/sources.lock") -eq 3 ]] \
+  || die "CPU runtime source lock must contain exactly three images"
 
 systemctl is-active --quiet tss-aiplatform-containerd.service \
   || die "isolated project containerd is not active"
@@ -65,8 +65,8 @@ system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
 [[ $system_containerd_pid =~ ^[1-9][0-9]*$ ]] || die "shared system containerd PID is invalid"
 docker_container_count="$(docker ps -q | wc -l)"
 
-echo "PASS: CPU runtime checksums and two locked image sources verified"
-echo "PLAN: import one CV training image and one CPU inference image into node=${TSS_NODE_NAME}"
+echo "PASS: CPU runtime checksums and three locked image sources verified"
+echo "PLAN: import CV training, NLP training and CPU inference images into node=${TSS_NODE_NAME}"
 if [[ $mode == --check ]]; then
   echo "CPU runtime bundle check passed without image writes: node=${TSS_NODE_NAME}"
   exit 0
@@ -116,5 +116,5 @@ done < <(grep -Ev '^(#|$)' "${bundle_dir}/sources.lock")
 [[ $(docker ps -q | wc -l) -eq $docker_container_count ]] \
   || die "shared Docker container count changed during CPU runtime import"
 logger -t tss-aiplatform-images \
-  "CPU runtime import complete node=${TSS_NODE_NAME} locked_images=2" 2>/dev/null || true
+  "CPU runtime import complete node=${TSS_NODE_NAME} locked_images=3" 2>/dev/null || true
 echo "CPU runtime image import complete: node=${TSS_NODE_NAME}"
