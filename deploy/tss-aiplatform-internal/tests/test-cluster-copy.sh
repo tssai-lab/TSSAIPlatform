@@ -215,6 +215,8 @@ grep -F -- '--profile gpu-runtime' "$internal_workflow" >/dev/null
 grep -F -- '--profile platform' "$internal_workflow" >/dev/null
 grep -F 'git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"' \
   "$internal_workflow" >/dev/null
+[[ $(grep -Fc '[[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]' \
+  "$internal_workflow") -ge 4 ]]
 grep -F 'exported-cpu-runtime-images.lock' "$internal_workflow" >/dev/null
 grep -F 'exported-platform-images.lock' "$internal_workflow" >/dev/null
 grep -F -- '--workers 16' "$internal_workflow" >/dev/null

@@ -555,7 +555,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
           [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"
@@ -578,16 +578,16 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
             --output "$RUNNER_TEMP/runtime-export-run.json"
           python3 - "$RUNNER_TEMP/runtime-export-run.json" \
-            "$RUNTIME_HEAD_SHA" <<'PY'
+            "$RUNTIME_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
           import json
           import sys
 
-          metadata_path, expected_sha = sys.argv[1:]
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
           with open(metadata_path, encoding="utf-8") as metadata_file:
               metadata = json.load(metadata_file)
           expected = {
               "head_sha": expected_sha,
-              "head_branch": "backend-ops",
+              "head_branch": expected_branch,
               "event": "workflow_dispatch",
               "status": "completed",
               "conclusion": "success",
@@ -680,7 +680,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
           [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"
@@ -709,16 +709,16 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
             --output "$RUNNER_TEMP/runtime-deploy-export-run.json"
           python3 - "$RUNNER_TEMP/runtime-deploy-export-run.json" \
-            "$RUNTIME_HEAD_SHA" <<'PY'
+            "$RUNTIME_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
           import json
           import sys
 
-          metadata_path, expected_sha = sys.argv[1:]
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
           with open(metadata_path, encoding="utf-8") as metadata_file:
               metadata = json.load(metadata_file)
           expected = {
               "head_sha": expected_sha,
-              "head_branch": "backend-ops",
+              "head_branch": expected_branch,
               "event": "workflow_dispatch",
               "status": "completed",
               "conclusion": "success",
