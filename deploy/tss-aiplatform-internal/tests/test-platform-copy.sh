@@ -52,15 +52,15 @@ while IFS= read -r script; do
   bash -n "$script"
 done < <(find "$platform_root/scripts" -maxdepth 1 -type f -name '*.sh' | sort)
 
-[[ $(grep -Ev '^(#|$)' "$lock" | wc -l) -eq 4 ]]
-[[ $(cut -d'|' -f3 "$lock" | grep -c '^tss-aiplatform-internal/') -eq 4 ]]
+[[ $(grep -Ev '^(#|$)' "$lock" | wc -l) -eq 5 ]]
+[[ $(cut -d'|' -f3 "$lock" | grep -c '^tss-aiplatform-internal/') -eq 5 ]]
 ! cut -d'|' -f1 "$lock" | grep -F ':latest' >/dev/null
-[[ $(cut -d'|' -f2 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
-[[ $(cut -d'|' -f4 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 4 ]]
-[[ $(cut -d'|' -f5 "$lock" | grep -Ec '^[0-9a-f]{64}$') -eq 4 ]]
-[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f2 | sort -u | wc -l) -eq 4 ]] \
+[[ $(cut -d'|' -f2 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 5 ]]
+[[ $(cut -d'|' -f4 "$lock" | grep -Ec '^sha256:[0-9a-f]{64}$') -eq 5 ]]
+[[ $(cut -d'|' -f5 "$lock" | grep -Ec '^[0-9a-f]{64}$') -eq 5 ]]
+[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f2 | sort -u | wc -l) -eq 5 ]] \
   || { echo "image lock contains a duplicate source manifest digest" >&2; exit 1; }
-[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f4 | sort -u | wc -l) -eq 4 ]] \
+[[ $(grep -Ev '^(#|$)' "$lock" | cut -d'|' -f4 | sort -u | wc -l) -eq 5 ]] \
   || { echo "image lock contains a duplicate image ID" >&2; exit 1; }
 lock_entry_count=0
 while IFS='|' read -r source_ref source_digest _project_ref expected_id expected_fingerprint budget_bytes; do
@@ -72,7 +72,7 @@ while IFS='|' read -r source_ref source_digest _project_ref expected_id expected
     || { echo "image lock contains a non-numeric budget" >&2; exit 1; }
   lock_entry_count=$((lock_entry_count + 1))
 done <"$lock"
-[[ $lock_entry_count -eq 4 ]] || { echo "image lock parser did not produce four entries" >&2; exit 1; }
+[[ $lock_entry_count -eq 5 ]] || { echo "image lock parser did not produce five entries" >&2; exit 1; }
 bash "$platform_root/scripts/export-platform-images.sh" --validate-only >/dev/null
 grep -F -- '--backend-only' "$platform_root/scripts/export-platform-images.sh" >/dev/null
 grep -F '[[ -n $_source_ref && $_source_ref != \#* ]] || continue' \
@@ -116,7 +116,7 @@ done
 ! grep -F '47.111.225.144' "$frontend_nginx" >/dev/null
 
 for image_variable in \
-  TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
+  TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_REDIS_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
   image_ref="$(sed -n "s/^${image_variable}=//p" "$platform_root/platform.env.example")"
   [[ -n $image_ref ]]
   grep -F "|${image_ref}|" "$lock" >/dev/null \
@@ -125,6 +125,9 @@ done
 
 grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
 grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null
+grep -F '127.0.0.1:${TSS_REDIS_PORT' "$compose" >/dev/null
+grep -F 'AUTH_SESSION_STORE: redis' "$compose" >/dev/null
+grep -F 'SPRING_DATA_REDIS_HOST: 127.0.0.1' "$compose" >/dev/null
 grep -F 'network_mode: host' "$compose" >/dev/null
 grep -F 'MINIO_ENDPOINT: http://${TSS_PLATFORM_BIND_IP}:${TSS_MINIO_API_PORT}' "$compose" >/dev/null
 grep -F 'TRAINING_MLFLOW_TRACKING_URI: http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT}' "$compose" >/dev/null
@@ -140,7 +143,7 @@ grep -F '[[ $flyway == "$expected_flyway" ]]' "$platform_root/scripts/verify-pla
 grep -F 'module1-schema-postgresql.sql:/docker-entrypoint-initdb.d/001-module1.sql:ro' "$compose" >/dev/null
 grep -F "psql -U \$\$POSTGRES_USER -d \$\$POSTGRES_DB -Atqc 'SELECT 1'" "$compose" >/dev/null
 grep -F 'install -d -m 0700 -o 999 -g 999' "$platform_root/scripts/prepare-platform.sh" >/dev/null
-! grep -E 'container_name: tss-(backend|postgres|minio|mlflow)$' "$compose" >/dev/null
+! grep -E 'container_name: tss-(backend|postgres|redis|minio|mlflow)$' "$compose" >/dev/null
 ! grep -F '/opt/tss-platform/postgres-data' "$compose" >/dev/null
 ! grep -E 'image:.*:latest' "$compose" >/dev/null
 
@@ -219,6 +222,7 @@ grep -F 'docker compose -f "$compose_file" up -d backend' "$deployer" >/dev/null
 grep -F -- '--confirm-node "$TSS_NODE_NAME"' "$deployer" >/dev/null
 ! grep -F -- '--confirm-node "$TSS_PLATFORM_HOSTNAME"' "$deployer" >/dev/null
 grep -F 'a non-backend platform container changed during backend deployment' "$deployer" >/dev/null
+grep -F 'reviewed internal Redis did not become healthy' "$deployer" >/dev/null
 grep -F 'TSS_CONSECUTIVE_SUCCESS_COUNT=' "$deployer" >/dev/null
 ! grep -E 'docker (system|image|container|volume) prune' "$deployer" >/dev/null
 if grep -F '${{ secrets.' "$workflow" >/dev/null; then

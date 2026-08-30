@@ -33,5 +33,5 @@ while IFS='|' read -r _source_ref _source_digest project_ref expected_id expecte
   [[ $actual_platform == linux/amd64 ]] || die "platform image is not linux/amd64: $project_ref"
   count=$((count + 1))
 done <"$lock_file"
-[[ $count -eq 4 ]] || die "expected four locked platform images"
-echo "PASS: four project-specific application images match the immutable registry and runtime-content baseline"
+[[ $count -eq 5 ]] || die "expected five locked platform images"
+echo "PASS: five project-specific application images match the immutable registry and runtime-content baseline"

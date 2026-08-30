@@ -85,7 +85,7 @@ deployment_succeeded=false
 capture_nonbackend() {
   local output=$1 name
   : >"$output"
-  for name in tss-aiplatform-internal-postgres tss-aiplatform-internal-minio tss-aiplatform-internal-mlflow; do
+  for name in tss-aiplatform-internal-postgres tss-aiplatform-internal-redis tss-aiplatform-internal-minio tss-aiplatform-internal-mlflow; do
     docker inspect --format '{{.Name}}|{{.Id}}|{{.RestartCount}}|{{.State.Status}}|{{.Config.Image}}' "$name" >>"$output"
   done
   sort -o "$output" "$output"
@@ -153,6 +153,19 @@ application_sha=${BASH_REMATCH[1]}
 [[ $expected_fingerprint =~ ^[0-9a-f]{64}$ && $budget_bytes =~ ^[1-9][0-9]*$ ]] \
   || die "backend fingerprint or budget differs"
 
+# Existing internal installations may predate the standard Redis service. Start
+# only that reviewed service before taking the non-backend snapshot; a later
+# backend failure leaves the healthy Redis and its persistent data in place.
+docker compose -f "$compose_file" up -d redis >/dev/null
+redis_healthy=false
+for _attempt in $(seq 1 24); do
+  if [[ $(docker inspect -f '{{.State.Health.Status}}' tss-aiplatform-internal-redis 2>/dev/null || true) == healthy ]]; then
+    redis_healthy=true
+    break
+  fi
+  sleep 3
+done
+[[ $redis_healthy == true ]] || die "reviewed internal Redis did not become healthy"
 capture_nonbackend "$nonbackend_before"
 old_image=${TSS_BACKEND_IMAGE}
 docker load --input "$work_dir/backend-image-amd64.tar" >/dev/null

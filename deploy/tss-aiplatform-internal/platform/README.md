@@ -7,8 +7,8 @@ kubeconfig, and it does not modify or join the Main/Second cluster.
 
 ## What this stage contains
 
-- four uniquely named Docker containers: PostgreSQL, MinIO, MLflow-lite and the
-  backend;
+- five uniquely named Docker containers: PostgreSQL, Redis, MinIO, MLflow-lite
+  and the backend;
 - persistent data and logs only below `/srv/tss-AIplatform/platform`;
 - the repository's module-one bootstrap SQL plus all Flyway migrations from the
   locked backend image;
@@ -28,7 +28,7 @@ environment, ports, health check and other runtime fields. A metadata-only
 local ID rewrite is reported as information; any executable-content difference
 still fails closed.
 
-The C5 image set consumes about 1.58 GB before layer sharing. The scripts keep a
+The C5 image set consumes about 1.7 GB before layer sharing. The scripts keep a
 10 GiB system-root survival floor for the shared Docker engine and a separate
 100 GiB floor on the dedicated 2 TiB project filesystem. These deployment
 floors are not the model-cache policy: model caching remains disabled in this
@@ -41,10 +41,10 @@ data stays on the dedicated project filesystem.
    `/srv/tss-AIplatform/repository`. Keep the worktree clean.
 2. Copy `platform.env.example` to `/etc/tss-aiplatform/platform.env`, replace
    the physical control-plane hostname and both IP placeholders, and verify the
-   five ports are unused on seu5090. The physical hostname may intentionally
+   six ports are unused on seu5090. The physical hostname may intentionally
    differ from the Kubernetes logical node name.
 3. Run `check-platform-image-budget.sh` on seu5090, then use the
-   `export-platform-images` GitHub Actions task to generate the four-image
+   `export-platform-images` GitHub Actions task to generate the five-image
    bundle from immutable registry digests. Load the verified stream into
    seu5090 Docker. The same exporter may run on any registry-connected Docker
    host; Main is neither a source nor a required hop. Temporary
@@ -60,8 +60,8 @@ sudo bash deploy/tss-aiplatform-internal/platform/scripts/bootstrap-platform.sh 
 The command generates fresh local secrets without displaying them, prepares
 the locked Metrics Server plus only the internal namespace/RBAC/services and
 exact firewall ports, starts the
-four Compose services, then verifies database, object storage, MLflow,
-Kubernetes least privilege, live node metrics and callback authentication. Re-running `--apply`
+five Compose services, then verifies database, the Redis-backed login session,
+object storage, MLflow, Kubernetes least privilege, live node metrics and callback authentication. Re-running `--apply`
 is idempotent. It also creates one clearly named normal smoke user, proves
 login, permission denial and a tiny MinIO upload/download/delete flow, and
 retains the resulting audit evidence. After the first deployment, `--check`
@@ -160,7 +160,7 @@ Nginx route are indexed in [`../reproducible/README.md`](../reproducible/README.
 
 ## Failure and rollback
 
-If C5 fails, retain the new data directories and logs. Stop only the four
+If C5 fails, retain the new data directories and logs. Stop only the five
 containers in the `tss-aiplatform-internal` Compose project and correct the
 classified local cause. Do not run a global Docker prune, delete volumes, reset
 Kubernetes, loosen Main, or remove any 4080/5090 non-project service. C6 CPU
@@ -213,8 +213,8 @@ Environment and gateway. Once enabled, the workflow promotes the exact
 published image digest into a small release-lock commit, exports only that
 backend image, downloads the short-lived bundle to the mechanical-disk Runner,
 and deploys through the forced gateway. The root helper rechecks the committed
-lock, runtime fingerprint, disk gates, host identity and all four platform
-images before Compose may act. It snapshots the three non-backend platform
+lock, runtime fingerprint, disk gates, host identity and all five platform
+images before Compose may act. It snapshots the four non-backend platform
 containers, changes only the backend, runs the full platform verifier and writes
 the state file below the configured `TSS_PLATFORM_ROOT`. Failed switches restore
 the previous backend configuration. Successful switches keep only the current

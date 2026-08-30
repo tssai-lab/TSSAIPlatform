@@ -10,7 +10,7 @@ offline bundle is needed.
 | Layer | Versioned source | How a new server obtains it |
 |---|---|---|
 | Kubernetes, Calico, Metrics Server and NVIDIA bootstrap | `../versions.env`, `../artifacts.lock` and repository scripts | Run the existing `export-airgap-bundles` workflow task, or pull the locked digests directly. |
-| PostgreSQL, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
+| PostgreSQL, Redis, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
 | Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
 | Minimal C6 CPU training and inference images | `cpu-runtime-images.lock` | Export and stage only the two locked images with the internal validation workflow. |
 | Minimal GPU training images | `gpu-runtime-images.lock` | Export and stage only the digest-locked CV/NLP GPU workers from `backend-gpu`; this does not enable GPU discovery or submit workloads. |
@@ -80,8 +80,8 @@ The Actions artifact is intentionally retained for seven days to avoid using
 GitHub as a permanent binary backup. The committed lock and exporter do not
 expire; rerun the workflow to recreate the same bundle from the same digests.
 
-For an existing platform whose three base services are already verified, do
-not move the complete four-image bundle just to update the application. Run
+For an existing platform whose four base services are already verified, do
+not move the complete five-image bundle just to update the application. Run
 `export-backend-image` instead. It exports only the single backend entry from
 the same lock, with its checksum and source metadata. This is the disk-minimal
 path used to keep the internal platform aligned with Main.
@@ -170,7 +170,7 @@ behind the separate GPU-worker gate and the immediate shared-host idle check.
    documented in `../versions.env`.
 3. Generate the Kubernetes air-gap bundles from GitHub Actions and import them
    with the existing guarded scripts.
-4. Generate the four platform-image bundle from GitHub Actions and load it with
+4. Generate the five platform-image bundle from GitHub Actions and load it with
    `docker load`.
 5. Create node/platform environment files from the committed examples and
    generate fresh Secrets.
@@ -183,7 +183,7 @@ behind the separate GPU-worker gate and the immediate shared-host idle check.
    verify the DCGM InternalIP endpoint before any single-GPU acceptance task.
 
 Steps 7 and 8 are required for a complete user-facing CPU platform. Finishing
-only the four base containers is an empty-platform milestone, not full
+only the five base containers is an empty-platform milestone, not full
 acceptance. Step 9 installs GPU discovery and monitoring infrastructure only. GPU business
 behavior is claimed only after the immutable workload image and the guarded
 single-GPU real test both pass; on a shared host, Kubernetes capacity never

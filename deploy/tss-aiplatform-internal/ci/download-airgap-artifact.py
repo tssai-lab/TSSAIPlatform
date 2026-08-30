@@ -86,9 +86,9 @@ PROFILES = {
         "checksum_files": {
             "platform-images.sha256": ["platform-images-amd64.tar", "sources.lock"],
         },
-        # The four lock entries have a combined conservative budget below
-        # 2 GiB. Reject anything larger before creating a partial directory.
-        "max_bytes": 2 * 1024**3,
+        # The five lock entries have a combined conservative budget below
+        # 2.1 GiB. Keep only a narrow 2.25 GiB ceiling for the staged bundle.
+        "max_bytes": 2304 * 1024**2,
     },
     "backend-image": {
         "artifact_prefix": "tss-aiplatform-backend-image",

@@ -243,7 +243,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Export four registry-locked platform images
+      - name: Export five registry-locked platform images
         run: |
           set -Eeuo pipefail
           output_dir="$RUNNER_TEMP/tss-aiplatform-platform-images"
@@ -1084,7 +1084,7 @@ jobs:
             cmp "$RUNNER_TEMP/exported-platform-images.lock" sources.lock
             cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/platform-images.lock" \
               sources.lock
-            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 4
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 5
           )
 
       - name: Record staged platform-image result
@@ -1098,7 +1098,7 @@ jobs:
             echo "- Export run: \`${PLATFORM_RUN_ID}\`"
             echo "- Source SHA: \`${PLATFORM_HEAD_SHA}\`"
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${PLATFORM_HEAD_SHA}-${PLATFORM_RUN_ID}\`"
-            echo "- Checksums and four-source lock: passed"
+            echo "- Checksums and five-source lock: passed"
             echo "- sudo, Docker import and platform restart: not attempted"
           } >> "$GITHUB_STEP_SUMMARY"
 

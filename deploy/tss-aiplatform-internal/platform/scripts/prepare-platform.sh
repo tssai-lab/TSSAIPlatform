@@ -45,6 +45,7 @@ origin_url="$(git -C "$TSS_REPOSITORY_ROOT" remote get-url origin)"
 declare -A port_owners=(
   ["$TSS_BACKEND_PORT"]=tss-aiplatform-internal-backend
   ["$TSS_POSTGRES_PORT"]=tss-aiplatform-internal-postgres
+  ["$TSS_REDIS_PORT"]=tss-aiplatform-internal-redis
   ["$TSS_MINIO_API_PORT"]=tss-aiplatform-internal-minio
   ["$TSS_MINIO_CONSOLE_PORT"]=tss-aiplatform-internal-minio
   ["$TSS_MLFLOW_PORT"]=tss-aiplatform-internal-mlflow
@@ -73,6 +74,8 @@ install -d -m 0700 -o 999 -g 999 \
 install -d -m 0750 -o root -g root \
   "${TSS_PLATFORM_ROOT}/data/minio" \
   "${TSS_PLATFORM_ROOT}/state"
+install -d -m 0750 -o 999 -g 1000 \
+  "${TSS_PLATFORM_ROOT}/data/redis"
 install -d -m 0750 -o 10001 -g 10001 \
   "${TSS_PLATFORM_ROOT}/data/mlflow" \
   "${TSS_PLATFORM_ROOT}/logs/backend"

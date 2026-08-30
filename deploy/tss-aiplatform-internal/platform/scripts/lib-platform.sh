@@ -47,11 +47,11 @@ load_platform_config() {
     TSS_PLATFORM_ENVIRONMENT TSS_PLATFORM_ROOT TSS_REPOSITORY_ROOT \
     TSS_PLATFORM_HOSTNAME TSS_PLATFORM_BIND_IP TSS_PLATFORM_WORKER_IP \
     TSS_PLATFORM_WORKER_NODE \
-    TSS_BACKEND_PORT TSS_POSTGRES_PORT TSS_MINIO_API_PORT \
+    TSS_BACKEND_PORT TSS_POSTGRES_PORT TSS_REDIS_PORT TSS_MINIO_API_PORT \
     TSS_MINIO_CONSOLE_PORT TSS_MLFLOW_PORT \
     TSS_CORS_ALLOWED_ORIGIN_PATTERNS TSS_KUBECTL_PATH \
     TSS_ADMIN_KUBECONFIG TSS_MIN_ROOT_FREE_GIB TSS_MIN_PLATFORM_FREE_GIB \
-    TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
+    TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_REDIS_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
     require_var "$name"
   done
 
@@ -82,7 +82,7 @@ load_platform_config() {
     || die "repository and mutable platform data must be separate"
 
   local -A seen_ports=()
-  for name in TSS_BACKEND_PORT TSS_POSTGRES_PORT TSS_MINIO_API_PORT \
+  for name in TSS_BACKEND_PORT TSS_POSTGRES_PORT TSS_REDIS_PORT TSS_MINIO_API_PORT \
     TSS_MINIO_CONSOLE_PORT TSS_MLFLOW_PORT; do
     validate_port "$name"
     [[ -z ${seen_ports[${!name}]:-} ]] || die "duplicate platform port: ${!name}"
@@ -94,7 +94,7 @@ load_platform_config() {
   (( TSS_MIN_ROOT_FREE_GIB >= 10 )) \
     || die "root free-space gate must remain at least 10 GiB"
 
-  for name in TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
+  for name in TSS_POSTGRES_IMAGE TSS_MINIO_IMAGE TSS_REDIS_IMAGE TSS_MLFLOW_IMAGE TSS_BACKEND_IMAGE; do
     [[ ${!name} == tss-aiplatform-internal/* && ${!name} != *:latest ]] \
       || die "$name must be a project-specific immutable alias"
   done

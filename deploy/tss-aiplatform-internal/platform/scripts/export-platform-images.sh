@@ -26,10 +26,10 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id expected_
     || { echo "ERROR: invalid conservative image budget: $project_ref" >&2; exit 1; }
   entry_count=$((entry_count + 1))
 done <"$lock_file"
-[[ $entry_count -eq 4 ]] || { echo "ERROR: expected four platform images" >&2; exit 1; }
+[[ $entry_count -eq 5 ]] || { echo "ERROR: expected five platform images" >&2; exit 1; }
 
 if [[ $mode == --validate-only ]]; then
-  echo "PASS: four platform images have immutable registry digests and local aliases"
+  echo "PASS: five platform images have immutable registry digests and local aliases"
   exit 0
 fi
 
@@ -84,7 +84,7 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id expected_
   temporary_tags+=("$project_ref")
   project_refs+=("$project_ref")
 done <"$lock_file"
-expected_exports=4
+expected_exports=5
 [[ $mode == --backend-only ]] && expected_exports=1
 [[ ${#project_refs[@]} -eq $expected_exports ]] \
   || { echo "ERROR: expected ${expected_exports} platform image export(s)" >&2; exit 1; }

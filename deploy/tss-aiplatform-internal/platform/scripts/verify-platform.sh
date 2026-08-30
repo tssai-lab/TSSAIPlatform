@@ -22,6 +22,7 @@ require_space_gates
 
 containers=(
   tss-aiplatform-internal-postgres
+  tss-aiplatform-internal-redis
   tss-aiplatform-internal-minio
   tss-aiplatform-internal-mlflow
   tss-aiplatform-internal-backend
@@ -51,12 +52,21 @@ payload = json.load(open(sys.argv[1], encoding="utf-8"))
 if payload.get("status") != "UP":
     raise SystemExit("overall readiness is not UP")
 components = payload.get("components") or {}
-for name in ("database", "objectStorage", "training"):
+for name in ("database", "objectStorage", "training", "authSession"):
     component = components.get(name)
     status = component.get("status") if isinstance(component, dict) else component
     if status != "UP":
         raise SystemExit(f"readiness component is not UP: {name}")
 PY
+[[ $(docker exec tss-aiplatform-internal-redis redis-cli ping) == PONG ]] \
+  || die "project Redis session store did not return PONG"
+[[ $(docker inspect -f '{{.Config.Image}}' tss-aiplatform-internal-redis) == "$TSS_REDIS_IMAGE" ]] \
+  || die "running Redis image differs from the reviewed platform alias"
+[[ $(docker port tss-aiplatform-internal-redis 6379/tcp) == "127.0.0.1:${TSS_REDIS_PORT}" ]] \
+  || die "Redis session store is not bound only to the reviewed loopback port"
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
+  tss-aiplatform-internal-backend | grep -Fx 'AUTH_SESSION_STORE=redis' >/dev/null \
+  || die "backend is not configured for Redis-backed sessions"
 curl --silent --show-error --fail --max-time 5 \
   "http://${TSS_PLATFORM_BIND_IP}:${TSS_MINIO_API_PORT}/minio/health/live" >/dev/null
 curl --silent --show-error --fail --max-time 5 \
