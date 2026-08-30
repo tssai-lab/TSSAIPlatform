@@ -9,11 +9,11 @@ import java.util.Locale;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class NullableServerMetricsV63MigrationContractTest {
+class NullableServerMetricsV64MigrationContractTest {
 
     @Test
     void migrationOnlyMakesMetricColumnsNullableWithoutRewritingHistory() throws Exception {
-        String sql = new ClassPathResource("db/migration/V63__nullable_server_metrics.sql")
+        String sql = new ClassPathResource("db/migration/V64__nullable_server_metrics.sql")
                 .getContentAsString(StandardCharsets.UTF_8)
                 .toLowerCase(Locale.ROOT);
 

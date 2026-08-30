@@ -36,6 +36,7 @@ class InferenceScriptServiceDeleteTest {
     private FakeScriptVersionRepository versionRepo;
     private FakeTaskRepository taskRepo;
     private FakeMinioDeleteTaskService minioDeleteTaskService;
+    private FakeAuthContext authContext;
     private InferenceScriptService service;
 
     @BeforeEach
@@ -44,15 +45,49 @@ class InferenceScriptServiceDeleteTest {
         versionRepo = new FakeScriptVersionRepository();
         taskRepo = new FakeTaskRepository();
         minioDeleteTaskService = new FakeMinioDeleteTaskService();
+        authContext = new FakeAuthContext(7, false);
+        service = newService(authContext);
+    }
+
+    private InferenceScriptService newService(FakeAuthContext context) {
         service = new InferenceScriptService(
                 assetRepo.proxy(),
                 versionRepo.proxy(),
                 taskRepo.proxy(),
                 new FakeMinioService(),
                 minioDeleteTaskService,
-                new FakeAuthContext(),
+                context,
                 new ObjectMapper()
         );
+        return service;
+    }
+
+    @Test
+    void ordinaryUserListsOnlyOwnAndSystemScripts() {
+        addScript("infer-script-ver-own", "infer-script-asset-own", 7);
+        addScript("infer-script-ver-other", "infer-script-asset-other", 8);
+        addScript("infer-script-ver-system", "infer-script-asset-system", AuthContext.SYSTEM_USER_ID);
+
+        List<String> ids = service.listScripts().stream().map(item -> item.getId()).toList();
+
+        assertEquals(2, ids.size());
+        assertTrue(ids.containsAll(List.of("infer-script-ver-own", "infer-script-ver-system")));
+        assertFalse(ids.contains("infer-script-ver-other"));
+    }
+
+    @Test
+    void administratorListsScriptsAcrossOwners() {
+        addScript("infer-script-ver-own", "infer-script-asset-own", 7);
+        addScript("infer-script-ver-other", "infer-script-asset-other", 8);
+        addScript("infer-script-ver-system", "infer-script-asset-system", AuthContext.SYSTEM_USER_ID);
+        service = newService(new FakeAuthContext(1, true));
+
+        List<String> ids = service.listScripts().stream().map(item -> item.getId()).toList();
+
+        assertEquals(3, ids.size());
+        assertTrue(ids.containsAll(
+                List.of("infer-script-ver-own", "infer-script-ver-other", "infer-script-ver-system")
+        ));
     }
 
     @Test
@@ -89,10 +124,14 @@ class InferenceScriptServiceDeleteTest {
     }
 
     private static InferenceScriptAsset scriptAsset(String id) {
+        return scriptAsset(id, 7);
+    }
+
+    private static InferenceScriptAsset scriptAsset(String id, int ownerUserId) {
         InferenceScriptAsset asset = new InferenceScriptAsset();
         asset.setId(id);
         asset.setName("script");
-        asset.setOwnerUserId(7);
+        asset.setOwnerUserId(ownerUserId);
         asset.setCreatedAt(Instant.now());
         asset.setUpdatedAt(Instant.now());
         asset.setDeleted(false);
@@ -100,18 +139,27 @@ class InferenceScriptServiceDeleteTest {
     }
 
     private static InferenceScriptVersion scriptVersion(String id, String assetId) {
+        return scriptVersion(id, assetId, 7);
+    }
+
+    private static InferenceScriptVersion scriptVersion(String id, String assetId, int ownerUserId) {
         InferenceScriptVersion version = new InferenceScriptVersion();
         version.setId(id);
         version.setAssetId(assetId);
         version.setVersion("v1");
-        version.setStoragePath("users/7/inference-scripts/" + assetId + "/v1/script.zip");
+        version.setStoragePath("users/" + ownerUserId + "/inference-scripts/" + assetId + "/v1/script.zip");
         version.setRuntime("PYTHON3");
         version.setEntryFile("infer.py");
         version.setStatus("READY");
-        version.setOwnerUserId(7);
+        version.setOwnerUserId(ownerUserId);
         version.setCreatedAt(Instant.now());
         version.setDeleted(false);
         return version;
+    }
+
+    private void addScript(String versionId, String assetId, int ownerUserId) {
+        versionRepo.versions.put(versionId, scriptVersion(versionId, assetId, ownerUserId));
+        assetRepo.assets.put(assetId, scriptAsset(assetId, ownerUserId));
     }
 
     @SuppressWarnings("unchecked")
@@ -149,6 +197,16 @@ class InferenceScriptServiceDeleteTest {
                     (proxy, method, args) -> switch (method.getName()) {
                         case "findByIdAndDeletedFalse" -> Optional.ofNullable(assets.get((String) args[0]))
                                 .filter(asset -> Boolean.FALSE.equals(asset.getDeleted()));
+                        case "findAllById" -> {
+                            List<InferenceScriptAsset> found = new ArrayList<>();
+                            for (Object id : (Iterable<?>) args[0]) {
+                                InferenceScriptAsset asset = assets.get(id);
+                                if (asset != null) {
+                                    found.add(asset);
+                                }
+                            }
+                            yield found;
+                        }
                         case "save" -> {
                             InferenceScriptAsset asset = (InferenceScriptAsset) args[0];
                             assets.put(asset.getId(), asset);
@@ -170,6 +228,16 @@ class InferenceScriptServiceDeleteTest {
                     (proxy, method, args) -> switch (method.getName()) {
                         case "findByIdAndDeletedFalse" -> Optional.ofNullable(versions.get((String) args[0]))
                                 .filter(version -> Boolean.FALSE.equals(version.getDeleted()));
+                        case "findByDeletedFalseOrderByCreatedAtDesc" -> versions.values().stream()
+                                .filter(version -> Boolean.FALSE.equals(version.getDeleted()))
+                                .toList();
+                        case "findByOwnerUserIdInAndDeletedFalseOrderByCreatedAtDesc" -> {
+                            List<?> ownerIds = (List<?>) args[0];
+                            yield versions.values().stream()
+                                    .filter(version -> ownerIds.contains(version.getOwnerUserId()))
+                                    .filter(version -> Boolean.FALSE.equals(version.getDeleted()))
+                                    .toList();
+                        }
                         case "save" -> {
                             InferenceScriptVersion version = (InferenceScriptVersion) args[0];
                             versions.put(version.getId(), version);
@@ -234,19 +302,27 @@ class InferenceScriptServiceDeleteTest {
     }
 
     private static class FakeAuthContext extends AuthContext {
+        private final int currentUserId;
+        private final boolean administrator;
+
+        FakeAuthContext(int currentUserId, boolean administrator) {
+            this.currentUserId = currentUserId;
+            this.administrator = administrator;
+        }
+
         @Override
         public Integer currentUserId() {
-            return 7;
+            return currentUserId;
         }
 
         @Override
         public boolean isAdmin() {
-            return false;
+            return administrator;
         }
 
         @Override
         public void requireOwnerAccess(Integer ownerUserId, String message) {
-            if (ownerUserId == null || !ownerUserId.equals(7)) {
+            if (ownerUserId == null || !ownerUserId.equals(currentUserId)) {
                 throw new IllegalArgumentException(message);
             }
         }

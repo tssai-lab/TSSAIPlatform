@@ -4,6 +4,7 @@ set -Eeuo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 validator="${root_dir}/deploy/scripts/tss-node-validate-deployment"
 bootstrap="${root_dir}/deploy/scripts/bootstrap-node-backend.sh"
+main_bootstrap="${root_dir}/deploy/scripts/bootstrap-main-backend.sh"
 backend_activator="${root_dir}/deploy/scripts/tss-node-activate-backend"
 backend_loader="${root_dir}/deploy/scripts/tss-node-load-backend"
 runtime_loader="${root_dir}/deploy/scripts/tss-node-load-inference"
@@ -16,6 +17,8 @@ runtime_workflow="${root_dir}/.github/workflows/runtime-images.yml"
 cv_dockerfile="${root_dir}/k8s/training-worker/Dockerfile.cv"
 inference_dockerfile="${root_dir}/k8s/inference-worker/Dockerfile"
 inference_ml_requirements="${root_dir}/k8s/inference-worker/requirements-ml-cpu.txt"
+kubeadm_verifier="${root_dir}/backend/scripts/k8s/verify-kubeadm.sh"
+kubeadm_probe="${root_dir}/k8s/base/backend-access-probe-job.yaml"
 
 workdir="$(mktemp -d)"
 cleanup() {
@@ -112,6 +115,29 @@ grep -F "printf 'TSS_DEPLOYMENT_SMOKE_NODE=%q\\n'" "$bootstrap" >/dev/null
 grep -F 'docker image inspect "$redis_image"' "$bootstrap" >/dev/null
 grep -F 'active_inference_worker_image' "$bootstrap" >/dev/null
 grep -F 'INFERENCE_KUBERNETES_WORKER_IMAGE' "$bootstrap" >/dev/null
+grep -F 'active_cluster_name' "$bootstrap" >/dev/null
+grep -F 'active_k8s_kubeconfig' "$bootstrap" >/dev/null
+grep -F 'active_k8s_verify_script' "$bootstrap" >/dev/null
+grep -F 'active_deployment_smoke_node' "$bootstrap" >/dev/null
+grep -F 'active_model_cache_enabled' "$bootstrap" >/dev/null
+grep -F 'active_model_cache_runtime_reserve_bytes' "$bootstrap" >/dev/null
+grep -F 'TRAINING_K8S_KUBECONFIG=${k8s_kubeconfig}' "$bootstrap" >/dev/null
+grep -F 'TRAINING_K8S_VERIFY_SCRIPT=${k8s_verify_script}' "$bootstrap" >/dev/null
+grep -F 'TSS_K8S_KUBECONFIG=/opt/tss-platform/k8s/.kube/admin.conf' \
+  "${root_dir}/deploy/nodes/main.env.example" >/dev/null
+grep -F 'TSS_DEPLOYMENT_SMOKE_NODE=k8s-master' \
+  "${root_dir}/deploy/nodes/main.env.example" >/dev/null
+grep -F 'TSS_MODEL_CACHE_ENABLED=true' \
+  "${root_dir}/deploy/nodes/main.env.example" >/dev/null
+grep -F 'TSS_CLUSTER_NAME:-main-kubeadm' "$main_bootstrap" >/dev/null
+grep -F 'TSS_DEPLOYMENT_SMOKE_NODE:-k8s-master' "$main_bootstrap" >/dev/null
+grep -F 'TSS_K8S_KUBECONFIG:-/opt/tss-platform/k8s/.kube/admin.conf' \
+  "$main_bootstrap" >/dev/null
+grep -F 'retired `tss-training-control-plane` kind cluster' "$redis_runbook" >/dev/null
+grep -F 'backend-access-probe-job.yaml' "$kubeadm_verifier" >/dev/null
+grep -F -- '--dry-run=server' "$kubeadm_verifier" >/dev/null
+grep -F 'automountServiceAccountToken: false' "$kubeadm_probe" >/dev/null
+grep -F 'readOnlyRootFilesystem: true' "$kubeadm_probe" >/dev/null
 if grep -F 'docker image inspect "$training_worker_image"' "$bootstrap" >/dev/null \
   || grep -F 'docker image inspect "$inference_worker_image"' "$bootstrap" >/dev/null; then
   echo "Backend bootstrap must not require duplicate Docker copies of Kubernetes-only worker images." >&2

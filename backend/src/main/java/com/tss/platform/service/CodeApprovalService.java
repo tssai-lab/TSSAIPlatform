@@ -10,6 +10,7 @@ import com.tss.platform.model.CodeApprovalStatus;
 import com.tss.platform.model.CodeRiskAssessmentStatus;
 import com.tss.platform.model.CodeRiskDisposition;
 import com.tss.platform.model.CodeRiskLevel;
+import com.tss.platform.model.TrainingCodeReviewMode;
 import com.tss.platform.model.TrainingCodeReviewPolicy;
 import com.tss.platform.repository.CodeApprovalRecordRepository;
 import com.tss.platform.repository.CodeAssetRepository;
@@ -43,6 +44,7 @@ public class CodeApprovalService {
     private final CodeArtifactStorageService storageService;
     private final CodeAssetAuditService auditService;
     private final AuthContext authContext;
+    private final SystemConfigService systemConfigService;
 
     public CodeApprovalService(
             CodeVersionRepository versionRepository,
@@ -52,7 +54,8 @@ public class CodeApprovalService {
             CodeApprovalRecordRepository approvalRecordRepository,
             CodeArtifactStorageService storageService,
             CodeAssetAuditService auditService,
-            AuthContext authContext
+            AuthContext authContext,
+            SystemConfigService systemConfigService
     ) {
         this.versionRepository = versionRepository;
         this.assetRepository = assetRepository;
@@ -62,6 +65,7 @@ public class CodeApprovalService {
         this.storageService = storageService;
         this.auditService = auditService;
         this.authContext = authContext;
+        this.systemConfigService = systemConfigService;
     }
 
     @Transactional
@@ -437,6 +441,13 @@ public class CodeApprovalService {
         requireCurrentPassingEvidence(version, validationRun);
         requireCurrentDirectPassEvidence(version, validationRun, assessment);
         requireActualArtifact(version);
+        if (systemConfigService.currentTrainingCodeReviewModeForUpdate()
+                != TrainingCodeReviewMode.DIRECT_PASS) {
+            throw validation(
+                    "DIRECT_PASS_DISABLED",
+                    "Direct-pass review mode is no longer enabled"
+            );
+        }
 
         CodeApprovalRecord latest = approvalRecordRepository
                 .findTopByVersionIdOrderByCreatedAtDescIdDesc(versionId)
@@ -516,6 +527,13 @@ public class CodeApprovalService {
             throw validation("RISK_EVIDENCE_STALE", "Risk assessment evidence is stale");
         }
         requireActualArtifact(version);
+        if (!systemConfigService.currentTrainingCodeReviewModeForUpdate()
+                .automaticDecisionsEnabled()) {
+            throw validation(
+                    "AUTO_REVIEW_DISABLED",
+                    "Automatic code review is no longer enabled"
+            );
+        }
 
         String decision;
         String action;

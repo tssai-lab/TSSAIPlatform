@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -74,6 +75,28 @@ class UserControllerPermissionTest {
         assertThat(result.getCode()).isEqualTo(Result.SUCCESS_CODE);
         assertThat(result.getData()).containsEntry("total", 0);
         verify(userService).getUserListWithRole(3);
+    }
+
+    @Test
+    void currentSystemListDisplaysDatabaseAdminRoleAsNormalAdministrator() {
+        UserService userService = mock(UserService.class);
+        UserAdministrationPolicy policy = mock(UserAdministrationPolicy.class);
+        Map<String, Object> administrator = new HashMap<>();
+        administrator.put("id", 20);
+        administrator.put("username", "normal-admin");
+        administrator.put("role_id", 2);
+        administrator.put("role_name", "admin");
+        when(policy.requiredVisibleRoleId()).thenReturn(null);
+        when(userService.getUserListWithRole(null)).thenReturn(List.of(administrator));
+        SystemUserController controller = new SystemUserController();
+        ReflectionTestUtils.setField(controller, "userService", userService);
+        ReflectionTestUtils.setField(controller, "userAdministrationPolicy", policy);
+
+        Result<Map<String, Object>> result = controller.getUserList();
+
+        assertThat(result.getCode()).isEqualTo(Result.SUCCESS_CODE);
+        assertThat(result.getData()).containsEntry("total", 1);
+        assertThat(administrator).containsEntry("role", "普通管理员");
     }
 
     @Test

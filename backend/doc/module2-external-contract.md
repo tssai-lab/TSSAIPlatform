@@ -669,7 +669,7 @@ ZIP 条目名严格按 UTF-8 解码。Windows ZIP 的反斜杠先规范化为 `/
 
 代码版本生命周期状态为 `READY / DEPRECATED / ARCHIVED`，校验状态为 `NOT_RUN / PASSED / FAILED`，审批状态为 `PENDING / APPROVED / REJECTED / REVOKED`。风险任务状态为 `QUEUED / RUNNING / COMPLETED / ERROR / CANCELED`，风险等级为 `LOW / MEDIUM / HIGH / UNKNOWN`，分流为 `AUTO_APPROVE / MANUAL_REVIEW / BLOCK / DIRECT_PASS`。
 
-训练代码审核模式通过管理员接口 `GET /api/system/config/get` 和 `POST /api/system/config/update` 提供给前端。请求字段 `trainingCodeReviewMode` 只允许 `DIRECT_PASS` 或 `STANDARD_REVIEW`，数据库默认 `STANDARD_REVIEW`。`DIRECT_PASS` 对新的成功校验证据跳过静态风险扫描和管理员审核，写入 `UNKNOWN + DIRECT_PASS` 风险证据及 `decisionSource=SYSTEM_CONFIG` 的批准记录；`STANDARD_REVIEW` 保持现有 `CODE_ASSET_RISK_MODE` 分流。直通模式仍执行 ZIP 结构、固定入口、实际对象名、SHA-256、长度以及消费时重新读取核对。模式变更不批量处理既有 `PENDING` 版本，也不自动撤销此前的系统直通批准。两个配置接口均仅管理员可用。
+训练代码审核模式通过超级管理员接口 `GET /api/system/config/get` 和 `POST /api/system/config/update` 提供给前端。请求字段 `trainingCodeReviewMode` 只允许 `DIRECT_PASS`、`STANDARD_REVIEW` 或 `MANUAL_ONLY`，数据库默认 `STANDARD_REVIEW`。`DIRECT_PASS` 对新的成功校验证据跳过静态风险扫描和管理员审核，写入 `UNKNOWN + DIRECT_PASS` 风险证据及 `decisionSource=SYSTEM_CONFIG` 的批准记录；`STANDARD_REVIEW` 保持现有 `CODE_ASSET_RISK_MODE` 分流；`MANUAL_ONLY` 不触发自动扫描判定，写入 `UNKNOWN + MANUAL_REVIEW` 证据并进入人工待审，管理员仍可显式重新扫描获取辅助证据。直通模式仍执行 ZIP 结构、固定入口、实际对象名、SHA-256、长度以及消费时重新读取核对。模式变更不批量处理既有 `PENDING` 版本，也不自动撤销此前的批准；已排队或运行中的扫描可以收尾，但切到 `MANUAL_ONLY` 后不得再自动批准、拒绝或撤销既有批准。配置变更会写入统一权限变更审计。
 
 V2 `/validate` 和 Legacy `/training-check` 都核对实际对象名、SHA-256 和长度。当前策略及全部通过证据完全一致时返回 `reused=true`，不新增校验/风险/审计证据，也不改变既有审批状态；只有制品或策略证据确实变化时才产生新 validation run，并使旧审批绑定回到 `PENDING`。因此前端应在已经批准且策略未变化时隐藏普通准入校验按钮，或至少二次确认。管理员审核中心的 `/rescan` 不等于普通校验：它显式生成新的风险证据，不应暴露给普通上传者。
 
