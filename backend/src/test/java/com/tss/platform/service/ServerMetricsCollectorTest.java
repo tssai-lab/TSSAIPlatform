@@ -73,6 +73,34 @@ class ServerMetricsCollectorTest {
     }
 
     @Test
+    void derivesPlatformSchedulabilityFromCordonAndBlockingTaints() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.shellRunner.run(any(), any(), anyInt()))
+                .thenReturn(ShellCommandRunner.CommandResult.success("""
+                        {"items":[
+                          {"metadata":{"name":"control","labels":{"node-role.kubernetes.io/control-plane":""}},
+                           "spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]}},
+                          {"metadata":{"name":"cordoned","labels":{}},"spec":{"unschedulable":true}},
+                          {"metadata":{"name":"preferred","labels":{}},
+                           "spec":{"taints":[{"key":"shared","effect":"PreferNoSchedule"}]}},
+                          {"metadata":{"name":"worker","labels":{"tss.ai/node-pool":"cpu"}},"spec":{}}
+                        ]}
+                        """));
+
+        Map<String, String> labels = fixture.collector.fetchNodeLabelsJson();
+
+        ObjectMapper mapper = new ObjectMapper();
+        assertThat(mapper.readTree(labels.get("control"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
+        assertThat(mapper.readTree(labels.get("cordoned"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("false");
+        assertThat(mapper.readTree(labels.get("preferred"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
+        assertThat(mapper.readTree(labels.get("worker"))
+                .path(JobScheduler.PLATFORM_SCHEDULABLE_LABEL).asText()).isEqualTo("true");
+    }
+
+    @Test
     void oneInvalidNodeMetricDoesNotDiscardHealthyNodes() {
         Fixture fixture = fixture();
         String metrics = """

@@ -21,8 +21,10 @@ cluster.
   `tss-AIplatform` filesystem on the 8 TB disk.
 - The reviewed seu5090 host also contains one RTX 5090. Its isolated project
   containerd enables the NVIDIA runtime, and the Device Plugin/DCGM exporter
-  may report that GPU. The standard control-plane `NoSchedule` taint is kept,
-  so ordinary training Jobs cannot consume the shared control-plane GPU.
+  may report that GPU. The standard control-plane `NoSchedule` taint is kept.
+  Node discovery records blocking taints/cordons as
+  `tss.ai/platform-schedulable=false`, and the platform scheduler excludes that
+  node before it pins a training or inference Job with `nodeName`.
 - The current seu5090 project root is `/srv/tss-AIplatform`, mounted from
   `/dev/sda1`. `/media/user/data` is on the nearly-full root filesystem and is
   not a valid project target.

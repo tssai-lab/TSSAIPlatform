@@ -2,6 +2,7 @@ package com.tss.platform.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.tss.platform.config.ComputeProperties;
 import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.ServerMetricHistory;
@@ -290,10 +291,14 @@ public class ServerMetricsCollector {
             JsonNode root = objectMapper.readTree(result.output());
             for (JsonNode item : root.path("items")) {
                 String name = item.path("metadata").path("name").asText();
-                JsonNode labels = item.path("metadata").path("labels");
-                // 空标签节点不写入：保持 k8s_labels_json 为 null，matchesNodeSelector 对空标签视为匹配全部，
-                // 避免把无标签节点写成 "{}" 后对所有 nodeSelector 都不匹配、导致该节点一个任务都分不到
-                if (!name.isBlank() && labels.isObject() && !labels.isEmpty()) {
+                JsonNode sourceLabels = item.path("metadata").path("labels");
+                ObjectNode labels = objectMapper.createObjectNode();
+                if (sourceLabels.isObject()) {
+                    labels.setAll((ObjectNode) sourceLabels);
+                }
+                labels.put(JobScheduler.PLATFORM_SCHEDULABLE_LABEL,
+                        isPlatformSchedulable(item) ? "true" : "false");
+                if (!name.isBlank()) {
                     labelsByNode.put(name, objectMapper.writeValueAsString(labels));
                 }
             }
@@ -301,6 +306,20 @@ public class ServerMetricsCollector {
             LOG.warn("Failed to fetch Kubernetes node labels: {}", exception.getMessage());
         }
         return labelsByNode;
+    }
+
+    static boolean isPlatformSchedulable(JsonNode node) {
+        JsonNode spec = node.path("spec");
+        if (spec.path("unschedulable").asBoolean(false)) {
+            return false;
+        }
+        for (JsonNode taint : spec.path("taints")) {
+            String effect = taint.path("effect").asText();
+            if ("NoSchedule".equals(effect) || "NoExecute".equals(effect)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void syncNodeLabels(List<ComputeServer> servers, Map<String, String> labelsByNode) {
