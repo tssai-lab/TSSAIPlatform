@@ -28,7 +28,7 @@ class CodeStaticRiskScannerTest {
 
         CodeRiskScanResult result = scanner.scan(Map.of("train.py", Files.readAllBytes(script)));
 
-        assertEquals("LOW", result.riskLevel());
+        assertEquals("LOW", result.riskLevel(), result.findings().toString());
         assertEquals("AUTO_APPROVE", result.disposition());
         assertTrue(result.findings().isEmpty());
     }

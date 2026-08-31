@@ -38,6 +38,7 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesInferenceExecutor.class);
     private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final Set<String> BINDABLE_STATUSES = Set.of("pending", "queued", "scheduled");
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
@@ -149,7 +150,7 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
         }
     }
 
-    private void submitJob(String taskId, Integer attempt) {
+    void submitJob(String taskId, Integer attempt) {
         updateStatus(taskId, attempt, "queued", 0, null);
         try {
             InferenceTask task = taskRepository.findById(taskId)
@@ -169,27 +170,27 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 datasetVersion = datasetVersionRepository.findByIdAndDeletedFalse(task.getDatasetVersionId())
                         .orElseThrow(() -> new IllegalArgumentException("数据集版本不存在: " + task.getDatasetVersionId()));
             }
-            String targetNodeName = null;
-            if (modelCacheProperties.isEnabled()) {
-                if (jobScheduler == null || computeServerRepository == null) {
-                    throw new IllegalStateException("model cache node scheduling is not configured");
-                }
-                String assignedServerIp;
-                synchronized (jobScheduler) {
-                    assignedServerIp = jobScheduler.assignNodeForInference(
-                            task,
-                            modelVersion.getArtifactAttestedSha256()
-                    );
-                    if (assignedServerIp == null || assignedServerIp.isBlank()) {
-                        throw new IllegalStateException("no cache-ready node has enough resources for inference");
-                    }
-                    if (!bindInferenceNode(taskId, attempt, assignedServerIp)) {
-                        LOG.info("Skip stale inference node binding: taskId={}, attempt={}", taskId, attempt);
-                        return;
-                    }
-                }
-                targetNodeName = resolveNodeName(assignedServerIp);
+            if (jobScheduler == null || computeServerRepository == null) {
+                throw new IllegalStateException("inference node scheduling is not configured");
             }
+            String assignedServerIp;
+            synchronized (jobScheduler) {
+                assignedServerIp = jobScheduler.assignNodeForInference(
+                        task,
+                        modelVersion.getArtifactAttestedSha256()
+                );
+                if (assignedServerIp == null || assignedServerIp.isBlank()) {
+                    String reason = modelCacheProperties.isEnabled()
+                            ? "no enabled cache-ready node has enough resources for inference"
+                            : "no enabled online node has enough resources for inference";
+                    throw new IllegalStateException(reason);
+                }
+                if (!bindInferenceNode(taskId, attempt, assignedServerIp)) {
+                    LOG.info("Skip stale inference node binding: taskId={}, attempt={}", taskId, attempt);
+                    return;
+                }
+            }
+            String targetNodeName = resolveNodeName(assignedServerIp);
 
 
             String yaml = manifestBuilder.buildJobYaml(
@@ -285,17 +286,21 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                 .orElse(serverIp);
     }
 
-    private boolean bindInferenceNode(String taskId, Integer attempt, String serverIp) {
+    boolean bindInferenceNode(String taskId, Integer attempt, String serverIp) {
         Boolean bound = transactionTemplate.execute(tx -> taskRepository.findByIdForUpdate(taskId)
                 .map(task -> {
                     int currentAttempt = Math.max(
                             task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(),
                             1
                     );
-                    if (currentAttempt != attempt || !"scheduled".equals(task.getStatus())) {
+                    if (currentAttempt != attempt || !BINDABLE_STATUSES.contains(task.getStatus())) {
+                        return false;
+                    }
+                    if (task.getServerIp() != null && !task.getServerIp().isBlank()) {
                         return false;
                     }
                     task.setServerIp(serverIp);
+                    task.setStatus("scheduled");
                     task.setUpdatedAt(Instant.now());
                     taskRepository.save(task);
                     return true;

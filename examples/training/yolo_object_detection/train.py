@@ -16,11 +16,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import shutil
 from pathlib import Path
-
-from ultralytics import YOLO
+from typing import Any
 
 
 def event(payload: dict) -> None:
@@ -28,29 +28,90 @@ def event(payload: dict) -> None:
     print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-def on_epoch_end(trainer) -> None:
-    """每个 epoch 结束时上报进度和当前指标，让训练进度条与指标曲线动起来。"""
-    epoch = int(getattr(trainer, "epoch", 0) + 1)
-    total = int(getattr(trainer, "epochs", 1) or 1)
-    pct = max(0, min(100, round(epoch * 100.0 / total)))
-    event({"type": "progress", "progress": pct})
+def finite_number(value: Any) -> float | None:
+    try:
+        if hasattr(value, "item"):
+            value = value.item()
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def trainer_metric_snapshot(trainer: Any) -> dict[str, float]:
+    """Read the completed epoch values exposed by Ultralytics."""
+    snapshot: dict[str, float] = {}
+    losses = getattr(trainer, "tloss", None)
+    if losses is not None:
+        try:
+            raw_losses = list(losses)
+        except TypeError:
+            raw_losses = [losses]
+        loss_values = [finite_number(value) for value in raw_losses]
+        finite_losses = [value for value in loss_values if value is not None]
+        if finite_losses:
+            snapshot["train_loss"] = sum(finite_losses)
+
     metrics = getattr(trainer, "metrics", None) or {}
-    snapshot = {}
     for source, target in (
-        ("train/box_loss", "train_loss"),
         ("metrics/mAP50(B)", "val_mAP50"),
         ("metrics/mAP50-95(B)", "val_mAP50_95"),
         ("metrics/precision(B)", "val_precision"),
         ("metrics/recall(B)", "val_recall"),
     ):
-        value = metrics.get(source)
-        if isinstance(value, (int, float)):
+        value = finite_number(metrics.get(source))
+        if value is not None:
             snapshot[target] = value
+    return snapshot
+
+
+def on_epoch_end(trainer: Any, emitted: dict[int, set[str]] | None = None) -> None:
+    """Report one completed epoch using the documented step-based protocol."""
+    epoch = int(getattr(trainer, "epoch", 0) + 1)
+    total = int(getattr(trainer, "epochs", 1) or 1)
+    pct = max(0, min(100, round(epoch * 100.0 / total)))
+    event({"type": "progress", "progress": pct})
+    snapshot = trainer_metric_snapshot(trainer)
     if snapshot:
-        event({"type": "metric", "metrics": snapshot})
+        event({"type": "metric", "step": epoch, "metrics": snapshot})
+        if emitted is not None:
+            emitted.setdefault(epoch, set()).update(snapshot)
+
+
+def result_history(results_csv: Path) -> list[tuple[int, dict[str, float]]]:
+    """Convert Ultralytics results.csv rows to platform metric events."""
+    if not results_csv.is_file():
+        return []
+    with results_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    history: list[tuple[int, dict[str, float]]] = []
+    for step, row in enumerate(rows, start=1):
+        metrics: dict[str, float] = {}
+        loss_values = [
+            finite_number(row.get(name))
+            for name in ("train/box_loss", "train/cls_loss", "train/dfl_loss")
+        ]
+        finite_losses = [value for value in loss_values if value is not None]
+        if finite_losses:
+            metrics["train_loss"] = sum(finite_losses)
+        for source, target in (
+            ("metrics/mAP50(B)", "val_mAP50"),
+            ("metrics/mAP50-95(B)", "val_mAP50_95"),
+            ("metrics/precision(B)", "val_precision"),
+            ("metrics/recall(B)", "val_recall"),
+        ):
+            value = finite_number(row.get(source))
+            if value is not None:
+                metrics[target] = value
+        if metrics:
+            history.append((step, metrics))
+    return history
 
 
 def main() -> None:
+    from ultralytics import YOLO
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--data-dir", required=True)
@@ -72,8 +133,11 @@ def main() -> None:
 
     event({"type": "progress", "progress": 2})
     model = YOLO(str(model_path) if mode != "FROM_SCRATCH" else "yolo11n.yaml")
-    # 注册 epoch 结束回调：训练过程中自动上报进度 + 指标
-    model.add_callback("on_train_epoch_end", on_epoch_end)
+    emitted: dict[int, set[str]] = {}
+    # on_fit_epoch_end 在验证完成后触发，此时 train/val 指标属于同一个已完成 epoch。
+    model.add_callback(
+        "on_fit_epoch_end", lambda trainer: on_epoch_end(trainer, emitted)
+    )
     event({"type": "progress", "progress": 8})
     result = model.train(
         data=str(data_yaml),
@@ -93,31 +157,19 @@ def main() -> None:
     shutil.copy2(run_dir / "weights" / "last.pt", output / "last.pt")
     metrics = {"trainingMode": mode, "epochs": int(params.get("epochs", 3))}
     results_csv = run_dir / "results.csv"
-    if results_csv.is_file():
+    history = result_history(results_csv)
+    if history:
         metrics["resultsCsv"] = str(results_csv.name)
-        with results_csv.open(newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
-        if rows:
-            latest = rows[-1]
-
-            def column(name: str):
-                raw = latest.get(name)
-                try:
-                    return float(raw) if raw not in (None, "") else None
-                except (TypeError, ValueError):
-                    return None
-
-            # 用 Ultralytics results.csv 的末行指标，转成平台可视化的标准指标名
-            metrics["train_loss"] = column("train/box_loss")
-            metrics["val_mAP50"] = column("metrics/mAP50(B)")
-            metrics["val_mAP50_95"] = column("metrics/mAP50-95(B)")
-            metrics["val_precision"] = column("metrics/precision(B)")
-            metrics["val_recall"] = column("metrics/recall(B)")
-            for key in ("train_loss", "val_mAP50", "val_mAP50_95", "val_precision", "val_recall"):
-                if metrics.get(key) is None:
-                    metrics.pop(key, None)
+        for step, epoch_metrics in history:
+            missing = {
+                key: value
+                for key, value in epoch_metrics.items()
+                if key not in emitted.get(step, set())
+            }
+            if missing:
+                event({"type": "metric", "step": step, "metrics": missing})
+        metrics.update(history[-1][1])
     (output / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
-    event({"type": "metric", "metrics": metrics})
     event({"type": "progress", "progress": 100})
 
 

@@ -104,6 +104,12 @@ jobs:
             -s examples/acceptance/minirbt_text_classification \
             -p 'test_*.py' -v
 
+      - name: Run YOLO training metric protocol tests
+        run: |
+          python3 -m unittest discover \
+            -s examples/training/yolo_object_detection \
+            -p 'test_*.py' -v
+
       - name: Run YOLOv11n inference preview tests
         run: |
           python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'

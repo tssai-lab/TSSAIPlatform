@@ -133,6 +133,18 @@ class JobSchedulerModelCacheTest {
     }
 
     @Test
+    void disabledNodeIsNeverSelectedForInference() {
+        Fixture fixture = new Fixture(false);
+        ComputeServer disabled = node("10.0.0.1", false);
+        disabled.setEnabled(false);
+        ComputeServer enabled = node("10.0.0.2", false);
+        when(fixture.computeServers.findByDeletedFalse()).thenReturn(List.of(disabled, enabled));
+
+        assertEquals(enabled.getServerIp(),
+                fixture.scheduler.assignNodeForInference(new InferenceTask(), null));
+    }
+
+    @Test
     void cpuOnlyFallbackCanRunCpuButNeverReceivesGpuOverflow() {
         Fixture fixture = new Fixture(false);
         ComputeServer control = gpuNode("tss-ai-control-01", """

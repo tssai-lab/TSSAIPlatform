@@ -164,6 +164,24 @@ class DatasetContractTest(unittest.TestCase):
                 split="../../secret", max_texts=10, batch_size=8, max_length=64
             )
 
+    def test_training_metrics_use_documented_visualization_names(self):
+        metrics = train.build_training_event_metrics(
+            0.25,
+            {"accuracy": 0.9, "precision": 0.8, "recall": 0.7, "f1": 0.75},
+        )
+
+        self.assertEqual(
+            {
+                "train_loss": 0.25,
+                "val_accuracy": 0.9,
+                "val_precision": 0.8,
+                "val_recall": 0.7,
+                "val_f1": 0.75,
+            },
+            metrics,
+        )
+        self.assertFalse(any(key.startswith("validation_") for key in metrics))
+
     def test_training_device_accepts_cpu_and_one_visible_cuda_device(self):
         class FakeDevice:
             def __init__(self, value):
