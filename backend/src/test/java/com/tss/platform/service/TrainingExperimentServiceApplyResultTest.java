@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -41,6 +42,7 @@ class TrainingExperimentServiceApplyResultTest {
     private AuthContext authContext;
     private TrainingFailureDiagnosticService failureDiagnosticService;
     private TrainingOutputValidator trainingOutputValidator;
+    private MlflowTrackingService mlflowTrackingService;
 
     @BeforeEach
     void setUp() {
@@ -48,6 +50,7 @@ class TrainingExperimentServiceApplyResultTest {
         authContext = mock(AuthContext.class);
         failureDiagnosticService = mock(TrainingFailureDiagnosticService.class);
         trainingOutputValidator = mock(TrainingOutputValidator.class);
+        mlflowTrackingService = mock(MlflowTrackingService.class);
         doNothing().when(authContext).requireOwnerAccess(anyInt(), anyString());
         service = new TrainingExperimentService(
                 repo,
@@ -67,7 +70,7 @@ class TrainingExperimentServiceApplyResultTest {
                         mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
                 authContext,
-                mock(MlflowTrackingService.class),
+                mlflowTrackingService,
                 failureDiagnosticService
         );
     }
@@ -100,6 +103,29 @@ class TrainingExperimentServiceApplyResultTest {
         service.updateResultInternal("train-2", req);
 
         assertEquals(100, version.getProgress());
+    }
+
+    @Test
+    void successBackfillsFinalMetricsAtConfiguredLastEpochInsteadOfZero() {
+        TrainingExperimentVersion version = runningVersion("train-metrics", 80);
+        version.setRunId("run-1");
+        version.setMlflowTrackingUri("http://mlflow:5000");
+        version.setHyperParamsJson("{\"epochs\":2}");
+        when(repo.findById("train-metrics")).thenReturn(Optional.of(version));
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateTrainingResultRequest req = new UpdateTrainingResultRequest();
+        req.setStatus("success");
+        req.setMetrics(java.util.Map.of("train_loss", 0.25));
+
+        service.updateResultInternal("train-metrics", req);
+
+        verify(mlflowTrackingService).logMetricsToUri(
+                eq("http://mlflow:5000"),
+                eq("run-1"),
+                eq(java.util.Map.of("train_loss", 0.25)),
+                eq(2)
+        );
     }
 
     @Test
