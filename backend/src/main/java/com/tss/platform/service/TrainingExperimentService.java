@@ -707,11 +707,30 @@ public class TrainingExperimentService {
                     version.getMlflowTrackingUri(),
                     version.getRunId(),
                     numeric,
-                    0
+                    metricBackfillStep(version)
             );
         } catch (Exception e) {
             LOG.warn("训练指标同步到 MLflow 失败: trainingId={}, error={}", version.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * 最终指标只是过程指标的兜底，横轴应落在实际训练末轮，不能伪造成 step=0。
+     * 旧任务没有合法 epochs 时按第 1 轮处理，仍保持单点终值语义。
+     */
+    private int metricBackfillStep(TrainingExperimentVersion version) {
+        try {
+            JsonNode params = version.getHyperParamsJson() == null || version.getHyperParamsJson().isBlank()
+                    ? objectMapper.createObjectNode()
+                    : objectMapper.readTree(version.getHyperParamsJson());
+            JsonNode epochs = params.path("epochs");
+            if (epochs.canConvertToInt() && epochs.asInt() > 0) {
+                return epochs.asInt();
+            }
+        } catch (Exception ignored) {
+            // 兼容历史脏数据：最终指标仍可作为第 1 轮单点展示。
+        }
+        return 1;
     }
 
     private Map<String, Double> numericMetrics(String metricsJson) {
