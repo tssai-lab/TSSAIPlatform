@@ -5,8 +5,15 @@
  */
 import { request } from '@umijs/max';
 import { SYSTEM_API_CONFIG } from '@/constants/system';
+import {
+  automaticReviewSelectedFromMode,
+  normalizeTrainingCodeReviewMode,
+  reviewEnabledFromMode,
+  reviewModeFromSwitches,
+} from './trainingCodeReviewPolicy';
+import type { TrainingCodeReviewMode } from './trainingCodeReviewPolicy';
 
-export type TrainingCodeReviewMode = 'DIRECT_PASS' | 'STANDARD_REVIEW';
+export type { TrainingCodeReviewMode } from './trainingCodeReviewPolicy';
 
 export const DEFAULT_USER_LOG_LIMIT_MB = 50;
 export const MIN_USER_LOG_LIMIT_MB = 1;
@@ -20,9 +27,11 @@ export const MAX_JOB_TTL_SECONDS = 3600;
 
 export interface SystemConfig {
   /**
-   * 前端开关：false=DIRECT_PASS，true=STANDARD_REVIEW
+   * 审核总开关：false=DIRECT_PASS，true=STANDARD_REVIEW 或 MANUAL_ONLY
    */
   enableTrainingCodeAdminReview?: boolean;
+  /** 审核总开关开启时，是否允许风险策略自动批准或拒绝 */
+  enableTrainingCodeAutoReview?: boolean;
   /** 后端字段 */
   trainingCodeReviewMode?: TrainingCodeReviewMode;
   /** 每用户日志上限 MB（写接口用 logMaxSize） */
@@ -46,11 +55,11 @@ export interface KubernetesResourcePolicy {
 export function reviewModeFromAdminFlag(
   enableAdminReview?: boolean,
 ): TrainingCodeReviewMode {
-  return enableAdminReview ? 'STANDARD_REVIEW' : 'DIRECT_PASS';
+  return reviewModeFromSwitches(enableAdminReview !== false, true);
 }
 
 export function adminFlagFromReviewMode(mode?: string | null): boolean {
-  return String(mode || '').toUpperCase() === 'STANDARD_REVIEW';
+  return reviewEnabledFromMode(mode);
 }
 
 function resolveUserLogLimitMb(raw?: Partial<SystemConfig> | null): number {
@@ -67,13 +76,17 @@ function resolveUserLogLimitMb(raw?: Partial<SystemConfig> | null): number {
 export function normalizeSystemConfig(
   raw?: Partial<SystemConfig> | null,
 ): SystemConfig {
-  const mode =
-    raw?.trainingCodeReviewMode ||
-    reviewModeFromAdminFlag(raw?.enableTrainingCodeAdminReview);
+  const mode = raw?.trainingCodeReviewMode
+    ? normalizeTrainingCodeReviewMode(raw.trainingCodeReviewMode)
+    : reviewModeFromSwitches(
+        raw?.enableTrainingCodeAdminReview !== false,
+        raw?.enableTrainingCodeAutoReview !== false,
+      );
   const limitMb = resolveUserLogLimitMb(raw);
   return {
     trainingCodeReviewMode: mode,
     enableTrainingCodeAdminReview: adminFlagFromReviewMode(mode),
+    enableTrainingCodeAutoReview: automaticReviewSelectedFromMode(mode),
     logMaxSize: limitMb,
     userLogStorageLimitMb: limitMb,
     updatedAt: raw?.updatedAt,
@@ -103,7 +116,10 @@ export async function updateSystemConfig(
 ) {
   const trainingCodeReviewMode =
     params.trainingCodeReviewMode ||
-    reviewModeFromAdminFlag(params.enableTrainingCodeAdminReview);
+    reviewModeFromSwitches(
+      params.enableTrainingCodeAdminReview !== false,
+      params.enableTrainingCodeAutoReview !== false,
+    );
   const logMaxSize = resolveUserLogLimitMb(params);
   const res = await request<{
     code: number;
@@ -121,14 +137,7 @@ export async function updateSystemConfig(
   if (res?.data) {
     return { ...res, data: normalizeSystemConfig(res.data) };
   }
-  return {
-    ...res,
-    data: normalizeSystemConfig({
-      ...params,
-      trainingCodeReviewMode,
-      logMaxSize,
-    }),
-  };
+  return res;
 }
 
 /** 获取 Main 当前集群的真实资源策略；失败时不得回落到浏览器本地值。 */
