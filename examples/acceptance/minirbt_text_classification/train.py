@@ -114,6 +114,17 @@ def emit_event(event: dict[str, Any]) -> None:
     print("TSS_EVENT " + json.dumps(event, ensure_ascii=False), flush=True)
 
 
+def build_training_event_metrics(train_loss: float, validation_metrics: dict[str, float]) -> dict[str, float]:
+    """Map MiniRBT metrics to the platform's documented canonical names."""
+    return {
+        "train_loss": float(train_loss),
+        "val_accuracy": float(validation_metrics["accuracy"]),
+        "val_precision": float(validation_metrics["precision"]),
+        "val_recall": float(validation_metrics["recall"]),
+        "val_f1": float(validation_metrics["f1"]),
+    }
+
+
 def resolve_torch_device(torch_module: Any, requested: str) -> Any:
     normalized = requested.strip().lower()
     if normalized == "cpu":
@@ -315,10 +326,7 @@ def main() -> int:
         train_loss = total_loss / max(steps, 1)
         train_loss_history.append(train_loss)
         validation_metrics, _ = evaluate(splits["validation"], validation_loader)
-        event_metrics = {"train_loss": train_loss}
-        event_metrics.update(
-            {f"validation_{name}": value for name, value in validation_metrics.items()}
-        )
+        event_metrics = build_training_event_metrics(train_loss, validation_metrics)
         emit_event({"type": "metric", "step": epoch, "metrics": event_metrics})
         emit_event({"type": "progress", "progress": round(epoch * 100 / epochs)})
 
@@ -366,6 +374,7 @@ def main() -> int:
         "test": test_metrics,
         "samples": {split: len(records) for split, records in splits.items()},
     }
+    metrics.update(build_training_event_metrics(train_loss_history[-1], validation_metrics))
     (args.out_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
