@@ -162,6 +162,22 @@ class CodeStaticRiskScannerTest {
     }
 
     @Test
+    void officialUltralyticsTrainingImportCanAutoApprove() {
+        CodeRiskScanResult result = scanner.scan(Map.of(
+                "train.py", bytes("""
+                        from ultralytics import YOLO
+
+                        def train() -> None:
+                            model = YOLO("yolo11n.pt")
+                            print(model)
+                        """)
+        ));
+
+        assertEquals("AUTO_APPROVE", result.disposition());
+        assertTrue(result.findings().isEmpty());
+    }
+
+    @Test
     void multilineExpressionCanBeTheFirstStatementOfAnIndentedSuite() {
         CodeRiskScanResult result = scanner.scan(Map.of(
                 "train.py", bytes("""
