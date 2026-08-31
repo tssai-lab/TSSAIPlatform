@@ -23,6 +23,14 @@ from pathlib import Path
 from typing import Any
 
 
+YOLO_METRIC_NAMES = (
+    ("metrics/mAP50(B)", "val_mAP50"),
+    ("metrics/mAP50-95(B)", "val_mAP50_95"),
+    ("metrics/precision(B)", "val_precision"),
+    ("metrics/recall(B)", "val_recall"),
+)
+
+
 def event(payload: dict) -> None:
     """向平台上报一条 TSS_EVENT 事件（进度 / 指标），打印后立即 flush。"""
     print("TSS_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
@@ -53,12 +61,7 @@ def trainer_metric_snapshot(trainer: Any) -> dict[str, float]:
             snapshot["train_loss"] = sum(finite_losses)
 
     metrics = getattr(trainer, "metrics", None) or {}
-    for source, target in (
-        ("metrics/mAP50(B)", "val_mAP50"),
-        ("metrics/mAP50-95(B)", "val_mAP50_95"),
-        ("metrics/precision(B)", "val_precision"),
-        ("metrics/recall(B)", "val_recall"),
-    ):
+    for source, target in YOLO_METRIC_NAMES:
         value = finite_number(metrics.get(source))
         if value is not None:
             snapshot[target] = value

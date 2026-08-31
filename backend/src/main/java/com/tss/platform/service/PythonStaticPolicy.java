@@ -40,7 +40,7 @@ final class PythonStaticPolicy {
             "typing_extensions", "uuid",
             "cv2", "joblib", "lightgbm", "matplotlib", "numpy", "pandas", "PIL",
             "scipy", "seaborn", "sklearn", "torch", "torchaudio", "torchvision",
-            "tqdm", "transformers", "datasets", "xgboost"
+            "tqdm", "transformers", "datasets", "ultralytics", "xgboost"
     );
 
     private static final Set<String> HIGH_CAPABILITY_IMPORT_ROOTS = Set.of(
