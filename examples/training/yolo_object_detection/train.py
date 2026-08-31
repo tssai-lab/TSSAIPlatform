@@ -98,18 +98,58 @@ def result_history(results_csv: Path) -> list[tuple[int, dict[str, float]]]:
         finite_losses = [value for value in loss_values if value is not None]
         if finite_losses:
             metrics["train_loss"] = sum(finite_losses)
-        for source, target in (
-            ("metrics/mAP50(B)", "val_mAP50"),
-            ("metrics/mAP50-95(B)", "val_mAP50_95"),
-            ("metrics/precision(B)", "val_precision"),
-            ("metrics/recall(B)", "val_recall"),
-        ):
+        for source, target in YOLO_METRIC_NAMES:
             value = finite_number(row.get(source))
             if value is not None:
                 metrics[target] = value
         if metrics:
             history.append((step, metrics))
     return history
+
+
+def resolve_data_manifest(data_yaml: Path, data_root: Path, output: Path) -> Path:
+    """Pin relative YOLO dataset paths to the platform-mounted dataset root."""
+    source_lines = data_yaml.read_text(encoding="utf-8").splitlines()
+    content_lines = [
+        line
+        for line in source_lines
+        if not (line == line.lstrip() and line.lstrip().startswith("path:"))
+    ]
+    resolved = output / "data.resolved.yaml"
+    root_literal = json.dumps(str(data_root.resolve()), ensure_ascii=False)
+    resolved.write_text(
+        "\n".join([f"path: {root_literal}", *content_lines]) + "\n",
+        encoding="utf-8",
+    )
+    return resolved
+
+
+def package_primary_model(best_pt: Path, output: Path) -> Path:
+    """Create the primary model archive required by the training plan."""
+    archive = shutil.make_archive(
+        str(output / "model"),
+        "zip",
+        root_dir=best_pt.parent,
+        base_dir=best_pt.name,
+    )
+    return Path(archive)
+
+
+def ensure_ultralytics_font(config_dir: Path | None = None, font_path: Path | None = None) -> Path:
+    """Provide the font Ultralytics expects without opening external network."""
+    target_dir = config_dir or (Path.home() / ".config" / "Ultralytics")
+    target = target_dir / "Arial.ttf"
+    if target.is_file():
+        return target
+    if font_path is None:
+        from matplotlib import font_manager
+
+        font_path = Path(font_manager.findfont("DejaVu Sans", fallback_to_default=True))
+    if not font_path.is_file():
+        raise FileNotFoundError("offline training font is unavailable in runtime image")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(font_path, target)
+    return target
 
 
 def main() -> None:
@@ -133,6 +173,8 @@ def main() -> None:
         raise FileNotFoundError(f"missing required dataset manifest: {data_yaml}")
     if mode != "FROM_SCRATCH" and not model_path.is_file():
         raise FileNotFoundError(f"missing required base model: {model_path}")
+    resolved_data_yaml = resolve_data_manifest(data_yaml, Path(args.data_dir), output)
+    ensure_ultralytics_font()
 
     event({"type": "progress", "progress": 2})
     model = YOLO(str(model_path) if mode != "FROM_SCRATCH" else "yolo11n.yaml")
@@ -143,7 +185,7 @@ def main() -> None:
     )
     event({"type": "progress", "progress": 8})
     result = model.train(
-        data=str(data_yaml),
+        data=str(resolved_data_yaml),
         epochs=int(params.get("epochs", 3)),
         batch=int(params.get("batch", 4)),
         imgsz=int(params.get("imgsz", 640)),
@@ -156,8 +198,12 @@ def main() -> None:
     )
     event({"type": "progress", "progress": 90})
     run_dir = Path(result.save_dir)
-    shutil.copy2(run_dir / "weights" / "best.pt", output / "best.pt")
+    best_pt = output / "best.pt"
+    published_pt = output / "yolo11n.pt"
+    shutil.copy2(run_dir / "weights" / "best.pt", best_pt)
+    shutil.copy2(best_pt, published_pt)
     shutil.copy2(run_dir / "weights" / "last.pt", output / "last.pt")
+    package_primary_model(published_pt, output)
     metrics = {"trainingMode": mode, "epochs": int(params.get("epochs", 3))}
     results_csv = run_dir / "results.csv"
     history = result_history(results_csv)
