@@ -4,6 +4,7 @@ import {
   TRAINING_MLFLOW_METRIC_KEYS,
   type TrainingMlflowMetricKey,
 } from '@/utils/trainingMetrics';
+import { normalizeMlflowMetricHistory } from './mlflowMetricHistory.mjs';
 
 const mlflowBasePath =
   process.env.REACT_APP_MLFLOW_BASE_PATH || API_CONFIG.ENDPOINTS.MLFLOW_METRICS_HISTORY;
@@ -68,9 +69,7 @@ async function fetchMetricSeries(
       const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
       const list = res?.metrics || [];
       if (!list.length) continue;
-      return list
-        .sort((a, b) => a.step - b.step)
-        .map((m) => ({ step: m.step, value: m.value }));
+      return normalizeMlflowMetricHistory(list);
     } catch {
       // try next alias
     }
@@ -98,9 +97,7 @@ export async function fetchMlflowMetricsBulk(
       }
       try {
         const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
-        result[key] = (res?.metrics || [])
-          .sort((a, b) => a.step - b.step)
-          .map((m) => ({ step: m.step, value: m.value }));
+        result[key] = normalizeMlflowMetricHistory(res?.metrics || []);
       } catch {
         result[key] = [];
       }
