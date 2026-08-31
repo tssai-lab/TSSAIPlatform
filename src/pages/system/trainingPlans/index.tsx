@@ -1,6 +1,7 @@
 import {
   CheckCircleOutlined,
   DownloadOutlined,
+  EditOutlined,
   EyeOutlined,
   FileTextOutlined,
   ReloadOutlined,
@@ -18,12 +19,14 @@ import {
   Divider,
   Drawer,
   Empty,
+  Input,
   List,
   Modal,
   message,
   Space,
   Table,
   Tag,
+  Tabs,
   Tooltip,
   Typography,
   Upload,
@@ -194,6 +197,14 @@ const TrainingPlansPage: React.FC = () => {
   const [plans, setPlans] = useState<TrainingPlanSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File>();
+  const [yamlInputMode, setYamlInputMode] = useState<'editor' | 'upload'>(
+    'editor',
+  );
+  const [yamlText, setYamlText] = useState('');
+  const [editorFileName, setEditorFileName] = useState(
+    'training-plan-online.yaml',
+  );
+  const [editingKey, setEditingKey] = useState<string>();
   const [preview, setPreview] = useState<TrainingPlanPreview>();
   const [previewing, setPreviewing] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -223,21 +234,32 @@ const TrainingPlansPage: React.FC = () => {
     if (access.canAccessTrainingPlans) void loadPlans();
   }, [access.canAccessTrainingPlans, loadPlans]);
 
+  const editorFile = useMemo(
+    () =>
+      yamlText
+        ? new File([yamlText], editorFileName, { type: 'application/yaml' })
+        : undefined,
+    [editorFileName, yamlText],
+  );
+  const activeFile = yamlInputMode === 'editor' ? editorFile : selectedFile;
+
   const resetSelectedFile = useCallback(() => {
     setSelectedFile(undefined);
+    setYamlText('');
+    setEditorFileName('training-plan-online.yaml');
     setPreview(undefined);
   }, []);
 
   const handlePreview = useCallback(async () => {
-    const fileError = validateTrainingPlanYamlFile(selectedFile);
-    if (fileError || !selectedFile) {
+    const fileError = validateTrainingPlanYamlFile(activeFile);
+    if (fileError || !activeFile) {
       message.warning(fileError || '请选择 YAML 文件');
       return;
     }
     setPreviewing(true);
     setPreview(undefined);
     try {
-      const result = await previewTrainingPlanYaml(selectedFile, {
+      const result = await previewTrainingPlanYaml(activeFile, {
         skipErrorHandler: true,
       });
       setPreview(result);
@@ -251,7 +273,7 @@ const TrainingPlansPage: React.FC = () => {
     } finally {
       setPreviewing(false);
     }
-  }, [selectedFile]);
+  }, [activeFile]);
 
   const executePublish = useCallback(
     async (file: File, expectedSha256: string) => {
@@ -277,14 +299,14 @@ const TrainingPlansPage: React.FC = () => {
 
   const confirmPublish = useCallback(() => {
     if (
-      !selectedFile ||
+      !activeFile ||
       !preview ||
-      !canPublishTrainingPlan(selectedFile, preview)
+      !canPublishTrainingPlan(activeFile, preview)
     ) {
       message.warning('请先使用当前文件完成校验');
       return;
     }
-    const file = selectedFile;
+    const file = activeFile;
     const sha256 = preview.sha256;
     Modal.confirm({
       title: `发布 ${preview.definition?.id || '-'}@${preview.definition?.version || '-'}？`,
@@ -307,7 +329,32 @@ const TrainingPlansPage: React.FC = () => {
       cancelText: '取消',
       onOk: () => executePublish(file, sha256),
     });
-  }, [executePublish, preview, selectedFile]);
+  }, [activeFile, executePublish, preview]);
+
+  const editPlanYaml = useCallback(async (plan: TrainingPlanSummary) => {
+    const key = `${plan.planId}@${plan.planVersion}`;
+    setEditingKey(key);
+    try {
+      const result = await fetchAdminTrainingPlan(
+        plan.planId,
+        plan.planVersion,
+        { skipErrorHandler: true },
+      );
+      setYamlInputMode('editor');
+      setYamlText(result.yamlContent || '');
+      setEditorFileName(`${plan.planId}-${plan.planVersion}.yaml`);
+      setSelectedFile(undefined);
+      setPreview(undefined);
+      message.info('已载入 YAML。修改 version 后先校验，再发布为新版本。');
+      document
+        .getElementById('training-plan-yaml-editor')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error: unknown) {
+      message.error(getTrainingPlanRequestError(error, 'YAML 加载失败'));
+    } finally {
+      setEditingKey(undefined);
+    }
+  }, []);
 
   const openDetail = useCallback(async (plan: TrainingPlanSummary) => {
     setDetail(undefined);
@@ -432,7 +479,7 @@ const TrainingPlansPage: React.FC = () => {
       {
         title: '操作',
         key: 'actions',
-        width: 150,
+        width: 240,
         render: (_, plan) => {
           const key = `${plan.planId}@${plan.planVersion}`;
           return (
@@ -443,6 +490,14 @@ const TrainingPlansPage: React.FC = () => {
                 onClick={() => void openDetail(plan)}
               >
                 详情
+              </Button>
+              <Button
+                type="link"
+                icon={<EditOutlined />}
+                loading={editingKey === key}
+                onClick={() => void editPlanYaml(plan)}
+              >
+                编辑新版本
               </Button>
               {plan.source === 'ONLINE' && plan.status === 'ACTIVE' ? (
                 <Button
@@ -460,7 +515,7 @@ const TrainingPlansPage: React.FC = () => {
         },
       },
     ],
-    [confirmDisable, disablingKey, openDetail],
+    [confirmDisable, disablingKey, editPlanYaml, editingKey, openDetail],
   );
 
   if (!access.canAccessTrainingPlans) return null;
@@ -468,7 +523,7 @@ const TrainingPlansPage: React.FC = () => {
   return (
     <PageContainer
       title="训练方案管理"
-      subTitle="上传并发布平台认可的训练方案 YAML（仅超级管理员）"
+      subTitle="在线编写或上传训练方案 YAML（仅超级管理员）"
       extra={[
         <Button key="manual" icon={<FileTextOutlined />}>
           <Link to="/user-manual#training-plan-yaml">查看使用手册</Link>
@@ -495,56 +550,105 @@ const TrainingPlansPage: React.FC = () => {
         showIcon
         type="info"
         message="发布前请先预览"
-        description="选择 YAML 只会生成预览，确认发布后才会保存。发起训练时，平台会按方案筛选可用模型和数据集；当前模板库仅提供已验证的 CV/CPU 模板。"
+        description="编辑或上传 YAML 只会生成预览，确认发布后才会保存。发起训练时，平台会按方案筛选可用模型和数据集。"
         style={{ marginBottom: 16 }}
       />
 
-      <Card title="上传并预览 YAML" style={{ marginBottom: 16 }}>
-        <Dragger
-          accept=".yaml,.yml,application/yaml,text/yaml"
-          maxCount={1}
-          multiple={false}
-          beforeUpload={(file) => {
-            const error = validateTrainingPlanYamlFile(file);
-            if (error) {
-              message.error(error);
-              return Upload.LIST_IGNORE;
-            }
-            setSelectedFile(file);
+      <Card
+        id="training-plan-yaml-editor"
+        title="编写或上传 YAML"
+        style={{ marginBottom: 16 }}
+      >
+        <Tabs
+          activeKey={yamlInputMode}
+          onChange={(key) => {
+            setYamlInputMode(key as 'editor' | 'upload');
             setPreview(undefined);
-            return false;
           }}
-          onRemove={() => {
-            resetSelectedFile();
-            return true;
-          }}
-          fileList={
-            selectedFile
-              ? [
-                  {
-                    uid: 'selected-training-plan-yaml',
-                    name: selectedFile.name,
-                    size: selectedFile.size,
-                    status: 'done' as const,
-                  },
-                ]
-              : []
-          }
-          disabled={previewing || publishing}
-        >
-          <p className="ant-upload-drag-icon">
-            <UploadOutlined />
-          </p>
-          <p className="ant-upload-text">点击或拖入一个 .yaml / .yml 文件</p>
-          <p className="ant-upload-hint">
-            最大 256 KiB；文件变化后必须重新预览。浏览器不负责业务校验。
-          </p>
-        </Dragger>
+          items={[
+            {
+              key: 'editor',
+              label: '在线编辑',
+              children: (
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="已发布版本不可覆盖"
+                    description="可以直接修改 YAML；基于已有方案编辑时，必须提高 version，再校验并发布为新版本。"
+                  />
+                  <Input.TextArea
+                    value={yamlText}
+                    rows={18}
+                    spellCheck={false}
+                    placeholder="粘贴训练方案 YAML，或在下方列表点击“编辑新版本”载入已有方案"
+                    style={{ fontFamily: 'Consolas, Monaco, monospace' }}
+                    disabled={previewing || publishing}
+                    onChange={(event) => {
+                      setYamlText(event.target.value);
+                      setPreview(undefined);
+                    }}
+                  />
+                  <Typography.Text type="secondary">
+                    最大 256 KiB；内容变化后必须重新校验。
+                  </Typography.Text>
+                </Space>
+              ),
+            },
+            {
+              key: 'upload',
+              label: '上传文件',
+              children: (
+                <Dragger
+                  accept=".yaml,.yml,application/yaml,text/yaml"
+                  maxCount={1}
+                  multiple={false}
+                  beforeUpload={(file) => {
+                    const error = validateTrainingPlanYamlFile(file);
+                    if (error) {
+                      message.error(error);
+                      return Upload.LIST_IGNORE;
+                    }
+                    setSelectedFile(file);
+                    setPreview(undefined);
+                    return false;
+                  }}
+                  onRemove={() => {
+                    setSelectedFile(undefined);
+                    setPreview(undefined);
+                    return true;
+                  }}
+                  fileList={
+                    selectedFile
+                      ? [
+                          {
+                            uid: 'selected-training-plan-yaml',
+                            name: selectedFile.name,
+                            size: selectedFile.size,
+                            status: 'done' as const,
+                          },
+                        ]
+                      : []
+                  }
+                  disabled={previewing || publishing}
+                >
+                  <p className="ant-upload-drag-icon">
+                    <UploadOutlined />
+                  </p>
+                  <p className="ant-upload-text">
+                    点击或拖入一个 .yaml / .yml 文件
+                  </p>
+                  <p className="ant-upload-hint">最大 256 KiB</p>
+                </Dragger>
+              ),
+            },
+          ]}
+        />
         <Space style={{ marginTop: 16 }} wrap>
           <Button
             type="primary"
             icon={<EyeOutlined />}
-            disabled={!selectedFile || publishing}
+            disabled={!activeFile || publishing}
             loading={previewing}
             onClick={() => void handlePreview()}
           >
@@ -554,16 +658,16 @@ const TrainingPlansPage: React.FC = () => {
             type="primary"
             icon={<CheckCircleOutlined />}
             disabled={
-              !canPublishTrainingPlan(selectedFile, preview) || previewing
+              !canPublishTrainingPlan(activeFile, preview) || previewing
             }
             loading={publishing}
             onClick={confirmPublish}
           >
             确认发布
           </Button>
-          {selectedFile ? (
+          {activeFile ? (
             <Typography.Text type="secondary">
-              当前文件：{selectedFile.name}（{selectedFile.size} 字节）
+              当前内容：{activeFile.name}（{activeFile.size} 字节）
             </Typography.Text>
           ) : null}
         </Space>

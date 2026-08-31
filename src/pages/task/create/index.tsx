@@ -56,6 +56,10 @@ import {
   isSpecDrivenInput,
 } from './trainingAssetCompatibility.mjs';
 import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
+import {
+  formatTrainingMode,
+  isSingleTrainingMode,
+} from './trainingModePresentation.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
   model: 'logreg',
@@ -1580,17 +1584,35 @@ const TaskCreate: React.FC = () => {
               <Form.Item name="name" label="任务名称（可选）">
                 <Input placeholder="例如：fusion-k8s-train" />
               </Form.Item>
-              <Form.Item
-                name="trainingMode"
-                label="训练类型"
-                rules={[{ required: true, message: '请选择训练类型' }]}
-              >
-                <Select
-                  options={(selectedTrainingPlan?.trainingModes ?? []).map(
-                    (mode) => ({ value: mode, label: mode }),
-                  )}
-                />
-              </Form.Item>
+              {isSingleTrainingMode(selectedTrainingPlan?.trainingModes) ? (
+                <>
+                  <Form.Item name="trainingMode" hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item label="训练类型">
+                    <Typography.Text>
+                      {formatTrainingMode(
+                        selectedTrainingPlan?.trainingModes?.[0],
+                      )}
+                    </Typography.Text>
+                  </Form.Item>
+                </>
+              ) : (
+                <Form.Item
+                  name="trainingMode"
+                  label="训练类型"
+                  rules={[{ required: true, message: '请选择训练类型' }]}
+                >
+                  <Select
+                    options={(selectedTrainingPlan?.trainingModes ?? []).map(
+                      (mode) => ({
+                        value: mode,
+                        label: formatTrainingMode(mode),
+                      }),
+                    )}
+                  />
+                </Form.Item>
+              )}
               <Form.Item name="remark" label="备注（可选）">
                 <Input placeholder="例如：create-page k8s test" />
               </Form.Item>

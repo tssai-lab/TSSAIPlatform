@@ -1025,21 +1025,21 @@ event({"type": "progress", "progress": 100})
                           <Link to="/system/training-plans">
                             系统管理 → 训练方案管理
                           </Link>
-                          ，下载 CV/CPU 模板。
+                          ，可以在线编写 YAML，也可以上传本地文件。
                         </span>
                       ),
                     },
                     {
                       children:
-                        '在本地文本编辑器中复制模板并提高 version；只修改手册允许的字段，不写密码、Token 或任意脚本。',
+                        '新建时可下载模板后粘贴到在线编辑器；修改已有方案时点击“编辑新版本”，先提高 version。不要写密码、Token 或任意脚本。',
                     },
                     {
                       children:
-                        '选择 .yaml 或 .yml 文件并点击“预览并校验”。预览只读取文件，不会保存或替换当前方案。',
+                        '在线内容或上传文件都必须点击“预览并校验”。预览只校验，不会保存或替换当前方案。',
                     },
                     {
                       children:
-                        '按页面给出的错误路径修改后重新选择文件。只有显示“可以发布”时，按钮才会解锁。',
+                        '按页面给出的错误路径修改后重新校验。只有显示“可以发布”时，按钮才会解锁。',
                     },
                     {
                       children:
@@ -1073,7 +1073,7 @@ event({"type": "progress", "progress": 100})
                   </Descriptions.Item>
                   <Descriptions.Item label="运行环境">
                     <Text code>runtimes</Text>
-                    ：只允许平台批准的不可变镜像、CPU 资源档位和拉取策略。
+                    ：只允许平台批准的不可变镜像、CPU/GPU 资源档位和拉取策略。
                   </Descriptions.Item>
                   <Descriptions.Item label="结果与安全">
                     <Text code>outputs / security</Text>

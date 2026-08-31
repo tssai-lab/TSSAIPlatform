@@ -15,7 +15,16 @@ interface MlflowMetricsResponse {
 /** 与标准 key 对应的 MLflow 常见别名（如 Ultralytics / 自定义脚本） */
 export const MLFLOW_METRIC_ALIASES: Partial<Record<TrainingMlflowMetricKey, string[]>> = {
   train_loss: ['loss', 'train/loss', 'metrics/train/loss', 'training_loss'],
-  val_accuracy: ['accuracy', 'val/accuracy', 'metrics/accuracy', 'top1_acc'],
+  val_accuracy: [
+    'validation_accuracy',
+    'accuracy',
+    'val/accuracy',
+    'metrics/accuracy',
+    'top1_acc',
+  ],
+  val_precision: ['validation_precision', 'precision', 'val/precision'],
+  val_recall: ['validation_recall', 'recall', 'val/recall'],
+  val_f1: ['validation_f1', 'f1', 'val/f1'],
   val_mAP50: ['val/mAP50', 'mAP50', 'metrics/mAP50', 'val/mAP50(B)', 'mAP_0.5'],
   val_mAP50_95: [
     'val/mAP50-95',
