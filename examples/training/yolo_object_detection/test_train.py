@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,51 @@ class FakeScalar:
 
 
 class YoloMetricProtocolTest(unittest.TestCase):
+    def test_ensure_ultralytics_font_uses_runtime_local_font(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "DejaVuSans.ttf"
+            source.write_bytes(b"font")
+
+            target = train.ensure_ultralytics_font(root / "config", source)
+
+            self.assertEqual(root / "config" / "Arial.ttf", target)
+            self.assertEqual(b"font", target.read_bytes())
+
+    def test_package_primary_model_creates_required_model_zip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            published_pt = output / "yolo11n.pt"
+            published_pt.write_bytes(b"weights")
+
+            archive = train.package_primary_model(published_pt, output)
+            unpacked = output / "unpacked"
+            shutil.unpack_archive(archive, unpacked)
+
+            self.assertEqual(output / "model.zip", archive)
+            self.assertEqual(b"weights", (unpacked / "yolo11n.pt").read_bytes())
+
+    def test_resolve_data_manifest_anchors_relative_paths_to_data_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "dataset"
+            output = root / "output"
+            data_root.mkdir()
+            output.mkdir()
+            source = data_root / "data.yaml"
+            source.write_text(
+                "path: .\ntrain: images/train\nval: images/val\n",
+                encoding="utf-8",
+            )
+
+            resolved = train.resolve_data_manifest(source, data_root, output)
+
+            text = resolved.read_text(encoding="utf-8")
+            self.assertIn(f"path: {json.dumps(str(data_root.resolve()))}", text)
+            self.assertNotIn("path: .", text)
+            self.assertIn("train: images/train", text)
+            self.assertIn("val: images/val", text)
+
     def test_completed_epoch_event_has_step_and_canonical_metrics(self):
         trainer = type(
             "Trainer",
