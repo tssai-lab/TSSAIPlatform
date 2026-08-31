@@ -7,6 +7,7 @@ on:
       - "deploy/**"
       - "k8s/**"
       - "examples/acceptance/minirbt_text_classification/**"
+      - "examples/training/yolo_object_detection/**"
       - "examples/inference/yolov11n/**"
       - ".github/workflows/**"
   push:
@@ -17,6 +18,7 @@ on:
       - "backend/**"
       - "deploy/**"
       - "k8s/**"
+      - "examples/training/yolo_object_detection/**"
       - "examples/inference/yolov11n/**"
       - ".github/workflows/**"
   workflow_dispatch:
