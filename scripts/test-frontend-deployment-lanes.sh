@@ -33,6 +33,14 @@ grep -F 'refs/heads/frontend-gpu:refs/remotes/origin/frontend-gpu' \
   "$runtime_workflow" >/dev/null
 grep -F 'remote_frontend_sha=' "$runtime_workflow" >/dev/null
 grep -F '[[ "$RUNNER_TEMP" == "${runner_work_root}/"* ]]' "$runtime_workflow" >/dev/null
+grep -F 'fetch-depth: 0' "$runtime_workflow" >/dev/null
+grep -F 'source_ref=refs/tss-aiplatform/internal-release' "$runtime_workflow" >/dev/null
+grep -F 'git bundle verify "$source_bundle"' "$runtime_workflow" >/dev/null
+grep -F 'stage_source_with_retry() {' "$runtime_workflow" >/dev/null
+grep -F '"stage-source ${INFRASTRUCTURE_SHA}" < "$source_bundle"' \
+  "$runtime_workflow" >/dev/null
+grep -F -- '-o ServerAliveInterval=15' "$runtime_workflow" >/dev/null
+grep -F -- '-o ServerAliveCountMax=2' "$runtime_workflow" >/dev/null
 grep -F 'stage-frontend' "$runtime_workflow" >/dev/null
 grep -F 'deploy-frontend' "$runtime_workflow" >/dev/null
 grep -F "connection throttle settle after the completed staging stream" \
