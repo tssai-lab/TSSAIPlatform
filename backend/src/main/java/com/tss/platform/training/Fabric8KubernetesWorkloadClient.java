@@ -1,7 +1,11 @@
 package com.tss.platform.training;
 
 import com.tss.platform.config.TrainingKubernetesProperties;
+import io.fabric8.kubernetes.api.model.ContainerStateWaiting;
+import io.fabric8.kubernetes.api.model.ContainerStatus;
 import io.fabric8.kubernetes.api.model.HasMetadata;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.slf4j.Logger;
@@ -11,7 +15,12 @@ import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /** Fabric8 implementation of the restricted training Job control surface. */
 @Component
@@ -59,6 +68,47 @@ public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient
             return client().batch().v1().jobs().inNamespace(namespace).withName(jobName).get() != null;
         } catch (RuntimeException exception) {
             throw new KubernetesWorkloadException("Fabric8 training Job existence check failed", exception);
+        }
+    }
+
+    @Override
+    public Optional<TrainingJobStatus> getTrainingJobStatus(String namespace, String jobName) {
+        validateTarget(namespace, jobName);
+        try {
+            Job job = client().batch().v1().jobs().inNamespace(namespace).withName(jobName).get();
+            if (job == null) {
+                return Optional.empty();
+            }
+
+            Pod newestPod = null;
+            try {
+                PodList podList = client().pods()
+                        .inNamespace(namespace)
+                        .withLabel("job-name", jobName)
+                        .list();
+                newestPod = podList == null || podList.getItems() == null
+                        ? null
+                        : podList.getItems().stream()
+                                .max(Comparator.comparing(this::podCreatedAtOrEpoch))
+                                .orElse(null);
+            } catch (RuntimeException podException) {
+                // Job counters remain authoritative. A temporary Pod-list permission or
+                // API failure must not hide a terminal Job result.
+                LOG.warn("Failed to read Fabric8 training Pod startup state: job={}, error={}",
+                        jobName, podException.getMessage());
+            }
+            ContainerStateWaiting waiting = waitingState(newestPod).orElse(null);
+
+            return Optional.of(new TrainingJobStatus(
+                    valueOrZero(job.getStatus() != null ? job.getStatus().getSucceeded() : null),
+                    valueOrZero(job.getStatus() != null ? job.getStatus().getFailed() : null),
+                    valueOrZero(job.getStatus() != null ? job.getStatus().getActive() : null),
+                    waiting != null ? waiting.getReason() : null,
+                    waiting != null ? waiting.getMessage() : null,
+                    newestPod != null ? podCreatedAtOrNull(newestPod) : null
+            ));
+        } catch (RuntimeException exception) {
+            throw new KubernetesWorkloadException("Fabric8 training Job status check failed", exception);
         }
     }
 
@@ -119,6 +169,45 @@ public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient
 
     private KubernetesClient client() {
         return clientProvider.getClient();
+    }
+
+    private Optional<ContainerStateWaiting> waitingState(Pod pod) {
+        if (pod == null || pod.getStatus() == null) {
+            return Optional.empty();
+        }
+        Stream<ContainerStatus> initStatuses = pod.getStatus().getInitContainerStatuses() == null
+                ? Stream.empty()
+                : pod.getStatus().getInitContainerStatuses().stream();
+        Stream<ContainerStatus> containerStatuses = pod.getStatus().getContainerStatuses() == null
+                ? Stream.empty()
+                : pod.getStatus().getContainerStatuses().stream();
+        return Stream.concat(initStatuses, containerStatuses)
+                .filter(status -> status != null && status.getState() != null
+                        && status.getState().getWaiting() != null)
+                .map(status -> status.getState().getWaiting())
+                .filter(waiting -> waiting.getReason() != null && !waiting.getReason().isBlank())
+                .findFirst();
+    }
+
+    private int valueOrZero(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private Instant podCreatedAtOrEpoch(Pod pod) {
+        Instant createdAt = podCreatedAtOrNull(pod);
+        return createdAt == null ? Instant.EPOCH : createdAt;
+    }
+
+    private Instant podCreatedAtOrNull(Pod pod) {
+        if (pod == null || pod.getMetadata() == null
+                || pod.getMetadata().getCreationTimestamp() == null) {
+            return null;
+        }
+        try {
+            return Instant.parse(pod.getMetadata().getCreationTimestamp());
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
     }
 
     private void validateTarget(String namespace, String jobName) {

@@ -101,6 +101,11 @@ public class TrainingKubernetesProperties {
     /** Job 状态轮询间隔（毫秒） */
     private long monitorIntervalMs = 30000;
 
+    /** Pod 持续处于不可恢复的启动错误多久后，将业务任务同步为失败。 */
+    @Min(0)
+    @Max(3600)
+    private int podStartupFailureGraceSeconds = 120;
+
     /** 训练 Job 客户端单次请求超时（秒）。 */
     @Min(1)
     @Max(3600)

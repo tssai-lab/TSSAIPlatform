@@ -3,23 +3,32 @@ package com.tss.platform.training;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodBuilder;
+import io.fabric8.kubernetes.api.model.PodList;
+import io.fabric8.kubernetes.api.model.PodListBuilder;
 import io.fabric8.kubernetes.api.model.batch.v1.Job;
 import io.fabric8.kubernetes.api.model.batch.v1.JobBuilder;
 import io.fabric8.kubernetes.api.model.batch.v1.JobList;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.BatchAPIGroupDSL;
+import io.fabric8.kubernetes.client.dsl.FilterWatchListDeletable;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NamespaceListVisitFromServerGetDeleteRecreateWaitApplicable;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.PodResource;
 import io.fabric8.kubernetes.client.dsl.ScalableResource;
 import io.fabric8.kubernetes.client.dsl.V1BatchAPIGroupDSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
@@ -46,6 +55,11 @@ class Fabric8KubernetesWorkloadClientTest {
     private final ScalableResource<Job> namedJobResource = mock(ScalableResource.class);
     private final NamespaceListVisitFromServerGetDeleteRecreateWaitApplicable<HasMetadata> loadedResources =
             mock(NamespaceListVisitFromServerGetDeleteRecreateWaitApplicable.class);
+    private final MixedOperation<Pod, PodList, PodResource> pods = mock(MixedOperation.class);
+    private final NonNamespaceOperation<Pod, PodList, PodResource> namespacedPods =
+            mock(NonNamespaceOperation.class);
+    private final FilterWatchListDeletable<Pod, PodList, PodResource> selectedPods =
+            mock(FilterWatchListDeletable.class);
 
     private Fabric8KubernetesWorkloadClient client;
     private Job job;
@@ -60,6 +74,9 @@ class Fabric8KubernetesWorkloadClientTest {
         when(jobs.inNamespace(NAMESPACE)).thenReturn(namespacedJobs);
         when(namespacedJobs.resource(any(Job.class))).thenReturn(jobResource);
         when(namespacedJobs.withName(JOB_NAME)).thenReturn(namedJobResource);
+        when(kubernetesClient.pods()).thenReturn(pods);
+        when(pods.inNamespace(NAMESPACE)).thenReturn(namespacedPods);
+        when(namespacedPods.withLabel("job-name", JOB_NAME)).thenReturn(selectedPods);
         when(kubernetesClient.load(any(InputStream.class))).thenReturn(loadedResources);
         client = new Fabric8KubernetesWorkloadClient(properties, provider);
         job = new JobBuilder()
@@ -191,5 +208,68 @@ class Fabric8KubernetesWorkloadClientTest {
                 KubernetesWorkloadException.class,
                 () -> client.deleteTrainingJob(NAMESPACE, JOB_NAME)
         );
+    }
+
+    @Test
+    void readsNewestPodStartupFailureTogetherWithJobCounters() {
+        String createdAt = "2026-09-02T12:00:00Z";
+        Job activeJob = new JobBuilder(job)
+                .withNewStatus()
+                .withActive(1)
+                .endStatus()
+                .build();
+        Pod waitingPod = new PodBuilder()
+                .withNewMetadata()
+                .withName("training-pod")
+                .withCreationTimestamp(createdAt)
+                .endMetadata()
+                .withNewStatus()
+                .addNewContainerStatus()
+                .withName("worker")
+                .withNewState()
+                .withNewWaiting()
+                .withReason("ImagePullBackOff")
+                .withMessage("pull access denied")
+                .endWaiting()
+                .endState()
+                .endContainerStatus()
+                .endStatus()
+                .build();
+        when(namedJobResource.get()).thenReturn(activeJob);
+        when(selectedPods.list()).thenReturn(new PodListBuilder().withItems(waitingPod).build());
+
+        var status = client.getTrainingJobStatus(NAMESPACE, JOB_NAME);
+
+        assertTrue(status.isPresent());
+        assertEquals(1, status.orElseThrow().active());
+        assertEquals("ImagePullBackOff", status.orElseThrow().podWaitingReason());
+        assertEquals("pull access denied", status.orElseThrow().podWaitingMessage());
+        assertEquals(Instant.parse(createdAt), status.orElseThrow().podCreatedAt());
+    }
+
+    @Test
+    void reportsMissingJobWithoutListingPods() {
+        when(namedJobResource.get()).thenReturn(null);
+
+        assertTrue(client.getTrainingJobStatus(NAMESPACE, JOB_NAME).isEmpty());
+
+        verify(selectedPods, never()).list();
+    }
+
+    @Test
+    void podListFailureDoesNotHideJobCounters() {
+        Job succeededJob = new JobBuilder(job)
+                .withNewStatus()
+                .withSucceeded(1)
+                .endStatus()
+                .build();
+        when(namedJobResource.get()).thenReturn(succeededJob);
+        when(selectedPods.list()).thenThrow(new RuntimeException("pods forbidden"));
+
+        var status = client.getTrainingJobStatus(NAMESPACE, JOB_NAME);
+
+        assertTrue(status.isPresent());
+        assertEquals(1, status.orElseThrow().succeeded());
+        assertEquals(null, status.orElseThrow().podWaitingReason());
     }
 }

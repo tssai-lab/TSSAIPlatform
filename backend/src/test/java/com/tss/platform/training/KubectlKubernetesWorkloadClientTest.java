@@ -5,10 +5,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +31,8 @@ class KubectlKubernetesWorkloadClientTest {
     private final List<String> applyCommand = List.of("kubectl", "apply");
     private final List<String> getCommand = List.of("kubectl", "get");
     private final List<String> deleteCommand = List.of("kubectl", "delete");
+    private final List<String> statusCommand = List.of("kubectl", "job-status");
+    private final List<String> podStatusCommand = List.of("kubectl", "pod-status");
 
     private KubectlKubernetesWorkloadClient client;
 
@@ -45,6 +50,21 @@ class KubectlKubernetesWorkloadClientTest {
         when(environmentService.kubectlCommand(
                 kubeconfig, "delete", "job", JOB_NAME, "-n", NAMESPACE, "--ignore-not-found"))
                 .thenReturn(deleteCommand);
+        when(environmentService.kubectlCommand(
+                kubeconfig,
+                "get", "job", JOB_NAME,
+                "-n", NAMESPACE,
+                "--ignore-not-found",
+                "-o", "jsonpath={.status.succeeded},{.status.failed},{.status.active}"))
+                .thenReturn(statusCommand);
+        when(environmentService.kubectlCommand(
+                kubeconfig,
+                "get", "pods",
+                "-n", NAMESPACE,
+                "-l", "job-name=" + JOB_NAME,
+                "--sort-by=.metadata.creationTimestamp",
+                "-o", "json"))
+                .thenReturn(podStatusCommand);
         client = new KubectlKubernetesWorkloadClient(properties, environmentService, shellCommandRunner);
     }
 
@@ -102,5 +122,61 @@ class KubectlKubernetesWorkloadClientTest {
                 () -> client.deleteTrainingJob(NAMESPACE, JOB_NAME)
         );
         verify(shellCommandRunner).run(deleteCommand, projectRoot, 60);
+    }
+
+    @Test
+    void parsesJobCountersAndInitContainerWaitingState() {
+        String podJson = """
+                {"items":[{"metadata":{"creationTimestamp":"2026-09-02T12:00:00Z"},
+                "status":{"initContainerStatuses":[{"state":{"waiting":{
+                "reason":"CreateContainerConfigError","message":"secret not found"}}}]}}]}
+                """;
+        when(shellCommandRunner.run(statusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success(",,1"));
+        when(shellCommandRunner.run(podStatusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success(podJson));
+
+        var status = client.getTrainingJobStatus(NAMESPACE, JOB_NAME);
+
+        assertTrue(status.isPresent());
+        assertEquals(1, status.orElseThrow().active());
+        assertEquals("CreateContainerConfigError", status.orElseThrow().podWaitingReason());
+        assertEquals("secret not found", status.orElseThrow().podWaitingMessage());
+        assertEquals(Instant.parse("2026-09-02T12:00:00Z"), status.orElseThrow().podCreatedAt());
+    }
+
+    @Test
+    void returnsEmptyOnlyWhenJobIsAbsent() {
+        when(shellCommandRunner.run(statusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success(""));
+
+        assertTrue(client.getTrainingJobStatus(NAMESPACE, JOB_NAME).isEmpty());
+
+        verify(shellCommandRunner, never()).run(podStatusCommand, projectRoot, 30);
+    }
+
+    @Test
+    void doesNotHideKubernetesApiFailureAsMissingJob() {
+        when(shellCommandRunner.run(statusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.failed(1, "forbidden", "denied"));
+
+        assertThrows(
+                KubernetesWorkloadException.class,
+                () -> client.getTrainingJobStatus(NAMESPACE, JOB_NAME)
+        );
+    }
+
+    @Test
+    void podListFailureDoesNotHideJobCounters() {
+        when(shellCommandRunner.run(statusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success("1,,"));
+        when(shellCommandRunner.run(podStatusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.failed(1, "forbidden", "denied"));
+
+        var status = client.getTrainingJobStatus(NAMESPACE, JOB_NAME);
+
+        assertTrue(status.isPresent());
+        assertEquals(1, status.orElseThrow().succeeded());
+        assertEquals(null, status.orElseThrow().podWaitingReason());
     }
 }

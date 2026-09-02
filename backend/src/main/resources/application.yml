@@ -171,6 +171,7 @@ training:
     job-ttl-seconds-after-finished: ${TRAINING_K8S_JOB_TTL_SECONDS:3600}
     internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}
     monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
+    pod-startup-failure-grace-seconds: ${TRAINING_K8S_POD_STARTUP_FAILURE_GRACE_SECONDS:120}
     client-request-timeout-seconds: ${TRAINING_K8S_CLIENT_REQUEST_TIMEOUT_SECONDS:120}
     failure-diagnostics-enabled: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_ENABLED:true}
     failure-diagnostics-retry-window-seconds: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_RETRY_WINDOW_SECONDS:900}

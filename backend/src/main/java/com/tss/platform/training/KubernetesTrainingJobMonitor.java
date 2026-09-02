@@ -9,50 +9,94 @@ import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingRunSpecCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 @Component
 public class KubernetesTrainingJobMonitor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesTrainingJobMonitor.class);
     private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final Set<String> FATAL_POD_STARTUP_REASONS = Set.of(
+            "ImagePullBackOff",
+            "ErrImagePull",
+            "InvalidImageName",
+            "CreateContainerConfigError",
+            "CreateContainerError",
+            "RunContainerError"
+    );
+    private static final String POD_STARTUP_FAILURE_PREFIX = "Pod 启动失败: ";
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
     private final TrainingExperimentVersionRepository repository;
-    private final ShellCommandRunner shellCommandRunner;
+    private final KubernetesWorkloadClient workloadClient;
     private final TrainingRunSpecCodec runSpecCodec;
     private final TransactionTemplate transactionTemplate;
     private final JobScheduler jobScheduler;
     private final TrainingFailureDiagnosticService failureDiagnosticService;
+    private final Clock clock;
+    private final ConcurrentMap<String, StartupFailureObservation> startupFailureObservations =
+            new ConcurrentHashMap<>();
 
+    @Autowired
     public KubernetesTrainingJobMonitor(
             TrainingKubernetesProperties properties,
             TrainingEnvironmentService environmentService,
             TrainingExperimentVersionRepository repository,
-            ShellCommandRunner shellCommandRunner,
+            KubernetesWorkloadClient workloadClient,
             TrainingRunSpecCodec runSpecCodec,
             TransactionTemplate transactionTemplate,
             @Lazy JobScheduler jobScheduler,
             TrainingFailureDiagnosticService failureDiagnosticService
     ) {
+        this(
+                properties,
+                environmentService,
+                repository,
+                workloadClient,
+                runSpecCodec,
+                transactionTemplate,
+                jobScheduler,
+                failureDiagnosticService,
+                Clock.systemUTC()
+        );
+    }
+
+    KubernetesTrainingJobMonitor(
+            TrainingKubernetesProperties properties,
+            TrainingEnvironmentService environmentService,
+            TrainingExperimentVersionRepository repository,
+            KubernetesWorkloadClient workloadClient,
+            TrainingRunSpecCodec runSpecCodec,
+            TransactionTemplate transactionTemplate,
+            @Lazy JobScheduler jobScheduler,
+            TrainingFailureDiagnosticService failureDiagnosticService,
+            Clock clock
+    ) {
         this.properties = properties;
         this.environmentService = environmentService;
         this.repository = repository;
-        this.shellCommandRunner = shellCommandRunner;
+        this.workloadClient = workloadClient;
         this.runSpecCodec = runSpecCodec;
         this.transactionTemplate = transactionTemplate;
         this.jobScheduler = jobScheduler;
         this.failureDiagnosticService = failureDiagnosticService;
+        this.clock = clock;
     }
 
     @Scheduled(fixedDelayString = "${training.kubernetes.monitor-interval-ms:30000}")
@@ -66,6 +110,10 @@ public class KubernetesTrainingJobMonitor {
                 // queued（排队等节点）还没有 Job，由 JobScheduler.dispatchQueuedTasks 处理，不在这里监控。
                 .filter(task -> "scheduled".equals(task.getStatus()) || "running".equals(task.getStatus()))
                 .toList();
+        Set<String> activeJobNames = activeTasks.stream()
+                .map(task -> KubernetesJobNaming.jobNameForTraining(task.getId()))
+                .collect(Collectors.toSet());
+        startupFailureObservations.keySet().removeIf(jobName -> !activeJobNames.contains(jobName));
 
         for (TrainingExperimentVersion task : activeTasks) {
             syncSingleTask(task);
@@ -75,72 +123,100 @@ public class KubernetesTrainingJobMonitor {
 
     private void syncSingleTask(TrainingExperimentVersion task) {
         String jobName = KubernetesJobNaming.jobNameForTraining(task.getId());
-        Path kubeconfig = environmentService.resolveKubeconfig();
-        List<String> cmd = environmentService.kubectlCommand(
-                kubeconfig,
-                "get", "job", jobName,
-                "-n", properties.getNamespace(),
-                "-o", "jsonpath={.status.succeeded},{.status.failed},{.status.active}"
-        );
-        ShellCommandRunner.CommandResult result = shellCommandRunner.run(
-                cmd,
-                environmentService.resolveProjectRoot(),
-                30
-        );
-        if (!result.success()) {
-            // Job 不存在或查询失败：scheduled 任务的 Job 可能还没提交（submitJob 在异步线程执行），
+        Optional<KubernetesWorkloadClient.TrainingJobStatus> statusResult;
+        try {
+            statusResult = workloadClient.getTrainingJobStatus(properties.getNamespace(), jobName);
+        } catch (RuntimeException exception) {
+            startupFailureObservations.remove(jobName);
+            LOG.warn("Failed to read K8s training Job status: id={}, error={}",
+                    task.getId(), exception.getMessage());
+            return;
+        }
+        if (statusResult.isEmpty()) {
+            startupFailureObservations.remove(jobName);
+            // Job 不存在：scheduled 任务的 Job 可能还没提交（submitJob 在异步线程执行），
             // 不标记失败，等下一轮轮询再查。
             return;
         }
 
-        String[] parts = result.output().trim().split(",");
-        int succeeded = parseInt(parts, 0);
-        int failed = parseInt(parts, 1);
-        int active = parseInt(parts, 2);
+        KubernetesWorkloadClient.TrainingJobStatus status = statusResult.get();
 
-        if (succeeded > 0) {
+        if (status.succeeded() > 0) {
+            startupFailureObservations.remove(jobName);
             markSucceeded(task.getId());
             return;
         }
-        if (failed > 0) {
-            String podError = fetchPodFailureReason(jobName);
-            markFailed(task.getId(), podError != null ? podError : "K8s Job 执行失败");
+        if (status.failed() > 0) {
+            startupFailureObservations.remove(jobName);
+            String podError = status.podWaitingReason() != null
+                    ? "Pod 状态: " + status.podWaitingReason()
+                    : "K8s Job 执行失败";
+            markFailed(task.getId(), podError);
             archiveFailure(task.getId(), jobName);
             return;
         }
-        if (active > 0 && !"running".equals(task.getStatus())) {
+        if (isExpiredFatalStartupFailure(jobName, status)) {
+            startupFailureObservations.remove(jobName);
+            String errorMessage = startupFailureMessage(status);
+            if (markFailed(task.getId(), errorMessage)) {
+                boolean evidenceReady = !properties.isFailureDiagnosticsEnabled()
+                        || archiveFailure(task.getId(), jobName);
+                if (evidenceReady) {
+                    deleteStartupFailedJob(jobName, task.getId());
+                }
+            }
+            return;
+        }
+        if (status.active() > 0 && !"running".equals(task.getStatus())) {
             markRunning(task.getId());
         }
     }
 
-    private String fetchPodFailureReason(String jobName) {
-        Path kubeconfig = environmentService.resolveKubeconfig();
-        List<String> cmd = environmentService.kubectlCommand(
-                kubeconfig,
-                "get", "pods",
-                "-n", properties.getNamespace(),
-                "-l", "job-name=" + jobName,
-                "-o", "jsonpath={.items[0].status.containerStatuses[0].state.waiting.reason}"
-        );
-        ShellCommandRunner.CommandResult result = shellCommandRunner.run(
-                cmd,
-                environmentService.resolveProjectRoot(),
-                20
-        );
-        if (result.success() && result.output() != null && !result.output().isBlank()) {
-            return "Pod 状态: " + result.output().trim();
+    private boolean isExpiredFatalStartupFailure(
+            String jobName,
+            KubernetesWorkloadClient.TrainingJobStatus status
+    ) {
+        if (!FATAL_POD_STARTUP_REASONS.contains(status.podWaitingReason())) {
+            startupFailureObservations.remove(jobName);
+            return false;
         }
-        return null;
+        Instant now = clock.instant();
+        StartupFailureObservation observation = startupFailureObservations.compute(
+                jobName,
+                (ignored, current) -> current == null
+                        || !Objects.equals(current.podCreatedAt(), status.podCreatedAt())
+                        ? new StartupFailureObservation(status.podCreatedAt(), now)
+                        : current
+        );
+        int graceSeconds = Math.max(0, properties.getPodStartupFailureGraceSeconds());
+        return !now.isBefore(observation.firstObservedAt().plusSeconds(graceSeconds));
     }
 
-    private int parseInt(String[] parts, int index) {
-        if (parts.length <= index || parts[index] == null || parts[index].isBlank()) {
-            return 0;
+    private String startupFailureMessage(KubernetesWorkloadClient.TrainingJobStatus status) {
+        StringBuilder message = new StringBuilder(POD_STARTUP_FAILURE_PREFIX)
+                .append(status.podWaitingReason());
+        if (status.podWaitingMessage() != null && !status.podWaitingMessage().isBlank()) {
+            String detail = TrainingFailureDiagnosticService.redact(status.podWaitingMessage())
+                    .replaceAll("\\s+", " ")
+                    .trim();
+            if (!detail.isBlank()) {
+                message.append(" - ").append(detail);
+            }
         }
+        if (message.length() > 1000) {
+            return message.substring(0, 1000);
+        }
+        return message.toString();
+    }
+
+    private void deleteStartupFailedJob(String jobName, String trainingId) {
         try {
-            return Integer.parseInt(parts[index].trim());
-        } catch (NumberFormatException e) {
-            return 0;
+            workloadClient.deleteTrainingJob(properties.getNamespace(), jobName);
+            LOG.info("Deleted startup-failed K8s Job after preserving diagnostics: id={}, job={}",
+                    trainingId, jobName);
+        } catch (RuntimeException exception) {
+            LOG.warn("Failed to delete startup-failed K8s Job: id={}, job={}, error={}",
+                    trainingId, jobName, exception.getMessage());
         }
     }
 
@@ -156,22 +232,26 @@ public class KubernetesTrainingJobMonitor {
                         cutoff
                 );
         for (TrainingExperimentVersion candidate : candidates) {
-            archiveFailure(candidate.getId(), KubernetesJobNaming.jobNameForTraining(candidate.getId()));
+            String jobName = KubernetesJobNaming.jobNameForTraining(candidate.getId());
+            boolean archived = archiveFailure(candidate.getId(), jobName);
+            if (archived && isStartupFailure(candidate.getErrorMessage())) {
+                deleteStartupFailedJob(jobName, candidate.getId());
+            }
         }
     }
 
-    private void archiveFailure(String trainingId, String jobName) {
+    private boolean archiveFailure(String trainingId, String jobName) {
         TrainingExperimentVersion task = null;
         TrainingFailureDiagnosticService.CaptureResult capture = null;
         try {
             task = repository.findById(trainingId).orElse(null);
             if (task == null || !"failed".equals(task.getStatus())
                     || (task.getLogPath() != null && !task.getLogPath().isBlank())) {
-                return;
+                return task != null && task.getLogPath() != null && !task.getLogPath().isBlank();
             }
             capture = failureDiagnosticService.archive(task, jobName);
             if (!capture.archived() || capture.logPath() == null) {
-                return;
+                return false;
             }
             TrainingFailureDiagnosticService.CaptureResult archivedCapture = capture;
             Boolean attached = transactionTemplate.execute(tx -> repository.findById(trainingId)
@@ -192,6 +272,7 @@ public class KubernetesTrainingJobMonitor {
             if (!Boolean.TRUE.equals(attached)) {
                 failureDiagnosticService.enqueueDeletion(task, capture.logPath());
             }
+            return Boolean.TRUE.equals(attached);
         } catch (Exception exception) {
             if (task != null && capture != null && capture.archived() && capture.logPath() != null) {
                 try {
@@ -203,7 +284,15 @@ public class KubernetesTrainingJobMonitor {
             }
             LOG.warn("Failed to archive K8s training diagnostics: id={}, error={}",
                     trainingId, exception.getMessage());
+            return false;
         }
+    }
+
+    private boolean isStartupFailure(String errorMessage) {
+        return errorMessage != null && errorMessage.startsWith(POD_STARTUP_FAILURE_PREFIX);
+    }
+
+    private record StartupFailureObservation(Instant podCreatedAt, Instant firstObservedAt) {
     }
 
     private void markRunning(String trainingId) {
@@ -253,22 +342,26 @@ public class KubernetesTrainingJobMonitor {
         }));
     }
 
-    private void markFailed(String trainingId, String errorMessage) {
-        transactionTemplate.executeWithoutResult(tx -> repository.findById(trainingId).ifPresent(version -> {
-            if (TERMINAL_STATUSES.contains(version.getStatus())) {
-                return;
-            }
-            version.setStatus("failed");
-            version.setProgress(version.getProgress() == null ? 0 : version.getProgress());
-            version.setErrorMessage(errorMessage);
-            version.setFinishedAt(Instant.now());
-            version.setUpdatedAt(Instant.now());
-            repository.save(version);
-            String nodeName = version.getServerIp();
-            if (nodeName != null) {
-                jobScheduler.releaseResources(trainingId, nodeName);
-            }
-            LOG.warn("训练任务同步为 failed: id={}, reason={}", trainingId, errorMessage);
-        }));
+    private boolean markFailed(String trainingId, String errorMessage) {
+        Boolean updated = transactionTemplate.execute(tx -> repository.findById(trainingId)
+                .map(version -> {
+                    if (TERMINAL_STATUSES.contains(version.getStatus())) {
+                        return false;
+                    }
+                    version.setStatus("failed");
+                    version.setProgress(version.getProgress() == null ? 0 : version.getProgress());
+                    version.setErrorMessage(errorMessage);
+                    version.setFinishedAt(Instant.now());
+                    version.setUpdatedAt(Instant.now());
+                    repository.save(version);
+                    String nodeName = version.getServerIp();
+                    if (nodeName != null) {
+                        jobScheduler.releaseResources(trainingId, nodeName);
+                    }
+                    LOG.warn("训练任务同步为 failed: id={}, reason={}", trainingId, errorMessage);
+                    return true;
+                })
+                .orElse(false));
+        return Boolean.TRUE.equals(updated);
     }
 }
