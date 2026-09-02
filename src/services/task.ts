@@ -60,6 +60,7 @@ export async function createTask(
     trainingMode?: string;
     resourceProfileId?: string;
     resourceRequest?: {
+      hardwareTargetId?: string;
       cpuCores?: number;
       memoryMiB?: number;
       gpuCount?: number;
@@ -166,6 +167,7 @@ export async function createExperimentVersion(
     trainingMode?: string;
     resourceProfileId?: string;
     resourceRequest?: {
+      hardwareTargetId?: string;
       cpuCores?: number;
       memoryMiB?: number;
       gpuCount?: number;

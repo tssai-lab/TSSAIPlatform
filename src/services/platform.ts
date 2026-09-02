@@ -313,8 +313,10 @@ export {
 
 export {
   fetchTrainingPlans,
+  fetchTrainingHardwareOptions,
   fetchTrainingResourceCapability,
   type TrainingPlan,
+  type TrainingHardwareOption,
   type TrainingResourceCapability,
 } from './trainingPlans';
 

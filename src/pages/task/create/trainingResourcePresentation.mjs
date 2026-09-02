@@ -37,8 +37,15 @@ export function resourceStatusPresentation(capability, error) {
   };
 }
 
-export function buildTrainingResourceRequest(mode, values, profile, capability) {
-  if (mode !== 'custom') return undefined;
+export function buildTrainingResourceRequest(
+  mode,
+  values,
+  profile,
+  capability,
+  hardwareTargetId,
+) {
+  if (!hardwareTargetId) throw new Error('请选择当前可用的硬件型号');
+  if (mode !== 'custom') return { hardwareTargetId };
   if (!capability) throw new Error('实际资源数据不可用，不能使用自定义配置');
   const cpuCores = Number(values?.cpuCores);
   const memoryMiB = Number(values?.memoryMiB);
@@ -57,6 +64,7 @@ export function buildTrainingResourceRequest(mode, values, profile, capability) 
     throw new Error('系统内存超出当前训练方案范围');
   }
   const result = {
+    hardwareTargetId,
     cpuCores,
     memoryMiB,
     gpuCount: Number(profile?.gpuCount || 0),
