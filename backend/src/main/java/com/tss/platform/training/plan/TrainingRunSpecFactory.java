@@ -20,6 +20,7 @@ import com.tss.platform.service.ArtifactDigestService;
 import com.tss.platform.service.CodeDependencyManifestService;
 import com.tss.platform.service.PythonRequirementsValidator;
 import com.tss.platform.service.ResolvedCodeArtifact;
+import com.tss.platform.service.TrainingHardwareOptionService;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -48,6 +49,7 @@ public class TrainingRunSpecFactory {
     private final ArtifactDigestService digestService;
     private final CodeDependencyManifestService dependencyManifestService;
     private final AuthContext authContext;
+    private final TrainingHardwareOptionService hardwareOptionService;
     private final ObjectMapper snapshotMapper;
 
     public TrainingRunSpecFactory(
@@ -61,6 +63,7 @@ public class TrainingRunSpecFactory {
             ArtifactDigestService digestService,
             CodeDependencyManifestService dependencyManifestService,
             AuthContext authContext,
+            TrainingHardwareOptionService hardwareOptionService,
             ObjectMapper objectMapper
     ) {
         this.planRegistry = planRegistry;
@@ -73,6 +76,7 @@ public class TrainingRunSpecFactory {
         this.digestService = digestService;
         this.dependencyManifestService = dependencyManifestService;
         this.authContext = authContext;
+        this.hardwareOptionService = hardwareOptionService;
         this.snapshotMapper = objectMapper.copy()
                 .setSerializationInclusion(JsonInclude.Include.NON_NULL)
                 .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
@@ -151,8 +155,13 @@ public class TrainingRunSpecFactory {
 
         PythonRequirementsValidator.DependencyManifest dependencies = dependencyManifestService.resolve(command.codeArtifact());
         TrainingRunSpec.Runtime runtime = runtimeOf(resolvedRuntime.runtime(), dependencies.sha256());
+        TrainingHardwareOptionService.HardwareSelection hardwareSelection =
+                hardwareOptionService.requireSelection(
+                        plan, resolvedRuntime.runtime(), resolvedRuntime.resourceProfile(),
+                        command.resourceRequest());
         TrainingRunSpec.Resources resources = TrainingResourceRequestResolver.resolve(
-                resolvedRuntime.runtime(), resolvedRuntime.resourceProfile(), command.resourceRequest());
+                resolvedRuntime.runtime(), resolvedRuntime.resourceProfile(), command.resourceRequest(),
+                hardwareSelection.hardwareTargetId(), hardwareSelection.nodeSelector());
         TrainingRunSpec.Workspace workspace = TrainingRunSpec.Workspace.standard();
         TrainingRunSpec runSpec = new TrainingRunSpec(
                 TrainingRunSpec.SCHEMA_VERSION,

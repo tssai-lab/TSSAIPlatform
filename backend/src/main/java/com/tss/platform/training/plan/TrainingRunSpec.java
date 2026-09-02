@@ -129,6 +129,7 @@ public record TrainingRunSpec(
 
     public record Resources(
             String profileId,
+            String hardwareTargetId,
             String cpuRequest,
             String cpuLimit,
             String memoryRequest,
@@ -138,6 +139,20 @@ public record TrainingRunSpec(
             Long gpuMemoryLimitMiB,
             Map<String, String> nodeSelector
     ) {
+        public Resources(
+                String profileId,
+                String cpuRequest,
+                String cpuLimit,
+                String memoryRequest,
+                String memoryLimit,
+                String ephemeralStorageLimit,
+                Integer gpuCount,
+                Long gpuMemoryLimitMiB,
+                Map<String, String> nodeSelector
+        ) {
+            this(profileId, null, cpuRequest, cpuLimit, memoryRequest, memoryLimit,
+                    ephemeralStorageLimit, gpuCount, gpuMemoryLimitMiB, nodeSelector);
+        }
     }
 
     public record Workspace(

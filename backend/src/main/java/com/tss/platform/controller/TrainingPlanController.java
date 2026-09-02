@@ -2,6 +2,8 @@ package com.tss.platform.controller;
 
 import com.tss.platform.dto.ApiResponse;
 import com.tss.platform.dto.resource.TrainingResourceCapabilityDto;
+import com.tss.platform.dto.resource.TrainingHardwareOptionDto;
+import com.tss.platform.service.TrainingHardwareOptionService;
 import com.tss.platform.service.TrainingResourceCapabilityService;
 import com.tss.platform.training.plan.TrainingPlanDefinition;
 import com.tss.platform.training.plan.TrainingPlanRegistry;
@@ -20,13 +22,16 @@ public class TrainingPlanController {
 
     private final TrainingPlanRegistry trainingPlanRegistry;
     private final TrainingResourceCapabilityService resourceCapabilityService;
+    private final TrainingHardwareOptionService hardwareOptionService;
 
     public TrainingPlanController(
             TrainingPlanRegistry trainingPlanRegistry,
-            TrainingResourceCapabilityService resourceCapabilityService
+            TrainingResourceCapabilityService resourceCapabilityService,
+            TrainingHardwareOptionService hardwareOptionService
     ) {
         this.trainingPlanRegistry = trainingPlanRegistry;
         this.resourceCapabilityService = resourceCapabilityService;
+        this.hardwareOptionService = hardwareOptionService;
     }
 
     @GetMapping
@@ -43,5 +48,13 @@ public class TrainingPlanController {
             @RequestParam("resourceProfileId") String resourceProfileId
     ) {
         return ApiResponse.ok(resourceCapabilityService.capability(planId, version, resourceProfileId));
+    }
+
+    @GetMapping("/{planId}/hardware-options")
+    public ApiResponse<List<TrainingHardwareOptionDto>> hardwareOptions(
+            @PathVariable String planId,
+            @RequestParam(value = "version", required = false) String version
+    ) {
+        return ApiResponse.ok(hardwareOptionService.options(planId, version));
     }
 }
