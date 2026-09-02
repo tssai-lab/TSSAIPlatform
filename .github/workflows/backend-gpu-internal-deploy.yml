@@ -195,6 +195,19 @@ jobs:
             grep -E "^ghcr.io/tssai-lab/tssai-backend:${APPLICATION_SHA}\\|" sources.lock
           )
 
+          source_bundle="$RUNNER_TEMP/backend-gpu-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$RELEASE_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${RELEASE_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
+
           ssh_options=(
             -i "$CONTROL_PLANE_SSH_KEY"
             -o BatchMode=yes
@@ -202,12 +215,26 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
             -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
           )
           ssh_with_retry() {
             local attempt
             for attempt in 1 2 3 4; do
               if ssh "${ssh_options[@]}" \
                 "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "$@"; then
+                return 0
+              fi
+              (( attempt < 4 )) || return 1
+              sleep $((attempt * 2))
+            done
+          }
+          stage_source_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              if ssh "${ssh_options[@]}" \
+                "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+                "stage-source ${RELEASE_SHA}" < "$source_bundle"; then
                 return 0
               fi
               (( attempt < 4 )) || return 1
@@ -231,6 +258,8 @@ jobs:
             done
           }
           ssh_with_retry probe
+          sleep 2
+          stage_source_with_retry
           sleep 2
           ssh_with_retry "sync ${RELEASE_SHA}"
           sleep 2
