@@ -59,6 +59,12 @@ grep -F 'for attempt in 1 2 3 4; do' "$internal_workflow" >/dev/null
 grep -F 'sleep $((attempt * 2))' "$internal_workflow" >/dev/null
 grep -F 'ssh_with_retry "sync ${RELEASE_SHA}"' "$internal_workflow" >/dev/null
 grep -F 'ssh_with_retry probe' "$internal_workflow" >/dev/null
+grep -F 'stage_source_with_retry() {' "$internal_workflow" >/dev/null
+grep -F '"stage-source ${RELEASE_SHA}" < "$source_bundle"' "$internal_workflow" >/dev/null
+grep -F 'source_ref=refs/tss-aiplatform/internal-release' "$internal_workflow" >/dev/null
+grep -F 'git bundle verify "$source_bundle"' "$internal_workflow" >/dev/null
+grep -F -- '-o ServerAliveInterval=15' "$internal_workflow" >/dev/null
+grep -F -- '-o ServerAliveCountMax=2' "$internal_workflow" >/dev/null
 ! grep -F 'ssh_with_retry deploy-backend' "$internal_workflow" >/dev/null
 ! grep -F 'ssh_with_retry stage-backend' "$internal_workflow" >/dev/null
 grep -F 'stage_backend_with_retry() {' "$internal_workflow" >/dev/null
@@ -93,6 +99,12 @@ grep -F 'retention-days: 3' "$internal_workflow" >/dev/null
 grep -F 'External Main cluster: not targeted' "$internal_workflow" >/dev/null
 ! grep -F 'deploy-main-validation.yml' "$internal_workflow" >/dev/null
 ! grep -F '${{ secrets.' "$internal_workflow" >/dev/null
+
+grep -F 'stage-source\ *)' "$platform_scripts/internal-runner-gateway.sh" >/dev/null
+grep -F 'fetch --no-tags "$source_bundle_path"' \
+  "$platform_scripts/internal-runner-gateway.sh" >/dev/null
+! grep -F 'fetch --no-tags --prune origin' \
+  "$platform_scripts/internal-runner-gateway.sh" >/dev/null
 
 grep -F 'TSS_DEPLOYMENT_BRANCH=%s' \
   "$platform_scripts/install-internal-runner-gateway.sh" >/dev/null

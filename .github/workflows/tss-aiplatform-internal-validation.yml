@@ -1216,6 +1216,18 @@ jobs:
           CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
+          source_bundle="$RUNNER_TEMP/internal-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$GITHUB_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${GITHUB_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
           ssh_options=(
             -i "$CONTROL_PLANE_SSH_KEY"
             -o BatchMode=yes
@@ -1223,8 +1235,12 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
             -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
           )
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+            "stage-source ${GITHUB_SHA}" < "$source_bundle"
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
           tar -C "$BACKEND_TARGET_DIR" -cf - \
             backend-image-amd64.tar backend-image.sha256 sources.lock \
@@ -1358,6 +1374,18 @@ jobs:
           CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
+          source_bundle="$RUNNER_TEMP/internal-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$GITHUB_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${GITHUB_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
           ssh_options=(
             -i "$CONTROL_PLANE_SSH_KEY"
             -o BatchMode=yes
@@ -1365,8 +1393,12 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
             -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
           )
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe-frontend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+            "stage-source ${GITHUB_SHA}" < "$source_bundle"
           ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
           tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
             --mode='u+rw,go-rwx' -C "$FRONTEND_TARGET_DIR" -cf - \

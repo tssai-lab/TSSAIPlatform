@@ -179,6 +179,7 @@ grep -F -- '-o BatchMode=yes' "$workflow" >/dev/null
 grep -F -- '-o IdentitiesOnly=yes' "$workflow" >/dev/null
 grep -F -- '-o StrictHostKeyChecking=yes' "$workflow" >/dev/null
 grep -F 'stage-backend' "$workflow" >/dev/null
+grep -F 'stage-source ${GITHUB_SHA}' "$workflow" >/dev/null
 grep -F 'deploy-backend' "$workflow" >/dev/null
 
 gateway="$platform_root/scripts/internal-runner-gateway.sh"
@@ -187,6 +188,11 @@ installer="$platform_root/scripts/install-internal-runner-gateway.sh"
 grep -F 'current_project_id=$(docker image inspect --format' "$deployer" >/dev/null
 grep -F 'candidate_id=$(docker image inspect --format' "$deployer" >/dev/null
 grep -F 'if [[ $candidate_id != "$current_project_id" ]]; then' "$deployer" >/dev/null
+grep -F 'TSS_BACKEND_IMAGE="$old_image" \' "$deployer" >/dev/null
+grep -F 'stage-source\ *)' "$gateway" >/dev/null
+grep -F 'source_bundle_ref=refs/tss-aiplatform/internal-release' "$gateway" >/dev/null
+grep -F 'fetch --no-tags "$source_bundle_path"' "$gateway" >/dev/null
+! grep -F 'fetch --no-tags --prune origin' "$gateway" >/dev/null
 grep -F 'command_text=${SSH_ORIGINAL_COMMAND:-}' "$gateway" >/dev/null
 grep -F 'exec sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-backend' "$gateway" >/dev/null
 grep -F 'command is not permitted by the internal Runner gateway' "$gateway" >/dev/null

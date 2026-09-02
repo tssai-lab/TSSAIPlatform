@@ -41,6 +41,8 @@ expected_user=$TSS_DEPLOYMENT_USER
 repository_root=$TSS_REPOSITORY_ROOT
 stage_root=$TSS_DEPLOY_STAGE_ROOT
 bundle_path=${stage_root}/backend.bundle
+source_bundle_path=${stage_root}/release-source.bundle
+source_bundle_ref=refs/tss-aiplatform/internal-release
 state_file=$TSS_DEPLOY_STATE_FILE
 frontend_config=/etc/tss-aiplatform-deploy/frontend.env
 expected_group=$(id -gn "$expected_user" 2>/dev/null || true)
@@ -77,6 +79,14 @@ load_frontend_target() {
   frontend_state_file=$TSS_FRONTEND_STATE_FILE
 }
 
+validate_source_bundle() {
+  local bundle_file=$1 requested_sha=$2
+  /usr/bin/git -C "$repository_root" bundle verify "$bundle_file" >/dev/null
+  [[ $(/usr/bin/git bundle list-heads "$bundle_file" "$source_bundle_ref") == \
+    "${requested_sha} ${source_bundle_ref}" ]] \
+    || die "staged source bundle does not contain the requested release"
+}
+
 command_text=${SSH_ORIGINAL_COMMAND:-}
 case "$command_text" in
   probe)
@@ -88,6 +98,30 @@ case "$command_text" in
       echo 'TSS_C7_BACKEND_DEPLOYMENT=NOT_RECORDED'
     fi
     ;;
+  stage-source\ *)
+    requested_sha=${command_text#stage-source }
+    [[ $requested_sha =~ ^[0-9a-f]{40}$ ]] || die "requested deployment SHA is invalid"
+    [[ ! -e $source_bundle_path || ( -f $source_bundle_path && ! -L $source_bundle_path \
+      && $(stat -c '%U:%G:%a' "$source_bundle_path") == "${expected_user}:${expected_group}:600" ) ]] \
+      || die "pending source bundle metadata differs"
+    pending=$(mktemp "${stage_root}/.release-source.bundle.XXXXXX")
+    trap 'rm -f "$pending"' EXIT
+    chmod 0600 "$pending"
+    ulimit -f $((128 * 1024))
+    dd of="$pending" bs=1M status=none
+    size=$(stat -c %s "$pending")
+    (( size > 0 && size <= 128 * 1024 * 1024 )) || die "source bundle size differs"
+    validate_source_bundle "$pending" "$requested_sha"
+    if [[ -f $source_bundle_path ]]; then
+      [[ $(sha256sum "$pending" | awk '{print $1}') == $(sha256sum "$source_bundle_path" | awk '{print $1}') ]] \
+        || die "a different source bundle is already pending"
+      rm -f "$pending"
+    else
+      mv "$pending" "$source_bundle_path"
+    fi
+    trap - EXIT
+    echo "PASS: release source bundle staged for ${requested_sha} (${size} bytes)"
+    ;;
   sync\ *)
     requested_sha=${command_text#sync }
     [[ $requested_sha =~ ^[0-9a-f]{40}$ ]] || die "requested deployment SHA is invalid"
@@ -97,13 +131,18 @@ case "$command_text" in
       || die "deployment repository is not on the configured branch"
     origin_url=$(/usr/bin/git -C "$repository_root" remote get-url origin)
     [[ $origin_url =~ $origin_pattern ]] || die "deployment repository origin differs"
-    /usr/bin/git -C "$repository_root" fetch --no-tags --prune origin \
-      "refs/heads/${TSS_DEPLOYMENT_BRANCH}:refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}"
+    [[ -f $source_bundle_path && ! -L $source_bundle_path \
+      && $(stat -c '%U:%G:%a' "$source_bundle_path") == "${expected_user}:${expected_group}:600" ]] \
+      || die "staged source bundle is absent or unsafe"
+    validate_source_bundle "$source_bundle_path" "$requested_sha"
+    /usr/bin/git -C "$repository_root" fetch --no-tags "$source_bundle_path" \
+      "${source_bundle_ref}:refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}"
     [[ $(/usr/bin/git -C "$repository_root" rev-parse "refs/remotes/origin/${TSS_DEPLOYMENT_BRANCH}") == "$requested_sha" ]] \
       || die "requested SHA is not the current configured deployment branch head"
     /usr/bin/git -C "$repository_root" merge --ff-only "$requested_sha"
     [[ $(/usr/bin/git -C "$repository_root" rev-parse HEAD) == "$requested_sha" ]] \
       || die "deployment repository did not reach the requested SHA"
+    rm -f "$source_bundle_path"
     echo "PASS: internal deployment repository synchronized to ${requested_sha}"
     ;;
   stage-backend)

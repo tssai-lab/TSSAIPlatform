@@ -95,7 +95,8 @@ rollback() {
   local exit_code=$?
   if [[ $deployment_succeeded != true && $configuration_changed == true && -f $platform_backup ]]; then
     install -o root -g root -m 0600 "$platform_backup" "$platform_config"
-    docker compose -f "$compose_file" up -d backend >/dev/null 2>&1 || true
+    TSS_BACKEND_IMAGE="$old_image" \
+      docker compose -f "$compose_file" up -d backend >/dev/null 2>&1 || true
   fi
   rm -rf "$work_dir"
   exit "$exit_code"
