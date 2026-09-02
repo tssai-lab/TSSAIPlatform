@@ -3,6 +3,7 @@ export const MODEL_UPLOAD_CATEGORY_OPTIONS = Object.freeze([
   Object.freeze({ value: 'NLP', label: 'NLP（文本）' }),
   Object.freeze({ value: 'POINT_CLOUD', label: '点云' }),
   Object.freeze({ value: 'ROBOT', label: '机器人' }),
+  Object.freeze({ value: 'OTHER', label: '其他（暂未归类）' }),
 ]);
 
 const MODEL_UPLOAD_CATEGORIES = new Set(

@@ -93,7 +93,8 @@ const s2Steps = (): TourProps['steps'] => [
   {
     target: byTour('model-type'),
     title: '模型类型',
-    description: '选择 CV / NLP / OTHER；注意：类型上传后不可更改。',
+    description:
+      '选择 CV / NLP / 点云 / 机器人 / OTHER（暂未归类）；注意：类型上传后不可更改。',
   },
   {
     target: byTour('model-remark'),

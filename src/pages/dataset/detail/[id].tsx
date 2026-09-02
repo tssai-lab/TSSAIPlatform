@@ -264,6 +264,7 @@ const DATASET_TYPE_LABEL: Record<string, string> = {
   MULTIMODAL: '多模态',
   ROBOT: '机器人',
   LEROBOT: 'LeRobot',
+  OTHER: '其他（暂未归类）',
 };
 
 const DATASET_TYPE_COLOR: Record<string, string> = {
@@ -273,6 +274,7 @@ const DATASET_TYPE_COLOR: Record<string, string> = {
   MULTIMODAL: 'magenta',
   ROBOT: 'default',
   LEROBOT: 'blue',
+  OTHER: 'default',
 };
 
 const DatasetDetail: React.FC = () => {

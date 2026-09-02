@@ -409,6 +409,15 @@ const ModelUpload: React.FC = () => {
                 description="请上传 zip 权重包；包内只允许模型相关文件，不能包含 .py 脚本。"
               />
             )}
+            {selectedType === 'OTHER' && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="暂未归类模型"
+                description="OTHER 只用于保存和检索暂时无法归类的模型；平台仍会执行文件安全校验，是否可训练由后续选择的训练方案决定。"
+              />
+            )}
             <Form.Item
               name="remark"
               label="资产备注"

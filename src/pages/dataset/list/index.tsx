@@ -210,6 +210,7 @@ const DatasetList: React.FC = () => {
         MULTIMODAL: { text: '多模态' },
         ROBOT: { text: '机器人' },
         LEROBOT: { text: 'LeRobot' },
+        OTHER: { text: '其他（暂未归类）' },
       },
       sorter: true,
     },

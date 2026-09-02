@@ -67,6 +67,8 @@ const ROBOT_ACCEPT = '.xml,.yaml,.yml,.zip';
 const LEROBOT_ACCEPT = '.zip';
 const VISUAL_ACCEPT = '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.zip';
 const TEXT_ACCEPT = '.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.zip';
+const OTHER_ACCEPT =
+  '.jpg,.jpeg,.png,.bmp,.gif,.webp,.tif,.tiff,.txt,.json,.jsonl,.csv,.xlsx,.xls,.pdf,.docx,.xml,.yaml,.yml,.ply,.pcd,.parquet,.mp4,.mkv,.md,.zip';
 
 function isRobotFileName(fileName: string) {
   const ext = fileName.split('.').pop()?.toLowerCase();
@@ -610,6 +612,15 @@ const DatasetUpload: React.FC = () => {
             />
           </Form.Item>
         )}
+        {directoryCategory === 'OTHER' && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="暂未归类数据集"
+            description="OTHER 只用于保存和检索暂时无法归类的数据；仅支持平台安全白名单文件或包含这些文件的 zip，是否可训练由后续选择的训练方案决定。"
+          />
+        )}
         {datasetType === 'MULTIMODAL' && (
           <>
             <Form.Item
@@ -710,12 +721,14 @@ const DatasetUpload: React.FC = () => {
                       ? LEROBOT_ACCEPT
                       : datasetType === 'NLP'
                         ? TEXT_ACCEPT
-                        : datasetType === 'CV'
-                          ? visualFileLayout === 'IMAGE_FOLDER' ||
-                            visualFileLayout === 'YOLO'
-                            ? '.zip'
-                            : VISUAL_ACCEPT
-                          : undefined
+                        : datasetType === 'OTHER'
+                          ? OTHER_ACCEPT
+                          : datasetType === 'CV'
+                            ? visualFileLayout === 'IMAGE_FOLDER' ||
+                              visualFileLayout === 'YOLO'
+                              ? '.zip'
+                              : VISUAL_ACCEPT
+                            : undefined
             }
             beforeUpload={() => false}
             onChange={(e) => {
@@ -738,11 +751,13 @@ const DatasetUpload: React.FC = () => {
                       ? '选择 LeRobot v3 数据集（.zip）'
                       : datasetType === 'NLP'
                         ? '选择文本文件或 zip（单文件）'
-                        : visualFileLayout === 'YOLO'
-                          ? '选择 YOLO zip（单文件）'
-                          : visualFileLayout === 'IMAGE_FOLDER'
-                            ? '选择 ImageFolder zip（单文件）'
-                            : '选择图片或 zip（可多选图片）'}
+                        : datasetType === 'OTHER'
+                          ? '选择安全白名单文件或 zip（单文件）'
+                          : visualFileLayout === 'YOLO'
+                            ? '选择 YOLO zip（单文件）'
+                            : visualFileLayout === 'IMAGE_FOLDER'
+                              ? '选择 ImageFolder zip（单文件）'
+                              : '选择图片或 zip（可多选图片）'}
             </Button>
           </Upload>
           <div style={{ marginTop: 8, color: '#999' }}>

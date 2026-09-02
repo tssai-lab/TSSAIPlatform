@@ -63,7 +63,7 @@ const modelConstraints = [
   {
     key: 'modelType',
     constraint: '模型类型',
-    specification: 'CV（计算机视觉）/ NLP（自然语言处理）/ OTHER（暂未归类）',
+    specification: 'CV / NLP / POINT_CLOUD / ROBOT / OTHER（暂未归类）',
     remark: '上传后不可更改',
   },
   {
@@ -166,6 +166,13 @@ const datasetConstraints = [
     constraint: '机器人数据集',
     specification: '.xml / .yaml / .yml / .zip',
     remark: '仅支持单个配置文件或配置类 zip',
+  },
+  {
+    key: 'otherFormat',
+    constraint: '暂未归类数据集',
+    specification:
+      '安全白名单内的图片、文本、XML/YAML、PLY/PCD、Parquet、视频等文件或 .zip',
+    remark: '仅用于存储和检索，不自动取得训练资格',
   },
   {
     key: 'versionFormat',
