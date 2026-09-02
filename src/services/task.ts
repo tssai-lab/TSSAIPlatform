@@ -59,6 +59,12 @@ export async function createTask(
     planVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    resourceRequest?: {
+      cpuCores?: number;
+      memoryMiB?: number;
+      gpuCount?: number;
+      gpuMemoryLimitMiB?: number;
+    };
     hyperParams?: Record<string, unknown> | string;
     remark?: string;
   },
@@ -159,6 +165,12 @@ export async function createExperimentVersion(
     planVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    resourceRequest?: {
+      cpuCores?: number;
+      memoryMiB?: number;
+      gpuCount?: number;
+      gpuMemoryLimitMiB?: number;
+    };
     hyperParams?: Record<string, unknown> | string;
     remark?: string;
   },

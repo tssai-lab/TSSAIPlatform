@@ -7,6 +7,7 @@ import {
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Modal,
   message,
   Radio,
@@ -36,12 +37,16 @@ import {
   fetchTrainingDatasetCandidates,
   fetchTrainingModelCandidates,
   fetchTrainingPlans,
+  fetchTrainingResourceCapability,
   getCodeVersionDetail,
   getModelVersion,
   publishTaskModel,
   uploadCodeZip,
 } from '@/services/platform';
-import type { TrainingPlan } from '@/services/trainingPlans';
+import type {
+  TrainingPlan,
+  TrainingResourceCapability,
+} from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
 import { markPendingCodeStatus } from '@/utils/pendingCodeVersions';
 import {
@@ -60,6 +65,11 @@ import {
   formatTrainingMode,
   isSingleTrainingMode,
 } from './trainingModePresentation.mjs';
+import {
+  buildTrainingResourceRequest,
+  formatMiB,
+  resourceStatusPresentation,
+} from './trainingResourcePresentation.mjs';
 
 const FUSION_HYPER_PARAMS_DEFAULT = {
   model: 'logreg',
@@ -275,12 +285,19 @@ const TaskCreate: React.FC = () => {
 
   const [form] = Form.useForm();
   const selectedResourceProfileId = Form.useWatch('resourceProfileId', form);
+  const resourceMode = Form.useWatch('resourceMode', form) || 'recommended';
   const [currentStep, setCurrentStep] = useState(0);
 
   const [modelOptions, setModelOptions] = useState<API.ModelItem[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<API.DatasetItem[]>([]);
   const [codeOptions, setCodeOptions] = useState<any[]>([]);
   const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
+  const [resourceCapability, setResourceCapability] =
+    useState<TrainingResourceCapability>();
+  const [resourceCapabilityLoading, setResourceCapabilityLoading] =
+    useState(false);
+  const [resourceCapabilityError, setResourceCapabilityError] =
+    useState<string>();
   const [selectedTrainingPlanId, setSelectedTrainingPlanId] =
     useState<string>();
 
@@ -405,6 +422,48 @@ const TaskCreate: React.FC = () => {
   const selectedResourceProfile = resourceProfiles.find(
     (profile) => profile.id === selectedResourceProfileId,
   );
+  const resourceStatus = resourceStatusPresentation(
+    resourceCapability,
+    resourceCapabilityError,
+  );
+
+  useEffect(() => {
+    if (!selectedTrainingPlan || !selectedResourceProfileId) {
+      setResourceCapability(undefined);
+      setResourceCapabilityError(undefined);
+      return;
+    }
+    let cancelled = false;
+    setResourceCapabilityLoading(true);
+    setResourceCapability(undefined);
+    setResourceCapabilityError(undefined);
+    fetchTrainingResourceCapability(
+      selectedTrainingPlan.id,
+      {
+        version: selectedTrainingPlan.version,
+        resourceProfileId: selectedResourceProfileId,
+      },
+      { skipErrorHandler: true },
+    )
+      .then((response) => {
+        if (cancelled) return;
+        if (!response?.success || !response.data) {
+          throw new Error(response?.errorMessage || '资源能力接口返回失败');
+        }
+        setResourceCapability(response.data);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setResourceCapabilityError(getApiErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setResourceCapabilityLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedResourceProfileId, selectedTrainingPlan]);
 
   useEffect(() => {
     if (!selectedTrainingPlan || !selectedDatasetVersionId) return;
@@ -526,6 +585,10 @@ const TaskCreate: React.FC = () => {
       planVersion: selectedTrainingPlan.version,
       trainingMode: selectedTrainingPlan.trainingModes?.[0],
       resourceProfileId: firstTrainingResourceProfileId(selectedTrainingPlan),
+      resourceMode: 'recommended',
+      cpuCores: undefined,
+      memoryMiB: undefined,
+      gpuMemoryLimitMiB: undefined,
       hyperParams: buildTrainingPlanHyperParams(selectedTrainingPlan),
     });
   }, [form, isExperimentContinue, selectedTrainingPlan]);
@@ -1051,7 +1114,7 @@ const TaskCreate: React.FC = () => {
   };
 
   const validateResourceSection = async () => {
-    await form.validateFields(['resourceProfileId']);
+    await form.validateFields(['resourceProfileId', 'resourceMode']);
     // 提交确认页会卸载资源步骤，useWatch 此时可能返回 undefined；
     // 直接读取 Form 保留的字段值，确保“已显示并确认”的默认档位能够提交。
     const formResourceProfileId = form.getFieldValue('resourceProfileId');
@@ -1067,6 +1130,26 @@ const TaskCreate: React.FC = () => {
     ) {
       message.error('请选择当前训练方案允许的资源规格');
       throw new Error('invalid resource profile');
+    }
+    if (form.getFieldValue('resourceMode') === 'custom') {
+      await form.validateFields([
+        'cpuCores',
+        'memoryMiB',
+        'gpuMemoryLimitMiB',
+      ]);
+      try {
+        buildTrainingResourceRequest(
+          'custom',
+          form.getFieldsValue(true),
+          resourceProfiles.find(
+            (profile) => profile.id === formResourceProfileId,
+          ),
+          resourceCapability,
+        );
+      } catch (error: any) {
+        message.error(error?.message || '自定义资源配置无效');
+        throw error;
+      }
     }
   };
 
@@ -1239,6 +1322,12 @@ const TaskCreate: React.FC = () => {
 
     try {
       let data: API.TrainingExperimentVersion | undefined;
+      const resourceRequest = buildTrainingResourceRequest(
+        values.resourceMode,
+        values,
+        selectedResourceProfile,
+        resourceCapability,
+      );
       const payload = {
         name: values.name,
         baseModelVersionId: selectedBaseModelVersionId,
@@ -1250,6 +1339,7 @@ const TaskCreate: React.FC = () => {
         planVersion: selectedTrainingPlan?.version || values.planVersion,
         trainingMode: values.trainingMode,
         resourceProfileId: values.resourceProfileId,
+        resourceRequest,
       };
       if (isExperimentContinue) {
         const res: any = await createExperimentVersion(experimentId, payload, {
@@ -1330,6 +1420,7 @@ const TaskCreate: React.FC = () => {
           hyperParams: JSON.stringify(FUSION_HYPER_PARAMS_DEFAULT, null, 2),
           modelVersion: 'v1.0.0',
           datasetVersion: 'v1.0.0',
+          resourceMode: 'recommended',
         }}
       >
         <Steps
@@ -1805,6 +1896,14 @@ const TaskCreate: React.FC = () => {
                 <Select
                   disabled={!resourceProfiles.length}
                   placeholder="请选择计算资源"
+                  onChange={() => {
+                    form.setFieldsValue({
+                      resourceMode: 'recommended',
+                      cpuCores: undefined,
+                      memoryMiB: undefined,
+                      gpuMemoryLimitMiB: undefined,
+                    });
+                  }}
                   options={resourceProfiles.map((profile) => ({
                     value: profile.id,
                     label: formatTrainingResourceProfileLabel(profile),
@@ -1812,7 +1911,56 @@ const TaskCreate: React.FC = () => {
                 />
               </Form.Item>
               {selectedResourceProfile && (
-                <Descriptions size="small" column={1} bordered>
+                <>
+                  <Alert
+                    type={
+                      resourceStatus.type as
+                        | 'success'
+                        | 'info'
+                        | 'warning'
+                        | 'error'
+                    }
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message={
+                      resourceCapabilityLoading
+                        ? '正在读取实际资源'
+                        : resourceStatus.message
+                    }
+                    description={resourceStatus.description}
+                  />
+                  <Form.Item
+                    name="resourceMode"
+                    label="配置方式"
+                    rules={[{ required: true, message: '请选择资源配置方式' }]}
+                  >
+                    <Radio.Group
+                      onChange={(event) => {
+                        if (event.target.value === 'custom' && resourceCapability) {
+                          form.setFieldsValue({
+                            cpuCores: resourceCapability.cpu.limitCores,
+                            memoryMiB: resourceCapability.memory.limitMiB,
+                            gpuMemoryLimitMiB: undefined,
+                          });
+                        } else {
+                          form.setFieldsValue({
+                            cpuCores: undefined,
+                            memoryMiB: undefined,
+                            gpuMemoryLimitMiB: undefined,
+                          });
+                        }
+                      }}
+                    >
+                      <Radio.Button value="recommended">推荐配置</Radio.Button>
+                      <Radio.Button
+                        value="custom"
+                        disabled={!resourceCapability}
+                      >
+                        自定义配置
+                      </Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  <Descriptions size="small" column={1} bordered>
                   <Descriptions.Item label="设备">
                     {selectedResourceProfile.deviceType === 'NVIDIA_GPU'
                       ? 'GPU'
@@ -1826,13 +1974,89 @@ const TaskCreate: React.FC = () => {
                     {selectedResourceProfile.memoryRequest} /{' '}
                     {selectedResourceProfile.memoryLimit}
                   </Descriptions.Item>
-                  <Descriptions.Item label="临时磁盘上限">
-                    {selectedResourceProfile.ephemeralStorageLimit}
-                  </Descriptions.Item>
                   <Descriptions.Item label="GPU 数量">
                     {selectedResourceProfile.gpuCount}
                   </Descriptions.Item>
-                </Descriptions>
+                  {selectedResourceProfile.deviceType === 'NVIDIA_GPU' && (
+                    <>
+                      <Descriptions.Item label="GPU 型号">
+                        {resourceCapability?.gpu?.models?.length
+                          ? `自动匹配：${resourceCapability.gpu.models.join(' / ')}`
+                          : '自动匹配（型号暂不可用）'}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="单卡总显存">
+                        {formatMiB(
+                          resourceCapability?.gpu?.safeTotalMemoryMiB,
+                        )}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="当前最大空闲显存（仅参考）">
+                        {formatMiB(
+                          resourceCapability?.gpu?.maxFreeMemoryMiB,
+                        )}
+                      </Descriptions.Item>
+                    </>
+                  )}
+                  </Descriptions>
+                  {resourceMode === 'custom' && resourceCapability && (
+                    <div style={{ marginTop: 16 }}>
+                      <Form.Item
+                        name="cpuCores"
+                        label="CPU 核数"
+                        rules={[{ required: true, message: '请输入 CPU 核数' }]}
+                        extra={`允许范围：${resourceCapability.cpu.requestCores} ～ ${resourceCapability.cpu.limitCores} 核`}
+                      >
+                        <InputNumber
+                          min={resourceCapability.cpu.requestCores}
+                          max={resourceCapability.cpu.limitCores}
+                          step={0.1}
+                          style={{ width: '100%' }}
+                          addonAfter="核"
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        name="memoryMiB"
+                        label="系统内存"
+                        rules={[{ required: true, message: '请输入系统内存' }]}
+                        extra={`允许范围：${formatMiB(resourceCapability.memory.requestMiB)} ～ ${formatMiB(resourceCapability.memory.limitMiB)}`}
+                      >
+                        <InputNumber
+                          min={resourceCapability.memory.requestMiB}
+                          max={resourceCapability.memory.limitMiB}
+                          step={256}
+                          precision={0}
+                          style={{ width: '100%' }}
+                          addonAfter="MiB"
+                        />
+                      </Form.Item>
+                      {selectedResourceProfile.deviceType ===
+                        'NVIDIA_GPU' && (
+                        <Form.Item
+                          name="gpuMemoryLimitMiB"
+                          label="单卡 GPU 显存软预算（可选）"
+                          extra={
+                            resourceCapability.gpu?.metricsComplete
+                              ? `最多 ${formatMiB(resourceCapability.gpu.safeTotalMemoryMiB)}。这是标准 PyTorch 进程软限制，超出后训练会显存不足，不等于硬隔离。`
+                              : 'GPU 详情缺失或过期，暂不能设置显存预算。'
+                          }
+                        >
+                          <InputNumber
+                            min={1}
+                            max={
+                              resourceCapability.gpu?.safeTotalMemoryMiB
+                            }
+                            step={256}
+                            precision={0}
+                            disabled={
+                              !resourceCapability.gpu?.metricsComplete
+                            }
+                            style={{ width: '100%' }}
+                            addonAfter="MiB"
+                          />
+                        </Form.Item>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1894,6 +2118,16 @@ const TaskCreate: React.FC = () => {
                       )
                     : '-'}
                 </Descriptions.Item>
+                <Descriptions.Item label="资源配置方式">
+                  {form.getFieldValue('resourceMode') === 'custom'
+                    ? '自定义配置'
+                    : '训练方案推荐配置'}
+                </Descriptions.Item>
+                {form.getFieldValue('gpuMemoryLimitMiB') ? (
+                  <Descriptions.Item label="单卡 GPU 显存软预算">
+                    {formatMiB(form.getFieldValue('gpuMemoryLimitMiB'))}
+                  </Descriptions.Item>
+                ) : null}
                 <Descriptions.Item label="模型权重目录">
                   /workspace/job/model（是否加载由训练方案和训练代码决定）
                 </Descriptions.Item>
