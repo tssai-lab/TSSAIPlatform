@@ -170,6 +170,9 @@ public class KubernetesJobManifestBuilder {
         appendEnv(yaml, "MLFLOW_EXPERIMENT_NAME", properties.getMlflowExperimentName());
         appendEnv(yaml, "BACKEND_CALLBACK_URL", callbackUrl);
         appendEnv(yaml, "INTERNAL_CALLBACK_TOKEN", properties.requireInternalCallbackToken());
+        if (runSpec.resources().gpuMemoryLimitMiB() != null) {
+            appendEnv(yaml, "TSS_GPU_MEMORY_LIMIT_MIB", runSpec.resources().gpuMemoryLimitMiB().toString());
+        }
         if (modelCache.enabled()) {
             appendEnv(yaml, "MODEL_CACHE_ENABLED", "true");
             appendEnv(yaml, "MODEL_CACHE_LOCK_PATH", "/var/run/tss-model-cache/model.lock");

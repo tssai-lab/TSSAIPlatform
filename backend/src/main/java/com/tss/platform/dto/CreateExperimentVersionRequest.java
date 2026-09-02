@@ -14,6 +14,7 @@ public class CreateExperimentVersionRequest {
     private String planVersion;
     private String trainingMode;
     private String resourceProfileId;
+    private TrainingResourceRequest resourceRequest;
     private Object hyperParams;
     private Object params;
     private String remark;

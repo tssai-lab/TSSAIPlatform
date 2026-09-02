@@ -12,6 +12,7 @@ import com.tss.platform.repository.ServerMetricHistoryRepository;
 import com.tss.platform.repository.ServerMetricSnapshotRepository;
 import com.tss.platform.training.ShellCommandRunner;
 import com.tss.platform.training.TrainingEnvironmentService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,6 +36,8 @@ public class ServerMetricsCollector {
     private static final Logger LOG = LoggerFactory.getLogger(ServerMetricsCollector.class);
     private static final Pattern TOP_LINE = Pattern.compile(
             "^([\\w.-]+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s*$");
+    private static final Pattern METRIC_LABEL = Pattern.compile(
+            "([A-Za-z_][A-Za-z0-9_]*)=\"([^\"]*)\"");
 
     private final ComputeServerRepository serverRepo;
     private final ServerMetricSnapshotRepository snapshotRepo;
@@ -44,6 +47,7 @@ public class ServerMetricsCollector {
     private final ComputeProperties properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private GpuDeviceObservationStore gpuObservationStore;
 
     public ServerMetricsCollector(
             ComputeServerRepository serverRepo,
@@ -61,6 +65,11 @@ public class ServerMetricsCollector {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    }
+
+    @Autowired
+    void setGpuObservationStore(GpuDeviceObservationStore gpuObservationStore) {
+        this.gpuObservationStore = gpuObservationStore;
     }
 
     @Transactional
@@ -550,6 +559,9 @@ public class ServerMetricsCollector {
             snap.setGpuRate(metrics.utilizationRate());
             snap.setGpuMemRate(metrics.memoryRate());
             snap.setGpuTemp(metrics.temperature());
+            if (gpuObservationStore != null && !metrics.devices().isEmpty()) {
+                gpuObservationStore.update(nodeName, metrics.devices(), Instant.now());
+            }
             if (!metrics.available()) {
                 LOG.warn("DCGM Exporter 未返回可识别指标 node={}", nodeName);
             }
@@ -569,6 +581,7 @@ public class ServerMetricsCollector {
         int totalMemCount = 0;
         double totalTemp = 0;
         int tempCount = 0;
+        Map<String, DeviceAccumulator> devices = new LinkedHashMap<>();
 
         if (body == null) {
             return new GpuMetrics(null, null, null);
@@ -584,12 +597,15 @@ public class ServerMetricsCollector {
             } else if (isMetric(line, "DCGM_FI_DEV_FB_USED")) {
                 totalMem += value;
                 usedMemCount++;
+                device(devices, line).usedMiB = value;
             } else if (isMetric(line, "DCGM_FI_DEV_FB_FREE")) {
                 freeMem += value;
                 freeMemCount++;
+                device(devices, line).freeMiB = value;
             } else if (isMetric(line, "DCGM_FI_DEV_FB_TOTAL")) {
                 totalMemCap += value;
                 totalMemCount++;
+                device(devices, line).totalMiB = value;
             } else if (isMetric(line, "DCGM_FI_DEV_GPU_TEMP")) {
                 totalTemp += value;
                 tempCount++;
@@ -605,7 +621,43 @@ public class ServerMetricsCollector {
             memory = roundOneDecimal(totalMem * 100.0 / (totalMem + freeMem));
         }
         Double temperature = tempCount > 0 ? roundOneDecimal(totalTemp / tempCount) : null;
-        return new GpuMetrics(utilization, memory, temperature);
+        List<GpuDeviceObservationStore.DeviceObservation> observations = devices.values().stream()
+                .map(DeviceAccumulator::toObservation)
+                .filter(Objects::nonNull)
+                .toList();
+        return new GpuMetrics(utilization, memory, temperature, observations);
+    }
+
+    private static DeviceAccumulator device(Map<String, DeviceAccumulator> devices, String line) {
+        Map<String, String> labels = metricLabels(line);
+        String id = labels.get("gpu");
+        if (id == null || id.isBlank()) id = labels.get("UUID");
+        if (id == null || id.isBlank()) id = "unidentified";
+        DeviceAccumulator device = devices.computeIfAbsent(id, ignored -> new DeviceAccumulator());
+        if (device.modelName == null) {
+            device.modelName = firstLabel(labels, "modelName", "model", "product");
+        }
+        return device;
+    }
+
+    private static Map<String, String> metricLabels(String line) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        int start = line.indexOf('{');
+        int end = line.indexOf('}', start + 1);
+        if (start < 0 || end < 0) return labels;
+        Matcher matcher = METRIC_LABEL.matcher(line.substring(start + 1, end));
+        while (matcher.find()) {
+            labels.put(matcher.group(1), matcher.group(2));
+        }
+        return labels;
+    }
+
+    private static String firstLabel(Map<String, String> labels, String... names) {
+        for (String name : names) {
+            String value = labels.get(name);
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return null;
     }
 
     private static boolean isMetric(String line, String metric) {
@@ -759,9 +811,42 @@ public class ServerMetricsCollector {
     record NodeStats(Double diskRate, Double networkRxRate, Double networkTxRate,
                      Long rawRxBytes, Long rawTxBytes) {}
 
-    record GpuMetrics(Double utilizationRate, Double memoryRate, Double temperature) {
+    record GpuMetrics(
+            Double utilizationRate,
+            Double memoryRate,
+            Double temperature,
+            List<GpuDeviceObservationStore.DeviceObservation> devices
+    ) {
+        GpuMetrics(Double utilizationRate, Double memoryRate, Double temperature) {
+            this(utilizationRate, memoryRate, temperature, List.of());
+        }
+
+        GpuMetrics {
+            devices = devices == null ? List.of() : List.copyOf(devices);
+        }
+
         boolean available() {
             return utilizationRate != null || memoryRate != null || temperature != null;
+        }
+    }
+
+    private static final class DeviceAccumulator {
+        private String modelName;
+        private Double usedMiB;
+        private Double freeMiB;
+        private Double totalMiB;
+
+        private GpuDeviceObservationStore.DeviceObservation toObservation() {
+            double total = totalMiB != null ? totalMiB
+                    : usedMiB != null && freeMiB != null ? usedMiB + freeMiB : 0;
+            if (!Double.isFinite(total) || total <= 0) return null;
+            double free = freeMiB != null ? freeMiB
+                    : usedMiB != null ? Math.max(0, total - usedMiB) : 0;
+            if (!Double.isFinite(free) || free < 0) return null;
+            long totalRounded = Math.round(total);
+            long freeRounded = Math.min(totalRounded, Math.round(free));
+            return new GpuDeviceObservationStore.DeviceObservation(
+                    modelName, totalRounded, freeRounded);
         }
     }
 }

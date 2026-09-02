@@ -250,6 +250,60 @@ class DatasetContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "device must be cpu"):
             train.resolve_torch_device(FakeTorch(), "1")
 
+    def test_training_gpu_memory_budget_is_soft_limited_per_process(self):
+        class Properties:
+            total_memory = 32 * 1024 * 1024 * 1024
+
+        class FakeCuda:
+            applied = None
+
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def device_count():
+                return 1
+
+            @staticmethod
+            def get_device_properties(_index):
+                return Properties()
+
+            def set_per_process_memory_fraction(self, fraction, index):
+                self.applied = (fraction, index)
+
+        fake_torch = type("FakeTorch", (), {"cuda": FakeCuda()})()
+
+        result = train.apply_gpu_memory_budget(fake_torch, "cuda:0", "8192")
+
+        self.assertEqual(8192, result)
+        self.assertEqual((0.25, 0), fake_torch.cuda.applied)
+
+    def test_training_gpu_memory_budget_rejects_more_than_the_visible_card(self):
+        class Properties:
+            total_memory = 16 * 1024 * 1024 * 1024
+
+        class FakeCuda:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def device_count():
+                return 1
+
+            @staticmethod
+            def get_device_properties(_index):
+                return Properties()
+
+            @staticmethod
+            def set_per_process_memory_fraction(_fraction, _index):
+                raise AssertionError("oversized budget must not be applied")
+
+        fake_torch = type("FakeTorch", (), {"cuda": FakeCuda()})()
+        with self.assertRaisesRegex(ValueError, "exceeds visible GPU memory"):
+            train.apply_gpu_memory_budget(fake_torch, "0", "32768")
+
     def test_long_inference_text_is_kept_in_bounded_task_output_preview_box(self):
         short_text = "短文本"
         long_text = "长" * (infer.INLINE_TEXT_PREVIEW_CHARS + 1)

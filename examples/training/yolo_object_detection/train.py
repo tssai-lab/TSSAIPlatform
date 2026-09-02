@@ -29,6 +29,7 @@ YOLO_METRIC_NAMES = (
     ("metrics/precision(B)", "val_precision"),
     ("metrics/recall(B)", "val_recall"),
 )
+GPU_MEMORY_LIMIT_ENV = "TSS_GPU_MEMORY_LIMIT_MIB"
 
 
 def event(payload: dict) -> None:
@@ -44,6 +45,37 @@ def finite_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def apply_gpu_memory_budget(
+    torch_module: Any,
+    requested_device: str,
+    raw_budget: str | None = None,
+) -> int | None:
+    """Apply the platform's optional per-process PyTorch allocator budget."""
+    value = os.environ.get(GPU_MEMORY_LIMIT_ENV) if raw_budget is None else raw_budget
+    if value is None or not value.strip():
+        return None
+    normalized_device = requested_device.strip().lower()
+    if normalized_device == "cpu":
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} cannot be used with CPU training")
+    try:
+        budget_mib = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} must be a positive integer") from exc
+    if budget_mib <= 0:
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} must be a positive integer")
+    if not torch_module.cuda.is_available() or int(torch_module.cuda.device_count()) != 1:
+        raise RuntimeError("GPU memory budget requires exactly one visible CUDA device")
+    total_bytes = int(torch_module.cuda.get_device_properties(0).total_memory)
+    budget_bytes = budget_mib * 1024 * 1024
+    if total_bytes <= 0 or budget_bytes > total_bytes:
+        total_mib = total_bytes // (1024 * 1024)
+        raise ValueError(
+            f"{GPU_MEMORY_LIMIT_ENV}={budget_mib} exceeds visible GPU memory {total_mib} MiB"
+        )
+    torch_module.cuda.set_per_process_memory_fraction(budget_bytes / total_bytes, 0)
+    return budget_mib
 
 
 def trainer_metric_snapshot(trainer: Any) -> dict[str, float]:
@@ -153,8 +185,6 @@ def ensure_ultralytics_font(config_dir: Path | None = None, font_path: Path | No
 
 
 def main() -> None:
-    from ultralytics import YOLO
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--data-dir", required=True)
@@ -162,6 +192,12 @@ def main() -> None:
     parser.add_argument("--params-file", required=True)
     parser.add_argument("--device", default="0")
     args = parser.parse_args()
+
+    if os.environ.get(GPU_MEMORY_LIMIT_ENV):
+        import torch
+
+        apply_gpu_memory_budget(torch, args.device)
+    from ultralytics import YOLO
 
     params = json.loads(Path(args.params_file).read_text(encoding="utf-8"))
     mode = os.environ.get("TSS_TRAINING_MODE", "FULL_FINETUNE")

@@ -17,6 +17,7 @@ from typing import Any
 DATASET_SCHEMA = "tss.dataset.nlp.text-classification/v1"
 MODEL_SCHEMA = "tss.model.nlp.bert-sequence-classification/v1"
 SPLITS = ("train", "validation", "test")
+GPU_MEMORY_LIMIT_ENV = "TSS_GPU_MEMORY_LIMIT_MIB"
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -143,6 +144,32 @@ def resolve_torch_device(torch_module: Any, requested: str) -> Any:
     return torch_module.device("cuda:0")
 
 
+def apply_gpu_memory_budget(torch_module: Any, requested_device: str, raw_budget: str | None = None) -> int | None:
+    """Apply a soft limit to the standard PyTorch process caching allocator."""
+    value = os.environ.get(GPU_MEMORY_LIMIT_ENV) if raw_budget is None else raw_budget
+    if value is None or not value.strip():
+        return None
+    if requested_device.strip().lower() == "cpu":
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} cannot be used with CPU training")
+    try:
+        budget_mib = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} must be a positive integer") from exc
+    if budget_mib <= 0:
+        raise ValueError(f"{GPU_MEMORY_LIMIT_ENV} must be a positive integer")
+    if not torch_module.cuda.is_available() or int(torch_module.cuda.device_count()) != 1:
+        raise RuntimeError("GPU memory budget requires exactly one visible CUDA device")
+    total_bytes = int(torch_module.cuda.get_device_properties(0).total_memory)
+    budget_bytes = budget_mib * 1024 * 1024
+    if total_bytes <= 0 or budget_bytes > total_bytes:
+        total_mib = total_bytes // (1024 * 1024)
+        raise ValueError(
+            f"{GPU_MEMORY_LIMIT_ENV}={budget_mib} exceeds visible GPU memory {total_mib} MiB"
+        )
+    torch_module.cuda.set_per_process_memory_fraction(budget_bytes / total_bytes, 0)
+    return budget_mib
+
+
 def configure_reproducibility(torch_module: Any, seed: int, device: Any) -> None:
     torch_module.manual_seed(seed)
     if getattr(device, "type", str(device).split(":", 1)[0]) != "cuda":
@@ -227,6 +254,7 @@ def main() -> int:
     from transformers import BertForSequenceClassification, BertTokenizer
 
     device = resolve_torch_device(torch, requested_device)
+    apply_gpu_memory_budget(torch, requested_device)
     configure_reproducibility(torch, seed, device)
     torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
     labels, splits = load_dataset_package(args.data_dir)
