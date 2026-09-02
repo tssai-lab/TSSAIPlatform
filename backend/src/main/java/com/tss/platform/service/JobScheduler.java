@@ -36,9 +36,9 @@ import java.util.stream.Collectors;
 public class JobScheduler {
 
     private static final Logger LOG = LoggerFactory.getLogger(JobScheduler.class);
-    static final String PLATFORM_SCHEDULABLE_LABEL = "tss.ai/platform-schedulable";
-    static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = "tss.ai/platform-max-active-tasks";
-    static final String GPU_SCHEDULABLE_LABEL = "tss.ai/gpu-schedulable";
+    static final String PLATFORM_SCHEDULABLE_LABEL = ComputeServerSchedulingPolicy.PLATFORM_SCHEDULABLE_LABEL;
+    static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = ComputeServerSchedulingPolicy.PLATFORM_MAX_ACTIVE_TASKS_LABEL;
+    static final String GPU_SCHEDULABLE_LABEL = ComputeServerSchedulingPolicy.GPU_SCHEDULABLE_LABEL;
 
     private final ComputeServerRepository computeServerRepo;
     private final TrainingExperimentVersionRepository trainingRepo;
@@ -366,44 +366,13 @@ public class JobScheduler {
     }
 
     private boolean matchesNodeSelector(ComputeServer node, Map<String, String> selector) {
-        // 从 k8s_labels_json 解析 K8s 标签
-        boolean acceleratorRequired = selector.containsKey("tss.ai/accelerator");
-        try {
-            String labelsJson = node.getK8sLabelsJson();
-            if (labelsJson == null || labelsJson.isBlank()) return !acceleratorRequired;
-            JsonNode labels = new ObjectMapper().readTree(labelsJson);
-            if (!labels.isObject()) return !acceleratorRequired;
-            if (acceleratorRequired
-                    && "false".equalsIgnoreCase(
-                    labels.path(GPU_SCHEDULABLE_LABEL).asText())) {
-                return false;
-            }
-            for (Map.Entry<String, String> e : selector.entrySet()) {
-                String val = labels.has(e.getKey()) ? labels.get(e.getKey()).asText() : null;
-                if (!e.getValue().equals(val)) return false;
-            }
-            return true;
-        } catch (Exception ignored) {
-            // GPU capability must be positively observed. Keep the historical
-            // CPU fallback behavior so this isolated feature cannot stall Main.
-            return !acceleratorRequired;
-        }
+        return ComputeServerSchedulingPolicy.matchesNodeSelector(node, selector);
     }
 
     // ── 工具方法 ──
 
     boolean isCacheReady(ComputeServer node) {
-        String labelsJson = node.getK8sLabelsJson();
-        if (labelsJson == null || labelsJson.isBlank()) {
-            return false;
-        }
-        try {
-            JsonNode labels = new ObjectMapper().readTree(labelsJson);
-            return "true".equalsIgnoreCase(
-                    labels.path("tss.ai/model-cache-ready").asText());
-        } catch (Exception ignored) {
-            return false;
-        }
+        return ComputeServerSchedulingPolicy.isCacheReady(node);
     }
 
     /**
@@ -413,51 +382,15 @@ public class JobScheduler {
      * work before the metrics collector has refreshed once.
      */
     boolean isPlatformSchedulable(ComputeServer node) {
-        String labelsJson = node.getK8sLabelsJson();
-        if (labelsJson == null || labelsJson.isBlank()) {
-            return true;
-        }
-        try {
-            JsonNode labels = new ObjectMapper().readTree(labelsJson);
-            JsonNode schedulable = labels.path(PLATFORM_SCHEDULABLE_LABEL);
-            return schedulable.isMissingNode()
-                    || !"false".equalsIgnoreCase(schedulable.asText());
-        } catch (Exception ignored) {
-            return true;
-        }
+        return ComputeServerSchedulingPolicy.isPlatformSchedulable(node);
     }
 
     private boolean isGpuSchedulable(ComputeServer node) {
-        try {
-            String labelsJson = node.getK8sLabelsJson();
-            if (labelsJson == null || labelsJson.isBlank()) return true;
-            JsonNode labels = new ObjectMapper().readTree(labelsJson);
-            if (!labels.isObject()) return true;
-            return !"false".equalsIgnoreCase(
-                    labels.path(GPU_SCHEDULABLE_LABEL).asText());
-        } catch (Exception ignored) {
-            // Preserve existing GPU-cluster behavior until the collector has
-            // refreshed labels; an explicit false marker always fails closed.
-            return true;
-        }
+        return ComputeServerSchedulingPolicy.isGpuSchedulable(node);
     }
 
     private Integer maxActiveTasks(ComputeServer node) {
-        String labelsJson = node.getK8sLabelsJson();
-        if (labelsJson == null || labelsJson.isBlank()) {
-            return null;
-        }
-        try {
-            JsonNode value = new ObjectMapper().readTree(labelsJson)
-                    .path(PLATFORM_MAX_ACTIVE_TASKS_LABEL);
-            if (value.isMissingNode()) {
-                return null;
-            }
-            int parsed = Integer.parseInt(value.asText());
-            return parsed > 0 ? parsed : 0;
-        } catch (Exception ignored) {
-            return 0;
-        }
+        return ComputeServerSchedulingPolicy.maxActiveTasks(node);
     }
 
     static long affinityScore(String affinityKey, String nodeId) {

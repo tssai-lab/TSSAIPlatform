@@ -97,6 +97,7 @@ class KubernetesJobManifestBuilderTest {
         when(resources.memoryRequest()).thenReturn("1Gi");
         when(resources.memoryLimit()).thenReturn("2Gi");
         when(resources.gpuCount()).thenReturn(1);
+        when(resources.gpuMemoryLimitMiB()).thenReturn(8192L);
         when(runSpec.runtime()).thenReturn(runtime);
         when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.NVIDIA_GPU);
         when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
@@ -113,6 +114,8 @@ class KubernetesJobManifestBuilderTest {
         assertTrue(yaml.contains("nvidia.com/gpu: \"1\""));
         assertTrue(yaml.contains("runtimeClassName: nvidia"));
         assertTrue(yaml.contains("nodeName: seu4080"));
+        assertTrue(yaml.contains("name: TSS_GPU_MEMORY_LIMIT_MIB"));
+        assertTrue(yaml.contains("value: \"8192\""));
     }
 
     @Test

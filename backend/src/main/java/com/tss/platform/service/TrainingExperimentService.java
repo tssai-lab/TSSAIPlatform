@@ -187,7 +187,8 @@ public class TrainingExperimentService {
                         version.getDatasetVersionId(),
                         version.getCodeVersionId(),
                         toParameterMap(initialParams),
-                        approvedCodeArtifact
+                        approvedCodeArtifact,
+                        req.getResourceRequest()
                 )
         );
         applyRunSnapshot(version, snapshot);
@@ -250,7 +251,8 @@ public class TrainingExperimentService {
                         version.getDatasetVersionId(),
                         version.getCodeVersionId(),
                         toParameterMap(effectiveParams),
-                        approvedCodeArtifact
+                        approvedCodeArtifact,
+                        req.getResourceRequest()
                 )
         );
         applyRunSnapshot(version, snapshot);

@@ -4,14 +4,14 @@ import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-final class KubernetesQuantityParser {
+public final class KubernetesQuantityParser {
 
     private static final Map<String, BigDecimal> MEMORY_MULTIPLIERS = memoryMultipliers();
 
     private KubernetesQuantityParser() {
     }
 
-    static double cpuCores(String raw) {
+    public static double cpuCores(String raw) {
         if (raw == null || raw.isBlank()) {
             return 0;
         }
@@ -36,7 +36,7 @@ final class KubernetesQuantityParser {
         return result;
     }
 
-    static long memoryBytes(String raw) {
+    public static long memoryBytes(String raw) {
         if (raw == null || raw.isBlank()) {
             return 0;
         }

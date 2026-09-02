@@ -24,6 +24,64 @@ class FakeScalar:
 
 
 class YoloMetricProtocolTest(unittest.TestCase):
+    def test_gpu_memory_budget_is_applied_before_model_creation(self):
+        class Properties:
+            total_memory = 16 * 1024 * 1024 * 1024
+
+        class FakeCuda:
+            fraction = None
+
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def device_count():
+                return 1
+
+            @staticmethod
+            def get_device_properties(_index):
+                return Properties()
+
+            def set_per_process_memory_fraction(self, fraction, index):
+                self.fraction = (fraction, index)
+
+        fake_torch = type("FakeTorch", (), {"cuda": FakeCuda()})()
+
+        applied = train.apply_gpu_memory_budget(fake_torch, "0", "8192")
+
+        self.assertEqual(8192, applied)
+        self.assertEqual((0.5, 0), fake_torch.cuda.fraction)
+
+    def test_gpu_memory_budget_rejects_cpu_invalid_and_oversized_values(self):
+        class Properties:
+            total_memory = 8 * 1024 * 1024 * 1024
+
+        class FakeCuda:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def device_count():
+                return 1
+
+            @staticmethod
+            def get_device_properties(_index):
+                return Properties()
+
+            @staticmethod
+            def set_per_process_memory_fraction(_fraction, _index):
+                raise AssertionError("invalid budgets must not be applied")
+
+        fake_torch = type("FakeTorch", (), {"cuda": FakeCuda()})()
+        with self.assertRaisesRegex(ValueError, "cannot be used with CPU"):
+            train.apply_gpu_memory_budget(fake_torch, "cpu", "1024")
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            train.apply_gpu_memory_budget(fake_torch, "0", "1.5")
+        with self.assertRaisesRegex(ValueError, "exceeds visible GPU memory"):
+            train.apply_gpu_memory_budget(fake_torch, "0", "9000")
+
     def test_ensure_ultralytics_font_uses_runtime_local_font(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

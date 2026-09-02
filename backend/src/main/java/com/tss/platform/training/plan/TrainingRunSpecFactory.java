@@ -26,9 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -153,7 +151,8 @@ public class TrainingRunSpecFactory {
 
         PythonRequirementsValidator.DependencyManifest dependencies = dependencyManifestService.resolve(command.codeArtifact());
         TrainingRunSpec.Runtime runtime = runtimeOf(resolvedRuntime.runtime(), dependencies.sha256());
-        TrainingRunSpec.Resources resources = resourcesOf(resolvedRuntime.resourceProfile());
+        TrainingRunSpec.Resources resources = TrainingResourceRequestResolver.resolve(
+                resolvedRuntime.runtime(), resolvedRuntime.resourceProfile(), command.resourceRequest());
         TrainingRunSpec.Workspace workspace = TrainingRunSpec.Workspace.standard();
         TrainingRunSpec runSpec = new TrainingRunSpec(
                 TrainingRunSpec.SCHEMA_VERSION,
@@ -332,17 +331,6 @@ public class TrainingRunSpecFactory {
         );
     }
 
-    private TrainingRunSpec.Resources resourcesOf(TrainingPlanDefinition.ResourceProfile profile) {
-        Map<String, String> nodeSelector = profile.nodeSelector() == null
-                ? Map.of()
-                : Collections.unmodifiableMap(new LinkedHashMap<>(profile.nodeSelector()));
-        return new TrainingRunSpec.Resources(
-                profile.id(), profile.cpuRequest(), profile.cpuLimit(),
-                profile.memoryRequest(), profile.memoryLimit(), profile.ephemeralStorageLimit(),
-                profile.gpuCount(), nodeSelector
-        );
-    }
-
     private String resolveModelFormat(TrainingPlanDefinition plan, String fileName, String artifactSpecId) {
         if (artifactSpecId != null) {
             return artifactSpecId;
@@ -493,7 +481,8 @@ public class TrainingRunSpecFactory {
             String datasetVersionId,
             String codeVersionId,
             Map<String, ?> parameters,
-            ResolvedCodeArtifact codeArtifact
+            ResolvedCodeArtifact codeArtifact,
+            com.tss.platform.dto.TrainingResourceRequest resourceRequest
     ) {
         public CreateCommand(
                 String trainingId,
@@ -510,7 +499,7 @@ public class TrainingRunSpecFactory {
         ) {
             this(trainingId, createdAt, planId, planVersion, null, resourceProfileId,
                     legacySelection, modelVersionId, datasetVersionId, codeVersionId,
-                    parameters, codeArtifact);
+                    parameters, codeArtifact, null);
         }
     }
 }

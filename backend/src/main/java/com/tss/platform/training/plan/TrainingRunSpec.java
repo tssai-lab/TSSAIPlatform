@@ -135,6 +135,7 @@ public record TrainingRunSpec(
             String memoryLimit,
             String ephemeralStorageLimit,
             Integer gpuCount,
+            Long gpuMemoryLimitMiB,
             Map<String, String> nodeSelector
     ) {
     }

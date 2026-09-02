@@ -116,6 +116,7 @@
         "memoryLimit": { "type": "string" },
         "ephemeralStorageLimit": { "type": "string" },
         "gpuCount": { "type": "integer", "minimum": 0 },
+        "gpuMemoryLimitMiB": { "type": "integer", "minimum": 1 },
         "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     }

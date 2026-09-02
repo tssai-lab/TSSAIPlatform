@@ -244,10 +244,10 @@ class ServerMetricsCollectorTest {
                 # HELP ignored
                 DCGM_FI_DEV_GPU_UTIL{gpu="0"} 0
                 DCGM_FI_DEV_GPU_UTIL{gpu="1"} 20
-                DCGM_FI_DEV_FB_USED{gpu="0"} 100
-                DCGM_FI_DEV_FB_USED{gpu="1"} 300
-                DCGM_FI_DEV_FB_TOTAL{gpu="0"} 1000
-                DCGM_FI_DEV_FB_TOTAL{gpu="1"} 1000
+                DCGM_FI_DEV_FB_USED{gpu="0",modelName="RTX 4080"} 100
+                DCGM_FI_DEV_FB_USED{gpu="1",modelName="RTX 4080"} 300
+                DCGM_FI_DEV_FB_TOTAL{gpu="0",modelName="RTX 4080"} 1000
+                DCGM_FI_DEV_FB_TOTAL{gpu="1",modelName="RTX 4080"} 1000
                 DCGM_FI_DEV_GPU_TEMP{gpu="0"} 40
                 DCGM_FI_DEV_GPU_TEMP{gpu="1"} 50
                 """);
@@ -256,6 +256,10 @@ class ServerMetricsCollectorTest {
         assertThat(metrics.memoryRate()).isEqualTo(20.0);
         assertThat(metrics.temperature()).isEqualTo(45.0);
         assertThat(metrics.available()).isTrue();
+        assertThat(metrics.devices()).hasSize(2);
+        assertThat(metrics.devices().get(0).modelName()).isEqualTo("RTX 4080");
+        assertThat(metrics.devices().get(0).totalMemoryMiB()).isEqualTo(1000L);
+        assertThat(metrics.devices().get(0).freeMemoryMiB()).isEqualTo(900L);
     }
 
     @Test
