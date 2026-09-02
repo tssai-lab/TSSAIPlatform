@@ -100,8 +100,11 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
   [[ $actual_image_id == "$image_id" ]] || die "imported image ID differs from lock: $source_ref"
   runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
     | awk -v ref="$runtime_ref" '$1 == ref {print}')"
-  if [[ -z $runtime_line ]]; then
-    ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images tag \
+  if [[ -z $runtime_line \
+    || $(awk '{print $3}' <<<"$runtime_line") != "$actual_manifest" ]]; then
+    # A runtime alias is intentionally mutable: keep the verified immutable
+    # source image and atomically point the alias at the newly locked content.
+    ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images tag --force \
       "$source_ref" "$runtime_ref" >/dev/null
     runtime_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
       | awk -v ref="$runtime_ref" '$1 == ref {print}')"

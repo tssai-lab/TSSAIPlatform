@@ -381,9 +381,9 @@ grep -F 'shared Docker container count changed during CPU runtime import' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
 grep -F 'imported image ID differs from lock' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
-grep -F 'if [[ -z $runtime_line ]]; then' \
+grep -F '!= "$actual_manifest"' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
-[[ $(grep -Fc 'images tag \' \
+[[ $(grep -Fc 'images tag --force \' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 1 ]]
 grep -F 'runtime image alias points to unexpected content' \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh" >/dev/null
@@ -403,6 +403,8 @@ fi
   "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 1 ]]
 [[ $(grep -Fc "awk -v ref=\"\$runtime_ref\" '\$1 == ref {print}'" \
   "${internal_dir}/scripts/import-cpu-runtime-images.sh") -eq 2 ]]
+[[ $(grep -Fc 'images tag --force \' \
+  "${internal_dir}/scripts/import-gpu-runtime-images.sh") -eq 1 ]]
 
 cpu_runtime_lock="${internal_dir}/reproducible/cpu-runtime-images.lock"
 [[ $(grep -Evc '^(#|$)' "$cpu_runtime_lock") -eq 3 ]]
