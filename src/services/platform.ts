@@ -311,7 +311,12 @@ export {
   publishTaskModel,
 } from './task';
 
-export { fetchTrainingPlans, type TrainingPlan } from './trainingPlans';
+export {
+  fetchTrainingPlans,
+  fetchTrainingResourceCapability,
+  type TrainingPlan,
+  type TrainingResourceCapability,
+} from './trainingPlans';
 
 export {
   fetchMlflowMetricHistory,
