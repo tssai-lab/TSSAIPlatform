@@ -41,6 +41,24 @@ class TrainingResourceRequestResolverTest {
     }
 
     @Test
+    void persistsOpaqueHardwareTargetAndTrustedSelectorInTheRunSpec() {
+        TrainingResourceRequest request = new TrainingResourceRequest();
+        request.setHardwareTargetId("hw-0123456789abcdef01234567");
+        request.setGpuCount(1);
+
+        TrainingRunSpec.Resources resolved = TrainingResourceRequestResolver.resolve(
+                runtime(TrainingPlanDefinition.DeviceType.NVIDIA_GPU, gpuProfile()),
+                gpuProfile(), request, request.getHardwareTargetId(),
+                Map.of("tss.ai/hardware-class", "rtx-4080"));
+
+        assertThat(resolved.hardwareTargetId()).isEqualTo(request.getHardwareTargetId());
+        assertThat(resolved.nodeSelector())
+                .containsEntry("tss.ai/accelerator", "nvidia")
+                .containsEntry("tss.ai/hardware-class", "rtx-4080")
+                .doesNotContainKey("kubernetes.io/hostname");
+    }
+
+    @Test
     void rejectsValuesOutsideThePlanAndGpuFieldsOnCpu() {
         TrainingResourceRequest belowMinimum = new TrainingResourceRequest();
         belowMinimum.setCpuCores(0.25);

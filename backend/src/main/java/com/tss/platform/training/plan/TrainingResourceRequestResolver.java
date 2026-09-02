@@ -19,17 +19,29 @@ final class TrainingResourceRequestResolver {
     static TrainingRunSpec.Resources resolve(
             TrainingPlanDefinition.RuntimeVariant runtime,
             TrainingPlanDefinition.ResourceProfile profile,
-            TrainingResourceRequest request
+            TrainingResourceRequest request,
+            String hardwareTargetId,
+            Map<String, String> hardwareSelector
     ) {
-        Map<String, String> nodeSelector = profile.nodeSelector() == null
-                ? Map.of()
-                : Collections.unmodifiableMap(new LinkedHashMap<>(profile.nodeSelector()));
+        Map<String, String> resolvedSelector = new LinkedHashMap<>();
+        if (profile.nodeSelector() != null) {
+            resolvedSelector.putAll(profile.nodeSelector());
+        }
+        if (hardwareSelector != null) {
+            hardwareSelector.forEach((key, value) -> {
+                String existing = resolvedSelector.putIfAbsent(key, value);
+                if (existing != null && !existing.equals(value)) {
+                    throw new IllegalArgumentException("hardware target conflicts with the selected resource profile");
+                }
+            });
+        }
+        Map<String, String> nodeSelector = Collections.unmodifiableMap(resolvedSelector);
         int profileGpuCount = profile.gpuCount() == null ? -1 : profile.gpuCount();
         validateDeviceContract(runtime.deviceType(), profileGpuCount);
 
         if (request == null) {
             return new TrainingRunSpec.Resources(
-                    profile.id(), profile.cpuRequest(), profile.cpuLimit(),
+                    profile.id(), hardwareTargetId, profile.cpuRequest(), profile.cpuLimit(),
                     profile.memoryRequest(), profile.memoryLimit(), profile.ephemeralStorageLimit(),
                     profileGpuCount, null, nodeSelector
             );
@@ -79,9 +91,17 @@ final class TrainingResourceRequestResolver {
         }
 
         return new TrainingRunSpec.Resources(
-                profile.id(), cpuRequest, cpuLimit, memoryRequest, memoryLimit,
+                profile.id(), hardwareTargetId, cpuRequest, cpuLimit, memoryRequest, memoryLimit,
                 profile.ephemeralStorageLimit(), gpuCount, gpuMemoryLimitMiB, nodeSelector
         );
+    }
+
+    static TrainingRunSpec.Resources resolve(
+            TrainingPlanDefinition.RuntimeVariant runtime,
+            TrainingPlanDefinition.ResourceProfile profile,
+            TrainingResourceRequest request
+    ) {
+        return resolve(runtime, profile, request, null, Map.of());
     }
 
     private static void validateDeviceContract(

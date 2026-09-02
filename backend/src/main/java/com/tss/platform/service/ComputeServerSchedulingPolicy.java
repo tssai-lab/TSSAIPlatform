@@ -13,6 +13,7 @@ final class ComputeServerSchedulingPolicy {
     static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = "tss.ai/platform-max-active-tasks";
     static final String GPU_SCHEDULABLE_LABEL = "tss.ai/gpu-schedulable";
     static final String MODEL_CACHE_READY_LABEL = "tss.ai/model-cache-ready";
+    static final String HARDWARE_CLASS_LABEL = "tss.ai/hardware-class";
 
     private ComputeServerSchedulingPolicy() {
     }
@@ -81,6 +82,17 @@ final class ComputeServerSchedulingPolicy {
             return parsed > 0 ? parsed : 0;
         } catch (Exception ignored) {
             return 0;
+        }
+    }
+
+    static String hardwareClass(ComputeServer node) {
+        try {
+            JsonNode labels = labels(node);
+            if (labels == null) return null;
+            String value = labels.path(HARDWARE_CLASS_LABEL).asText("").trim();
+            return value.isEmpty() ? null : value;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
