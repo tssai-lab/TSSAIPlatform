@@ -14,4 +14,5 @@
 /k8s/**/*.yml text eol=lf
 /k8s/**/*.yaml text eol=lf
 /k8s/**/*.sh text eol=lf
+/k8s/**/*.txt text eol=lf
 /k8s/**/Dockerfile text eol=lf
