@@ -775,11 +775,13 @@ const DatasetUpload: React.FC = () => {
                     ? ' LeRobot：上传标准 LeRobot v3 zip，包含 meta、data 与 videos 目录；上传完成后可按时序查看。'
                     : datasetType === 'NLP'
                       ? ' 文本类支持 txt/json/jsonl/csv/xlsx/xls/pdf/docx 或包含这些文件的 zip。'
-                      : visualFileLayout === 'YOLO'
-                        ? ' YOLO：zip 内须有 data.yaml 和匹配的图片/标签。'
-                        : visualFileLayout === 'IMAGE_FOLDER'
-                          ? ' ImageFolder：按类别子目录组织图片，并整体打包为单个 zip。'
-                          : ' 未标注图片：可多选图片或上传只含图片的 zip。'}
+                      : datasetType === 'OTHER'
+                        ? ' OTHER：支持平台安全白名单中的单个文件或包含这些文件的 zip；是否可训练由训练方案决定。'
+                        : visualFileLayout === 'YOLO'
+                          ? ' YOLO：zip 内须有 data.yaml 和匹配的图片/标签。'
+                          : visualFileLayout === 'IMAGE_FOLDER'
+                            ? ' ImageFolder：按类别子目录组织图片，并整体打包为单个 zip。'
+                            : ' 未标注图片：可多选图片或上传只含图片的 zip。'}
           </div>
         </Form.Item>
         {uploading && (
