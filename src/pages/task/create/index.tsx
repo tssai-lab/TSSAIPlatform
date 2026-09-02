@@ -35,26 +35,30 @@ import {
   fetchApprovedCodeVersions,
   fetchTaskDetail,
   fetchTrainingDatasetCandidates,
+  fetchTrainingHardwareOptions,
   fetchTrainingModelCandidates,
   fetchTrainingPlans,
-  fetchTrainingResourceCapability,
   getCodeVersionDetail,
   getModelVersion,
   publishTaskModel,
   uploadCodeZip,
 } from '@/services/platform';
 import type {
+  TrainingHardwareOption,
   TrainingPlan,
-  TrainingResourceCapability,
 } from '@/services/trainingPlans';
 import { getApiErrorMessage } from '@/utils/apiError';
 import { markPendingCodeStatus } from '@/utils/pendingCodeVersions';
 import {
   firstTrainingResourceProfileId,
-  formatTrainingResourceProfileLabel,
   isTrainingResourceProfileIdAllowed,
   listTrainingResourceProfiles,
 } from './resourceProfilePresentation.mjs';
+import {
+  firstTrainingHardwareOption,
+  formatTrainingHardwareOptionLabel,
+  isTrainingHardwareTargetAllowed,
+} from './hardwareOptionPresentation.mjs';
 import {
   filterDatasetCandidates,
   filterModelCandidates,
@@ -284,6 +288,7 @@ const TaskCreate: React.FC = () => {
   const backFromModelDetail = fromSource === 'model' && !!fromModelAssetId;
 
   const [form] = Form.useForm();
+  const selectedHardwareTargetId = Form.useWatch('hardwareTargetId', form);
   const selectedResourceProfileId = Form.useWatch('resourceProfileId', form);
   const resourceMode = Form.useWatch('resourceMode', form) || 'recommended';
   const [currentStep, setCurrentStep] = useState(0);
@@ -292,12 +297,11 @@ const TaskCreate: React.FC = () => {
   const [datasetOptions, setDatasetOptions] = useState<API.DatasetItem[]>([]);
   const [codeOptions, setCodeOptions] = useState<any[]>([]);
   const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
-  const [resourceCapability, setResourceCapability] =
-    useState<TrainingResourceCapability>();
-  const [resourceCapabilityLoading, setResourceCapabilityLoading] =
-    useState(false);
-  const [resourceCapabilityError, setResourceCapabilityError] =
-    useState<string>();
+  const [hardwareOptions, setHardwareOptions] = useState<
+    TrainingHardwareOption[]
+  >([]);
+  const [hardwareOptionsLoading, setHardwareOptionsLoading] = useState(false);
+  const [hardwareOptionsError, setHardwareOptionsError] = useState<string>();
   const [selectedTrainingPlanId, setSelectedTrainingPlanId] =
     useState<string>();
 
@@ -420,50 +424,82 @@ const TaskCreate: React.FC = () => {
     [selectedTrainingPlan],
   );
   const selectedResourceProfile = resourceProfiles.find(
-    (profile) => profile.id === selectedResourceProfileId,
+    (profile) =>
+      profile.id ===
+      (selectedResourceProfileId || form.getFieldValue('resourceProfileId')),
+  );
+  const selectedHardwareOption = hardwareOptions.find(
+    (option) =>
+      option.hardwareTargetId ===
+      (selectedHardwareTargetId || form.getFieldValue('hardwareTargetId')),
   );
   const resourceStatus = resourceStatusPresentation(
-    resourceCapability,
-    resourceCapabilityError,
+    selectedHardwareOption,
+    hardwareOptionsError,
   );
 
   useEffect(() => {
-    if (!selectedTrainingPlan || !selectedResourceProfileId) {
-      setResourceCapability(undefined);
-      setResourceCapabilityError(undefined);
+    if (!selectedTrainingPlan) {
+      setHardwareOptions([]);
+      setHardwareOptionsError(undefined);
       return;
     }
     let cancelled = false;
-    setResourceCapabilityLoading(true);
-    setResourceCapability(undefined);
-    setResourceCapabilityError(undefined);
-    fetchTrainingResourceCapability(
+    setHardwareOptionsLoading(true);
+    setHardwareOptions([]);
+    setHardwareOptionsError(undefined);
+    fetchTrainingHardwareOptions(
       selectedTrainingPlan.id,
       {
         version: selectedTrainingPlan.version,
-        resourceProfileId: selectedResourceProfileId,
       },
       { skipErrorHandler: true },
     )
       .then((response) => {
         if (cancelled) return;
         if (!response?.success || !response.data) {
-          throw new Error(response?.errorMessage || '资源能力接口返回失败');
+          throw new Error(response?.errorMessage || '硬件型号接口返回失败');
         }
-        setResourceCapability(response.data);
+        const options = response.data;
+        setHardwareOptions(options);
+        if (!options.length) {
+          setHardwareOptionsError(
+            '当前没有与训练方案兼容且通过检测的可训练硬件',
+          );
+          form.setFieldsValue({
+            hardwareTargetId: undefined,
+            resourceProfileId: undefined,
+          });
+          return;
+        }
+        const currentTargetId = form.getFieldValue('hardwareTargetId');
+        const preferredProfileId = form.getFieldValue('resourceProfileId');
+        const selected =
+          options.find(
+            (option) => option.hardwareTargetId === currentTargetId,
+          ) || firstTrainingHardwareOption(options, preferredProfileId);
+        form.setFieldsValue({
+          hardwareTargetId: selected?.hardwareTargetId,
+          resourceProfileId: selected?.resourceProfileId,
+          resourceMode: 'recommended',
+          cpuCores: undefined,
+          memoryMiB: undefined,
+          gpuMemoryLimitMiB: undefined,
+        });
       })
       .catch((error) => {
         if (!cancelled) {
-          setResourceCapabilityError(getApiErrorMessage(error));
+          setHardwareOptions([]);
+          setHardwareOptionsError(getApiErrorMessage(error));
         }
       })
       .finally(() => {
-        if (!cancelled) setResourceCapabilityLoading(false);
+        if (!cancelled) setHardwareOptionsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedResourceProfileId, selectedTrainingPlan]);
+  }, [form, selectedTrainingPlan]);
 
   useEffect(() => {
     if (!selectedTrainingPlan || !selectedDatasetVersionId) return;
@@ -584,6 +620,7 @@ const TaskCreate: React.FC = () => {
       planId: selectedTrainingPlan.id,
       planVersion: selectedTrainingPlan.version,
       trainingMode: selectedTrainingPlan.trainingModes?.[0],
+      hardwareTargetId: undefined,
       resourceProfileId: firstTrainingResourceProfileId(selectedTrainingPlan),
       resourceMode: 'recommended',
       cpuCores: undefined,
@@ -763,6 +800,7 @@ const TaskCreate: React.FC = () => {
             planId: data.trainingPlanId,
             planVersion: data.trainingPlanVersion,
             trainingMode: data.trainingMode,
+            hardwareTargetId: undefined,
             resourceProfileId: data.resourceProfileId,
           });
         }
@@ -1114,13 +1152,23 @@ const TaskCreate: React.FC = () => {
   };
 
   const validateResourceSection = async () => {
-    await form.validateFields(['resourceProfileId', 'resourceMode']);
+    await form.validateFields(['hardwareTargetId', 'resourceMode']);
     // 提交确认页会卸载资源步骤，useWatch 此时可能返回 undefined；
     // 直接读取 Form 保留的字段值，确保“已显示并确认”的默认档位能够提交。
+    const formHardwareTargetId = form.getFieldValue('hardwareTargetId');
     const formResourceProfileId = form.getFieldValue('resourceProfileId');
-    if (!resourceProfiles.length) {
-      message.error('当前训练方案没有可用的资源规格');
-      throw new Error('missing resource profile');
+    if (!hardwareOptions.length) {
+      message.error('当前没有通过检测的可训练硬件');
+      throw new Error('missing hardware option');
+    }
+    if (
+      !isTrainingHardwareTargetAllowed(
+        hardwareOptions,
+        formHardwareTargetId,
+      )
+    ) {
+      message.error('请选择当前可用的硬件型号');
+      throw new Error('invalid hardware target');
     }
     if (
       !isTrainingResourceProfileIdAllowed(
@@ -1144,7 +1192,10 @@ const TaskCreate: React.FC = () => {
           resourceProfiles.find(
             (profile) => profile.id === formResourceProfileId,
           ),
-          resourceCapability,
+          hardwareOptions.find(
+            (option) => option.hardwareTargetId === formHardwareTargetId,
+          ),
+          formHardwareTargetId,
         );
       } catch (error: any) {
         message.error(error?.message || '自定义资源配置无效');
@@ -1322,11 +1373,21 @@ const TaskCreate: React.FC = () => {
 
     try {
       let data: API.TrainingExperimentVersion | undefined;
+      const submittedHardwareOption = hardwareOptions.find(
+        (option) => option.hardwareTargetId === values.hardwareTargetId,
+      );
+      const submittedResourceProfile = resourceProfiles.find(
+        (profile) => profile.id === values.resourceProfileId,
+      );
+      if (!submittedHardwareOption || !submittedResourceProfile) {
+        throw new Error('所选硬件型号已不可用，请返回资源配置重新选择');
+      }
       const resourceRequest = buildTrainingResourceRequest(
         values.resourceMode,
         values,
-        selectedResourceProfile,
-        resourceCapability,
+        submittedResourceProfile,
+        submittedHardwareOption,
+        values.hardwareTargetId,
       );
       const payload = {
         name: values.name,
@@ -1462,7 +1523,12 @@ const TaskCreate: React.FC = () => {
                       planId: value,
                       planVersion: plan?.version,
                       trainingMode: plan?.trainingModes?.[0],
+                      hardwareTargetId: undefined,
                       resourceProfileId: firstTrainingResourceProfileId(plan),
+                      resourceMode: 'recommended',
+                      cpuCores: undefined,
+                      memoryMiB: undefined,
+                      gpuMemoryLimitMiB: undefined,
                       modelType:
                         modelTypes.length === 1 ? modelTypes[0] : undefined,
                       hyperParams: buildTrainingPlanHyperParams(plan),
@@ -1879,38 +1945,62 @@ const TaskCreate: React.FC = () => {
 
           {currentStep === 4 && (
             <>
-              {!resourceProfiles.length && (
+              {hardwareOptionsLoading && !hardwareOptions.length && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="正在从 Kubernetes 读取可训练硬件型号"
+                />
+              )}
+              {!hardwareOptionsLoading && hardwareOptionsError && (
                 <Alert
                   type="error"
                   showIcon
                   style={{ marginBottom: 16 }}
-                  message="当前训练方案没有可用的资源规格"
+                  message="可训练硬件读取失败"
+                  description={hardwareOptionsError}
+                />
+              )}
+              {!hardwareOptionsLoading &&
+                !hardwareOptionsError &&
+                !hardwareOptions.length && (
+                <Alert
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="当前没有与训练方案兼容的可训练硬件"
                 />
               )}
               <Form.Item
-                name="resourceProfileId"
-                label="计算资源规格"
-                extra="任务提交后会固化此规格；任务等待容器启动时显示为“调度中”。"
-                rules={[{ required: true, message: '请选择计算资源规格' }]}
+                name="hardwareTargetId"
+                label="可训练硬件型号"
+                extra="列表来自 Kubernetes 和最新硬件指标；任务只固化型号目标，不暴露或指定服务器、IP和物理卡号。"
+                rules={[{ required: true, message: '请选择可训练硬件型号' }]}
               >
                 <Select
-                  disabled={!resourceProfiles.length}
-                  placeholder="请选择计算资源"
-                  onChange={() => {
+                  loading={hardwareOptionsLoading}
+                  disabled={!hardwareOptions.length}
+                  placeholder="请选择检测到的硬件型号"
+                  onChange={(hardwareTargetId: string) => {
+                    const option = hardwareOptions.find(
+                      (item) => item.hardwareTargetId === hardwareTargetId,
+                    );
                     form.setFieldsValue({
+                      resourceProfileId: option?.resourceProfileId,
                       resourceMode: 'recommended',
                       cpuCores: undefined,
                       memoryMiB: undefined,
                       gpuMemoryLimitMiB: undefined,
                     });
                   }}
-                  options={resourceProfiles.map((profile) => ({
-                    value: profile.id,
-                    label: formatTrainingResourceProfileLabel(profile),
+                  options={hardwareOptions.map((option) => ({
+                    value: option.hardwareTargetId,
+                    label: formatTrainingHardwareOptionLabel(option, formatMiB),
                   }))}
                 />
               </Form.Item>
-              {selectedResourceProfile && (
+              {selectedResourceProfile && selectedHardwareOption && (
                 <>
                   <Alert
                     type={
@@ -1923,8 +2013,8 @@ const TaskCreate: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                     message={
-                      resourceCapabilityLoading
-                        ? '正在读取实际资源'
+                      hardwareOptionsLoading
+                        ? '正在读取可训练硬件'
                         : resourceStatus.message
                     }
                     description={resourceStatus.description}
@@ -1936,10 +2026,13 @@ const TaskCreate: React.FC = () => {
                   >
                     <Radio.Group
                       onChange={(event) => {
-                        if (event.target.value === 'custom' && resourceCapability) {
+                        if (
+                          event.target.value === 'custom' &&
+                          selectedHardwareOption
+                        ) {
                           form.setFieldsValue({
-                            cpuCores: resourceCapability.cpu.limitCores,
-                            memoryMiB: resourceCapability.memory.limitMiB,
+                            cpuCores: selectedHardwareOption.cpu.limitCores,
+                            memoryMiB: selectedHardwareOption.memory.limitMiB,
                             gpuMemoryLimitMiB: undefined,
                           });
                         } else {
@@ -1954,60 +2047,60 @@ const TaskCreate: React.FC = () => {
                       <Radio.Button value="recommended">推荐配置</Radio.Button>
                       <Radio.Button
                         value="custom"
-                        disabled={!resourceCapability}
+                        disabled={!selectedHardwareOption}
                       >
                         自定义配置
                       </Radio.Button>
                     </Radio.Group>
                   </Form.Item>
                   <Descriptions size="small" column={1} bordered>
-                  <Descriptions.Item label="设备">
-                    {selectedResourceProfile.deviceType === 'NVIDIA_GPU'
-                      ? 'GPU'
-                      : 'CPU'}
+                  <Descriptions.Item label="硬件型号">
+                    {selectedHardwareOption.displayName}
                   </Descriptions.Item>
-                  <Descriptions.Item label="CPU（申请 / 上限）">
-                    {selectedResourceProfile.cpuRequest} /{' '}
-                    {selectedResourceProfile.cpuLimit}
+                  <Descriptions.Item label="可用节点">
+                    {selectedHardwareOption.eligibleNodeCount} 个
                   </Descriptions.Item>
-                  <Descriptions.Item label="内存（申请 / 上限）">
-                    {selectedResourceProfile.memoryRequest} /{' '}
-                    {selectedResourceProfile.memoryLimit}
+                  <Descriptions.Item label="CPU（最小 / 最大）">
+                    {selectedHardwareOption.cpu.requestCores} /{' '}
+                    {selectedHardwareOption.cpu.limitCores} 核
                   </Descriptions.Item>
-                  <Descriptions.Item label="GPU 数量">
-                    {selectedResourceProfile.gpuCount}
+                  <Descriptions.Item label="系统内存（最小 / 最大）">
+                    {formatMiB(selectedHardwareOption.memory.requestMiB)} /{' '}
+                    {formatMiB(selectedHardwareOption.memory.limitMiB)}
                   </Descriptions.Item>
                   {selectedResourceProfile.deviceType === 'NVIDIA_GPU' && (
                     <>
-                      <Descriptions.Item label="GPU 型号">
-                        {resourceCapability?.gpu?.models?.length
-                          ? `自动匹配：${resourceCapability.gpu.models.join(' / ')}`
-                          : '自动匹配（型号暂不可用）'}
+                      <Descriptions.Item label="本次 GPU 数量">
+                        {selectedHardwareOption.gpuCount} 卡
+                        （当前训练方案仅支持单卡）
+                      </Descriptions.Item>
+                      <Descriptions.Item label="集群检测到的同型号 GPU">
+                        {selectedHardwareOption.gpu?.observedGpuCount ?? 0} 张
                       </Descriptions.Item>
                       <Descriptions.Item label="单卡总显存">
                         {formatMiB(
-                          resourceCapability?.gpu?.safeTotalMemoryMiB,
+                          selectedHardwareOption.gpu?.safeTotalMemoryMiB,
                         )}
                       </Descriptions.Item>
                       <Descriptions.Item label="当前最大空闲显存（仅参考）">
                         {formatMiB(
-                          resourceCapability?.gpu?.maxFreeMemoryMiB,
+                          selectedHardwareOption.gpu?.maxFreeMemoryMiB,
                         )}
                       </Descriptions.Item>
                     </>
                   )}
                   </Descriptions>
-                  {resourceMode === 'custom' && resourceCapability && (
+                  {resourceMode === 'custom' && selectedHardwareOption && (
                     <div style={{ marginTop: 16 }}>
                       <Form.Item
                         name="cpuCores"
                         label="CPU 核数"
                         rules={[{ required: true, message: '请输入 CPU 核数' }]}
-                        extra={`允许范围：${resourceCapability.cpu.requestCores} ～ ${resourceCapability.cpu.limitCores} 核`}
+                        extra={`所选硬件允许范围：${selectedHardwareOption.cpu.requestCores} ～ ${selectedHardwareOption.cpu.limitCores} 核`}
                       >
                         <InputNumber
-                          min={resourceCapability.cpu.requestCores}
-                          max={resourceCapability.cpu.limitCores}
+                          min={selectedHardwareOption.cpu.requestCores}
+                          max={selectedHardwareOption.cpu.limitCores}
                           step={0.1}
                           style={{ width: '100%' }}
                           addonAfter="核"
@@ -2017,11 +2110,11 @@ const TaskCreate: React.FC = () => {
                         name="memoryMiB"
                         label="系统内存"
                         rules={[{ required: true, message: '请输入系统内存' }]}
-                        extra={`允许范围：${formatMiB(resourceCapability.memory.requestMiB)} ～ ${formatMiB(resourceCapability.memory.limitMiB)}`}
+                        extra={`所选硬件允许范围：${formatMiB(selectedHardwareOption.memory.requestMiB)} ～ ${formatMiB(selectedHardwareOption.memory.limitMiB)}`}
                       >
                         <InputNumber
-                          min={resourceCapability.memory.requestMiB}
-                          max={resourceCapability.memory.limitMiB}
+                          min={selectedHardwareOption.memory.requestMiB}
+                          max={selectedHardwareOption.memory.limitMiB}
                           step={256}
                           precision={0}
                           style={{ width: '100%' }}
@@ -2034,20 +2127,20 @@ const TaskCreate: React.FC = () => {
                           name="gpuMemoryLimitMiB"
                           label="单卡 GPU 显存软预算（可选）"
                           extra={
-                            resourceCapability.gpu?.metricsComplete
-                              ? `最多 ${formatMiB(resourceCapability.gpu.safeTotalMemoryMiB)}。这是标准 PyTorch 进程软限制，超出后训练会显存不足，不等于硬隔离。`
+                            selectedHardwareOption.gpu?.metricsComplete
+                              ? `所选型号最多 ${formatMiB(selectedHardwareOption.gpu.safeTotalMemoryMiB)}。这是标准 PyTorch 进程软限制，超出后训练会显存不足，不等于硬隔离。`
                               : 'GPU 详情缺失或过期，暂不能设置显存预算。'
                           }
                         >
                           <InputNumber
                             min={1}
                             max={
-                              resourceCapability.gpu?.safeTotalMemoryMiB
+                              selectedHardwareOption.gpu?.safeTotalMemoryMiB
                             }
                             step={256}
                             precision={0}
                             disabled={
-                              !resourceCapability.gpu?.metricsComplete
+                              !selectedHardwareOption.gpu?.metricsComplete
                             }
                             style={{ width: '100%' }}
                             addonAfter="MiB"
@@ -2112,9 +2205,10 @@ const TaskCreate: React.FC = () => {
                   Kubernetes Job
                 </Descriptions.Item>
                 <Descriptions.Item label="运行规格">
-                  {selectedResourceProfile
-                    ? formatTrainingResourceProfileLabel(
-                        selectedResourceProfile,
+                  {selectedHardwareOption
+                    ? formatTrainingHardwareOptionLabel(
+                        selectedHardwareOption,
+                        formatMiB,
                       )
                     : '-'}
                 </Descriptions.Item>

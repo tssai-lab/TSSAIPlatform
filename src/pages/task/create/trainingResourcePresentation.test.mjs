@@ -18,9 +18,15 @@ const capability = {
 };
 
 test('recommended mode keeps the existing request contract', () => {
-  assert.equal(
-    undefined,
-    buildTrainingResourceRequest('recommended', {}, { gpuCount: 1 }, capability),
+  assert.deepEqual(
+    { hardwareTargetId: 'hw-4080' },
+    buildTrainingResourceRequest(
+      'recommended',
+      {},
+      { gpuCount: 1 },
+      capability,
+      'hw-4080',
+    ),
   );
 });
 
@@ -31,8 +37,15 @@ test('custom mode builds bounded CPU memory GPU and soft memory request', () => 
       { cpuCores: 2, memoryMiB: 4096, gpuMemoryLimitMiB: 8192 },
       { gpuCount: 1 },
       capability,
+      'hw-4080',
     ),
-    { cpuCores: 2, memoryMiB: 4096, gpuCount: 1, gpuMemoryLimitMiB: 8192 },
+    {
+      hardwareTargetId: 'hw-4080',
+      cpuCores: 2,
+      memoryMiB: 4096,
+      gpuCount: 1,
+      gpuMemoryLimitMiB: 8192,
+    },
   );
 });
 
@@ -44,6 +57,7 @@ test('custom mode rejects stale GPU details and values outside the plan', () => 
         { cpuCores: 0.5, memoryMiB: 4096 },
         { gpuCount: 1 },
         capability,
+        'hw-4080',
       ),
     /CPU 核数/,
   );
@@ -54,8 +68,22 @@ test('custom mode rejects stale GPU details and values outside the plan', () => 
         { cpuCores: 2, memoryMiB: 4096, gpuMemoryLimitMiB: 1024 },
         { gpuCount: 1 },
         { ...capability, gpu: { ...capability.gpu, metricsComplete: false } },
+        'hw-4080',
       ),
     /GPU 显存预算/,
+  );
+});
+
+test('resource request rejects a missing hardware target', () => {
+  assert.throws(
+    () =>
+      buildTrainingResourceRequest(
+        'recommended',
+        {},
+        { gpuCount: 1 },
+        capability,
+      ),
+    /硬件型号/,
   );
 });
 
