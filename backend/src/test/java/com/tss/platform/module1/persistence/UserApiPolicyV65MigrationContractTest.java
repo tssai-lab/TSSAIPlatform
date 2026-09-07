@@ -20,6 +20,10 @@ class UserApiPolicyV65MigrationContractTest {
         assertThat(sql).contains("unique (user_id, feature_group)");
         assertThat(sql).contains("max_concurrent_requests is null or max_concurrent_requests >= 1");
         assertThat(sql).contains("version bigint not null default 0");
+        assertThat(sql).contains("to_regclass('public.users')");
+        assertThat(sql).contains("foreign key (user_id) references users(id)");
+        assertThat(sql).contains("foreign key (updated_by) references users(id)");
+        assertThat(sql).doesNotContain("user_id integer not null references users(id)");
         assertThat(sql).doesNotContain("insert into user_api_policies");
         assertThat(sql).doesNotContain("update users");
         for (String group : new String[]{

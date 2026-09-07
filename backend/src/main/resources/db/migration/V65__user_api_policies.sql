@@ -1,10 +1,10 @@
 CREATE TABLE user_api_policies (
     id BIGSERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL,
     feature_group VARCHAR(40) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     max_concurrent_requests INTEGER,
-    updated_by INTEGER REFERENCES users(id),
+    updated_by INTEGER,
     version BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -21,6 +21,21 @@ CREATE TABLE user_api_policies (
         max_concurrent_requests IS NULL OR max_concurrent_requests >= 1
     )
 );
+
+-- 账号表由 module1-schema-postgresql.sql 管理，不属于本组 Flyway 迁移。
+-- 正式平台已有 users 表时保留外键；只加载业务迁移的隔离测试库也必须能从零构建。
+DO $$
+BEGIN
+    IF to_regclass('public.users') IS NOT NULL THEN
+        ALTER TABLE user_api_policies
+            ADD CONSTRAINT fk_user_api_policies_user
+            FOREIGN KEY (user_id) REFERENCES users(id);
+        ALTER TABLE user_api_policies
+            ADD CONSTRAINT fk_user_api_policies_updated_by
+            FOREIGN KEY (updated_by) REFERENCES users(id);
+    END IF;
+END
+$$;
 
 CREATE INDEX idx_user_api_policies_user_id ON user_api_policies (user_id);
 
