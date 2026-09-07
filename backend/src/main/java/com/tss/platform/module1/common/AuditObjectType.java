@@ -12,5 +12,6 @@ public enum AuditObjectType {
     TRAINING_CODE,
     TRAINING_PLAN,
     INFERENCE_SCRIPT,
+    API_POLICY,
     UNKNOWN
 }
