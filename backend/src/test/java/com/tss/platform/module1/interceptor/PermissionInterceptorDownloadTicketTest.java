@@ -2,6 +2,9 @@ package com.tss.platform.module1.interceptor;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.tss.platform.service.NativeDownloadTicketService;
+import com.tss.platform.module1.security.UserApiConcurrencyLimiter;
+import com.tss.platform.module1.security.UserApiFeatureClassifier;
+import com.tss.platform.module1.security.UserApiPolicyService;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -20,7 +23,7 @@ class PermissionInterceptorDownloadTicketTest {
     @Test
     void browserGetTicketRestoresExistingLoginBeforeNormalPermissionChecks() throws Exception {
         NativeDownloadTicketService ticketService = mock(NativeDownloadTicketService.class);
-        PermissionInterceptor interceptor = new PermissionInterceptor(ticketService);
+        PermissionInterceptor interceptor = interceptor(ticketService);
         MockHttpServletRequest request = new MockHttpServletRequest(
                 "GET", "/api/files/download"
         );
@@ -40,7 +43,7 @@ class PermissionInterceptorDownloadTicketTest {
     @Test
     void expiredLoginBehindValidTicketIsStillRejectedByNormalLoginCheck() throws Exception {
         NativeDownloadTicketService ticketService = mock(NativeDownloadTicketService.class);
-        PermissionInterceptor interceptor = new PermissionInterceptor(ticketService);
+        PermissionInterceptor interceptor = interceptor(ticketService);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/files/download");
         request.addParameter(NativeDownloadTicketService.QUERY_PARAMETER, "opaque-ticket");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -53,5 +56,14 @@ class PermissionInterceptorDownloadTicketTest {
             stp.verify(() -> StpUtil.setTokenValue("expired-sa-token"));
             stp.verify(StpUtil::checkLogin);
         }
+    }
+
+    private static PermissionInterceptor interceptor(NativeDownloadTicketService ticketService) {
+        return new PermissionInterceptor(
+                ticketService,
+                mock(UserApiPolicyService.class),
+                new UserApiFeatureClassifier(),
+                mock(UserApiConcurrencyLimiter.class)
+        );
     }
 }

@@ -120,6 +120,11 @@ sa-token:
   token-style: uuid
   is-log: false
 
+security:
+  user-api-policy:
+    # Redis并发租约异常退出后的兜底过期时间；正常请求在完成时立即释放自己的租约。
+    counter-ttl-seconds: ${USER_API_POLICY_COUNTER_TTL_SECONDS:300}
+
 auth:
   session:
     # Main sets this to redis during the controlled infrastructure bootstrap.

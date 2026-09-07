@@ -9,6 +9,8 @@ public class Result<T> {
     public static final Integer NO_AUTH_CODE = 403;
     public static final Integer UNAUTHORIZED_CODE = 401;
     public static final Integer SERVER_ERROR_CODE = 500;
+    public static final Integer TOO_MANY_REQUESTS_CODE = 429;
+    public static final Integer SERVICE_UNAVAILABLE_CODE = 503;
 
     private Integer code;
     private String message;
@@ -64,6 +66,22 @@ public class Result<T> {
         Result<T> result = new Result<>();
         result.setCode(SERVER_ERROR_CODE);
         result.setMessage(message == null ? "服务器内部错误" : message);
+        result.setData(null);
+        return result;
+    }
+
+    public static <T> Result<T> tooManyRequests(String message) {
+        Result<T> result = new Result<>();
+        result.setCode(TOO_MANY_REQUESTS_CODE);
+        result.setMessage(message == null ? "请求过于频繁，请稍后重试" : message);
+        result.setData(null);
+        return result;
+    }
+
+    public static <T> Result<T> serviceUnavailable(String message) {
+        Result<T> result = new Result<>();
+        result.setCode(SERVICE_UNAVAILABLE_CODE);
+        result.setMessage(message == null ? "服务暂时不可用" : message);
         result.setData(null);
         return result;
     }

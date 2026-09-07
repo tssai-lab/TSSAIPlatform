@@ -2,6 +2,11 @@ package com.tss.platform.module1.interceptor;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.tss.platform.module1.common.Result;
+import com.tss.platform.module1.security.UserApiConcurrencyLimiter;
+import com.tss.platform.module1.security.UserApiFeatureClassifier;
+import com.tss.platform.module1.security.UserApiFeatureGroup;
+import com.tss.platform.module1.security.UserApiPolicyDecision;
+import com.tss.platform.module1.security.UserApiPolicyService;
 import com.tss.platform.service.NativeDownloadTicketService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,9 +41,23 @@ public class PermissionInterceptor implements HandlerInterceptor {
     );
 
     private final NativeDownloadTicketService downloadTicketService;
+    private final UserApiPolicyService userApiPolicyService;
+    private final UserApiFeatureClassifier featureClassifier;
+    private final UserApiConcurrencyLimiter concurrencyLimiter;
 
-    public PermissionInterceptor(NativeDownloadTicketService downloadTicketService) {
+    private static final String ACQUIRED_LEASE_ATTRIBUTE =
+            PermissionInterceptor.class.getName() + ".acquiredLease";
+
+    public PermissionInterceptor(
+            NativeDownloadTicketService downloadTicketService,
+            UserApiPolicyService userApiPolicyService,
+            UserApiFeatureClassifier featureClassifier,
+            UserApiConcurrencyLimiter concurrencyLimiter
+    ) {
         this.downloadTicketService = downloadTicketService;
+        this.userApiPolicyService = userApiPolicyService;
+        this.featureClassifier = featureClassifier;
+        this.concurrencyLimiter = concurrencyLimiter;
     }
 
     @Override
@@ -76,7 +95,60 @@ public class PermissionInterceptor implements HandlerInterceptor {
             return false;
         }
 
+        java.util.Optional<UserApiFeatureGroup> featureGroup = featureClassifier.classify(requestUri);
+        if (featureGroup.isEmpty()) {
+            return true;
+        }
+        try {
+            Integer userId = StpUtil.getLoginIdAsInt();
+            UserApiPolicyDecision policy = userApiPolicyService.resolve(userId, featureGroup.get());
+            if (!policy.enabled()) {
+                SYSTEM_LOG.warn("用户API功能已禁用: userId={}, group={}, uri={}",
+                        userId, featureGroup.get(), requestUri);
+                writeResult(response, HttpServletResponse.SC_FORBIDDEN,
+                        Result.noAuth("该功能已被管理员禁用"));
+                return false;
+            }
+            Integer limit = policy.maxConcurrentRequests();
+            if (limit != null) {
+                java.util.Optional<UserApiConcurrencyLimiter.Lease> lease =
+                        concurrencyLimiter.tryAcquire(userId, featureGroup.get(), limit);
+                if (lease.isEmpty()) {
+                    writeResult(response, 429,
+                            Result.tooManyRequests("该功能当前并发请求数已达到上限，请稍后重试"));
+                    return false;
+                }
+                request.setAttribute(ACQUIRED_LEASE_ATTRIBUTE, lease.get());
+            }
+        } catch (Exception exception) {
+            SYSTEM_LOG.error("用户API策略检查失败: uri={}, error={}", requestUri, exception.getMessage(), exception);
+            writeResult(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    Result.serviceUnavailable("权限策略服务暂时不可用，请稍后重试"));
+            return false;
+        }
+
         return true;
+    }
+
+    @Override
+    public void afterCompletion(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            Object handler,
+            Exception exception
+    ) {
+        Object lease = request.getAttribute(ACQUIRED_LEASE_ATTRIBUTE);
+        if (lease instanceof UserApiConcurrencyLimiter.Lease acquiredLease) {
+            try {
+                concurrencyLimiter.release(acquiredLease);
+            } catch (Exception releaseException) {
+                SYSTEM_LOG.error("释放用户API并发计数失败: userId={}, group={}, error={}",
+                        acquiredLease.userId(),
+                        acquiredLease.featureGroup(),
+                        releaseException.getMessage(),
+                        releaseException);
+            }
+        }
     }
 
     private void writeResult(HttpServletResponse response, int httpStatus, Result<?> result) throws IOException {

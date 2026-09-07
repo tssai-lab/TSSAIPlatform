@@ -519,7 +519,7 @@ POST /api/user/promote-to-admin
 
 这组接口面向系统管理页面，参数命名更贴近前端展示，例如使用 `phone`、`role`、`enabled`。
 
-重要代码现状：`WebConfig` 当前未注册 `/api/system/user/**` 到 `PermissionInterceptor`。业务语义上这些接口应为管理员接口，但当前代码只有部分写操作在方法内部通过 `StpUtil` 和 `roleId` 做判断。
+权限规则：`WebConfig` 会把 `/api/system/user/**` 交给统一权限拦截器；用户管理写操作还会在 Controller 内按当前登录人和目标用户角色做二次校验。
 
 ### 4.1 查询系统用户列表
 
@@ -539,7 +539,7 @@ GET /api/system/user/list
 - `role`：转换为前端展示角色文本，如 `超管`、`普通管理员`、`普通用户`。
 - `createdAt`：由 `created_at` 复制。
 
-注意：底层查询包含 `password` 字段，当前 Controller 未移除该字段。
+安全说明：用户列表使用后端白名单字段，不返回密码哈希等敏感信息。
 
 ### 4.2 新增系统用户
 
@@ -568,11 +568,24 @@ POST /api/system/user/add
 ```
 
 处理规则：
-- 新增用户默认密码固定为 `123456`，并使用 BCrypt 加密保存。
+- 后端为每次新增或恢复账号生成独立的 16 位随机临时密码，使用 BCrypt 加密保存。
+- 明文临时密码只在本次成功响应的 `data.temporaryPassword` 中返回，不写日志、不保存明文；调用方应立即安全交付给用户。
 - 邮箱默认 `{username}@default.com`。
 - 超级管理员可以创建普通管理员或普通用户，但当前代码不支持创建或提升为超级管理员。
 - 普通管理员只能创建普通用户。
 - 如用户名或手机号对应软删除账号，后端会尝试恢复该账号。
+
+成功响应示例：
+
+```json
+{
+  "code": 200,
+  "message": "新增用户成功",
+  "data": {
+    "temporaryPassword": "一次性随机临时密码"
+  }
+}
+```
 
 ### 4.3 编辑系统用户
 
@@ -644,11 +657,51 @@ POST /api/system/user/checkUsername
 
 只检查未删除用户是否占用该用户名。
 
+### 4.7 用户级 API 功能策略
+
+基础路径：`/api/system/user/{userId}/api-policies`。只有超级管理员可以读取和修改；超级管理员账号本身不能被用户级策略锁定。
+
+系统固定管理以下六个稳定功能组：
+
+| 功能组 | 范围 |
+| --- | --- |
+| `MODEL_ASSET` | 模型资产 |
+| `DATASET_ASSET` | 数据集资产 |
+| `TRAINING_DEFINITION` | 训练代码与训练方案 |
+| `TRAINING_TASK` | 训练任务 |
+| `INFERENCE_TASK` | 推理任务 |
+| `SYSTEM_ADMIN_AUDIT` | 系统管理与审计 |
+
+无策略记录表示继承角色默认权限：允许继续进入原有角色和对象权限校验、并发不限。用户级策略只能收紧原有权限，不能给角色越权。
+
+```http
+GET /api/system/user/{userId}/api-policies
+PUT /api/system/user/{userId}/api-policies/{featureGroup}
+DELETE /api/system/user/{userId}/api-policies/{featureGroup}?version={version}
+```
+
+`PUT` 请求体：
+
+```json
+{
+  "enabled": false,
+  "maxConcurrentRequests": 2,
+  "version": 0
+}
+```
+
+- `enabled=false` 时，新进入该功能组的请求统一返回 HTTP 403；已运行的训练或推理任务不会被删除。
+- `maxConcurrentRequests` 留空表示不限流，填写时必须大于等于 1；达到上限返回 HTTP 429。
+- `version` 是乐观锁版本。并发修改冲突返回 HTTP 409，客户端必须刷新后重试，不能静默覆盖。
+- `DELETE` 删除用户覆盖记录并恢复继承，数据库即时读取，无需重启、重新部署或重新登录。
+- 策略修改成功和失败均写入权限变更审计；成功记录包含修改前后值，不记录令牌或密码。
+- 策略数据库或共享 Redis 计数器不可用时返回 HTTP 503，不静默放行。
+
 ## 5. 角色接口
 
 基础路径：`/api/role`
 
-代码现状：`WebConfig` 当前未注册 `/api/role/**` 到 `PermissionInterceptor`，因此这组接口当前不会被拦截器自动鉴权。业务上建议仅管理员访问。
+权限规则：`WebConfig` 已统一拦截 `/api/role/**`，这组接口仅管理员可访问。
 
 ### 5.1 查询角色列表
 
