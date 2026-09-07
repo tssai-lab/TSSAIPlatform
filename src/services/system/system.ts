@@ -16,6 +16,9 @@ export {
   toggleUserStatus,
   checkUsername,
   promoteUserToNormalAdmin,
+  fetchUserApiPolicies,
+  updateUserApiPolicy,
+  resetUserApiPolicy,
   type CurrentUserRoleForApi,
   type UserListParams,
   type UserListResponse,
@@ -23,6 +26,10 @@ export {
   type AddUserParams,
   type EditUserParams,
   type CommonResponse as SystemCommonResponse,
+  type TemporaryPasswordData,
+  type UserApiFeatureGroup,
+  type UserApiPolicy,
+  type UserApiPolicyUpdate,
 } from './user';
 
 export {

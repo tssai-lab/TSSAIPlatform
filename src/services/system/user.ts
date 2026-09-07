@@ -66,6 +66,35 @@ export interface CommonResponse<T = any> {
   data?: T;
 }
 
+export interface TemporaryPasswordData {
+  temporaryPassword: string;
+}
+
+export type UserApiFeatureGroup =
+  | 'MODEL_ASSET'
+  | 'DATASET_ASSET'
+  | 'TRAINING_DEFINITION'
+  | 'TRAINING_TASK'
+  | 'INFERENCE_TASK'
+  | 'SYSTEM_ADMIN_AUDIT';
+
+export interface UserApiPolicy {
+  userId: number;
+  featureGroup: UserApiFeatureGroup;
+  displayName: string;
+  enabled: boolean;
+  maxConcurrentRequests: number | null;
+  inherited: boolean;
+  version: number | null;
+  updatedAt?: string | null;
+}
+
+export interface UserApiPolicyUpdate {
+  enabled: boolean;
+  maxConcurrentRequests: number | null;
+  version?: number | null;
+}
+
 /** 列表角色展示：仅按 roleId / role_id 映射（1 超管 2 普管 3 普通用户） */
 function pickRoleLabel(roleId: unknown): string {
   const n = Number(roleId);
@@ -185,11 +214,47 @@ export async function fetchUserList(params: UserListParams): Promise<UserListRes
 
 /** 新增用户 POST /api/system/user/add */
 export async function addUser(params: AddUserParams) {
-  return request<CommonResponse<UserItem>>(SYSTEM_API_CONFIG.ENDPOINTS.USER_ADD, {
+  return request<CommonResponse<TemporaryPasswordData>>(SYSTEM_API_CONFIG.ENDPOINTS.USER_ADD, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: params,
   });
+}
+
+export async function fetchUserApiPolicies(userId: number) {
+  return request<CommonResponse<UserApiPolicy[]>>(
+    `/system/user/${userId}/api-policies`,
+    { method: 'GET' },
+  );
+}
+
+export async function updateUserApiPolicy(
+  userId: number,
+  featureGroup: UserApiFeatureGroup,
+  data: UserApiPolicyUpdate,
+) {
+  return request<CommonResponse<UserApiPolicy>>(
+    `/system/user/${userId}/api-policies/${featureGroup}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data,
+    },
+  );
+}
+
+export async function resetUserApiPolicy(
+  userId: number,
+  featureGroup: UserApiFeatureGroup,
+  version?: number | null,
+) {
+  return request<CommonResponse<UserApiPolicy>>(
+    `/system/user/${userId}/api-policies/${featureGroup}`,
+    {
+      method: 'DELETE',
+      params: version == null ? undefined : { version },
+    },
+  );
 }
 
 /** 编辑用户 PUT /api/system/user/edit */
