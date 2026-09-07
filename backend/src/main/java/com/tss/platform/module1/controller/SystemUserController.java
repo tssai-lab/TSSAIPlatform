@@ -8,6 +8,7 @@ import com.tss.platform.module1.entity.User;
 import com.tss.platform.module1.security.UserAdministrationForbiddenException;
 import com.tss.platform.module1.security.UserAdministrationPolicy;
 import com.tss.platform.module1.security.UserSessionInvalidator;
+import com.tss.platform.module1.security.TemporaryPasswordGenerator;
 import com.tss.platform.module1.service.AuditRecordService;
 import com.tss.platform.module1.service.UserService;
 import com.tss.platform.module1.util.DesensitizationUtil;
@@ -41,6 +42,9 @@ public class SystemUserController {
 
     @Resource
     private UserSessionInvalidator userSessionInvalidator;
+
+    @Resource
+    private TemporaryPasswordGenerator temporaryPasswordGenerator;
 
     @GetMapping("/list")
     public Result<Map<String, Object>> getUserList() {
@@ -168,14 +172,18 @@ public class SystemUserController {
             user.setMobile(mobile);
             user.setRoleId(roleId);
             user.setStatus(UserRoleUtil.isEnabledStatus(UserRoleUtil.safeString(params.get("status"))));
-            user.setPassword(BCrypt.hashpw("123456", BCrypt.gensalt()));
+            String temporaryPassword = temporaryPasswordGenerator.generate();
+            user.setPassword(BCrypt.hashpw(temporaryPassword, BCrypt.gensalt()));
             user.setEmail(username + "@default.com");
             user.setCreatedAt(LocalDateTime.now());
             user.setUpdatedAt(LocalDateTime.now());
 
             if (userService.save(user)) {
                 SYSTEM_LOG.info("管理员新增用户成功: username={}", DesensitizationUtil.maskUsername(username));
-                return Result.success(null, "新增用户成功");
+                return Result.success(
+                        Map.of("temporaryPassword", temporaryPassword),
+                        "新增用户成功"
+                );
             }
             return Result.fail("新增失败");
         } catch (UserAdministrationForbiddenException e) {
@@ -196,7 +204,8 @@ public class SystemUserController {
     private Result<?> restoreDeletedUser(User deletedUser, String username, String mobile, Integer roleId,
                                        Map<String, Object> params) {
         boolean status = UserRoleUtil.isEnabledStatus(UserRoleUtil.safeString(params.get("status")));
-        String passwordHash = BCrypt.hashpw("123456", BCrypt.gensalt());
+        String temporaryPassword = temporaryPasswordGenerator.generate();
+        String passwordHash = BCrypt.hashpw(temporaryPassword, BCrypt.gensalt());
         String email = username + "@default.com";
 
         boolean ok = userService.restoreDeletedUser(
@@ -206,7 +215,10 @@ public class SystemUserController {
         }
         SYSTEM_LOG.info("管理员恢复已删除用户: username={}, userId={}",
                 DesensitizationUtil.maskUsername(username), deletedUser.getId());
-        return Result.success(null, "用户已恢复");
+        return Result.success(
+                Map.of("temporaryPassword", temporaryPassword),
+                "用户已恢复"
+        );
     }
 
     @PutMapping("/edit")
