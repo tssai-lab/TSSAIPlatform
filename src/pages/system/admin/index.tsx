@@ -16,7 +16,6 @@ import dayjs from 'dayjs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SYSTEM_ADMIN_ROLE_OPTIONS,
-  SYSTEM_DEFAULT_PASSWORD,
   SYSTEM_ROLES,
   SYSTEM_STATUS,
   SYSTEM_STATUS_OPTIONS,
@@ -39,6 +38,7 @@ import {
   isCurrentLoginAccount,
 } from '../guardSelfAccount';
 import { notifyRequestError } from '../notifyRequestError';
+import { showTemporaryPasswordNotice } from '../TemporaryPasswordNotice';
 
 /**
  * 管理员列表页
@@ -175,18 +175,7 @@ const AdminListPage: React.FC = () => {
           setModalVisible(false);
           form.resetFields();
           actionRef.current?.reloadAndRest?.();
-          Modal.success({
-            title: '新增成功',
-            content: (
-              <div>
-                <p>
-                  初始密码是
-                  <strong>{SYSTEM_DEFAULT_PASSWORD}</strong>
-                  ，可通过登录页【忘记密码】（手机验证码）进行修改密码。
-                </p>
-              </div>
-            ),
-          });
+          showTemporaryPasswordNotice(response.data?.temporaryPassword);
         }
       }
     } catch (error: unknown) {

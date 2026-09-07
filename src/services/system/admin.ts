@@ -2,7 +2,13 @@
  * 系统管理-管理员列表模块 - Services 层
  * 管理员列表基于用户管理接口复用实现（仅做管理员范围的约束）
  */
-import type { CommonResponse, UserItem, UserListParams, UserListResponse } from './user';
+import type {
+  CommonResponse,
+  TemporaryPasswordData,
+  UserItem,
+  UserListParams,
+  UserListResponse,
+} from './user';
 import {
   addUser,
   checkUsername,
@@ -64,7 +70,7 @@ export async function addAdmin(params: {
   phone: string;
   role: AdminRoleName | string;
   status: string;
-}): Promise<CommonResponse<UserItem>> {
+}): Promise<CommonResponse<TemporaryPasswordData>> {
   assertAdminRole(params.role);
   return addUser({
     username: params.username,

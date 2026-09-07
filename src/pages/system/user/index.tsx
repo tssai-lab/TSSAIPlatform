@@ -1,6 +1,7 @@
 import {
   DeleteOutlined,
   EditOutlined,
+  SafetyCertificateOutlined,
   UserSwitchOutlined,
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
@@ -19,7 +20,6 @@ import {
 import dayjs from 'dayjs';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  SYSTEM_DEFAULT_PASSWORD,
   SYSTEM_ROLE_OPTIONS_NORMAL_ADMIN,
   SYSTEM_ROLE_OPTIONS_SUPER,
   SYSTEM_ROLES,
@@ -44,6 +44,8 @@ import {
   isCurrentLoginAccount,
 } from '../guardSelfAccount';
 import { notifyRequestError } from '../notifyRequestError';
+import { showTemporaryPasswordNotice } from '../TemporaryPasswordNotice';
+import ApiPolicyModal from './ApiPolicyModal';
 
 /**
  * 用户管理页
@@ -59,6 +61,7 @@ const UserManagement: React.FC = () => {
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [_usernameChecking, setUsernameChecking] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [apiPolicyTarget, setApiPolicyTarget] = useState<UserItem | null>(null);
   const actionRef = useRef<ActionType>(null);
 
   useEffect(() => {
@@ -242,18 +245,7 @@ const UserManagement: React.FC = () => {
           setModalVisible(false);
           form.resetFields();
           actionRef.current?.reload();
-          Modal.success({
-            title: '新增成功',
-            content: (
-              <div>
-                <p>
-                  初始密码是
-                  <strong>{SYSTEM_DEFAULT_PASSWORD}</strong>
-                  ，可通过登录页【忘记密码】（手机验证码）进行修改密码。
-                </p>
-              </div>
-            ),
-          });
+          showTemporaryPasswordNotice(response.data?.temporaryPassword);
           return;
         }
         message.error(response.message || '新增失败');
@@ -441,6 +433,16 @@ const UserManagement: React.FC = () => {
         const isSelf = isCurrentLoginAccount(record, currentUser);
         return (
           <Space>
+            {isSuperAdmin && record.role !== SYSTEM_ROLES.SUPER_ADMIN && (
+              <Button
+                type="link"
+                size="small"
+                icon={<SafetyCertificateOutlined />}
+                onClick={() => setApiPolicyTarget(record)}
+              >
+                API 权限
+              </Button>
+            )}
             {isSuperAdmin && record.role === SYSTEM_ROLES.USER && (
               <Popconfirm
                 title={`将「${record.username}」设为普通管理员？`}
@@ -611,6 +613,10 @@ const UserManagement: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+      <ApiPolicyModal
+        target={apiPolicyTarget}
+        onClose={() => setApiPolicyTarget(null)}
+      />
     </PageContainer>
   );
 };
