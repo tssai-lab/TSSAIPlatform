@@ -37,4 +37,8 @@ functions/*
 screenshot
 .firebase
 
+# 本地浏览器回归证据，不进入交付构建
+.playwright-cli/
+/output/playwright/
+
 build

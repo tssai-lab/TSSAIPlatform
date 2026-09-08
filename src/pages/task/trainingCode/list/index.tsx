@@ -1,7 +1,7 @@
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { history, useAccess } from '@umijs/max';
-import { Button, message, Popconfirm, Space, Tag, Typography } from 'antd';
+import { Alert, Button, message, Popconfirm, Space, Tag, Typography } from 'antd';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import ResizableTitle from '@/pages/dataset/components/ResizableTitle';
@@ -78,6 +78,11 @@ const TrainingCodeList: React.FC = () => {
   const access = useAccess();
   const actionRef = useRef<ActionType | null>(null);
   const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const [listNotice, setListNotice] = useState<{
+    type: 'error' | 'warning';
+    text: string;
+  }>();
+  const listRequestSequence = useRef(0);
 
   const handleColumnResize = useCallback(
     (key: ResizableColumnKey) => (width: number) => {
@@ -102,13 +107,20 @@ const TrainingCodeList: React.FC = () => {
     current?: number;
     pageSize?: number;
   }) => {
+    const sequence = ++listRequestSequence.current;
     try {
       const res = await fetchOwnerCodeVersionInventory({
         skipErrorHandler: true,
       });
       if (res?.success === false) {
-        message.error(res?.errorMessage || '训练代码列表加载失败');
-        return { data: [], success: false, total: 0 };
+        throw new Error(res.errorMessage || '训练代码列表加载失败');
+      }
+      if (sequence === listRequestSequence.current) {
+        setListNotice(
+          res.incomplete
+            ? { type: 'warning', text: res.warningMessage || '训练代码列表未完整加载，请刷新重试' }
+            : undefined,
+        );
       }
       let list = Array.isArray(res?.data) ? res.data : [];
       const keyword = params.codeAssetName?.trim()?.toLowerCase();
@@ -127,7 +139,12 @@ const TrainingCodeList: React.FC = () => {
         total: res?.total ?? list.length,
       };
     } catch (error: any) {
-      message.error(getApiErrorMessage(error, '训练代码列表加载失败'));
+      if (sequence === listRequestSequence.current) {
+        setListNotice({
+          type: 'error',
+          text: getApiErrorMessage(error, '训练代码列表加载失败'),
+        });
+      }
       return { data: [], success: false, total: 0 };
     }
   };
@@ -365,6 +382,24 @@ const TrainingCodeList: React.FC = () => {
         </Button>,
       ]}
     >
+      {listNotice && (
+        <Alert
+          showIcon
+          type={listNotice.type}
+          message={listNotice.text}
+          description={
+            listNotice.type === 'error'
+              ? '本次查询未成功；若表格中仍有记录，它们是上一次的结果，不能据此判断代码已丢失。'
+              : undefined
+          }
+          action={
+            <Button size="small" onClick={() => actionRef.current?.reload()}>
+              重试加载
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <ProTable<CodeVersionListItem>
         actionRef={actionRef}
         columns={columns}

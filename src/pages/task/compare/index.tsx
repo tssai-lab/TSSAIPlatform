@@ -627,9 +627,11 @@ const TaskCompare: React.FC = () => {
         if (results.length < 2 || !hasComparableMetric) {
           setMetricsData([]);
           message.error(
-            results.length < 2
-              ? '有效训练指标不足 2 个任务，无法形成合同要求的对比'
-              : '所选任务没有共同核心指标，无法进行有效对比',
+            failed > 0
+              ? `${failed} 个任务的训练指标加载失败，当前结果不足以形成有效对比，请重试`
+              : results.length < 2
+                ? '有效训练指标不足 2 个任务，无法形成合同要求的对比'
+                : '所选任务没有共同核心指标，无法进行有效对比',
           );
         } else {
           setMetricsData(results);

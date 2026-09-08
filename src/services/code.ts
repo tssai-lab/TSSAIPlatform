@@ -264,6 +264,7 @@ export async function fetchCodeVersionList(
     pageSize?: number;
   },
   options?: { [key: string]: any },
+  strictResponse = false,
 ) {
   // 不向现网 list 传空 codeName / 未声明分页参数，避免后端按空值过滤成 0 条
   const query: Record<string, string | number> = {};
@@ -295,6 +296,7 @@ export async function fetchCodeVersionList(
       list = raw.data;
       total = raw.total ?? res.total ?? raw.data.length;
     } else {
+      if (strictResponse) throw new Error('训练代码列表响应格式异常');
       return { ...res, data: [] as CodeVersionListItem[], total: 0 };
     }
     // legacy list 不含 validationStatus/riskLevel；V2 版本常不含 trainingProfile
@@ -326,6 +328,9 @@ function unwrapAssetList(payload: unknown): import('./codeV2').V2CodeAsset[] {
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === 'object') {
     const obj = payload as Record<string, unknown>;
+    if (obj.errorCode || obj.success === false) {
+      throw new Error('训练代码资产列表响应异常');
+    }
     if (Array.isArray(obj.items)) {
       return obj.items as import('./codeV2').V2CodeAsset[];
     }
@@ -340,7 +345,7 @@ function unwrapAssetList(payload: unknown): import('./codeV2').V2CodeAsset[] {
       }
     }
   }
-  return [];
+  throw new Error('训练代码资产列表响应格式异常');
 }
 
 /** 本地待审登记补进列表，避免 PENDING/REJECTED 被 legacy 列表滤掉后看不到记录。
@@ -389,55 +394,77 @@ function mergeLocalPendingRows(
  */
 export async function fetchOwnerCodeVersionInventory(options?: {
   [key: string]: any;
-}) {
+}): Promise<{
+  success: boolean;
+  data: CodeVersionListItem[];
+  total: number;
+  errorMessage?: string;
+  incomplete?: boolean;
+  warningMessage?: string;
+}> {
   const opts = { skipErrorHandler: true, ...(options || {}) };
+  let assets: import('./codeV2').V2CodeAsset[];
   try {
-    const assets = unwrapAssetList(await listV2CodeAssets(opts));
-    const rows: CodeVersionListItem[] = [];
-    await Promise.all(
-      assets.map(async (asset) => {
-        const assetId = String(asset.id || '').trim();
-        if (!assetId) return;
-        try {
-          const versions = unwrapVersionList(
-            await listV2CodeAssetVersions(assetId, opts),
-          );
-          versions.forEach((version) => {
-            const mapped = mapV2CodeVersionToLegacy(version);
-            const displayName =
-              (asset.name && !isInternalGeneratedCodeAssetName(asset.name)
-                ? asset.name.trim()
-                : undefined) ||
-              mapped.codeName ||
-              mapped.codeAssetName;
-            if (!mapped.codeVersionId) return;
-            rows.push({
-              ...mapped,
-              codeAssetId: mapped.codeAssetId || assetId,
-              codeName: displayName || mapped.codeName,
-              codeAssetName: displayName || mapped.codeAssetName,
-              trainingProfile:
-                mapped.trainingProfile || asset.trainingProfile || '',
-            });
-          });
-        } catch {
-          // 单个资产版本失败不影响其它资产
-        }
-      }),
-    );
-    const enriched = await Promise.all(
-      rows.map((item) =>
-        enrichCodeVersionDisplayFields(item, { ...opts, enrichRisk: true }),
-      ),
-    );
-    const merged = mergeLocalPendingRows(enriched);
-    return { success: true, data: merged, total: merged.length };
-  } catch {
-    const res = await fetchCodeVersionList(undefined, options);
+    assets = unwrapAssetList(await listV2CodeAssets(opts));
+  } catch (error) {
+    // 只有资产入口确实不支持 V2 才降级；单资产失败不能把整个列表变为旧接口结果。
+    if (!isLegacyEndpointUnavailable(error)) throw error;
+    const res = await fetchCodeVersionList(undefined, options, true);
+    if (res.success === false) {
+      throw new Error(res.errorMessage || '训练代码列表加载失败');
+    }
     const list = Array.isArray(res?.data) ? res.data : [];
     const merged = mergeLocalPendingRows(list);
     return { ...res, data: merged, total: merged.length };
   }
+
+  let failedAssets = 0;
+  const assetRows = await Promise.all(
+    assets.map(async (asset): Promise<CodeVersionListItem[]> => {
+      try {
+        const assetId = String(asset?.id || '').trim();
+        if (!assetId) throw new Error('训练代码资产缺少标识');
+        const versions = unwrapVersionList(
+          await listV2CodeAssetVersions(assetId, opts), true,
+        );
+        return versions.map((version) => {
+          const mapped = mapV2CodeVersionToLegacy(version);
+          if (!mapped.codeVersionId?.trim()) throw new Error('训练代码版本缺少标识');
+          const displayName =
+            (asset.name && !isInternalGeneratedCodeAssetName(asset.name)
+              ? asset.name.trim()
+              : undefined) || mapped.codeName || mapped.codeAssetName;
+          return {
+            ...mapped,
+            codeAssetId: mapped.codeAssetId || assetId,
+            codeName: displayName || mapped.codeName,
+            codeAssetName: displayName || mapped.codeAssetName,
+            trainingProfile: mapped.trainingProfile || asset.trainingProfile || '',
+          };
+        });
+      } catch {
+        // 允许展示其它资产，但不得把缺失记录伪装成完整列表。
+        failedAssets += 1;
+        return [];
+      }
+    }),
+  );
+  if (assets.length > 0 && failedAssets === assets.length) {
+    throw new Error('训练代码版本列表加载失败，请刷新重试；不能据此判断代码已丢失');
+  }
+  const enriched = await Promise.all(
+    assetRows.flat().map((item) =>
+      enrichCodeVersionDisplayFields(item, { ...opts, enrichRisk: true }),
+    ),
+  );
+  const merged = mergeLocalPendingRows(enriched);
+  return {
+    success: true, data: merged, total: merged.length,
+    incomplete: failedAssets > 0,
+    warningMessage: failedAssets > 0
+      ? `${assets.length} 个代码资产中有 ${failedAssets} 个版本列表加载失败，当前列表不完整，请刷新重试。`
+      : undefined,
+  };
 }
 
 /** 管理员待审核队列：走 V2 `/api/v2/admin/code-review-tasks` */
@@ -573,10 +600,14 @@ async function enrichAdminReviewListItem(
 
 function unwrapVersionList(
   payload: unknown,
+  strict = false,
 ): import('./codeV2').V2CodeVersion[] {
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === 'object') {
     const obj = payload as Record<string, unknown>;
+    if (strict && (obj.errorCode || obj.success === false)) {
+      throw new Error('训练代码版本列表响应异常');
+    }
     if (Array.isArray(obj.items)) {
       return obj.items as import('./codeV2').V2CodeVersion[];
     }
@@ -584,6 +615,7 @@ function unwrapVersionList(
       return obj.data as import('./codeV2').V2CodeVersion[];
     }
   }
+  if (strict) throw new Error('训练代码版本列表响应格式异常');
   return [];
 }
 

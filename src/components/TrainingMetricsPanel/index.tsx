@@ -1,5 +1,6 @@
 import { ReloadOutlined } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Input,
   Select,
@@ -148,7 +149,7 @@ const SplitMetricChart: React.FC<SplitChartProps> = ({
   );
 };
 
-const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
+const TrainingMetricsPanelContent: React.FC<TrainingMetricsPanelProps> = ({
   runId,
   taskStatus,
   progress,
@@ -160,6 +161,11 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   const [metricsData, setMetricsData] = useState<MetricsDataMap>({});
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string>('');
+  const [metricsError, setMetricsError] = useState(false);
+  const metricsRequest = useRef<{
+    sequence: number;
+    controller?: AbortController;
+  }>({ sequence: 0 });
   const [chartStyle, setChartStyle] = useState<ChartStyle>(() => {
     const saved = localStorage.getItem(
       CHART_STYLE_STORAGE_KEY,
@@ -204,29 +210,45 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
   const loadMetrics = useCallback(
     async (silent = false) => {
       if (!runId) return;
+      // 自动刷新不叠加请求；手动刷新取代旧请求，避免慢响应覆盖较新的结果。
+      if (silent && metricsRequest.current.controller) return;
+      metricsRequest.current.controller?.abort();
+      const controller = new AbortController();
+      const sequence = ++metricsRequest.current.sequence;
+      metricsRequest.current.controller = controller;
       if (!silent) setMetricsLoading(true);
       try {
         const data = await fetchMlflowMetricsBulk(runId, undefined, {
           skipErrorHandler: true,
+          signal: controller.signal,
         });
+        if (sequence !== metricsRequest.current.sequence) return;
         setMetricsData(data);
         setLastUpdatedAt(new Date().toLocaleTimeString());
+        setMetricsError(false);
       } catch {
-        if (!silent) setMetricsData({});
+        if (sequence !== metricsRequest.current.sequence) return;
+        controller.abort();
+        // 失败不能擦掉上次成功值，也不能更新“成功时间”。
+        setMetricsError(true);
       } finally {
-        if (!silent) setMetricsLoading(false);
+        if (sequence === metricsRequest.current.sequence) {
+          metricsRequest.current.controller = undefined;
+          setMetricsLoading(false);
+        }
       }
     },
     [runId],
   );
 
   useEffect(() => {
-    if (!runId) {
-      setMetricsData({});
-      return;
-    }
     loadMetrics(false);
-  }, [runId, loadMetrics]);
+    return () => {
+      metricsRequest.current.sequence += 1;
+      metricsRequest.current.controller?.abort();
+      metricsRequest.current.controller = undefined;
+    };
+  }, [loadMetrics]);
 
   useEffect(() => {
     if (!shouldPoll) return;
@@ -372,6 +394,20 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
         ) : null}
       </Space>
 
+      {metricsError && (
+        <Alert
+          showIcon
+          type={lastUpdatedAt ? 'warning' : 'error'}
+          message="训练指标加载失败"
+          description={
+            lastUpdatedAt
+              ? '本次未能更新，当前保留上一次成功查询的结果；请点击「刷新」重试。'
+              : '无法读取训练指标，请点击「刷新」重试；这不表示训练没有产生指标。'
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       {runId && mlflowMetricSummaries.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <Typography.Text
@@ -443,7 +479,7 @@ const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = ({
           过程折线，避免出现水平直线。若指标随 step/epoch
           有真实变化，刷新后会出现过程曲线。
         </div>
-      ) : (
+      ) : metricsError ? null : (
         <div
           style={{
             height: 320,
@@ -551,5 +587,10 @@ function MetricSummaryGrid({
     </div>
   );
 }
+
+/** Run 改变时隔离整个展示状态，防止上一任务的曲线短暂显示在新任务下。 */
+const TrainingMetricsPanel: React.FC<TrainingMetricsPanelProps> = (props) => (
+  <TrainingMetricsPanelContent key={props.runId || ''} {...props} />
+);
 
 export default TrainingMetricsPanel;
