@@ -3,13 +3,13 @@
 本目录面向从零安装的客户服务器，不依赖实验室机器名称、原私有仓库权限或 GitHub Runner。
 继续使用当前 kubeadm + containerd + Docker Compose 架构，不另建一套业务服务。
 
-**当前提供只读预检、安装配置生成、完整性校验和锁定镜像清单；还不是完整离线安装包。** 不执行安装，不创建集群。镜像实际导出、按系统版本准备依赖及空机复演尚未完成，不应交给甲方当作一键安装器。
+**当前提供只读预检、安装配置生成、完整性校验和锁定镜像清单；还不是完整离线安装包。** 不执行安装，不创建集群。镜像实际导出、平台必要依赖缺项核对及新装复演尚未完成，不应交给甲方当作一键安装器。
 
 ## 已确认要求
 
-- Ubuntu 20.04 LTS 及以上版本为支持目标，包括后续版本的适配；不能凭系统版本号保证任意内核/驱动均可运行。
+- 客户服务器已安装 Ubuntu 22.04 及以上。本轮不准备 Ubuntu 系统安装镜像、不重装/升级系统，也不继续适配 20.04；不能凭系统版本号保证任意内核/驱动均可运行。
 - 一台节点可同时承担控制、平台服务、存储和计算。后续新增计算节点，不搬迁原数据库和用户资产。
-- 不需要 GitHub 自动部署工具；交付已校验的源码、镜像、系统安装包、配置模板和手册。
+- 不需要 GitHub 自动部署工具；交付已校验的源码、平台/基础组件镜像、配置模板和手册。先检查已有 Kubernetes、容器运行时和 NVIDIA 驱动/容器工具，仅补齐实际缺项，不为所有 Ubuntu 版本预制整套系统环境。
 - 只在预留 CPU/内存后开放训练资源；显存预算仍为 PyTorch 软限制。
 
 ## 先做只读检查
@@ -63,7 +63,7 @@ python3 deploy/customer/deployment_plan.py --verify-output /path/to/new-plan
 
 ## 假设与当前限制
 
-- 当前部署入口为 IPv4、单控制节点、linux/amd64；用户要求的 Ubuntu 20.04+ 为适配目标，不等于所有版本已验收。
+- 当前部署入口为 IPv4、单控制节点、linux/amd64；用户指定 Ubuntu 22.04+ 为前置系统范围，不等于所有版本已验收。
 - 示例预留系统 5 核/8 GiB（含五个 Compose 服务）、Kubernetes 1 核/2 GiB，另有 500 MiB 内存驱逐余量；是保守起点，不是甲方硬件容量，也不硬限制系统服务所在 cgroup。客户预检用实测容量判断是否容得下。[资源预留依据](https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/)
 - 首台控制节点保留标准 `control-plane:NoSchedule`，以免自定义暂存污点挡住 CoreDNS；最终只开放指定节点，不全局清除污点。[kubeadm 配置依据](https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/)
 - Metrics Server 继承当前内网的 `--kubelet-insecure-tls` 兼容配置；它跳过 kubelet 服务证书校验，需把 10250 网络访问限制在集群内。不代表关闭 API Server/RBAC 校验；企业要求严格 TLS 时应在后续独立步骤配置受信任 kubelet 证书，不能默默改成公网暴露。
@@ -84,7 +84,7 @@ python3 -m unittest discover -s deploy/customer -p 'test_*.py' -v
 
 ## D2b 还需完成的安装材料
 
-1. 以当前已测试镜像锁和清单**实际导出**离线包；按 Ubuntu 版本分别准备系统依赖，包内包含校验和，禁止静默联网补装。
+1. 以当前已测试镜像锁和清单**实际导出**离线包，包含校验和。Ubuntu 由客户预装；平台运行依赖先检查已装版本，仅按实际缺项和目标系统准备补装材料，禁止静默联网补装。
 2. 新装前确认目录、地址、网段和端口，拒绝复用不属于本项目的 Kubernetes/数据目录。
 3. 安装隔离的运行时并初始化单节点控制面；只对明确选择的节点开放计算，不改现有内网集群的控制节点策略。
 4. 安装网络、Metrics Server、NVIDIA Device Plugin、GPU 监控；生成最小权限后端凭据。
@@ -92,4 +92,4 @@ python3 -m unittest discover -s deploy/customer -p 'test_*.py' -v
 6. 核对 CPU/内存预留、动态硬件、CPU/GPU 训练、推理、重启恢复；新增工作节点时重复镜像/驱动/监控/缓存准备。
 7. 将检查输出、执行命令和结果写入部署记录，再编制最终逐步手册。
 
-Ubuntu 20.04 特别注意内核和 cgroup v2；较新的 Ubuntu 也不能跳过 NVIDIA 驱动与容器工具验证。参见后端 `doc/delivery-sop.md` 的官方来源与支持边界。
+Ubuntu 22.04 及以上仍需核对内核、cgroup v2、NVIDIA 驱动与容器工具；不自动修改系统环境。参见后端 `doc/delivery-sop.md` 的支持边界。

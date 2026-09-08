@@ -79,7 +79,7 @@ def collect_catalog(root):
     return dict(schema_version=1, architecture='linux/amd64', images=images,
                 manifests=manifests, lock_sha256=locks, archives_verified=False,
                 notes=['此清单不包含镜像文件；导出后仍需核对归档校验和、运行别名及摘要。',
-                       '系统 deb 包、驱动包按 Ubuntu 版本另备，不包含用户数据或凭据。',
+                       '不包含 Ubuntu 系统；平台运行依赖及驱动先检查现有安装，缺项按目标版本补齐，不包含用户数据或凭据。',
                        '运行别名中的原仓库名称是本地查找键，不代表安装时需要访问该仓库。'])
 
 

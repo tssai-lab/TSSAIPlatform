@@ -18,7 +18,7 @@ class PreflightTest(unittest.TestCase):
                 'commands': {'docker': True}, 'existing_kubernetes': False}
 
     def test_target_versions_are_not_misrepresented_as_verified(self):
-        for version in ('20.04', '22.04', '24.04', '26.04', '25.10', '28.04'):
+        for version in ('22.04', '24.04', '26.04', '25.10', '28.04'):
             facts = self.baseline()
             facts['os']['VERSION_ID'] = version
             result = assess(facts)
@@ -26,9 +26,9 @@ class PreflightTest(unittest.TestCase):
             self.assertFalse(result['installation_verified'])
             self.assertTrue(result['warnings'])
 
-    def test_20_04_default_old_kernel_and_cgroup_need_preparation(self):
+    def test_supported_os_still_requires_compatible_kernel_and_cgroup(self):
         facts = self.baseline()
-        facts['os']['VERSION_ID'] = '20.04'
+        facts['os']['VERSION_ID'] = '22.04'
         facts['kernel'] = '5.4.0-generic'
         facts['cgroup_v2'] = False
         self.assertEqual(len(assess(facts)['failures']), 2)
@@ -41,7 +41,7 @@ class PreflightTest(unittest.TestCase):
             self.assertEqual(assess(facts)['status'], 'not_ready')
 
     def test_rejects_old_or_unparseable_os(self):
-        for version in ('18.04', '', 'unknown'):
+        for version in ('18.04', '20.04', '22.03', '', 'unknown'):
             facts = self.baseline()
             facts['os']['VERSION_ID'] = version
             self.assertEqual(assess(facts)['status'], 'not_ready')

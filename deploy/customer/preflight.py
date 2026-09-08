@@ -145,9 +145,9 @@ def assess(facts, require_gpu=True):
     os_info = facts.get('os', {})
     version = version_pair(os_info.get('VERSION_ID', ''))
     if facts.get('system') != 'Linux' or os_info.get('ID') != 'ubuntu':
-        failures.append('本交付路径要求 Ubuntu；其他系统不能套用 Ubuntu 离线包。')
-    elif version is None or version < (20, 4):
-        failures.append('Ubuntu 版本无法识别或低于 20.04 支持目标。')
+        failures.append('本交付路径要求已安装 Ubuntu 22.04 及以上；不负责安装操作系统。')
+    elif version is None or version < (22, 4):
+        failures.append('Ubuntu 版本无法识别或低于 22.04 支持目标。')
     else:
         warnings.append('Ubuntu {} 属于适配目标，但本检查不证明该版本已实机验收。'.format(
             os_info.get('VERSION_ID')))
@@ -165,7 +165,7 @@ def assess(facts, require_gpu=True):
     missing = [name for name, available in facts.get('commands', {}).items() if not available
                and (require_gpu or name != 'nvidia-container-runtime')]
     if missing:
-        warnings.append('待由对应 Ubuntu 离线依赖包安装：' + ', '.join(missing))
+        warnings.append('缺少平台运行依赖，需按目标服务器版本补齐（不准备 Ubuntu 系统）：' + ', '.join(missing))
     warnings.append('尚未检查镜像完整性、端口/网段冲突、资源预留、磁盘容量预算和真实训练。')
     return {'status': 'not_ready' if failures else 'basic_compatible',
             'failures': failures, 'warnings': warnings, 'installation_verified': False}
