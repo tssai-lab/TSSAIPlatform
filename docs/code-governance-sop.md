@@ -191,3 +191,52 @@ playwright-cli -s=code-pagination run-code --filename scripts/qa/code-list-pagin
 playwright-cli -s=code-pagination run-code --filename scripts/qa/read-errors-check.js
 playwright-cli -s=code-pagination close
 ```
+
+## G1c：结果对比的任务详情读取失败（已完成本地验证，2026-09-09）
+
+- 身份：`delivery-cleanup-frontend` / `codex/frontend-read-errors` / 起点 `4d546a2`，工作区干净。仅修对比加载回调；不改初始任务目录查询、权限、API、指标计算、训练或部署。
+- A：`TrainingTaskController.detail` 返回 `ApiResponse`，找不到详情可能是业务失败；前端请求层支持 `code` / `success`。详情 `runId` 可缺省，页面已有旧字段 `run_id` 和缺省名称兼容。
+- A：当前回调捕获详情错误后直接跳过，又把空 `data` 补成带 ID 的对象；会把“无法读取”混入“没有运行记录”。页面已要求至少 2 个任务，指标失败已独立计数，部分有效结果可继续展示。
+- A：后端接口允许用训练实验编号查对应版本，响应 ID 可以不同于请求 ID；不能把二者必须相等作为新校验。
+- B：继续保留部分成功；分别统计详情失败、成功但无 Run ID、指标失败。详情失败不得被描述为没有指标；空/错误响应不能据此确认没有 Run。重复选择和同一版本的编号别名不能凑成两个不同任务，依据为现有唯一行键和去重对比池。
+- C：无新增业务决策。不改失败后清空旧对比结果的现有规则，不新增自动重试或请求回退。只读加载的并发改造、目录补全失败、管理员代码查询吞错留在后续范围。
+- 先以真实回调测试复现，再最小修改；验证全部失败、部分失败不足两项、部分成功、无 Run、空/畸形/业务错误响应、旧字段、重复编号及恢复。浏览器使用真实页面的本地隔离响应，不接真实账号或服务器。
+
+### G1c 执行证据与行为对应
+
+| 证据 | 预期—实现—测试 | 结果 |
+| --- | --- | --- |
+| G1c-E01 | `readFailures.test.mjs` 用 TS AST 提取真实 `loadCompareData`，执行实际回调，不复制修复逻辑 | 修改前新增 9 项：1 通过、8 失败；均为真实断言失败，不是环境错误 |
+| G1c-E02 | `src/pages/task/compare/index.tsx` 校验详情包装/标识，分别统计详情失败、无 Run、指标失败；保留部分成功、旧字段及原指标算法 | 新增 10 项全部通过（含复查补充的混合缺项）；覆盖网络/超时、401/403/404/429/500、业务失败、畸形响应、重试、冻结响应对象和重复编号 |
+| G1c-E03 | `scripts/qa/compare-detail-errors-check.js`，真实 React 对比页/服务 + 本地隔离响应 | 26 项断言通过；包含加载中重复点击、延迟返回、全部/部分失败、恢复、空指标、URL 重复编号；图表/表格正常 |
+| G1c-E04 | 重跑前两阶段浏览器脚本 | `code-list-pagination-check.js` 19 项、`read-errors-check.js` 25 项重新通过 |
+| G1c-E05 | `npm test` / `npx --no-install max setup` / `npm run tsc` / `npm run build` | 最终 139/139，零跳过；setup 成功、类型零错误、生产构建成功 |
+
+- 本轮对比页实际操作 7 个控件：A/B/C 三个行选择框、全选框、加载按钮（含原按钮重试/加载中重复点击）、性能指标下拉、训练损失复选框。26 是场景断言数，不冒充 26 个不同按钮。唯一可选指标的打开/选择已测，不宣称测试了不存在的第二个选项。
+- 未执行且不属于本次回调修复：返回列表/返回箭头、高级训练编号加载及清空、对比池加入/清空/删除/跳转、任务目录分页；也未操作任何上传、删除、审批、训练、推理按钮。不把本地 70 项浏览器断言称为全站按钮覆盖率。
+- 截图 `output/playwright/compare-detail-failure.png`、`compare-detail-partial.png` 已查看：分别显示“详情加载失败”及“已加载 2 个任务、另 1 个详情失败”，后者仍有两项表格及图表。截图不进入构建。
+- 构建身份：`dist/index.html` SHA256 `46d905c4f6b1b64f9c6f7d7819878b3b0bc22f5be7723c5229f0454c3f405f6f`；`dist/umi.d31ae30e.js` SHA256 `b38ccac4256ad8c9e0a1e3254336168bc03688186db713af914fd18605ed9114`。
+
+### G1c 反向审查、假设与剩余风险
+
+1. 单独第二轮检查发现：不能用 `runId || run_id` 吞掉非法的 `0/false`；已修正并扩充用例。无 Run、详情失败和指标失败同时出现时，数量分别统计；补充混合用例后最终全量为 139 项。
+2. 兼容事实已对照后端 `TrainingExperimentVersionDto` / 实体（ID、Run ID 均为字符串）与详情 Controller：允许实验编号返回版本 ID，不强制请求/响应 ID 一致。仍兼容旧 `run_id` 及有有效 Run 但缺省 ID 的旧响应；复制对象后补显示名，不修改原响应。
+3. 采用现有部分成功规则：至少两个不同任务有共同指标即可显示，同时提示缺项；不把读失败当作不存在。保留“有效结果不足时清空旧对比”的既有行为，未改为缓存上轮结果，也未改变数据库记录。
+4. 本地夹具拒绝业务写请求，不接真实账号、真实 API、GPU 或服务器。本轮没有推送、触发 Action、改权限、改后端、改环境配置或部署；既有线上训练不受本次操作影响。旧阶段真实只读联调不能冒充新构建线上验收。
+5. 尚未覆盖：加载时切换选择/路由的跨请求竞态、初始目录补全吞错、真实权限身份与真实故障注入、旧服务器联调。建议下一小阶段先治理管理员代码读取失败，再进入 G2/G3 拆分；不自动扩大本轮范围。
+6. 提示沿用既有 `message` 短提示。隔离页面控制台出现 Antd 静态 message 的上下文告警，未出现页面崩溃；没有为了消除告警改主题/消息架构。持续告警及统一消息方式留待 G2，不算本轮已解决。
+7. 规范检查限制：旧 HEAD 页面和当前页面的完整 Biome 检查均因格式基线不能通过；当前产品页独立 lint 检查通过。新增浏览器脚本已整理格式，但 CLI 要求全文为函数表达式，格式化器添加末尾分号会导致入口语法错误，移除分号并复跑 26 项通过。不能宣称全项目格式检查已经清零。
+8. 本轮本地提交不运行会自动整页重排的 Husky 格式化钩子；单独执行 lint、提交信息校验、全部测试、类型及构建，并保留上述未清零项。不修改仓库钩子配置或远端保护规则，不跳过真实测试来放行部署。全页纯格式整理应另立变更，避免把无关差异混入本次修复。
+9. 结论：G1c 功能修复及本地相邻回归通过，可作为有条件发布候选，不等于整个平台交付放行。远端合入前须核对最新增量，部署前仍须确定可接受的短暂停机窗口；本轮只作本地提交。
+
+### G1c 复验入口
+
+```powershell
+node --test --test-name-pattern='对比详情|结果对比' src/services/readFailures.test.mjs
+node scripts/qa/read-errors-harness.mjs
+# 另一个终端：使用已安装的 Playwright CLI
+playwright-cli -s=compare-details open 'http://127.0.0.1:18893/?view=compare'
+playwright-cli -s=compare-details snapshot
+playwright-cli -s=compare-details run-code --filename scripts/qa/compare-detail-errors-check.js
+playwright-cli -s=compare-details close
+```

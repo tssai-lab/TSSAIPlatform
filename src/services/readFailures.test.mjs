@@ -164,7 +164,7 @@ test('本人代码：降级后旧接口报错或缺少列表也不能伪装成�
   }
 });
 
-test('结果对比：真实加载回调区分请求失败、指标为空与成功对比', async () => {
+function compareLoader({ ids = ['a', 'b'], detail, metrics } = {}) {
   // 仅提取页面中真实回调表达式，隔离大页面其它交互；不重写指标汇总算法。
   const path = new URL('../pages/task/compare/index.tsx', import.meta.url);
   const sourceFile = ts.createSourceFile(path.pathname, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -178,23 +178,29 @@ test('结果对比：真实加载回调区分请求失败、指标为空与成�
   const compiled = ts.transpileModule(`exports.load = ${initializer.getText(sourceFile)}`, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
+  const calls = [], detailCalls = [], messages = [], snapshots = [], loading = [];
+  const exports = {};
+  vm.runInNewContext(compiled, {
+    exports, useCallback: fn => fn, selectedRowKeys: ids, taskList: ids.map(id => ({ id, name: id })),
+    MLFLOW_METRIC_KEYS: ['train_loss'],
+    fetchTaskDetail: async id => { detailCalls.push(id); return detail ? detail(id) : { data: { id, name: id, runId: id } }; },
+    fetchMlflowMetricsBulk: async run => { calls.push(run); return metrics ? metrics(run) : { train_loss: [{ step: 0, value: 1 }] }; },
+    setMetricsLoading: value => loading.push(value), setMetricsData: data => snapshots.push(data),
+    message: Object.fromEntries(['info', 'error', 'warning'].map(level => [level, text => messages.push({ level, text })])),
+  });
+  return { load: exports.load, calls, detailCalls, messages, snapshots, loading };
+}
+
+test('结果对比：真实加载回调区分请求失败、指标为空与成功对比', async () => {
   for (const scenario of ['failure', 'empty', 'success', 'partial']) {
-    const calls = [], messages = [], snapshots = [];
     const ids = scenario === 'partial' ? ['a', 'b', 'c'] : ['a', 'b'];
-    const exports = {};
-    vm.runInNewContext(compiled, {
-      exports, useCallback: fn => fn, selectedRowKeys: ids, taskList: ids.map(id => ({ id, name: id })),
-      MLFLOW_METRIC_KEYS: ['train_loss'],
-      fetchTaskDetail: async id => ({ data: { id, name: id, runId: id } }),
-      fetchMlflowMetricsBulk: async run => {
-        calls.push(run);
+    const { load, calls, messages, snapshots } = compareLoader({ ids,
+      metrics: async run => {
         if ((scenario === 'failure' && run === 'b') || (scenario === 'partial' && run === 'c')) throw new Error('offline');
         return { train_loss: scenario === 'empty' ? [] : [{ step: 0, value: 1 }] };
       },
-      setMetricsLoading: () => {}, setMetricsData: data => snapshots.push(data),
-      message: Object.fromEntries(['info', 'error', 'warning'].map(level => [level, text => messages.push({ level, text })])),
     });
-    await exports.load();
+    await load();
     assert.deepEqual(calls, ids);
     if (scenario === 'failure') {
       assert.ok(messages.some(item => item.level === 'error' && /加载失败/.test(item.text)));
@@ -207,6 +213,133 @@ test('结果对比：真实加载回调区分请求失败、指标为空与成�
       if (scenario === 'partial') assert.ok(messages.some(item => /1 个指标拉取失败/.test(item.text)));
     }
   }
+});
+
+test('对比详情：网络、权限和服务错误不误报没有指标', async () => {
+  for (const failure of [new Error('timeout'), ...[401, 403, 404, 429, 500].map(status => ({ response: { status } }))]) {
+    const state = compareLoader({ detail: async () => { throw failure; } });
+    await state.load();
+    assert.ok(state.messages.some(m => m.level === 'error' && /2.*任务详情.*加载失败/.test(m.text)));
+    assert.ok(state.messages.every(m => !/没有可用|没有共同|尚无运行记录/.test(m.text)));
+    assert.equal(state.calls.length, 0, '不绕过失败详情去读列表缓存中的 Run');
+    assert.equal(state.snapshots.at(-1).length, 0);
+    assert.equal(state.loading.at(-1), false);
+  }
+});
+
+test('对比详情：一项失败加一项成功时指出详情失败而非指标不足', async () => {
+  const state = compareLoader({ detail: async id => {
+    if (id === 'b') throw new Error('offline');
+    return { data: { id, runId: id } };
+  } });
+  await state.load();
+  assert.ok(state.messages.some(m => m.level === 'error' && /1.*任务详情.*加载失败/.test(m.text)));
+  assert.deepEqual(state.calls, ['a']);
+  assert.equal(state.snapshots.at(-1).length, 0);
+});
+
+test('对比详情：两项成功一项详情失败仍可对比并明确缺项', async () => {
+  const state = compareLoader({ ids: ['a', 'b', 'c'], detail: async id => {
+    if (id === 'c') throw new Error('offline');
+    return { data: { id, runId: id } };
+  } });
+  await state.load();
+  assert.equal(state.snapshots.at(-1).length, 2);
+  assert.ok(state.messages.some(m => m.level === 'warning' && /1.*任务详情.*加载失败/.test(m.text)));
+  assert.ok(state.messages.every(m => !/无详情或 Run ID/.test(m.text)));
+});
+
+test('对比详情：有效详情没有运行记录时才提示暂无 Run ID', async () => {
+  for (const runId of [undefined, null, '', '   ']) {
+    const state = compareLoader({ detail: async id => ({ success: true, data: { id, runId } }) });
+    await state.load();
+    assert.equal(state.calls.length, 0);
+    assert.ok(state.messages.some(m => /运行记录|Run ID/.test(m.text)));
+    assert.equal(state.messages.filter(m => m.level === 'error').length, 0);
+  }
+});
+
+test('对比详情：一项读取失败加一项无 Run 时优先说明读取失败', async () => {
+  const state = compareLoader({ detail: async id => {
+    if (id === 'a') throw new Error('offline');
+    return { success: true, data: { id, runId: null } };
+  } });
+  await state.load();
+  assert.ok(state.messages.some(m => m.level === 'error' && /任务详情.*加载失败/.test(m.text)));
+  assert.equal(state.calls.length, 0);
+});
+
+test('对比详情：空、畸形和业务失败响应不是无指标的证据', async () => {
+  for (const response of [null, {}, { data: null }, { data: [] }, { data: {} }, { data: 'bad' },
+    { data: { unexpected: true } }, { success: false, data: { id: 'a', runId: 'a' } },
+    { code: 403, data: { id: 'a', runId: 'a' } }, { data: { id: 'a', runId: 123 } },
+    { data: { id: 'a', run_id: {} } }, { data: { id: 'a', runId: 0 } },
+    { data: { id: 'a', runId: false } }, { data: { id: {}, runId: 'a' } },
+    { data: { id: '   ' } },
+  ]) {
+    const state = compareLoader({ detail: async () => response });
+    await state.load();
+    assert.ok(state.messages.some(m => m.level === 'error' && /任务详情.*加载失败/.test(m.text)), JSON.stringify(response));
+    assert.equal(state.calls.length, 0);
+  }
+});
+
+test('对比详情：保留旧 run_id 与实验编号兼容，不修改原始响应', async () => {
+  const data = new Map(['a', 'b'].map(id => [id, Object.freeze({ id: `version-${id}`, run_id: ` run-${id} ` })]));
+  const state = compareLoader({ detail: async id => ({ code: 200, data: data.get(id) }) });
+  await state.load();
+  assert.deepEqual(state.calls, ['run-a', 'run-b']);
+  assert.equal(state.snapshots.at(-1).length, 2);
+  assert.equal(data.get('a').name, undefined);
+  const legacy = compareLoader({ detail: async id => ({ data: { run_id: id } }) });
+  await legacy.load();
+  assert.deepEqual(legacy.calls, ['a', 'b'], '保留可读旧 Run 的缺省 ID 兼容');
+});
+
+test('对比详情：重复编号不能凑成两个不同任务', async () => {
+  const duplicate = compareLoader({ ids: ['a', 'a'] });
+  await duplicate.load();
+  assert.equal(duplicate.detailCalls.length, 0);
+  assert.equal(duplicate.calls.length, 0);
+  const alias = compareLoader({ ids: ['a', 'exp-a'], detail: async () => ({ data: { id: 'a', runId: 'run-a' } }) });
+  await alias.load();
+  assert.equal(alias.snapshots.at(-1).length, 0, '同一版本的实验编号别名仍是同一任务');
+});
+
+test('对比详情：重试恢复后不继承上轮失败计数；成功空指标保持原判断', async () => {
+  let fail = true;
+  const state = compareLoader({ detail: async id => {
+    if (fail) throw new Error('offline');
+    return { data: { id, runId: id } };
+  } });
+  await state.load();
+  state.messages.length = 0;
+  fail = false;
+  await state.load();
+  assert.equal(state.snapshots.at(-1).length, 2);
+  assert.equal(state.messages.length, 0);
+  const empty = compareLoader({ metrics: async () => ({ train_loss: [] }) });
+  await empty.load();
+  assert.ok(empty.messages.some(m => /没有共同核心指标/.test(m.text)));
+});
+
+test('对比详情：多类缺项同时存在时分别计数，不把无 Run 算成详情失败', async () => {
+  const state = compareLoader({
+    ids: ['a', 'b', 'no-run', 'detail-error', 'metric-error'],
+    detail: async id => {
+      if (id === 'detail-error') throw new Error('detail unavailable');
+      return { data: { id, runId: id === 'no-run' ? undefined : id } };
+    },
+    metrics: async id => {
+      if (id === 'metric-error') throw new Error('metrics unavailable');
+      return { train_loss: [{ step: 0, value: 1 }] };
+    },
+  });
+  await state.load();
+  assert.equal(state.snapshots.at(-1).length, 2);
+  assert.deepEqual(state.calls, ['a', 'b', 'metric-error']);
+  assert.ok(state.messages.some(m => m.level === 'info' && /1 个任务尚无运行记录/.test(m.text)));
+  assert.ok(state.messages.some(m => m.level === 'warning' && /1 个任务详情加载失败.*1 个指标拉取失败/.test(m.text)));
 });
 
 // 执行页面原有请求回调与排序函数，避免测试里复制一份已修正的筛选/计数逻辑。

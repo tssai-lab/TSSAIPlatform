@@ -18,8 +18,10 @@ const result = await build({
     import { createRoot } from 'react-dom/client';
     import Metrics from './src/components/TrainingMetricsPanel';
     import CodeList from './src/pages/task/trainingCode/list';
+    import TaskCompare from './src/pages/task/compare';
     window.__qa = {
       metrics: 'success', code: 'success', calls: [], held: [],
+      compare: {}, detailCalls: [],
       release() { this.held.splice(0).forEach(resolve => resolve()); },
     };
     function Harness() {
@@ -35,7 +37,10 @@ const result = await build({
         <section id="code-list"><CodeList/></section>
       </main>;
     }
-    createRoot(document.getElementById('root')).render(<React.StrictMode><Harness/></React.StrictMode>);
+    const compareView = new URLSearchParams(location.search).get('view') === 'compare';
+    createRoot(document.getElementById('root')).render(<React.StrictMode>{compareView
+      ? <main style={{padding:24}}><h1>本地对比测试（无真实后端连接）</h1><TaskCompare/></main>
+      : <Harness/>}</React.StrictMode>);
   `, resolveDir: root, loader: 'jsx' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
   define: { 'process.env.NODE_ENV': '"development"', 'process.env.REACT_APP_MLFLOW_BASE_PATH': '"/qa-metrics"' },
@@ -46,20 +51,45 @@ const result = await build({
       builder.onResolve({ filter: /^@\/services\/platform$/ }, () => ({ path: 'platform', namespace: 'qa' }));
       builder.onResolve({ filter: /^@\// }, args => builder.resolve(path.resolve(root, 'src', args.path.slice(2)), { resolveDir: root, kind: args.kind }));
       builder.onLoad({ filter: /^platform$/, namespace: 'qa' }, () => ({
-        contents: `export * from './src/services/code'; export * from './src/services/mlflow';`, resolveDir: root,
+        contents: `export * from './src/services/code'; export * from './src/services/mlflow'; export * from './src/services/task';`, resolveDir: root,
       }));
       builder.onLoad({ filter: /^umi$/, namespace: 'qa' }, () => ({
         contents: `
+          const search = new URLSearchParams(location.search);
+          export const useSearchParams = () => [search];
           export const useAccess = () => ({isAdmin: false});
           export const history = {push: () => {throw new Error('夹具禁止业务导航');}};
           export async function request(url, options = {}) {
             if (options.method && options.method !== 'GET') throw new Error('夹具禁止写接口');
             const qa = window.__qa;
             qa.calls.push(url);
+            const tasks = ['a', 'b', 'c'].map(id => ({id, name:'任务 ' + id.toUpperCase(),
+              modelId:'model', datasetId:'dataset', modelName:'测试模型', datasetName:'测试数据集',
+              status:'success', createTime:'2026-09-09T00:00:00Z'}));
+            if (url === '/task/list') return {success:true, data:{data:tasks, total:tasks.length}};
+            if (url === '/task/detail') {
+              const id = options.params.id;
+              qa.detailCalls.push(id);
+              const mode = qa.compare[id];
+              if (mode === 'error') throw new Error('测试任务详情读取失败');
+              if (mode === 'held') await new Promise(resolve => qa.held.push(resolve));
+              if (mode === 'invalid') return {success:true, data:{}};
+              if (mode === 'business-error') return {success:false, data:null};
+              return {success:true, data:{...tasks.find(t => t.id === id),
+                runId: mode === 'no-run' ? undefined : id}};
+            }
             if (url.startsWith('/qa-metrics')) {
               const mode = qa.metrics;
               const parsed = new URL(url, location.origin);
               const run = parsed.searchParams.get('run_id');
+              if (search.get('view') === 'compare') {
+                if (qa.compare[run] === 'metrics-error') throw new Error('测试对比指标读取失败');
+                if (qa.compare[run] === 'empty') return {metrics:[]};
+                const key = parsed.searchParams.get('metric_key');
+                if (key === 'train_loss') return {metrics:[{step:0,value:2},{step:1,value:run === 'a' ? 1 : 0.5}]};
+                if (key === 'val_accuracy') return {metrics:[{step:0,value:run === 'a' ? 0.8 : 0.9}]};
+                return {metrics:[]};
+              }
               if (mode === 'held') await new Promise(resolve => qa.held.push(resolve));
               // 故意允许已取消的迟到响应，检验页面防串数据，而不只依赖网络取消。
               if (mode === 'error') throw new Error('测试指标服务不可用');
