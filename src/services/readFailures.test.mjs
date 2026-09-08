@@ -208,3 +208,122 @@ test('结果对比：真实加载回调区分请求失败、指标为空与成�
     }
   }
 });
+
+// 执行页面原有请求回调与排序函数，避免测试里复制一份已修正的筛选/计数逻辑。
+function ownerListRequest(fetchInventory) {
+  const path = new URL('../pages/task/trainingCode/list/index.tsx', import.meta.url);
+  const source = readFileSync(path, 'utf8');
+  const sourceFile = ts.createSourceFile(path.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const helpers = [], notices = [], requests = [];
+  let initializer;
+  const visit = node => {
+    if (ts.isFunctionDeclaration(node) && ['getCodeUploadedAt', 'compareUploadedAtDesc'].includes(node.name?.text)) {
+      helpers.push(node.getText(sourceFile));
+    }
+    if (ts.isVariableDeclaration(node) && node.name.getText(sourceFile) === 'requestList') initializer = node.initializer;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  assert.ok(initializer, '必须找到页面的真实列表请求回调');
+  assert.equal(helpers.length, 2, '必须执行页面的真实排序函数');
+  const compiled = ts.transpileModule(`${helpers.join('\n')}\nexports.request = ${initializer.getText(sourceFile)}`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const exports = {};
+  vm.runInNewContext(compiled, {
+    exports, listRequestSequence: { current: 0 }, setListNotice: notice => notices.push(notice),
+    fetchOwnerCodeVersionInventory: async options => { requests.push(options); return fetchInventory(); },
+    getCodeUserDisplayName: inventory().getCodeUserDisplayName,
+    getApiErrorMessage: (error, fallback) => error.message || fallback,
+  });
+  return { request: exports.request, notices, requests };
+}
+
+const ownerRows = (count, matches) => Array.from({ length: count }, (_, index) => ({
+  codeVersionId: `version-${String(index).padStart(2, '0')}`,
+  codeName: index < matches ? `MiniRBT ${index}` : `YOLO ${index}`,
+  fileName: `train-${index}.zip`, createdAt: `2026-09-${String(index + 1).padStart(2, '0')}`,
+}));
+
+test('本人列表分页：名称筛选 7 条时总数是 7，不是服务返回的 16', async () => {
+  const rows = ownerRows(16, 7);
+  const before = JSON.stringify(rows);
+  const list = ownerListRequest(async () => ({ success: true, data: rows, total: 16 }));
+  const result = await list.request({ codeAssetName: 'MiniRBT', current: 1, pageSize: 10 });
+  assert.equal(result.data.length, 7);
+  assert.equal(result.total, 7);
+  assert.equal(result.data[0].codeVersionId, 'version-06', '保持最新上传在前');
+  assert.equal(JSON.stringify(rows), before, '不原地修改服务数组');
+  assert.equal(list.requests.length, 1, '不新增计数接口或重复请求');
+});
+
+test('本人列表分页：文件名匹配忽略大小写和查询首尾空格', async () => {
+  const list = ownerListRequest(async () => ({ success: true, data: ownerRows(16, 7), total: 16 }));
+  const result = await list.request({ codeAssetName: '  TRAIN-15.ZIP  ' });
+  assert.equal(result.data[0].codeVersionId, 'version-15');
+  assert.equal(result.total, 1);
+});
+
+test('本人列表分页：零匹配和空显示字段均返回真实零条数', async () => {
+  const list = ownerListRequest(async () => ({ success: true, data: [
+    ...ownerRows(16, 7), { codeVersionId: 'missing', codeName: null, fileName: null },
+  ], total: 17 }));
+  const result = await list.request({ codeAssetName: '不存在的名称' });
+  assert.equal(result.success, true);
+  assert.equal(result.data.length, 0);
+  assert.equal(result.total, 0);
+  assert.equal(list.notices.at(-1), undefined, '零匹配不是读取失败');
+});
+
+test('本人列表分页：空查询和重置恢复完整总数', async () => {
+  const list = ownerListRequest(async () => ({ success: true, data: ownerRows(16, 7), total: 16 }));
+  await list.request({ codeAssetName: 'MiniRBT' });
+  for (const keyword of [undefined, '', '   ']) {
+    const result = await list.request({ codeAssetName: keyword });
+    assert.equal(result.data.length, 16);
+    assert.equal(result.total, 16);
+  }
+});
+
+test('本人列表分页：第二页仍返回完整匹配数组，避免重复分页截断', async () => {
+  const list = ownerListRequest(async () => ({ success: true, data: ownerRows(23, 12), total: 23 }));
+  const result = await list.request({ codeAssetName: 'MiniRBT', current: 2, pageSize: 10 });
+  assert.equal(result.data.length, 12, '切片交给表格；回调不再截成第二页 2 条');
+  assert.equal(result.total, 12);
+});
+
+test('本人列表分页：部分失败的匹配条数不冒充完整资产数且保留告警', async () => {
+  const list = ownerListRequest(async () => ({
+    success: true, data: ownerRows(9, 4), total: 9, incomplete: true, warningMessage: '部分版本列表加载失败',
+  }));
+  const result = await list.request({ codeAssetName: 'MiniRBT' });
+  assert.equal(result.total, 4);
+  assert.equal(list.notices.at(-1).type, 'warning');
+  assert.match(list.notices.at(-1).text, /部分版本列表加载失败/);
+});
+
+test('本人列表分页：空资产集仍是正常零条，不提示故障', async () => {
+  const list = ownerListRequest(async () => ({ success: true, data: [], total: 0 }));
+  const result = await list.request({});
+  assert.equal(result.success, true);
+  assert.equal(result.total, 0);
+  assert.equal(list.notices.at(-1), undefined);
+});
+
+test('本人列表分页：请求失败仍标记 success=false，重试成功清除错误', async () => {
+  let state = 'success';
+  const list = ownerListRequest(async () => {
+    if (state === 'exception') throw new Error('网络不可用');
+    if (state === 'business') return { success: false, errorMessage: '读取被拒绝', data: [] };
+    return { success: true, data: ownerRows(16, 7), total: 16 };
+  });
+  await list.request({});
+  for (state of ['exception', 'business']) {
+    const result = await list.request({});
+    assert.equal(result.success, false, '表格依此保留上次成功结果');
+    assert.equal(list.notices.at(-1).type, 'error');
+  }
+  state = 'success';
+  assert.equal((await list.request({})).total, 16);
+  assert.equal(list.notices.at(-1), undefined);
+});

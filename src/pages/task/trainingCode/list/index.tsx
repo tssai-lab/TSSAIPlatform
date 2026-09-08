@@ -136,7 +136,8 @@ const TrainingCodeList: React.FC = () => {
       return {
         data: list,
         success: true,
-        total: res?.total ?? list.length,
+        // 本页在完整清单上筛选并由表格分页；不能沿用筛选前的服务层总数。
+        total: list.length,
       };
     } catch (error: any) {
       if (sequence === listRequestSequence.current) {

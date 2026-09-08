@@ -69,7 +69,18 @@ const result = await build({
             }
             if (url === '/v2/code-assets') {
               if (qa.code === 'error') throw new Error('测试代码接口不可用');
+              if (qa.code === 'many' || qa.code === 'many-partial') return Array.from({length: 23}, (_, index) => ({
+                id: 'page-' + String(index).padStart(2, '0'),
+                name: (index < 12 ? 'MiniRBT ' : 'YOLO ') + String(index).padStart(2, '0'),
+              }));
               return qa.code === 'empty' ? [] : [{id:'a',name:'代码 A'}, {id:'b',name:'代码 B'}];
+            }
+            const paged = url.match(new RegExp('^/v2/code-assets/(page-[0-9]{2})/versions$'));
+            if (paged) {
+              if (qa.code === 'many-partial' && paged[1] === 'page-11') throw new Error('测试部分版本失败');
+              return [{id:'version-' + paged[1], codeAssetId:paged[1], version:1,
+                fileName: 'train-' + paged[1] + '.zip', createdAt: '2026-09-' + String(Number(paged[1].slice(5)) + 1).padStart(2, '0'),
+                trainingProfile:'cv', approvalStatus:'APPROVED', status:'READY', validationStatus:'VALID', riskLevel:'LOW'}];
             }
             const match = url.match(new RegExp('^/v2/code-assets/([ab])/versions$'));
             if (match) {
