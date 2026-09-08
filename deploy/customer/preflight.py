@@ -73,6 +73,13 @@ def collect(data_path):
                             '--format=csv,noheader,nounits'])
     tools = {name: bool(shutil.which(name)) for name in
              ('docker', 'containerd', 'kubeadm', 'kubelet', 'kubectl', 'nvidia-container-runtime')}
+    addresses_text = run_readonly(['ip', '-j', '-4', 'address', 'show', 'scope', 'global'])
+    ports_text = run_readonly(['ss', '-H', '-lntu'])
+    try:
+        addresses = [entry['local'] for interface in json.loads(addresses_text)
+                     for entry in interface.get('addr_info', []) if entry.get('family') == 'inet']
+    except (ValueError, TypeError, KeyError):
+        addresses = None
     return {
         'system': platform.system(), 'os': system, 'architecture': platform.machine(),
         'kernel': platform.release(), 'cgroup_v2': Path('/sys/fs/cgroup/cgroup.controllers').is_file(),
@@ -81,12 +88,57 @@ def collect(data_path):
         'data_filesystem_free_bytes': shutil.disk_usage(target).free,
         'root_filesystem_free_bytes': shutil.disk_usage(Path('/')).free,
         'gpu_summary': gpu_text.splitlines() if gpu_text else [], 'commands': tools,
+        'host_ipv4_addresses': addresses,
+        'listening_ports': parse_listening_ports(ports_text),
         'existing_kubernetes': Path('/etc/kubernetes/admin.conf').exists()
         or Path('/etc/kubernetes/kubelet.conf').exists(),
     }
 
 
-def assess(facts):
+def parse_listening_ports(text):
+    if text is None:
+        return None
+    ports = set()
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or not fields[4].rsplit(':', 1)[-1].isdigit():
+            return None  # 无法理解现场输出时不把它解释为“无端口占用”。
+        ports.add(int(fields[4].rsplit(':', 1)[-1]))
+    return sorted(ports)
+
+
+def assess_configuration(facts, config):
+    """将用户填写的部署计划与本机事实核对，不把计划里的容量当作硬件事实。"""
+    failures = []
+    if facts.get('host_ipv4_addresses') is None or config['node_ip'] not in facts['host_ipv4_addresses']:
+        failures.append('计划节点 IP 不属于本机或未能读取实际地址。')
+    reserved = config['reserved']
+    cpu = facts.get('cpu_logical_cores')
+    memory = facts.get('memory_bytes', {}).get('MemTotal')
+    if not cpu or cpu * 1000 <= reserved['system_cpu_millis'] + reserved['kube_cpu_millis']:
+        failures.append('实际 CPU 不足以满足资源预留并留给 Pod 使用。')
+    reserved_mib = reserved['system_memory_mib'] + reserved['kube_memory_mib'] + 500
+    if not memory or memory <= reserved_mib * 1024 * 1024:
+        failures.append('实际内存不足以满足系统/Kubernetes/驱逐预留并留给 Pod 使用。')
+    ports = facts.get('listening_ports')
+    if ports is None:
+        failures.append('无法读取监听端口，不能证明安装端口空闲。')
+    else:
+        needed = {10250}
+        if config['role'] == 'control-compute':
+            needed.update(config['ports'].values())
+            needed.update({2379, 2380, int(config['control_plane_endpoint'].split(':')[1])})
+        if config['gpu_enabled']:
+            needed.add(9400)
+        conflicts = needed.intersection(ports)
+        if conflicts:
+            failures.append('计划端口已被占用：' + ', '.join(map(str, sorted(conflicts))))
+    if config['data_root'] != facts.get('data_path'):
+        failures.append('检查的数据目录与配置不一致。')
+    return failures
+
+
+def assess(facts, require_gpu=True):
     """目标是发现准备工作，不把未装依赖或未做功能验收伪装成可交付。"""
     failures = []
     warnings = []
@@ -106,11 +158,12 @@ def assess(facts):
         failures.append('当前 cgroup v2 路径要求 Linux 内核至少 5.8；先规划内核准备，不自动升级。')
     if facts.get('cgroup_v2') is not True:
         failures.append('尚未启用 cgroup v2；需按系统版本准备并在获准重启后复查。')
-    if not facts.get('gpu_summary'):
+    if require_gpu and not facts.get('gpu_summary'):
         failures.append('NVIDIA 驱动未能报告 GPU；需准备或修复驱动，不能证明 GPU 可用于训练。')
     if facts.get('existing_kubernetes'):
         failures.append('发现已有 Kubernetes 配置；先确认归属，不可作为空机初始化。')
-    missing = [name for name, available in facts.get('commands', {}).items() if not available]
+    missing = [name for name, available in facts.get('commands', {}).items() if not available
+               and (require_gpu or name != 'nvidia-container-runtime')]
     if missing:
         warnings.append('待由对应 Ubuntu 离线依赖包安装：' + ', '.join(missing))
     warnings.append('尚未检查镜像完整性、端口/网段冲突、资源预留、磁盘容量预算和真实训练。')
@@ -120,11 +173,23 @@ def assess(facts):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-path', required=True, help='计划使用的项目数据绝对路径；不会创建目录')
+    parser.add_argument('--data-path', help='计划使用的项目数据绝对路径；不会创建目录')
+    parser.add_argument('--config', help='客户节点 JSON 配置；额外核对实际地址、端口和资源预留')
     args = parser.parse_args()
+    if not args.data_path and not args.config:
+        parser.error('至少提供 --data-path 或 --config')
     try:
-        facts = collect(args.data_path)
-        result = dict(facts=facts, assessment=assess(facts))
+        config = None
+        if args.config:
+            from deployment_plan import load_config
+            config = load_config(args.config)
+        facts = collect(args.data_path or config['data_root'])
+        assessment = assess(facts, require_gpu=config['gpu_enabled'] if config else True)
+        if config:
+            assessment['failures'].extend(assess_configuration(facts, config))
+            if assessment['failures']:
+                assessment['status'] = 'not_ready'
+        result = dict(facts=facts, assessment=assessment)
     except (OSError, ValueError) as exc:
         print(json.dumps({'error': str(exc), 'installation_verified': False}, ensure_ascii=False))
         return 2

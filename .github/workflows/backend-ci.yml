@@ -89,8 +89,10 @@ jobs:
       - name: Run deployment validation contract tests
         run: bash deploy/scripts/tests/test-tss-node-validation.sh
 
-      - name: Run customer read-only preflight tests
-        run: python3 -m unittest discover -s deploy/customer -p 'test_*.py' -v
+      - name: Run customer preflight and configuration tests
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.3'
+          python3 -m unittest discover -s deploy/customer -p 'test_*.py' -v
 
       - name: Run isolated internal deployment contract tests
         run: |

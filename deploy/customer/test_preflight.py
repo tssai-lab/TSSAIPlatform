@@ -6,7 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from preflight import assess, nearest_existing_directory, read_os_release, run_readonly, version_pair
+from preflight import (assess, assess_configuration, nearest_existing_directory, parse_listening_ports,
+                       read_os_release, run_readonly, version_pair)
 
 
 class PreflightTest(unittest.TestCase):
@@ -103,6 +104,38 @@ class PreflightTest(unittest.TestCase):
     def test_preflight_source_uses_python_38_syntax(self):
         source = Path(__file__).with_name('preflight.py').read_text(encoding='utf-8')
         ast.parse(source, feature_version=(3, 8))
+
+    def test_port_parser_distinguishes_empty_from_unavailable_and_handles_ipv6(self):
+        self.assertEqual(parse_listening_ports(''), [])
+        self.assertIsNone(parse_listening_ports(None))
+        self.assertIsNone(parse_listening_ports('unexpected'))
+        self.assertEqual(parse_listening_ports('tcp LISTEN 0 128 [::]:22 [::]:*\n'
+                                               'udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:*'), [22, 53])
+
+    def test_cpu_worker_does_not_require_a_gpu_or_nvidia_runtime(self):
+        facts = self.baseline()
+        facts['gpu_summary'] = []
+        facts['commands']['nvidia-container-runtime'] = False
+        result = assess(facts, require_gpu=False)
+        self.assertEqual(result['status'], 'basic_compatible')
+        self.assertFalse(any('nvidia-container-runtime' in warning for warning in result['warnings']))
+        self.assertEqual(assess(facts)['status'], 'not_ready')
+
+    def test_plan_checks_real_capacity_ip_ports_and_actual_data_path(self):
+        import json
+        config = json.loads(Path(__file__).with_name('node.example.json').read_text())
+        facts = {'host_ipv4_addresses': [config['node_ip']], 'cpu_logical_cores': 16,
+                 'memory_bytes': {'MemTotal': 32 * 1024 ** 3},
+                 'listening_ports': [22], 'data_path': config['data_root']}
+        self.assertEqual(assess_configuration(facts, config), [])
+        for key, value in (('host_ipv4_addresses', []), ('cpu_logical_cores', 6),
+                           ('memory_bytes', {'MemTotal': 8 * 1024 ** 3}),
+                           ('listening_ports', [18081]), ('listening_ports', None),
+                           ('data_path', '/other/project')):
+            with self.subTest(key=key, value=value):
+                changed = deepcopy(facts)
+                changed[key] = value
+                self.assertTrue(assess_configuration(changed, config))
 
 
 if __name__ == '__main__':
