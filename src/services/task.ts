@@ -36,15 +36,8 @@ export async function fetchTaskDetail(id: string, options?: { [key: string]: any
   );
 }
 
-/** 图文一致性训练演示固定参数（后端种子资产） */
-export const CONSISTENCY_DEMO_PARAMS = {
-  trainingProfile: 'image_text_consistency_fusion_logreg',
-  codeVersionId: 'code-ver-consistency-test-v1',
-  datasetVersionId: 'dataset-ver-consistency-test-data-v1',
-  hyperParams: {} as Record<string, unknown>,
-};
-
-export const CONSISTENCY_TRAINING_PROFILE = CONSISTENCY_DEMO_PARAMS.trainingProfile;
+/** 历史图文一致性方案标识；真实代码和数据集版本仍由用户选择，不绑定种子资产。 */
+export const CONSISTENCY_TRAINING_PROFILE = 'image_text_consistency_fusion_logreg';
 
 /** 发起训练任务（会自动生成 experimentId，并创建 versionNo=1） */
 export async function createTask(
@@ -82,14 +75,6 @@ export async function createTask(
   );
 }
 
-/** 图文一致性训练演示：固定 profile + 种子 code/dataset 版本 */
-export async function createConsistencyTask(
-  body: { name?: string },
-  options?: { [key: string]: any },
-) {
-  return createTask({ ...CONSISTENCY_DEMO_PARAMS, name: body.name }, options);
-}
-
 /** 使用上传得到的 code/dataset 版本发起 profile 训练 */
 export async function createProfileTrainingTask(
   params: {
@@ -105,7 +90,7 @@ export async function createProfileTrainingTask(
   return createTask(
     {
       name: params.name,
-      trainingProfile: params.trainingProfile || CONSISTENCY_DEMO_PARAMS.trainingProfile,
+      trainingProfile: params.trainingProfile || CONSISTENCY_TRAINING_PROFILE,
       codeVersionId: params.codeVersionId,
       datasetVersionId: params.datasetVersionId,
       hyperParams: params.hyperParams ?? {},

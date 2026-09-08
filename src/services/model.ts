@@ -1,5 +1,6 @@
 import { request } from '@umijs/max';
 import { downloadAuthFile } from '@/utils/authFileDownload';
+import { isLegacyEndpointUnavailable } from '@/utils/apiCompatibility.mjs';
 import { collectPaginatedCandidates } from './paginatedCandidates.mjs';
 
 export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
@@ -230,7 +231,7 @@ function normalizeV2ModelUploadComplete(raw: unknown): BackendModelItem | null {
 
 /**
  * 初始化或恢复模型分片上传。
- * 优先 V2 `/v2/model-uploads/init`（业务字段在 init 写入会话），失败回退 Legacy。
+ * 优先 V2（业务字段在 init 写入会话），仅接口不支持时兼容 Legacy。
  */
 export async function modelUploadInit(
   params: API.ModelUploadInitParams,
@@ -261,8 +262,9 @@ export async function modelUploadInit(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型上传回执缺少 uploadId，请查询上传状态后再操作');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   return request<{ data: API.ModelUploadInitResult }>('/model/upload/init', {
@@ -279,7 +281,7 @@ export async function modelUploadInit(
   });
 }
 
-/** 上传模型分片；优先 V2 chunks，失败回退 Legacy */
+/** 上传模型分片；仅 V2 接口不支持时兼容旧接口，不重放结果不明的请求。 */
 export async function modelUploadChunk(
   uploadId: string,
   partIndex: number,
@@ -303,8 +305,9 @@ export async function modelUploadChunk(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型分片回执缺少 uploadId，请查询上传状态后再操作');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   const formData = new FormData();
@@ -318,7 +321,7 @@ export async function modelUploadChunk(
   });
 }
 
-/** 查询模型上传进度；优先 V2 GET，失败回退 Legacy */
+/** 查询模型上传进度；仅 V2 接口不支持时兼容旧接口。 */
 export async function modelUploadProgress(
   uploadId: string,
   options?: { [key: string]: any },
@@ -336,8 +339,9 @@ export async function modelUploadProgress(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型进度回执缺少 uploadId，请确认服务端响应');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   return request<{ data: API.ModelUploadInitResult }>('/model/upload/progress', {
@@ -349,7 +353,8 @@ export async function modelUploadProgress(
 
 /**
  * 完成模型上传。
- * 优先 V2 complete（仅 uploadId）；失败回退 Legacy complete（带业务字段）。
+ * 优先 V2 complete（仅 uploadId）；仅接口不支持时兼容 Legacy（带业务字段）。
+ * 服务端可能已完成入库，回执异常或超时不能再次提交到另一个接口。
  */
 export async function modelUploadComplete(
   params: API.ModelUploadCompleteParams,
@@ -370,8 +375,9 @@ export async function modelUploadComplete(
     if (completed?.id) {
       return { data: completed };
     }
-  } catch {
-    // fall through
+    throw new Error('模型完成回执缺少版本 ID，请先在模型列表确认是否已保存');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   return request<{ data: BackendModelItem }>('/model/upload/complete', {
@@ -587,7 +593,7 @@ export async function deleteModelAsset(id: string, options?: { [key: string]: un
   });
 }
 
-/** PUT /api/v2/model-assets/{assetId}/current-version（正式）；失败回退兼容路径 */
+/** 切换当前版本；仅新接口不支持时走兼容路径，保留业务冲突和权限错误。 */
 export async function switchModelCurrentVersion(
   assetId: string,
   versionId: string,
@@ -604,7 +610,8 @@ export async function switchModelCurrentVersion(
         ...(options || {}),
       },
     );
-  } catch {
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
     return request<{ success?: boolean; data?: unknown }>(
       `/model-assets/${encodeURIComponent(assetId)}/current-version`,
       {

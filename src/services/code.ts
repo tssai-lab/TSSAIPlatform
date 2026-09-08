@@ -2,6 +2,7 @@
  * 代码资产上传 Service
  */
 import { request } from '@umijs/max';
+import { isLegacyEndpointUnavailable } from '@/utils/apiCompatibility.mjs';
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import { downloadAuthFile } from '@/utils/authFileDownload';
 import {
@@ -741,25 +742,28 @@ export async function decideCodeVersion(
     throw new Error('无法获取审核任务详情，请确认版本仍在待审队列中');
   }
 
-  // APPROVE：管理员详情不可用时尝试 V2（无 expected*）再回退 legacy
+  // 只有旧后端不提供详情接口时才走兼容路径；不能绕过权限、风险证据或服务故障。
+  if (detailError && !isLegacyEndpointUnavailable(detailError)) throw detailError;
+  if (!detailError) throw new Error('审批详情响应为空，请确认服务端状态后再操作');
   try {
     const body: { decision: 'APPROVE'; reason?: string } = { decision: 'APPROVE' };
     if (reason?.trim()) body.reason = reason.trim();
     const data = await approveV2CodeVersion(codeVersionId, body, options);
     return mapApprovalResult(data as Record<string, unknown>);
-  } catch {
-  return request<{
-    success: boolean;
-    data: CodeVersionApprovalResult;
-    errorMessage?: string;
-  }>(`/code/version/${encodeURIComponent(codeVersionId)}/approve`, {
-    method: 'POST',
-    ...(options || {}),
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
+    return request<{
+      success: boolean;
+      data: CodeVersionApprovalResult;
+      errorMessage?: string;
+    }>(`/code/version/${encodeURIComponent(codeVersionId)}/approve`, {
+      method: 'POST',
+      ...(options || {}),
     });
   }
 }
 
-/** 管理员审核通过训练代码版本（优先 V2 审批证据，失败回退 legacy approve） */
+/** 管理员审核通过训练代码版本（优先 V2 审批证据，仅接口不支持时兼容旧审批）。 */
 export async function approveCodeVersion(
   codeVersionId: string,
   options?: { [key: string]: any },

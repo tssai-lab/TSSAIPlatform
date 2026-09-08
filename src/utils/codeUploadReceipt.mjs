@@ -1,3 +1,5 @@
+import { isLegacyEndpointUnavailable } from './apiCompatibility.mjs';
+
 function nonBlank(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -54,8 +56,5 @@ export function persistSuccessfulCodeUpload(response, metadata, persist) {
  * persisted the asset, so replaying the ZIP could create a duplicate.
  */
 export function shouldFallbackToLegacyCodeUpload(error) {
-  const status = Number(
-    error?.response?.status ?? error?.info?.status ?? error?.status,
-  );
-  return status === 404 || status === 405 || status === 501;
+  return isLegacyEndpointUnavailable(error);
 }
