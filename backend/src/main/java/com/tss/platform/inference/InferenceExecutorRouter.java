@@ -17,6 +17,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 推理提交与恢复入口；通过数据库条件更新领取某次 attempt，防止重复提交和旧请求覆盖重试。
+ * 当前推理只路由到 Kubernetes 执行器；环境不可用时记录失败，不静默改成本地推理。
+ */
 @Service
 public class InferenceExecutorRouter implements InferenceExecutor {
 
@@ -68,6 +72,7 @@ public class InferenceExecutorRouter implements InferenceExecutor {
         start(taskId, attempt);
     }
 
+    /** 先提交领取状态，再调用外部 Kubernetes；远程调用不占用数据库长事务。 */
     public void start(String taskId, Integer attempt) {
         int safeAttempt = Math.max(attempt == null ? 1 : attempt, 1);
         Integer claimed = transactionTemplate.execute(tx ->
@@ -112,6 +117,7 @@ public class InferenceExecutorRouter implements InferenceExecutor {
         }
     }
 
+    /** 恢复长时间未提交的记录；沿用原 attempt，由执行器核对该次任务，不新建业务重试。 */
     @Scheduled(fixedDelayString = "${tss.inference.recovery-delay-ms:30000}")
     public void recoverStaleSubmissions() {
         Instant staleBefore = Instant.now().minus(STALE_SUBMISSION_AGE);
@@ -139,6 +145,7 @@ public class InferenceExecutorRouter implements InferenceExecutor {
         }
     }
 
+    /** 只更新仍属于本次 attempt 的非终态记录，防止延迟失败覆盖已成功/停止的新状态。 */
     private void markFailed(String taskId, Integer attempt, String message) {
         transactionTemplate.executeWithoutResult(tx -> taskRepository.findByIdForUpdate(taskId).ifPresent(task -> {
             int currentAttempt = Math.max(task.getCurrentAttempt() == null ? 1 : task.getCurrentAttempt(), 1);

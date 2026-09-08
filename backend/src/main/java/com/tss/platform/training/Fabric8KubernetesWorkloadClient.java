@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/** Fabric8 implementation of the restricted training Job control surface. */
+/** 受限训练 Job 控制接口的 Fabric8 实现，与 kubectl 实现通过配置互斥装配。 */
 @Component
 @ConditionalOnProperty(prefix = "training.kubernetes", name = "client-mode", havingValue = "fabric8")
 public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient {
@@ -47,8 +47,8 @@ public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient
         try {
             client().batch().v1().jobs().inNamespace(namespace).resource(job).create();
         } catch (RuntimeException exception) {
-            // Never invoke kubectl here. The request might already have reached the API
-            // server, so reconcile with the same Fabric8 client and deterministic name.
+            // 不在这里调用 kubectl：请求可能已被 API 接收。
+            // 使用同一个 Fabric8 客户端和确定的 Job 名称核对结果，避免重复创建。
             try {
                 if (trainingJobExists(namespace, jobName)) {
                     LOG.info("Training Job already exists after Fabric8 create failure; treating it as submitted: job={}", jobName);
@@ -92,8 +92,7 @@ public class Fabric8KubernetesWorkloadClient implements KubernetesWorkloadClient
                                 .max(Comparator.comparing(this::podCreatedAtOrEpoch))
                                 .orElse(null);
             } catch (RuntimeException podException) {
-                // Job counters remain authoritative. A temporary Pod-list permission or
-                // API failure must not hide a terminal Job result.
+                // Job 计数是终态依据；临时无法列出 Pod 不能掩盖 Job 已成功/失败的事实。
                 LOG.warn("Failed to read Fabric8 training Pod startup state: job={}, error={}",
                         jobName, podException.getMessage());
             }

@@ -25,7 +25,7 @@ public class TrainingKubernetesProperties {
     public static final String PUBLIC_DEVELOPMENT_INTERNAL_CALLBACK_TOKEN =
             "tss-internal-callback-dev";
 
-    /** 是否启用 K8s 训练调度（false 时回退本地 Java 训练） */
+    /** 是否启用 K8s 训练调度；使用训练方案的任务不可静默回退本地执行。 */
     private boolean enabled = true;
 
     /** 训练 Job 控制通道；同一进程只会装配一种实现。 */
@@ -37,14 +37,14 @@ public class TrainingKubernetesProperties {
     /** 启动时是否执行连通性 verify Job */
     private boolean verifyOnStartup = true;
 
-    /** 环境初始化失败时是否回退本地训练 */
+    /** 历史兼容配置；TrainingExecutorRouter 对方案任务仍会拒绝回退，不应作为容灾开关。 */
     private boolean fallbackToLocal = true;
 
     private String clusterName = "tss-training";
     private String namespace = "tss-training";
     private String serviceAccount = "tss-training-worker";
 
-    /** RuntimeClass used only by Pods that request NVIDIA GPUs. */
+    /** 仅为申请 NVIDIA GPU 的 Pod 指定 RuntimeClass，CPU 任务不依赖 NVIDIA 运行时。 */
     @Pattern(regexp = "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$", message = "must be a valid RuntimeClass name")
     private String gpuRuntimeClassName = "nvidia";
 

@@ -63,6 +63,15 @@ import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * 数据集上传编排：管理上传会话、分片、版本发布与失败补偿。
+ *
+ * <p>数据库与对象存储不共享事务。完成上传时先在短事务内占用会话并创建草稿，
+ * 再于事务外合并/校验对象，最后在短事务内发布版本。失败后使用对应补偿路径；
+ * 不能给整个完成流程简单加上一个长事务，也不能仅删除数据库记录而遗留对象。</p>
+ * <p>所有权检查由 getSession 等入口统一执行；并发完成请求由条件更新争抢，
+ * 已完成会话返回原结果，不重复创建版本。</p>
+ */
 @Service
 public class DatasetUploadService {
 
@@ -513,6 +522,7 @@ public class DatasetUploadService {
         return progress(getSession(uploadId));
     }
 
+    /** 根据会话用途分派完成流程；追加数据包有独立接口，不能混入首次上传。 */
     public Map<String, Object> complete(DatasetUploadCompleteRequest req) {
         if (req == null || req.getUploadId() == null || req.getUploadId().isBlank()) {
             throw new IllegalArgumentException("uploadId 不能为空");
@@ -529,6 +539,7 @@ public class DatasetUploadService {
         return completeSingleModalUpload(session.getId());
     }
 
+    /** 单模态：占位 → 合并与校验 → 发布；每个阶段失败由对应补偿逻辑保留可恢复状态。 */
     private Map<String, Object> completeSingleModalUpload(String uploadId) {
         DatasetUploadSession initial = getSession(uploadId);
         if (STATUS_COMPLETED.equals(initial.getStatus())) {
@@ -1667,6 +1678,7 @@ public class DatasetUploadService {
         normalizeStrictManifestForTask(taskType, session.getSampleGrouping(), session.getStrictManifest());
     }
 
+    /** 在调用方事务内按旧状态和所有者条件占用会话，阻止两个请求同时完成同一次上传。 */
     private DatasetUploadSession claimCompleting(String uploadId) {
         DatasetUploadSession session = getSession(uploadId);
         if (STATUS_COMPLETED.equals(session.getStatus())) {

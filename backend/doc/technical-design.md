@@ -1,5 +1,6 @@
 # TSS AI Platform Backend 技术设计文档
 
+> 维护提示（2026-09-08）：本文保留早期模块设计与接口示例，不应单独作为当前交付验收或新装依据。当前代码入口与不可破坏的边界见 [代码维护说明](code-maintenance-guide.md)；运行配置以 `application.yml` 和部署版本为准。数据库已经采用 Flyway + `ddl-auto=validate`。
 
 ## 1. 文档目的
 
@@ -82,7 +83,7 @@ Nginx :80/:443
 | `spring.datasource.url` | PostgreSQL JDBC 地址 |
 | `spring.datasource.username` | PostgreSQL 用户名 |
 | `spring.datasource.password` | PostgreSQL 密码 |
-| `spring.jpa.hibernate.ddl-auto` | JPA 表结构维护策略，当前为 `update` |
+| `spring.jpa.hibernate.ddl-auto` | 当前为 `validate`，只校验实体与表结构；变更由 Flyway 执行 |
 | `minio.endpoint` | MinIO API 地址，生产通常为 `http://127.0.0.1:9010` |
 | `minio.access-key` | MinIO access key |
 | `minio.secret-key` | MinIO secret key |
@@ -565,7 +566,7 @@ Authorization: Bearer <token>
 ### 8.1 建表策略
 
 - 用户模块表由 `src/main/resources/db/module1-schema-postgresql.sql` 初始化。
-- 模型、数据集、上传会话、训练实验版本等表由 JPA/Hibernate 根据实体自动维护，当前 `ddl-auto=update`。
+- 模型、数据集、上传会话、训练实验版本等表由 `src/main/resources/db/migration` 中的 Flyway 迁移维护；当前 `ddl-auto=validate`，Hibernate 不自动改表。已部署 SQL 不可重写，新增结构通过新的版本化迁移交付。
 - PostgreSQL 主库名建议为 `tss`。
 
 ### 8.2 用户与权限表
@@ -903,7 +904,7 @@ curl http://服务器IP/api/files/health
 
 - 统一 `ApiResponse` 与 `Result` 两套响应模型，减少前端适配成本。
 - 将 MinIO 账号密码改为环境变量配置。
-- 为 JPA 表增加显式 Flyway/Liquibase 迁移脚本，替代生产环境依赖 `ddl-auto=update`。
+- 已采用 Flyway；后续变更必须新增迁移并验证升级路径，不得切回 `ddl-auto=update` 绕过结构校验。
 - 为模型、数据集、训练实验等关键操作补充统一审计日志。
 - 生产环境启用 HTTPS，并通过 Nginx 控制上传大小与超时时间。
 - 为上传会话增加过期清理任务，定期删除长期未完成的临时分片。

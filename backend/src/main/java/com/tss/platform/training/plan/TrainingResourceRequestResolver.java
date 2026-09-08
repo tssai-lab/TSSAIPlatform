@@ -8,7 +8,11 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Resolves optional user values inside the immutable bounds of one plan resource profile. */
+/**
+ * 将用户资源设置约束在所选方案规格内，并合并实际硬件选择器；不能由前端扩大方案上限。
+ * CPU/内存/GPU 数量进入 Kubernetes 资源声明；显存预算传给训练运行时做软限制，
+ * 不等同于 MIG 硬隔离，也不意味着 Kubernetes 已预留相应大小的显存。
+ */
 final class TrainingResourceRequestResolver {
 
     private static final long MIB = 1024L * 1024L;

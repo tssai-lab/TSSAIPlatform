@@ -4,10 +4,10 @@ import java.time.Instant;
 import java.util.Optional;
 
 /**
- * Least-privilege control surface used by the training executor.
+ * 训练执行器使用的最小权限 Kubernetes 控制接口。
  *
- * <p>It deliberately exposes only the Job operations needed by training. Callers
- * cannot pass arbitrary kubectl commands or choose another credential source.</p>
+ * <p>仅暴露训练需要的 Job 操作，不允许调用者传入任意 kubectl 命令或替换凭据。
+ * Fabric8 与 kubectl 是互斥实现，不是自动故障回退链；本接口尚不承接推理执行器。</p>
  */
 public interface KubernetesWorkloadClient {
 
@@ -26,9 +26,9 @@ public interface KubernetesWorkloadClient {
     boolean trainingJobExists(String namespace, String jobName);
 
     /**
-     * Reads the Job counters together with the newest Pod's startup state.
+     * 同时读取 Job 计数与最新 Pod 的启动状态。
      *
-     * @return empty only when the named Job does not exist
+     * @return 仅当目标 Job 不存在时返回空；API 故障必须抛错，不能伪装成任务不存在
      */
     Optional<TrainingJobStatus> getTrainingJobStatus(String namespace, String jobName);
 
