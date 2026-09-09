@@ -24,11 +24,7 @@ import com.tss.platform.repository.DatasetVersionPackageRepository;
 import com.tss.platform.repository.ImportJobRepository;
 import com.tss.platform.repository.UploadChunkProgressSummary;
 import com.tss.platform.security.AuthContext;
-import io.minio.ComposeObjectArgs;
-import io.minio.ComposeSource;
 import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
-import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -45,23 +41,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /**
  * 数据集上传编排：管理上传会话、分片、版本发布与失败补偿。
@@ -75,9 +65,6 @@ import java.util.zip.ZipOutputStream;
 @Service
 public class DatasetUploadService {
 
-    private static final int MIN_CHUNK_SIZE = 5 * 1024 * 1024;
-    private static final int CHUNK_SIZE_GRANULARITY = 1024 * 1024;
-    private static final int MAX_COMPOSE_SOURCES = 10_000;
     private static final String STATUS_UPLOADING = "UPLOADING";
     private static final String STATUS_COMPLETING = "COMPLETING";
     private static final String STATUS_COMPLETED = "COMPLETED";
@@ -90,11 +77,8 @@ public class DatasetUploadService {
     private static final String GROUPING_MANIFEST = "MANIFEST";
     private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
-    private static final Set<String> CV_IMAGE_EXTENSIONS = Set.of(
-            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"
-    );
 
-    private final MinioClient minioClient;
+    private final DatasetUploadObjectStore objectStore;
     private final String bucket;
     private final DatasetUploadSessionRepository sessionRepo;
     private final DatasetUploadChunkRepository chunkRepo;
@@ -128,8 +112,8 @@ public class DatasetUploadService {
             PlatformTransactionManager transactionManager,
             DatasetWorkspaceAuditService auditService
     ) {
-        this.minioClient = minioClient;
         this.bucket = minioConfig.getBucket();
+        this.objectStore = new DatasetUploadObjectStore(minioClient, this.bucket);
         this.sessionRepo = sessionRepo;
         this.chunkRepo = chunkRepo;
         this.assetRepo = assetRepo;
@@ -411,18 +395,9 @@ public class DatasetUploadService {
         StatObjectResponse stat;
         boolean objectUploaded = false;
         try (InputStream is = file.getInputStream()) {
-            minioClient.putObject(
-                    PutObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(objectName)
-                            .stream(is, file.getSize(), -1)
-                            .contentType(MediaType.APPLICATION_OCTET_STREAM_VALUE)
-                            .build()
-            );
+            objectStore.put(is, objectName, file.getSize(), MediaType.APPLICATION_OCTET_STREAM_VALUE);
             objectUploaded = true;
-            stat = minioClient.statObject(
-                    StatObjectArgs.builder().bucket(bucket).object(objectName).build()
-            );
+            stat = objectStore.stat(objectName);
         } catch (Exception e) {
             if (objectUploaded) {
                 removeObjectQuietly(objectName);
@@ -560,19 +535,7 @@ public class DatasetUploadService {
         DatasetUploadSession completed;
         UploadFailure failure = storageFailure();
         try {
-            List<ComposeSource> sources = chunks.stream()
-                    .map(chunk -> ComposeSource.builder()
-                            .bucket(bucket)
-                            .object(chunk.getObjectName())
-                            .build())
-                    .collect(Collectors.toList());
-            minioClient.composeObject(
-                    ComposeObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(destinationObject)
-                            .sources(sources)
-                            .build()
-            );
+            objectStore.compose(chunks, destinationObject);
             failure = validationFailure();
             DatasetZipValidator.ValidationResult evidence = validateDatasetObjectWithEvidence(
                     reservation.session().getType(),
@@ -651,25 +614,8 @@ public class DatasetUploadService {
         String destinationObject = appendPackageDestinationObject(claimed);
         DatasetUploadSession completed;
         try {
-            List<ComposeSource> sources = chunks.stream()
-                    .map(chunk -> ComposeSource.builder()
-                            .bucket(bucket)
-                            .object(chunk.getObjectName())
-                            .build())
-                    .collect(Collectors.toList());
-            minioClient.composeObject(
-                    ComposeObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(destinationObject)
-                            .sources(sources)
-                            .build()
-            );
-            StatObjectResponse stat = minioClient.statObject(
-                    StatObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(destinationObject)
-                            .build()
-            );
+            objectStore.compose(chunks, destinationObject);
+            StatObjectResponse stat = objectStore.stat(destinationObject);
             if (stat.size() != claimed.getFileSize()) {
                 throw new IllegalArgumentException(
                         "composed append package size does not match upload session"
@@ -903,25 +849,8 @@ public class DatasetUploadService {
         DatasetUploadSession completed;
         UploadFailure failure = storageFailure();
         try {
-            List<ComposeSource> sources = chunks.stream()
-                    .map(chunk -> ComposeSource.builder()
-                            .bucket(bucket)
-                            .object(chunk.getObjectName())
-                            .build())
-                    .collect(Collectors.toList());
-            minioClient.composeObject(
-                    ComposeObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(destName)
-                            .sources(sources)
-                            .build()
-            );
-            StatObjectResponse stat = minioClient.statObject(
-                    StatObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(destName)
-                            .build()
-            );
+            objectStore.compose(chunks, destName);
+            StatObjectResponse stat = objectStore.stat(destName);
             if (stat.size() != reservation.session().getFileSize()) {
                 throw new IllegalArgumentException("合并后文件大小与上传会话不一致");
             }
@@ -1331,14 +1260,7 @@ public class DatasetUploadService {
             long sizeBytes = Files.size(tempZip);
             FolderUploadReservation reserved = reservation;
             try (InputStream is = Files.newInputStream(tempZip)) {
-                minioClient.putObject(
-                        PutObjectArgs.builder()
-                                .bucket(bucket)
-                                .object(reserved.destinationObject())
-                                .stream(is, sizeBytes, -1)
-                                .contentType("application/zip")
-                                .build()
-                );
+                objectStore.put(is, reserved.destinationObject(), sizeBytes, "application/zip");
             }
             DatasetZipValidator.ValidationResult evidence = validateDatasetObjectWithEvidence(
                     taskType,
@@ -1965,74 +1887,7 @@ public class DatasetUploadService {
             List<String> paths,
             String annotationFormat
     ) throws Exception {
-        int imageCount = 0;
-        Set<String> entryNames = new LinkedHashSet<>();
-        try (OutputStream os = Files.newOutputStream(tempZip);
-             ZipOutputStream zip = new ZipOutputStream(os)) {
-            for (int i = 0; i < files.size(); i += 1) {
-                MultipartFile file = files.get(i);
-                if (file == null || file.isEmpty()) {
-                    throw new IllegalArgumentException("图片文件不能为空");
-                }
-                String entryName = sanitizeZipEntryPath(paths.get(i), file.getOriginalFilename());
-                String ext = extensionOf(entryName);
-                if (!CvAnnotationFormat.isAllowedFile(annotationFormat, ext)
-                        && !DatasetZipValidator.isCvDatasetManifest(annotationFormat, entryName)) {
-                    throw new IllegalArgumentException(
-                            "CV folder upload does not allow file for annotationFormat "
-                                    + annotationFormat + ": " + entryName
-                    );
-                }
-                if (!entryNames.add(entryName)) {
-                    throw new IllegalArgumentException("图片文件夹中存在重复路径: " + entryName);
-                }
-
-                ZipEntry entry = new ZipEntry(entryName);
-                entry.setTime(System.currentTimeMillis());
-                zip.putNextEntry(entry);
-                try (InputStream input = file.getInputStream()) {
-                    input.transferTo(zip);
-                }
-                zip.closeEntry();
-                if (CV_IMAGE_EXTENSIONS.contains(ext)) {
-                    imageCount += 1;
-                }
-            }
-        }
-        return imageCount;
-    }
-
-    private String sanitizeZipEntryPath(String rawPath, String fallbackName) {
-        String path = normalizeText(rawPath);
-        if (path == null) {
-            path = normalizeText(fallbackName);
-        }
-        if (path == null) {
-            throw new IllegalArgumentException("图片文件路径不能为空");
-        }
-        String normalized = path.replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:.*")) {
-            throw new IllegalArgumentException("图片文件路径非法: " + path);
-        }
-        List<String> parts = new ArrayList<>();
-        for (String part : normalized.split("/")) {
-            if (part == null || part.isBlank() || ".".equals(part)) {
-                continue;
-            }
-            if ("..".equals(part) || part.contains("\u0000")) {
-                throw new IllegalArgumentException("图片文件路径非法: " + path);
-            }
-            parts.add(sanitizeZipSegment(part));
-        }
-        if (parts.isEmpty()) {
-            throw new IllegalArgumentException("图片文件路径不能为空");
-        }
-        return String.join("/", parts);
-    }
-
-    private String sanitizeZipSegment(String value) {
-        String segment = value.trim().replaceAll("[\\\\:*?\"<>|]", "_");
-        return segment.isEmpty() ? "unnamed" : segment;
+        return DatasetFolderArchive.writeCvFolderZip(tempZip, files, paths, annotationFormat);
     }
 
     private void removeObjectQuietly(String objectName) {
@@ -2352,13 +2207,11 @@ public class DatasetUploadService {
     }
 
     private String normalizeText(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
+        return DatasetUploadPolicy.normalizeText(value);
     }
 
     private void requireText(String value, String message) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(message);
-        }
+        DatasetUploadPolicy.requireText(value, message);
     }
 
     private void validateDatasetFileName(String taskType, String fileName) {
@@ -2374,62 +2227,15 @@ public class DatasetUploadService {
     }
 
     static String normalizeSampleGrouping(String value) {
-        String normalized = value == null || value.isBlank()
-                ? null
-                : value.trim().toUpperCase(Locale.ROOT);
-        if (normalized != null
-                && !GROUPING_MANIFEST.equals(normalized)
-                && !GROUPING_AUTO_DIRECTORY.equals(normalized)) {
-            throw new IllegalArgumentException(
-                    "sampleGrouping 仅支持 MANIFEST 或 AUTO_DIRECTORY"
-            );
-        }
-        return normalized;
+        return DatasetUploadPolicy.normalizeSampleGrouping(value);
     }
 
     static String normalizeSampleGroupingForTask(String taskType, String value) {
-        String normalized = normalizeSampleGrouping(value);
-        if ("MULTIMODAL".equals(taskType) && normalized == null) {
-            return GROUPING_AUTO_DIRECTORY;
-        }
-        return normalized;
+        return DatasetUploadPolicy.normalizeSampleGroupingForTask(taskType, value);
     }
 
     static String normalizeManifestPath(String sampleGrouping, String value) {
-        String normalized = value == null || value.isBlank()
-                ? null
-                : value.trim().replace('\\', '/');
-        if (GROUPING_AUTO_DIRECTORY.equals(sampleGrouping)) {
-            if (normalized != null) {
-                throw new IllegalArgumentException(
-                        "AUTO_DIRECTORY 不允许传 manifestPath"
-                );
-            }
-            return null;
-        }
-        if (!GROUPING_MANIFEST.equals(sampleGrouping)) {
-            if (normalized != null) {
-                throw new IllegalArgumentException(
-                        "manifestPath 仅在 sampleGrouping=MANIFEST 时可用"
-                );
-            }
-            return null;
-        }
-        if (normalized == null) {
-            return "manifest.json";
-        }
-        if (normalized.length() > 255
-                || normalized.startsWith("/")
-                || normalized.matches("^[A-Za-z]:.*")
-                || normalized.contains("\u0000")) {
-            throw new IllegalArgumentException("manifestPath 非法");
-        }
-        for (String part : normalized.split("/")) {
-            if ("..".equals(part)) {
-                throw new IllegalArgumentException("manifestPath 非法");
-            }
-        }
-        return normalized;
+        return DatasetUploadPolicy.normalizeManifestPath(sampleGrouping, value);
     }
 
     static boolean normalizeStrictManifestForTask(
@@ -2437,58 +2243,23 @@ public class DatasetUploadService {
             String sampleGrouping,
             Boolean value
     ) {
-        boolean strict = Boolean.TRUE.equals(value);
-        if (!strict) {
-            return false;
-        }
-        if (!"MULTIMODAL".equals(taskType)) {
-            throw new IllegalArgumentException(
-                    "strictManifest 仅 MULTIMODAL + MANIFEST 支持"
-            );
-        }
-        if (!GROUPING_MANIFEST.equals(sampleGrouping)) {
-            throw new IllegalArgumentException(
-                    "strictManifest 仅在 sampleGrouping=MANIFEST 时可用"
-            );
-        }
-        return true;
+        return DatasetUploadPolicy.normalizeStrictManifestForTask(taskType, sampleGrouping, value);
     }
 
     static int calculateChunkSize(long fileSize) {
-        long sizeRequiredByPartLimit = ((fileSize - 1) / MAX_COMPOSE_SOURCES) + 1;
-        long rawChunkSize = Math.max(MIN_CHUNK_SIZE, sizeRequiredByPartLimit);
-        long roundedChunkSize = ((rawChunkSize + CHUNK_SIZE_GRANULARITY - 1) / CHUNK_SIZE_GRANULARITY)
-                * CHUNK_SIZE_GRANULARITY;
-        if (roundedChunkSize > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("fileSize 过大，无法生成有效分片");
-        }
-        return (int) roundedChunkSize;
+        return DatasetUploadPolicy.calculateChunkSize(fileSize);
     }
 
     static int calculateTotalChunks(long fileSize, int chunkSize) {
-        long totalChunks = ((fileSize - 1) / chunkSize) + 1;
-        if (totalChunks > MAX_COMPOSE_SOURCES) {
-            throw new IllegalArgumentException("分片数量不能超过 " + MAX_COMPOSE_SOURCES);
-        }
-        return (int) totalChunks;
+        return DatasetUploadPolicy.calculateTotalChunks(fileSize, chunkSize);
     }
 
     private static void validateGroupingForTask(String taskType, String sampleGrouping) {
-        if ("MULTIMODAL".equals(taskType) && !isMultimodalGrouping(sampleGrouping)) {
-            throw new IllegalArgumentException(
-                    "MULTIMODAL 数据集必须使用 sampleGrouping=MANIFEST 或 AUTO_DIRECTORY"
-            );
-        }
-        if (!"MULTIMODAL".equals(taskType) && sampleGrouping != null) {
-            throw new IllegalArgumentException(
-                    "仅 MULTIMODAL 数据集支持 sampleGrouping"
-            );
-        }
+        DatasetUploadPolicy.validateGroupingForTask(taskType, sampleGrouping);
     }
 
     private static boolean isMultimodalGrouping(String sampleGrouping) {
-        return GROUPING_MANIFEST.equals(sampleGrouping)
-                || GROUPING_AUTO_DIRECTORY.equals(sampleGrouping);
+        return DatasetUploadPolicy.isMultimodalGrouping(sampleGrouping);
     }
 
     private Long validateDatasetObjectFormat(
@@ -2551,10 +2322,6 @@ public class DatasetUploadService {
         );
     }
 
-    private static String extensionOf(String name) {
-        return DatasetZipValidator.extensionOf(name);
-    }
-
     private String rootMessage(Throwable e) {
         Throwable current = e;
         while (current.getCause() != null) {
@@ -2582,27 +2349,11 @@ public class DatasetUploadService {
     }
 
     static String manifestDestinationObject(DatasetUploadSession session) {
-        return manifestDestinationObject(
-                session.getOwnerUserId(),
-                session.getAssetId(),
-                session.getVersionNo(),
-                session.getFileName()
-        );
+        return DatasetUploadPolicy.manifestDestinationObject(session);
     }
 
     static String appendPackageDestinationObject(DatasetUploadSession session) {
-        if (session.getOwnerUserId() == null
-                || session.getAssetId() == null || session.getAssetId().isBlank()
-                || session.getVersionNo() == null
-                || session.getId() == null || session.getId().isBlank()
-                || session.getFileName() == null || session.getFileName().isBlank()) {
-            throw new IllegalArgumentException("append upload session is incomplete");
-        }
-        return "users/" + session.getOwnerUserId()
-                + "/datasets/" + session.getAssetId()
-                + "/" + sanitizeSegment("v" + session.getVersionNo())
-                + "/packages/" + sanitizeSegment(session.getId())
-                + "/" + sanitizeSegment(session.getFileName());
+        return DatasetUploadPolicy.appendPackageDestinationObject(session);
     }
 
     private static String manifestDestinationObject(
@@ -2611,25 +2362,11 @@ public class DatasetUploadService {
             Integer versionNo,
             String fileName
     ) {
-        if (ownerUserId == null
-                || assetId == null || assetId.isBlank()
-                || versionNo == null
-                || fileName == null || fileName.isBlank()) {
-            throw new IllegalArgumentException("manifest upload reservation is incomplete");
-        }
-        return "users/" + ownerUserId
-                + "/datasets/" + assetId + "/" + sanitizeSegment("v" + versionNo)
-                + "/" + sanitizeSegment(fileName);
+        return DatasetUploadPolicy.manifestDestinationObject(ownerUserId, assetId, versionNo, fileName);
     }
 
     private static String sanitizeSegment(String value) {
-        String normalized = value == null ? "" : value.trim();
-        if (normalized.isEmpty()) {
-            return "unnamed";
-        }
-        return normalized
-                .replaceAll("[\\\\/:*?\"<>|]", "_")
-                .toLowerCase(Locale.ROOT);
+        return DatasetUploadPolicy.sanitizeSegment(value);
     }
 
     private record VersionAllocation(
