@@ -302,3 +302,69 @@ playwright-cli -s=admin-read run-code --filename scripts/qa/code-list-pagination
 playwright-cli -s=admin-read run-code --filename scripts/qa/read-errors-check.js
 playwright-cli -s=admin-read close
 ```
+
+## G1e：管理员代码资产详情完整读取（已完成本地验证，2026-09-09）
+
+- 身份：`delivery-cleanup-frontend` / `codex/frontend-read-errors` / 起点 `92facef`，工作区干净；Fix and verify，只在本地隔离环境验证，不部署、不改后端或并行安装包工作。
+- A：`adminAssets/index.tsx:loadAssetMeta` 将版本列表异常吞成 `[]`，`applyAssetMeta` 据此解除 trainingProfile 锁定并显示“暂无版本”。后端 `V2CodeAssetService.patch` 已要求首版产生后 trainingProfile 不可修改，并用 assetRevision 检查并发；本轮保持这些规则与所有写接口不变。
+- A：管理员详情 API 返回直接资产 DTO，版本 API 返回数组；版本编号兼容 `versionId/id/codeVersionId`。当前进入详情会自动只读预览最新版本，不应自动创建工作区。
+- B：资产元数据与版本列表必须一起读成功并通过基本结构/身份检查，才提交到表单及版本表；任何一项失败显示持续错误和重试，不解释为没有版本或解除锁定。依据是已有不可变规则、README 失败不冒充空态约定和 G1d 处理模式。
+- B：请求序号及当前资产标识防止返回列表、切换资产或卸载后旧结果写回；出错时不显示可编辑详情，重试仅 GET。保存已经成功、后续刷新失败时，保持“保存成功”和“刷新失败”两个事实，不诱导重复写入。
+- C：不引入新业务决策；不改权限、资产归属、审核、工作区、训练消费权、训练方案标识历史规则。资产列表分页、用户名解析、可选风险补全、文件目录/内容失败及其它编辑并发另列待办，不扩大到整个管理页面重构。
+- 预期—实现—测试：真实 `loadAssetMeta/enterAsset/exitDetail/submitEdit` 回调先红测；覆盖两接口失败、业务错误/畸形响应、真实空、已发布版本锁定、迟到响应、返回/卸载、保存成功后刷新失败；真实页面隔离浏览器验证管理入口、返回、加载/错误状态、重试、只读版本预览以及禁止误显“暂无版本”。不操作真实删除/审批/发布/训练。
+
+### G1e 执行证据
+
+| 证据 | 预期—实现—测试 | 结果 |
+| --- | --- | --- |
+| G1e-E01 | `adminAssetDetailReadFailures.test.mjs` 以 TS AST 提取真实页面回调，替换接口和状态容器，不复制被测逻辑 | 修改前 11 项：3 通过、8 失败；复现版本吞错、部分元数据提交、跨资产串数据、退出后重新打开详情和写成功后误报失败 |
+| G1e-E02 | `loadAssetMeta` 两接口一起成功后再提交表单；检查直接资产 DTO、版本数组及编号归属；请求序号及当前资产检查 | 新增 14 项最终全部通过；覆盖超时、401/403/404/429/500、业务失败、非法空响应、编号别名、真实零版本、锁定及读取重试 |
+| G1e-E03 | `enterAsset/exitDetail` 与卸载清理、持续错误与只读重试入口 | 浏览器验证加载中/失败时无保存、删除及方案编辑入口；失败不显示“暂无版本”；旧元数据返回不串入新详情 |
+| G1e-E04 | 同一读取函数在 `submitEdit/restoreVersionBrowse/retryAssetMeta` 中的调用 | 单元回归证明一次 PATCH 成功后刷新失败不会再次 PATCH 或误报保存失败；原版本号和锁定字段提交规则不变；只读恢复仍优先指定版本；重试不重开已有工作区 |
+| G1e-E05 | `admin-asset-detail-errors-check.js`，真实 React 页面、真实服务和本地隔离 GET 响应 | 24 项断言通过；只读查看最新/旧版本、选择文件、返回、失败恢复、慢请求、真实空态、卸载/重新挂载 |
+| G1e-E06 | 最终夹具重跑全部既有读取治理浏览器脚本 | 管理员队列 27、结果对比 26、本人分页 19、列表与指标错误 25，均通过；加本阶段 24，共 121 项断言 |
+| G1e-E07 | `npm test` → `npx --no-install max setup` → `npm run tsc` → `npm run build` | 最终 167/167，零失败、零跳过；setup 成功、类型零错误、生产构建成功 |
+| G1e-E08 | 局部 Biome lint（不自动格式化）、commitlint、`git diff --check` | 均退出 0；保留原页面 8 个可选链建议，已核对 HEAD 同样存在；没有借机改写工作区写操作 |
+
+最终构建身份：`dist/index.html` SHA256 `6387be5522a26cc753a8cf4bd85128b666728fea1ff8dfe851f266b03bca578a`；`dist/umi.7a7bd5e7.js` SHA256 `b34d684c0818286ff7431d9b56bec48c424a25bbd9ff65696524f0399c43e8fa`。
+
+### G1e 页面与控件边界
+
+本轮新增 UI 范围为路由 `/task/code/admin-assets` 的列表进入详情及详情读取状态，在本地 `?view=assets` 挂载同一产品页面。测试入口不是线上路由验收。以下 9 个实际产品交互均执行通过；测试专用“卸载/挂载”另计，不冒充产品按钮。24/121 均为场景断言数，不是按钮数。
+
+| 控件 ID | 实际执行交互 | 结果 |
+| --- | --- | --- |
+| G1e-C01/C02 | 测试资产 A/B 的两个“管理”入口 | 通过 |
+| G1e-C03 | 详情返回列表箭头（成功、错误、加载中） | 通过 |
+| G1e-C04 | 新增“重试详情”（错误、慢请求、恢复） | 通过 |
+| G1e-C05/C06 | 版本 v1/v2 各自“查看文件” | 通过 |
+| G1e-C07/C08 | 目录中的 README.md/train.py 两个文件节点 | 通过 |
+| G1e-C09 | trainingProfile 输入（有版本禁用，真实零版本可填，未保存） | 通过 |
+
+范围外未执行：资产列表筛选/排序/分页/刷新/列设置、资产与版本复制、其它元数据输入、保存和删除资产、版本校验/下载/编辑/弃用/归档、单文件下载、工作区新建/重命名/删除文件、保存/恢复/发布/放弃等写入及弹窗控件。写成功后刷新失败只做回调单元测试，不冒充真实 PATCH、持久化或审批验收。没有对真实资产执行任何读写测试。
+
+截图 `output/playwright/admin-asset-detail-error.png`、`admin-asset-detail-empty.png` 已查看：错误页只有错误说明和重试，不出现旧编辑表单；真实零版本才显示空表和可编辑方案。证据目录不提交、不进入生产页面。
+
+### G1e 反向审查、假设与剩余风险
+
+1. 修复后独立第二轮审查了全部 `loadAssetMeta` 调用方；补上保留现有工作区、发布后恢复指定版本、退出后旧保存回调不重新读取的 3 项测试。未使用子代理，未改后端或复用旧分支代码。
+2. 严格保持“元数据 DTO + 版本数组”的已知直接响应契约和 ID 别名，不新增任意嵌套响应兼容。空/畸形/错误包装不再被解释为零版本；其它页面的正常化及兼容函数未变。训练方案只在确认没有版本时维持原有可编辑行为，没有放宽后端不可变或管理员授权规则。
+3. “两项一起提交”仅指前端状态更新，不是数据库事务快照。两次 GET 之间仍可能新发布版本；真正的并发和不可变校验仍依赖后台 `assetRevision`、`TRAINING_PROFILE_IMMUTABLE`。本轮不更改数据库或声称消除了后台并发。
+4. 读取中的详情暂时隐藏，失败时显示持续错误；原状态保留在组件内但不作为可操作的当前详情。元数据重试不调用 `enterAsset`、不重新创建工作区；已有工作区浏览/草稿状态不被主动清除。首次打开失败的重试会恢复默认最新版本只读预览。
+5. 请求序号仅保护本次资产元数据及其后续入口。已启动的文件目录/文件内容请求仍有历史吞错和迟到覆盖风险，尚未治理，不能把本轮结论扩展为所有文件预览并发都安全；管理员资产列表的畸形响应、条数选择器和其它 G1 待办也未完成。建议下一阶段先单独修文件目录读取不完整提示，再进入 G2 大文件拆分。
+6. 浏览器第一次因名称控件的实际无障碍标签为“* 名称”、测试写成“名称”而等待超时；据页面快照修正测试，不改产品标签，重跑 24 项通过。控制台仍有原有 `Modal.destroyOnClose` 弃用告警，未见页面崩溃；不宣称零告警或全部格式基线通过。
+7. 远端预检确认治理分支仍为起点 `92facef`，`frontend-gpu=8729bb9`、`frontend-dev=72410be` 不变。已有 origin fetch 配置只建立 backend 跟踪引用，所以按 `origin/codex/frontend-read-errors` 比较失败；改用 `ls-remote` 的确切 SHA 验证 `0/0`，未修改 Git 配置，更不是远端分支丢失。普通推送会继续阻止非快进覆盖。
+8. 本轮只修改一个产品页面、两个测试文件、现有隔离夹具和 SOP，作为独立提交推送治理分支。沿用 G1d 已说明的本地提交方式，单独执行 lint/commitlint/完整测试/类型/构建，避免格式化钩子整页重排或改坏 CLI 函数入口；不修改钩子、保护规则或部署配置。
+9. 发布结论：本地修复与回归通过，可进入只读联调候选，暂不直接上线。未验证真实身份权限、实际写入/持久化、真实接口故障及新构建部署；不把隔离夹具成功当成交付验收。部署主线未合并，内外网运行环境与并行后端安装包工作均未改变。
+
+### G1e 复验入口
+
+```powershell
+node --test src/services/adminAssetDetailReadFailures.test.mjs
+node scripts/qa/read-errors-harness.mjs
+# 另一个终端，使用已安装的 Playwright CLI
+playwright-cli -s=asset-read open 'http://127.0.0.1:18893/?view=assets'
+playwright-cli -s=asset-read snapshot
+playwright-cli -s=asset-read run-code --filename scripts/qa/admin-asset-detail-errors-check.js
+playwright-cli -s=asset-read close
+```

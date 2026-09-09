@@ -20,10 +20,12 @@ const result = await build({
     import CodeList from './src/pages/task/trainingCode/list';
     import TaskCompare from './src/pages/task/compare';
     import PendingCodes from './src/pages/task/trainingCode/pending';
+    import AdminAssets from './src/pages/task/trainingCode/adminAssets';
     window.__qa = {
       metrics: 'success', code: 'success', calls: [], held: [],
       compare: {}, detailCalls: [],
       adminMode: 'success', adminCalls: [], navigation: [],
+      assetMode: 'success', assetCalls: [],
       release() { this.held.splice(0).forEach(resolve => resolve()); },
     };
     function Harness() {
@@ -39,12 +41,19 @@ const result = await build({
         <section id="code-list"><CodeList/></section>
       </main>;
     }
+    function AssetHarness() {
+      const [visible, setVisible] = React.useState(true);
+      return <main style={{padding:24}}><h1>本地资产详情测试（无真实后端连接）</h1>
+        <button onClick={() => setVisible(!visible)}>{visible ? '卸载测试页' : '挂载测试页'}</button>
+        {visible && <AdminAssets/>}
+      </main>;
+    }
     const view = new URLSearchParams(location.search).get('view');
     createRoot(document.getElementById('root')).render(<React.StrictMode>{view === 'compare'
       ? <main style={{padding:24}}><h1>本地对比测试（无真实后端连接）</h1><TaskCompare/></main>
       : view === 'admin'
         ? <main style={{padding:24}}><h1>本地管理员队列测试（无真实后端连接）</h1><PendingCodes/></main>
-        : <Harness/>}</React.StrictMode>);
+        : view === 'assets' ? <AssetHarness/> : <Harness/>}</React.StrictMode>);
   `, resolveDir: root, loader: 'jsx' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
   define: { 'process.env.NODE_ENV': '"development"', 'process.env.REACT_APP_MLFLOW_BASE_PATH': '"/qa-metrics"' },
@@ -55,14 +64,14 @@ const result = await build({
       builder.onResolve({ filter: /^@\/services\/platform$/ }, () => ({ path: 'platform', namespace: 'qa' }));
       builder.onResolve({ filter: /^@\// }, args => builder.resolve(path.resolve(root, 'src', args.path.slice(2)), { resolveDir: root, kind: args.kind }));
       builder.onLoad({ filter: /^platform$/, namespace: 'qa' }, () => ({
-        contents: `export * from './src/services/code'; export * from './src/services/mlflow';
+        contents: `export * from './src/services/code'; export * from './src/services/codeV2'; export * from './src/services/mlflow';
           export { fetchTaskDetail, fetchTaskList, listExperimentVersions, CONSISTENCY_TRAINING_PROFILE } from './src/services/task';`, resolveDir: root,
       }));
       builder.onLoad({ filter: /^umi$/, namespace: 'qa' }, () => ({
         contents: `
           const search = new URLSearchParams(location.search);
           export const useSearchParams = () => [search];
-          export const useAccess = () => ({isAdmin: search.get('view') === 'admin' && search.get('role') !== 'user'});
+          export const useAccess = () => ({isAdmin: ['admin','assets'].includes(search.get('view')) && search.get('role') !== 'user'});
           export const history = {
             push: () => {throw new Error('夹具禁止业务导航');},
             replace: path => { window.__qa.navigation.push(path); },
@@ -72,6 +81,28 @@ const result = await build({
             const qa = window.__qa;
             qa.calls.push(url);
             if (url === '/system/user/list') return {code:200, data:{list:[{id:1,username:'qa-owner',role:'普通用户',status:'启用'}],total:1}};
+            if (search.get('view') === 'assets' && url.startsWith('/v2/admin/')) {
+              qa.assetCalls.push({url, method:options.method});
+              const assets = ['a','b'].map(id => ({id:'asset-' + id,name:'测试资产 ' + id.toUpperCase(),ownerUserId:1,assetRevision:2,trainingProfile:'cv'}));
+              if (url === '/v2/admin/code-assets') return {items:assets,totalElements:2};
+              const match = url.match(new RegExp('^/v2/admin/code-assets/(asset-[ab])(/versions)?$'));
+              const mode = qa.assetMode;
+              if (match) {
+                if (mode === 'held') await new Promise(resolve => qa.held.push(resolve));
+                if (match[2]) {
+                  if (mode === 'versions-error') throw new Error('测试版本列表不可用');
+                  if (mode === 'versions-invalid') return {code:403,items:[]};
+                  if (mode === 'empty') return [];
+                  return [1,2].map(n => ({id:'v' + n + '-' + match[1],codeAssetId:match[1],versionLabel:'v' + n,trainingProfile:'cv',status:'READY',approvalStatus:'APPROVED',publishedAt:'2026-09-0' + n + 'T00:00:00Z'}));
+                }
+                if (mode === 'detail-error') throw new Error('测试资产详情不可用');
+                if (mode === 'detail-invalid') return {success:false,id:match[1]};
+                return assets.find(item => item.id === match[1]);
+              }
+              if (url.endsWith('/tree')) return [{path:'train.py',type:'FILE'}, {path:'README.md',type:'FILE'}];
+              if (url.endsWith('/files/content')) return {content:'只读文件 ' + options.params.path + ' · ' + url.split('/')[4]};
+              throw new Error('资产夹具未声明接口: ' + url);
+            }
             if (url === '/v2/admin/code-review-tasks') {
               const mode = qa.adminMode;
               const params = options.params;

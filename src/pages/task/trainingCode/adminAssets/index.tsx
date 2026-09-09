@@ -165,8 +165,10 @@ const AdminCodeAssetsPage: React.FC = () => {
   const actionRef = useRef<ActionType | null>(null);
   const browseRef = useRef<BrowseState | null>(null);
   const activeAssetRef = useRef<V2AdminCodeAsset | null>(null);
+  const assetLoadSequence = useRef(0);
   const [activeAsset, setActiveAsset] = useState<V2AdminCodeAsset | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [assetReadError, setAssetReadError] = useState<string>();
   const [editing, setEditing] = useState<V2AdminCodeAsset | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editProfileLocked, setEditProfileLocked] = useState(false);
@@ -203,6 +205,12 @@ const AdminCodeAssetsPage: React.FC = () => {
   useEffect(() => {
     activeAssetRef.current = activeAsset;
   }, [activeAsset]);
+
+  useEffect(() => () => {
+    // 路由离开后，未完成的读取不能再写回详情。
+    assetLoadSequence.current += 1;
+    activeAssetRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!access.isAdmin) {
@@ -253,31 +261,63 @@ const AdminCodeAssetsPage: React.FC = () => {
   };
 
   const loadAssetMeta = async (assetId: string) => {
-    const [detail, versionList] = await Promise.all([
-      getAdminCodeAsset(assetId, { skipErrorHandler: true }),
-      listAdminCodeAssetVersions(assetId, { skipErrorHandler: true }).catch(
-        () => [],
-      ),
-    ]);
-    const versionsNext = Array.isArray(versionList) ? versionList : [];
-    applyAssetMeta(detail, versionsNext);
-    setVersions(versionsNext);
-    setVersionsAssetId(assetId);
-    setVersionsAssetName(detail.name || assetId);
-    // 同步刷新详情页只读字段（revision / 时间戳等）
-    setActiveAsset((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        ...detail,
-        assetId: detail.assetId || detail.id || assetId,
-        ownerUserId: detail.ownerUserId ?? prev.ownerUserId,
-      };
-    });
-    return { detail, versionsNext };
+    if ((activeAssetRef.current?.assetId || activeAssetRef.current?.id) !== assetId) return;
+    const sequence = ++assetLoadSequence.current;
+    const isCurrent = () => sequence === assetLoadSequence.current
+      && (activeAssetRef.current?.assetId || activeAssetRef.current?.id) === assetId;
+    setDetailLoading(true);
+    setAssetReadError(undefined);
+    try {
+      // 两项共同决定表单及方案锁定状态；版本读取失败不能等同“尚无版本”。
+      const [detail, versionList] = await Promise.all([
+        getAdminCodeAsset(assetId, { skipErrorHandler: true }),
+        listAdminCodeAssetVersions(assetId, { skipErrorHandler: true }),
+      ]);
+      if (!isCurrent()) return;
+      const response = detail as unknown as Record<string, unknown> | null;
+      if (!response || Array.isArray(response) || typeof response !== 'object'
+        || response.errorCode || response.success === false
+        || (response.code !== undefined && response.code !== 200)
+        || (detail.assetId || detail.id) !== assetId
+        || (detail.trainingProfile != null && typeof detail.trainingProfile !== 'string')) {
+        throw new Error('代码资产详情响应异常，请重试');
+      }
+      if (!Array.isArray(versionList) || versionList.some((version) => {
+        const id = version?.versionId || version?.id || version?.codeVersionId;
+        return typeof id !== 'string' || !id.trim()
+          || (version.codeAssetId != null && version.codeAssetId !== assetId);
+      })) {
+        throw new Error('代码资产版本列表响应异常，不能确认版本状态，请重试');
+      }
+      const versionsNext = versionList;
+      applyAssetMeta(detail, versionsNext);
+      setVersions(versionsNext);
+      setVersionsAssetId(assetId);
+      setVersionsAssetName(detail.name || assetId);
+      // 同步刷新详情页只读字段；不把旧资产的迟到响应合并进新资产。
+      setActiveAsset((prev) => {
+        if (!prev || (prev.assetId || prev.id) !== assetId) return prev;
+        return {
+          ...prev, ...detail,
+          assetId: detail.assetId || detail.id || assetId,
+          ownerUserId: detail.ownerUserId ?? prev.ownerUserId,
+        };
+      });
+      return { detail, versionsNext };
+    } catch (error: unknown) {
+      if (!isCurrent()) return;
+      setAssetReadError(getApiErrorMessage(error, '加载资产详情或版本失败'));
+      throw error;
+    } finally {
+      if (isCurrent()) setDetailLoading(false);
+    }
   };
 
   const exitDetail = () => {
+    assetLoadSequence.current += 1;
+    activeAssetRef.current = null;
+    setAssetReadError(undefined);
+    setDetailLoading(false);
     closeBrowse();
     setActiveAsset(null);
     setEditing(null);
@@ -307,7 +347,11 @@ const AdminCodeAssetsPage: React.FC = () => {
       }
       await patchAdminCodeAsset(assetId, patch, { skipErrorHandler: true });
       message.success('资产已更新');
-      await loadAssetMeta(assetId);
+      try {
+        await loadAssetMeta(assetId);
+      } catch {
+        // 写入已经成功；读取错误由详情持续提示，不误报保存失败或重复 PATCH。
+      }
     } catch (e: unknown) {
       message.error(getApiErrorMessage(e, '更新失败'));
     } finally {
@@ -469,11 +513,18 @@ const AdminCodeAssetsPage: React.FC = () => {
   const enterAsset = async (record: V2AdminCodeAsset) => {
     const assetId = record.assetId || record.id;
     if (!assetId) return;
+    activeAssetRef.current = record;
     setActiveAsset(record);
-    setDetailLoading(true);
+    setEditing(null);
+    setVersions([]);
+    setVersionsAssetId(undefined);
+    setEditProfileLocked(true);
+    form.resetFields();
     closeBrowse();
     try {
-      const { detail, versionsNext } = await loadAssetMeta(assetId);
+      const result = await loadAssetMeta(assetId);
+      if (!result) return;
+      const { detail, versionsNext } = result;
       const merged: V2AdminCodeAsset = {
         ...record,
         ...detail,
@@ -486,10 +537,23 @@ const AdminCodeAssetsPage: React.FC = () => {
       if (latest) {
         await openVersionBrowse(latest);
       }
-    } catch (e: unknown) {
-      message.error(getApiErrorMessage(e, '加载资产失败'));
-    } finally {
-      setDetailLoading(false);
+    } catch {
+      // loadAssetMeta 已展示持续错误；保留当前入口供只读重试。
+    }
+  };
+
+  const retryAssetMeta = async () => {
+    const assetId = activeAssetRef.current?.assetId || activeAssetRef.current?.id;
+    if (!assetId) return;
+    try {
+      const result = await loadAssetMeta(assetId);
+      // 不重开已有工作区或丢弃本地草稿；首次详情重试成功才补只读预览。
+      if (result && !browseRef.current) {
+        const latest = pickLatestCodeVersion(result.versionsNext);
+        if (latest) await openVersionBrowse(latest);
+      }
+    } catch {
+      // 保留 loadAssetMeta 的明确错误，重试不会触发写接口。
     }
   };
 
@@ -877,7 +941,9 @@ const AdminCodeAssetsPage: React.FC = () => {
       return;
     }
     try {
-      const { versionsNext } = await loadAssetMeta(assetId);
+      const result = await loadAssetMeta(assetId);
+      if (!result) return;
+      const { versionsNext } = result;
       const preferred = preferVersionId?.trim()
         ? versionsNext.find(
             (v) =>
@@ -1277,7 +1343,7 @@ const AdminCodeAssetsPage: React.FC = () => {
       }
       onBack={activeAsset ? exitDetail : undefined}
       extra={
-        activeAsset && activeAssetId ? (
+        activeAsset && activeAssetId && !detailLoading && !assetReadError ? (
           <Popconfirm
             title="确认软删除该代码资产？"
             description="将软删除整个代码资产。若已被训练引用或存在打开工作区，删除会失败。"
@@ -1298,7 +1364,21 @@ const AdminCodeAssetsPage: React.FC = () => {
         ) : undefined
       }
     >
-      {activeAsset ? (
+      {activeAsset && (detailLoading || assetReadError) ? (
+        <Card>
+          <Spin spinning={detailLoading}>
+            <Alert
+              type={assetReadError ? 'error' : 'info'}
+              showIcon
+              message={assetReadError || '正在读取资产详情与版本'}
+              description="读取完整前暂不展示可操作详情，不能据此判断没有版本。"
+              action={assetReadError && (
+                <Button onClick={() => void retryAssetMeta()}>重试详情</Button>
+              )}
+            />
+          </Spin>
+        </Card>
+      ) : activeAsset ? (
         <Spin spinning={detailLoading}>
           <Card
             title="资产信息"
