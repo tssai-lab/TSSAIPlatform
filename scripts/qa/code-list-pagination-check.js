@@ -1,6 +1,6 @@
 // Playwright CLI run-code --filename；只连接 read-errors-harness 的本地隔离页面。
 async (page) => {
-  await page.reload();
+  await page.goto('http://127.0.0.1:18893/');
   const checks = [];
   const assert = (ok, name) => { if (!ok) throw new Error(name); checks.push(name); };
   const codes = page.locator('#code-list');

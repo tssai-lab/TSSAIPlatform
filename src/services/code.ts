@@ -1381,8 +1381,11 @@ export async function fetchCodeEditablePreview(
   const opts = { skipErrorHandler: true, ...(options || {}) };
   const assetId = params.codeAssetId?.trim();
   if (assetId && !params.preferVersionSnapshot) {
+    let workspaceListLoaded = false;
     try {
       const listed = await listV2CodeWorkspaces(assetId, opts);
+      workspaceListLoaded = true;
+      if (!Array.isArray(listed)) throw new Error('工作区列表响应异常，请重试');
       const openWs = Array.isArray(listed)
         ? listed.find((ws) => isOpenWorkspace(ws) && ws.id)
         : undefined;
@@ -1395,6 +1398,7 @@ export async function fetchCodeEditablePreview(
         let codeContent: string | undefined;
         let codeFileName: string | undefined;
         let codeFilePath: string | undefined;
+        let loadError: string | undefined;
         if (codeFiles[0]?.path) {
           try {
             const payload = await getV2CodeWorkspaceFileContent(
@@ -1403,7 +1407,7 @@ export async function fetchCodeEditablePreview(
               opts,
             );
             const content = extractV2FileText(payload);
-            if (content) {
+            if (content !== undefined) {
               codeContent = content;
               codeFilePath = codeFiles[0].path;
               codeFileName =
@@ -1411,8 +1415,8 @@ export async function fetchCodeEditablePreview(
                 codeFiles[0].path.split('/').pop() ||
                 codeFiles[0].path;
             }
-          } catch {
-            // 列表仍可用
+          } catch (error) {
+            loadError = codePreviewErrorMessage(error, '读取工作区文件失败');
           }
         }
         return {
@@ -1421,6 +1425,7 @@ export async function fetchCodeEditablePreview(
             codeContent,
             codeFileName,
             codeFilePath,
+            loadError,
             workspaceId: openWs.id,
             fromWorkspace: true,
           } as CodeVersionPreviewBundle & {
@@ -1429,8 +1434,9 @@ export async function fetchCodeEditablePreview(
           },
         };
       }
-    } catch {
-      // fall through to version snapshot
+    } catch (error) {
+      // 仅旧后端根本没有工作区端点时兼容版本预览；草稿读取失败不能换成旧代码。
+      if (workspaceListLoaded || !isLegacyEndpointUnavailable(error)) throw error;
     }
   }
   const versionPreview = await fetchCodeVersionCodePreview(
@@ -1458,8 +1464,11 @@ export async function previewCodeEditableFile(
   const opts = { skipErrorHandler: true, ...(options || {}) };
   const assetId = params.codeAssetId?.trim();
   if (assetId && !params.preferVersionSnapshot) {
+    let workspaceListLoaded = false;
     try {
       const listed = await listV2CodeWorkspaces(assetId, opts);
+      workspaceListLoaded = true;
+      if (!Array.isArray(listed)) throw new Error('工作区列表响应异常，请重试');
       const openWs = Array.isArray(listed)
         ? listed.find((ws) => isOpenWorkspace(ws) && ws.id)
         : undefined;
@@ -1481,8 +1490,8 @@ export async function previewCodeEditableFile(
           },
         };
       }
-    } catch {
-      // fall through
+    } catch (error) {
+      if (workspaceListLoaded || !isLegacyEndpointUnavailable(error)) throw error;
     }
   }
   const res = await previewCodeVersionFile(

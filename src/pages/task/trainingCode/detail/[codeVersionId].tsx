@@ -153,6 +153,11 @@ const TrainingCodeDetail: React.FC = () => {
   const [previewFileName, setPreviewFileName] = useState('');
   const [codePreviewVisible, setCodePreviewVisible] = useState(false);
   const [filesLoadError, setFilesLoadError] = useState<string>();
+  const [previewReadError, setPreviewReadError] = useState<string>();
+  const previewSequence = useRef(0);
+  const filesSequence = useRef(0);
+  const metaSequence = useRef(0);
+  const versionsSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -181,10 +186,20 @@ const TrainingCodeDetail: React.FC = () => {
   const [renameFileForm] = Form.useForm<RenameFileFormValues>();
 
   const codeAssetId = meta?.codeAssetId?.trim();
-  const canEditAsset = Boolean(codeAssetId && !adminReviewMode);
+  const canEditAsset = Boolean(codeAssetId && !adminReviewMode && !metaLoadFailed && !metaLoading && !previewLoading && !filesLoading && !previewReadError && !filesLoadError);
+
+  useEffect(() => () => {
+    // 版本/视角切换及卸载后，旧详情、目录和文件请求全部失效。
+    previewSequence.current += 1;
+    filesSequence.current += 1;
+    metaSequence.current += 1;
+    versionsSequence.current += 1;
+  }, [codeVersionId, adminReviewMode]);
 
   const loadMeta = useCallback(async () => {
     if (!codeVersionId) return;
+    const sequence = ++metaSequence.current;
+    const isCurrent = () => sequence === metaSequence.current;
     setMetaLoading(true);
     setMetaLoadFailed(false);
     try {
@@ -195,6 +210,7 @@ const TrainingCodeDetail: React.FC = () => {
         : await getCodeVersionDetail(codeVersionId, {
             skipErrorHandler: true,
           });
+      if (!isCurrent()) return;
       if (res?.success === false) {
         if (!listRecord) {
           throw new Error(
@@ -214,6 +230,7 @@ const TrainingCodeDetail: React.FC = () => {
         });
       }
     } catch (error: any) {
+      if (!isCurrent()) return;
       if (!listRecord) {
         setMeta(null);
         setMetaLoadFailed(true);
@@ -225,11 +242,13 @@ const TrainingCodeDetail: React.FC = () => {
         }
       }
     } finally {
-      setMetaLoading(false);
+      if (isCurrent()) setMetaLoading(false);
     }
   }, [adminReviewMode, codeVersionId, listRecord]);
 
   const loadAssetVersions = useCallback(async () => {
+    const sequence = ++versionsSequence.current;
+    const isCurrent = () => sequence === versionsSequence.current;
     if (!codeAssetId) {
       setAssetVersions([]);
       return;
@@ -239,18 +258,24 @@ const TrainingCodeDetail: React.FC = () => {
       const res = await listCodeAssetVersions(codeAssetId, {
         skipErrorHandler: true,
       });
+      if (!isCurrent()) return;
       setAssetVersions(Array.isArray(res?.data) ? res.data : []);
     } catch (error: any) {
+      if (!isCurrent()) return;
       message.error(getApiErrorMessage(error, '版本列表加载失败'));
       setAssetVersions([]);
     } finally {
-      setVersionsLoading(false);
+      if (isCurrent()) setVersionsLoading(false);
     }
   }, [codeAssetId, versionsRefreshKey]);
 
   const loadPreview = useCallback(
     async (path: string, preferVersionSnapshot = false) => {
       if (!codeVersionId || !path) return;
+      const sequence = ++previewSequence.current;
+      const isCurrent = () => sequence === previewSequence.current;
+      setPreviewReadError(undefined);
+      setOriginalPreviewContent('');
       setSelectedPath(path);
       setPreviewLoading(true);
       setPreviewContent('');
@@ -269,15 +294,17 @@ const TrainingCodeDetail: React.FC = () => {
               },
               { skipErrorHandler: true },
             );
+        if (!isCurrent()) return;
         const data = res?.data;
+        if (res?.success === false || !data || typeof data.content !== 'string') throw new Error('代码文件内容响应异常');
         const content = data?.content || '';
         setPreviewContent(content);
         setOriginalPreviewContent(content);
         setPreviewFileName(data?.fileName || data?.path || path);
       } catch (error: any) {
-        message.error(getApiErrorMessage(error, '代码预览加载失败'));
+        if (isCurrent()) setPreviewReadError(getApiErrorMessage(error, '代码预览加载失败'));
       } finally {
-        setPreviewLoading(false);
+        if (isCurrent()) setPreviewLoading(false);
       }
     },
     [adminReviewMode, codeVersionId, meta?.codeAssetId],
@@ -285,6 +312,15 @@ const TrainingCodeDetail: React.FC = () => {
 
   const loadFiles = useCallback(async () => {
     if (!codeVersionId || metaLoadFailed) return;
+    const sequence = ++filesSequence.current;
+    const isCurrent = () => sequence === filesSequence.current;
+    previewSequence.current += 1;
+    setCodeFiles([]);
+    setSelectedPath(undefined);
+    setPreviewContent('');
+    setOriginalPreviewContent('');
+    setPreviewReadError(undefined);
+    setPreviewLoading(false);
     setFilesLoading(true);
     setFilesLoadError(undefined);
     const preferVersionSnapshot = preferVersionSnapshotRef.current;
@@ -294,6 +330,7 @@ const TrainingCodeDetail: React.FC = () => {
         const res = await listAdminCodeReviewFiles(codeVersionId, {
           skipErrorHandler: true,
         });
+        if (!isCurrent()) return;
         const files = res.data ?? [];
         setCodeFiles(files as API.ModelCodeFile[]);
         setWorkspaceDraftOpen(false);
@@ -314,6 +351,7 @@ const TrainingCodeDetail: React.FC = () => {
           },
           { skipErrorHandler: true },
         );
+        if (!isCurrent()) return;
         const files = res?.data?.codeFiles ?? [];
         setCodeFiles(files);
         setFilesLoadError(res?.data?.loadError);
@@ -323,7 +361,7 @@ const TrainingCodeDetail: React.FC = () => {
         setOpenWorkspaceId(
           (res?.data as { workspaceId?: string })?.workspaceId,
         );
-        if (res?.data?.codeFilePath && res?.data?.codeContent) {
+        if (res?.data?.codeFilePath && res?.data?.codeContent !== undefined) {
           setSelectedPath(res.data.codeFilePath);
           setPreviewFileName(res.data.codeFileName || res.data.codeFilePath);
           setPreviewContent(res.data.codeContent);
@@ -337,13 +375,14 @@ const TrainingCodeDetail: React.FC = () => {
         }
       }
     } catch (error: any) {
+      if (!isCurrent()) return;
       setCodeFiles([]);
       setSelectedPath(undefined);
       setPreviewContent('');
       setWorkspaceDraftOpen(false);
       setFilesLoadError(getApiErrorMessage(error, '代码文件列表加载失败'));
     } finally {
-      setFilesLoading(false);
+      if (isCurrent()) setFilesLoading(false);
     }
   }, [
     adminReviewMode,
@@ -1462,6 +1501,7 @@ const TrainingCodeDetail: React.FC = () => {
                   </Space>
                 }
               >
+                {previewReadError ? <Alert type="error" showIcon message="文件读取失败" description={previewReadError} action={<Button onClick={() => selectedPath && void loadPreview(selectedPath, !workspaceDraftOpen)}>重试文件</Button>} /> : null}
                 {!selectedPath && !filesLoading && (
                   <Empty
                     description="请从左侧选择文件"
@@ -1475,7 +1515,7 @@ const TrainingCodeDetail: React.FC = () => {
                 )}
                 {selectedPath &&
                   !previewLoading &&
-                  previewContent &&
+                  !previewReadError &&
                   (adminReviewMode ? (
                     <pre
                       style={{
@@ -1503,6 +1543,7 @@ const TrainingCodeDetail: React.FC = () => {
                         value={previewContent}
                         fileName={previewFileName}
                         onChange={setPreviewContent}
+                        readOnly={!canEditAsset}
                         minHeight="360px"
                         maxHeight="520px"
                       />

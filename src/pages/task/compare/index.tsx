@@ -7,6 +7,7 @@
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -158,6 +159,11 @@ function formatImprovementAxisLabel(
   return [ver, id, name].filter(Boolean).join('\n');
 }
 
+/** ECharts 的 HTML 提示不会自动转义业务名称，必须按纯文本处理。 */
+function escapeTooltipText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /** 性能提升图 tooltip：数值优先，身份信息次要 */
 function formatImprovementTooltipHtml(
   task: TaskMetricsData,
@@ -178,11 +184,11 @@ function formatImprovementTooltipHtml(
     .join(' · ');
   return [
     ...valueLines.map(
-      (line) => `<div style="font-size:13px;font-weight:600">${line}</div>`,
+      (line) => `<div style="font-size:13px;font-weight:600">${escapeTooltipText(line)}</div>`,
     ),
-    `<div style="margin-top:6px;opacity:.85">${identity}</div>`,
+    `<div style="margin-top:6px;opacity:.85">${escapeTooltipText(identity)}</div>`,
     detail
-      ? `<div style="margin-top:2px;font-size:11px;opacity:.7">${detail}</div>`
+      ? `<div style="margin-top:2px;font-size:11px;opacity:.7">${escapeTooltipText(detail)}</div>`
       : null,
   ]
     .filter(Boolean)
@@ -375,10 +381,11 @@ function buildImprovementGroups(data: TaskMetricsData[]): ComparableGroup[] {
 
 /** 任务列表接口：兼容 { data: TaskItem[] } 与 { data: { data, total } } */
 function normalizeTaskListResponse(res: any): API.TaskItem[] {
+  if (!res || res.success === false || res.errorCode || (res.code !== undefined && res.code !== 200)) throw new Error('任务目录响应异常');
   const d = res?.data;
-  if (Array.isArray(d)) return d;
-  if (Array.isArray(d?.data)) return d.data;
-  return [];
+  const list = Array.isArray(d) ? d : d?.data;
+  if (!Array.isArray(list) || list.some(row => !row || typeof row.id !== 'string' || !row.id.trim())) throw new Error('任务目录响应格式异常');
+  return list;
 }
 
 /** 详情返回的训练实验版本 → 对比页任务行（列表里可能只有每个实验最新一条，需补全历史版本） */
@@ -410,6 +417,11 @@ const TaskCompare: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [taskList, setTaskList] = useState<API.TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const catalogLoadSequence = useRef(0);
+  const compareLoadSequence = useRef(0);
+  const [catalogReadError, setCatalogReadError] = useState<string>();
+  const [catalogWarning, setCatalogWarning] = useState<string>();
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsData, setMetricsData] = useState<TaskMetricsData[]>([]);
@@ -451,17 +463,24 @@ const TaskCompare: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const sequence = ++catalogLoadSequence.current;
+    compareLoadSequence.current += 1;
+    setMetricsLoading(false);
+    setMetricsData([]);
+    const isCurrent = () => sequence === catalogLoadSequence.current;
     const load = async () => {
       setLoading(true);
+      setCatalogReadError(undefined);
+      setCatalogWarning(undefined);
+      setTaskList([]);
       try {
         const expId = experimentIdFromUrl.trim();
         if (expId) {
           setExperimentIdInput(expId);
-          try {
             const vr: any = await listExperimentVersions(expId, {
               skipErrorHandler: true,
             });
-            const vers: any[] = vr?.data ?? [];
+            const vers = normalizeTaskListResponse(vr);
             const list: API.TaskItem[] = vers.map((d) =>
               experimentVersionToTaskRow(d),
             );
@@ -471,32 +490,32 @@ const TaskCompare: React.FC = () => {
             const missing = want.filter(
               (id) => !list.some((t) => String(t.id) === String(id)),
             );
+            let failures = 0;
             for (const id of missing) {
               try {
                 const dr = await fetchTaskDetail(id, {
                   skipErrorHandler: true,
                 });
+                if (!isCurrent()) return;
                 const d: any = (dr as any)?.data;
-                if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
+                if (dr?.success === false || !d?.id) throw new Error('任务详情不可读');
+                list.unshift(experimentVersionToTaskRow(d, hint));
               } catch {
-                // 详情失败则跳过，不造虚拟行
+                failures += 1;
               }
             }
-            setTaskList(
-              await enrichFocusedTaskDisplayNames(list, idsFromUrl, {
+            const enriched = await enrichFocusedTaskDisplayNames(list, idsFromUrl, {
                 skipErrorHandler: true,
-              }),
-            );
+              });
+            if (!isCurrent()) return;
+            setTaskList(enriched);
+            if (failures) setCatalogWarning(`${failures} 个指定训练版本读取失败，列表不完整，请重试`);
             return;
-          } catch {
-            message.error('加载实验版本失败');
-            setTaskList([]);
-            return;
-          }
         }
 
         const res = await fetchTaskList({ current: 1, pageSize: 200 });
         const list = normalizeTaskListResponse(res);
+        let failures = 0;
 
         const want = idsFromUrl;
         const hint = list.find((t) => t.modelName && t.datasetName);
@@ -506,31 +525,35 @@ const TaskCompare: React.FC = () => {
         for (const id of missing) {
           try {
             const dr = await fetchTaskDetail(id, { skipErrorHandler: true });
+            if (!isCurrent()) return;
             const d: any = (dr as any)?.data;
-            if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
+            if (dr?.success === false || !d?.id) throw new Error('任务详情不可读');
+            list.unshift(experimentVersionToTaskRow(d, hint));
           } catch {
-            // 详情失败则跳过，不造虚拟行
+            failures += 1;
           }
         }
 
-        setTaskList(
-          await enrichFocusedTaskDisplayNames(
+        const enriched = await enrichFocusedTaskDisplayNames(
             list,
             [...idsFromUrl, ...loadComparePool()],
             {
               skipErrorHandler: true,
             },
-          ),
-        );
-      } catch {
-        message.error('加载训练任务列表失败');
-        setTaskList([]);
+          );
+        if (!isCurrent()) return;
+        setTaskList(enriched);
+        const hints = [failures ? `${failures} 个指定训练版本读取失败` : '', list.length >= 200 ? '候选列表最多展示首页 200 条，可通过训练编号加载历史版本' : ''].filter(Boolean);
+        if (hints.length) setCatalogWarning(hints.join('；'));
+      } catch (error) {
+        if (isCurrent()) setCatalogReadError(error instanceof Error ? error.message : '加载训练任务列表失败');
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     };
-    load();
-  }, [idsFromUrl.join(','), experimentIdFromUrl]);
+    void load();
+    return () => { catalogLoadSequence.current += 1; compareLoadSequence.current += 1; };
+  }, [idsFromUrl.join(','), experimentIdFromUrl, catalogRefreshKey]);
 
   const handleLoadExperiment = async () => {
     const expId = experimentIdInput.trim();
@@ -543,6 +566,8 @@ const TaskCompare: React.FC = () => {
 
   const loadCompareData = useCallback(
     async (overrideIds?: string[]) => {
+      const sequence = ++compareLoadSequence.current;
+      const isCurrent = () => sequence === compareLoadSequence.current;
       const ids = [
         ...new Set((overrideIds ?? (selectedRowKeys as string[])).map(String)),
       ];
@@ -559,6 +584,7 @@ const TaskCompare: React.FC = () => {
         for (const id of ids) {
           try {
             const res = await fetchTaskDetail(id, { skipErrorHandler: true });
+            if (!isCurrent()) return;
             const responseCode = (res as { code?: number } | undefined)?.code;
             const data = res?.data as
               | (TaskWithRunId & { run_id?: unknown })
@@ -605,6 +631,7 @@ const TaskCompare: React.FC = () => {
           }
         }
         const byId = new Map(selectedTasks.map((t) => [String(t.id), t]));
+        if (!isCurrent()) return;
         const withRunId = details.filter((d) => d.runId);
         if (withRunId.length === 0) {
           setMetricsData([]);
@@ -635,6 +662,7 @@ const TaskCompare: React.FC = () => {
               runId,
               MLFLOW_METRIC_KEYS as unknown as string[],
             );
+            if (!isCurrent()) return;
             results.push({
               taskId: t.id,
               taskName: t.name || meta.name,
@@ -663,6 +691,7 @@ const TaskCompare: React.FC = () => {
             failed += 1;
           }
         }
+        if (!isCurrent()) return;
         const hasComparableMetric = MLFLOW_METRIC_KEYS.some(
           (key) =>
             results.filter((task) => task.metrics[key]?.length).length >= 2,
@@ -693,10 +722,11 @@ const TaskCompare: React.FC = () => {
           );
         }
       } catch {
+        if (!isCurrent()) return;
         setMetricsData([]);
         message.error('加载对比数据失败');
       } finally {
-        setMetricsLoading(false);
+        if (isCurrent()) setMetricsLoading(false);
       }
     },
     [selectedRowKeys, taskList],
@@ -1248,6 +1278,7 @@ const TaskCompare: React.FC = () => {
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
       }
     >
+      {catalogReadError || catalogWarning ? <Alert type={catalogReadError ? 'error' : 'warning'} showIcon message={catalogReadError ? '训练目录读取失败' : '训练目录不完整'} description={catalogReadError || catalogWarning} action={<Button onClick={() => setCatalogRefreshKey(key => key + 1)}>重试目录</Button>} style={{ marginBottom: 16 }} /> : null}
       <Card title="按训练编号加载版本（高级）" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Input

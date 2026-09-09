@@ -1,5 +1,6 @@
 // 用 Playwright CLI run-code --filename 执行；依赖本地隔离夹具，不连接真实后端。
 async (page) => {
+  await page.goto('http://127.0.0.1:18893/');
   await page.evaluate(() => localStorage.removeItem('taskMetricsChartStyle'));
   await page.reload();
   const checked = [];

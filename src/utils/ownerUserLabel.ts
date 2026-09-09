@@ -50,20 +50,23 @@ export function resolveOwnerUserIdFilter(
   if (!text) return undefined;
   if (/^\d+$/.test(text)) {
     const id = Number(text);
-    return Number.isFinite(id) ? id : undefined;
+    if (!Number.isSafeInteger(id)) throw new Error('用户 ID 超出可识别范围，请检查输入');
+    return id;
   }
-  if (!usernameMap || usernameMap.size === 0) return undefined;
+  // 非空但无法解析的筛选不能悄悄变成“全部用户”；用户目录不可读时仍可输入 ID。
+  if (!usernameMap || usernameMap.size === 0) throw new Error('无法查询用户名，请输入用户 ID 或刷新后重试');
   const lower = text.toLowerCase();
-  let exact: number | undefined;
+  const exact: number[] = [];
   const partial: number[] = [];
   usernameMap.forEach((name, id) => {
     const n = name.toLowerCase();
-    if (n === lower) exact = id;
+    if (n === lower) exact.push(id);
     else if (n.includes(lower)) partial.push(id);
   });
-  if (exact != null) return exact;
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) throw new Error('匹配到多个用户，请输入用户 ID');
   if (partial.length === 1) return partial[0];
-  return undefined;
+  throw new Error(partial.length > 1 ? '匹配到多个用户，请输入完整用户名或用户 ID' : '未找到该用户，请检查用户名或输入用户 ID');
 }
 
 export function useOwnerUsernameMap(): Map<number, string> {

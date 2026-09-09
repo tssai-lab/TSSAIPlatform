@@ -314,11 +314,14 @@ export type V2CodeErrorBody = {
   traceId?: string;
 };
 
-function unwrapList(payload: unknown, depth = 0): V2CodeTreeNode[] {
+function unwrapList(payload: unknown, depth = 0, strict = false): V2CodeTreeNode[] {
   if (Array.isArray(payload)) {
+    if (strict && payload.some((node) => typeof node !== 'string' && (!node || typeof node !== 'object' || Array.isArray(node)))) {
+      throw new Error('代码目录节点响应异常');
+    }
     if (
       payload.length > 0 &&
-      typeof payload[0] === 'string'
+      payload.every((node) => typeof node === 'string')
     ) {
       return (payload as string[]).map((path) => ({
         path,
@@ -327,12 +330,18 @@ function unwrapList(payload: unknown, depth = 0): V2CodeTreeNode[] {
     }
     return payload as V2CodeTreeNode[];
   }
-  if (!payload || typeof payload !== 'object') return [];
+  if (!payload || typeof payload !== 'object' || depth > 3) {
+    if (strict) throw new Error('代码目录响应格式异常');
+    return [];
+  }
   const obj = payload as Record<string, unknown>;
+  if (strict && (obj.errorCode || obj.success === false || (obj.code !== undefined && obj.code !== 200))) {
+    throw new Error('代码目录响应异常');
+  }
 
   if (depth < 3 && obj.data && typeof obj.data === 'object') {
-    const nested = unwrapList(obj.data, depth + 1);
-    if (nested.length) return nested;
+    const nested = unwrapList(obj.data, depth + 1, strict);
+    if (strict || nested.length) return nested;
   }
 
   for (const key of [
@@ -346,7 +355,7 @@ function unwrapList(payload: unknown, depth = 0): V2CodeTreeNode[] {
   ]) {
     const value = obj[key];
     if (Array.isArray(value)) {
-      return unwrapList(value, depth + 1);
+      return unwrapList(value, depth + 1, strict);
     }
   }
 
@@ -359,10 +368,11 @@ function unwrapList(payload: unknown, depth = 0): V2CodeTreeNode[] {
     return [rootNode];
   }
 
-  if (typeof obj.path === 'string' || typeof obj.fileName === 'string') {
+  if (typeof obj.path === 'string' || typeof obj.fileName === 'string' || typeof obj.name === 'string') {
     return [obj as V2CodeTreeNode];
   }
 
+  if (strict) throw new Error('代码目录响应格式异常');
   return [];
 }
 
@@ -450,52 +460,27 @@ export async function fetchAllV2CodeTreeFiles(
   const visitedPrefixes = new Set<string>();
   const filesByPath = new Map<string, V2CodeTreeFileEntry>();
 
-  const addFiles = (entries: V2CodeTreeFileEntry[]) => {
-    entries.forEach((entry) => {
-      if (entry.path) filesByPath.set(entry.path, entry);
-    });
-  };
-
   const loadPrefix = async (prefix: string, depth: number) => {
     const normPrefix = prefix.replace(/^\/+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
     const visitKey = normPrefix || '__root__';
-    if (visitedPrefixes.has(visitKey) || depth > maxDepth) return;
+    if (visitedPrefixes.has(visitKey)) return;
+    if (depth > maxDepth) throw new Error('代码目录超过读取深度限制，文件列表不完整');
     visitedPrefixes.add(visitKey);
+    // 调用方需要完整列表；任何一层失败都向上传递，不能用成功的半棵树冒充完整结果。
+    const payload = await fetchTree(normPrefix || undefined);
+    await walk(unwrapList(payload, 0, true), normPrefix, depth);
+  };
 
-    let payload: unknown;
-    try {
-      payload = await fetchTree(normPrefix || undefined);
-    } catch {
-      return;
-    }
-
-    if (
-      Array.isArray(payload) &&
-      payload.length > 0 &&
-      typeof payload[0] === 'string'
-    ) {
-      addFiles(flattenV2CodeTree(payload));
-      return;
-    }
-
-    const nodes = unwrapList(payload);
+  const walk = async (nodes: V2CodeTreeNode[], prefix: string, depth: number) => {
+    if (depth > maxDepth) throw new Error('代码目录超过读取深度限制，文件列表不完整');
     for (const node of nodes) {
-      const path = resolveV2TreeNodePath(node, normPrefix);
-      if (!path) continue;
+      if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('代码目录节点响应异常');
+      const path = resolveV2TreeNodePath(node, prefix);
+      if (!path || (node.children != null && !Array.isArray(node.children))) throw new Error('代码目录节点响应异常');
 
       if (isDirNode(node)) {
         if (Array.isArray(node.children) && node.children.length > 0) {
-          addFiles(flattenV2CodeTree({ children: node.children }));
-          for (const child of node.children) {
-            const childPath = resolveV2TreeNodePath(child, path);
-            if (
-              childPath &&
-              isDirNode(child) &&
-              (!child.children || child.children.length === 0)
-            ) {
-              await loadPrefix(childPath, depth + 1);
-            }
-          }
+          await walk(node.children, path, depth + 1);
         } else {
           await loadPrefix(path, depth + 1);
         }
@@ -1383,6 +1368,10 @@ export function normalizeAdminCodeAssetPage(
   const page = visit(payload);
   if (strict && !page) throw new Error('管理员代码资产列表响应格式异常');
   const items = Array.isArray(page?.items) ? page.items : [];
+  if (strict && (items.some(item => !item || typeof (item.assetId || item.id) !== 'string' || !(item.assetId || item.id)?.trim())
+    || (page?.totalElements != null && (!Number.isSafeInteger(page.totalElements) || page.totalElements < items.length)))) {
+    throw new Error('管理员代码资产列表标识或条数异常');
+  }
   return {
     items,
     total: page?.totalElements ?? items.length,
@@ -1859,7 +1848,12 @@ export async function rescanAdminCodeReviewTask(
 
 export function extractV2FileText(payload: V2CodeFileContent | string): string {
   if (typeof payload === 'string') return payload;
-  return payload?.content || payload?.text || '';
+  const response = payload as Record<string, unknown> | null;
+  if (!response || Array.isArray(response) || response.errorCode || response.success === false
+    || (response.code !== undefined && response.code !== 200)) throw new Error('代码文件响应异常');
+  const content = response.content ?? response.text;
+  if (typeof content !== 'string') throw new Error('代码文件内容响应格式异常');
+  return content;
 }
 
 export async function errorMessageFromV2(error: any): Promise<string> {

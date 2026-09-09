@@ -164,6 +164,8 @@ const AdminCodeAssetsPage: React.FC = () => {
   const ownerUsernameMap = useOwnerUsernameMap();
   const actionRef = useRef<ActionType | null>(null);
   const browseRef = useRef<BrowseState | null>(null);
+  const browseLoadSequence = useRef(0);
+  const fileLoadSequence = useRef(0);
   const activeAssetRef = useRef<V2AdminCodeAsset | null>(null);
   const assetLoadSequence = useRef(0);
   const [activeAsset, setActiveAsset] = useState<V2AdminCodeAsset | null>(null);
@@ -188,6 +190,9 @@ const AdminCodeAssetsPage: React.FC = () => {
 
   const [browse, setBrowse] = useState<BrowseState | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseReadError, setBrowseReadError] = useState<string>();
+  const [fileReadError, setFileReadError] = useState<string>();
+  const [listReadError, setListReadError] = useState<string>();
   const [browseFiles, setBrowseFiles] = useState<
     Array<{ path: string; fileName?: string; sizeBytes?: number }>
   >([]);
@@ -210,6 +215,9 @@ const AdminCodeAssetsPage: React.FC = () => {
     // 路由离开后，未完成的读取不能再写回详情。
     assetLoadSequence.current += 1;
     activeAssetRef.current = null;
+    browseLoadSequence.current += 1;
+    fileLoadSequence.current += 1;
+    browseRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -224,12 +232,21 @@ const AdminCodeAssetsPage: React.FC = () => {
   );
 
   const previewDirty = previewContent !== originalPreviewContent;
+  // 空工作区仍可新增文件/放弃草稿；文件是否可编辑与工作区是否可操作分开判断。
+  const workspaceWritable = browse?.mode === 'workspace' && !browse.workspaceReadOnly && !browseLoading && !browseReadError;
   const workspaceEditable =
     browse?.mode === 'workspace' &&
     !browse.workspaceReadOnly &&
-    browse.fileEditable !== false;
+    browse.fileEditable === true && !previewLoading && !browseLoading && !fileReadError;
 
   const closeBrowse = () => {
+    browseLoadSequence.current += 1;
+    fileLoadSequence.current += 1;
+    browseRef.current = null;
+    setBrowseLoading(false);
+    setPreviewLoading(false);
+    setBrowseReadError(undefined);
+    setFileReadError(undefined);
     setBrowse(null);
     setBrowseFiles([]);
     setPreviewContent('');
@@ -238,7 +255,9 @@ const AdminCodeAssetsPage: React.FC = () => {
   };
 
   const patchBrowse = (patch: Partial<BrowseState>) => {
-    setBrowse((prev) => (prev ? { ...prev, ...patch } : prev));
+    const next = browseRef.current ? { ...browseRef.current, ...patch } : null;
+    browseRef.current = next;
+    setBrowse(next);
   };
 
   const applyAssetMeta = (
@@ -360,6 +379,14 @@ const AdminCodeAssetsPage: React.FC = () => {
   };
 
   const loadBrowseTree = async (state: BrowseState) => {
+    browseRef.current = state;
+    const sequence = ++browseLoadSequence.current;
+    fileLoadSequence.current += 1;
+    const isCurrent = () => sequence === browseLoadSequence.current && browseRef.current?.targetId === state.targetId && browseRef.current?.mode === state.mode;
+    patchBrowse({ fileEditable: false, contentHash: undefined });
+    setBrowseReadError(undefined);
+    setFileReadError(undefined);
+    setPreviewLoading(false);
     setBrowseLoading(true);
     setBrowseFiles([]);
     setSelectedPath(undefined);
@@ -377,6 +404,7 @@ const AdminCodeAssetsPage: React.FC = () => {
               }),
         { maxDepth: 8 },
       );
+      if (!isCurrent()) return;
       setBrowseFiles(files);
       const data = buildCodeFileTreeData(files);
       setExpandedKeys(collectCodeFileTreeExpandedKeys(data));
@@ -384,15 +412,21 @@ const AdminCodeAssetsPage: React.FC = () => {
         await loadBrowseFile(state, files[0].path);
       }
     } catch (e: unknown) {
-      message.error(getApiErrorMessage(e, '加载目录失败'));
+      if (isCurrent()) setBrowseReadError(getApiErrorMessage(e, '加载目录失败'));
     } finally {
-      setBrowseLoading(false);
+      if (isCurrent()) setBrowseLoading(false);
     }
   };
 
   const loadBrowseFile = async (state: BrowseState, path: string) => {
+    const sequence = ++fileLoadSequence.current;
+    const isCurrent = () => sequence === fileLoadSequence.current && browseRef.current?.targetId === state.targetId && browseRef.current?.mode === state.mode;
     setSelectedPath(path);
     setPreviewLoading(true);
+    setFileReadError(undefined);
+    setPreviewContent('');
+    setOriginalPreviewContent('');
+    patchBrowse({ fileEditable: false, contentHash: undefined });
     try {
       if (state.mode === 'workspace') {
         const [contentRes, metadata] = await Promise.all([
@@ -401,8 +435,14 @@ const AdminCodeAssetsPage: React.FC = () => {
           }),
           getAdminCodeWorkspaceFileMetadata(state.targetId, path, {
             skipErrorHandler: true,
-          }).catch(() => undefined),
+          }),
         ]);
+        if (!isCurrent()) return;
+        // 后端 DTO 明确提供文件身份和可编辑标志；未知不能被当作允许编辑。
+        if (!metadata || metadata.path !== path || typeof metadata.editable !== 'boolean' || typeof metadata.readOnly !== 'boolean'
+          || !Number.isSafeInteger(metadata.workspaceRevision) || Number(metadata.workspaceRevision) < 0) {
+          throw new Error('文件元数据响应异常，不能确认编辑状态，请重试');
+        }
         const text = extractV2FileText(contentRes as any) || '';
         setPreviewContent(text);
         setOriginalPreviewContent(text);
@@ -410,23 +450,25 @@ const AdminCodeAssetsPage: React.FC = () => {
           workspaceRevision:
             metadata?.workspaceRevision ?? state.workspaceRevision,
           fileEditable:
-            metadata?.editable !== false && metadata?.readOnly !== true,
+            metadata.editable === true && metadata.readOnly === false,
           contentHash: metadata?.contentHash,
         });
       } else {
         const res = await getAdminCodeVersionFileContent(state.targetId, path, {
           skipErrorHandler: true,
         });
+        if (!isCurrent()) return;
         const text = extractV2FileText(res as any) || '';
         setPreviewContent(text);
         setOriginalPreviewContent(text);
       }
     } catch (e: unknown) {
+      if (!isCurrent()) return;
       setPreviewContent('');
       setOriginalPreviewContent('');
-      message.error(getApiErrorMessage(e, '读取文件失败'));
+      setFileReadError(getApiErrorMessage(e, '读取文件失败'));
     } finally {
-      setPreviewLoading(false);
+      if (isCurrent()) setPreviewLoading(false);
     }
   };
 
@@ -1549,12 +1591,12 @@ const AdminCodeAssetsPage: React.FC = () => {
             />
           </Card>
 
-          {workspaceEditable ? (
+          {workspaceWritable ? (
             <div style={{ marginBottom: 12 }}>
               <Space wrap>
                 <Button
                   loading={actionLoading}
-                  disabled={!selectedPath || !previewDirty}
+                  disabled={!workspaceEditable || !selectedPath || !previewDirty}
                   onClick={() => void handleSaveDraft()}
                 >
                   保存草稿
@@ -1563,6 +1605,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                   type="primary"
                   loading={actionLoading}
                   onClick={handleSaveAndPublish}
+                  disabled={previewLoading || !!fileReadError}
                 >
                   保存并发布
                 </Button>
@@ -1619,7 +1662,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                 title={browse?.mode === 'workspace' ? '工作区目录' : '代码目录'}
                 style={{ marginBottom: 16 }}
                 extra={
-                  workspaceEditable ? (
+                  workspaceWritable ? (
                     <Space wrap size={4}>
                       <Button
                         size="small"
@@ -1649,7 +1692,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                 }
               >
                 <Spin spinning={browseLoading}>
-                  {browseFiles.length === 0 && !browseLoading ? (
+                  {browseReadError ? <Alert type="error" showIcon message="目录读取失败" description={browseReadError} action={<Button onClick={() => browse && void loadBrowseTree(browse)}>重试目录</Button>} /> : browseFiles.length === 0 && !browseLoading ? (
                     <Empty
                       description={
                         browse?.mode === 'workspace'
@@ -1728,6 +1771,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                 style={{ marginBottom: 16 }}
               >
                 <Spin spinning={previewLoading || browseLoading}>
+                  {fileReadError ? <Alert type="error" showIcon message="文件读取失败" description={fileReadError} action={<Button onClick={() => browse && selectedPath && void loadBrowseFile(browse, selectedPath)}>重试文件</Button>} /> : null}
                   {workspaceEditable ? (
                     <CodeEditor
                       value={previewContent}
@@ -1752,7 +1796,7 @@ const AdminCodeAssetsPage: React.FC = () => {
                         minHeight: 200,
                       }}
                     >
-                      {previewContent || '选择左侧文件查看内容'}
+                      {selectedPath ? previewContent : '选择左侧文件查看内容'}
                     </pre>
                   )}
                 </Spin>
@@ -1761,13 +1805,15 @@ const AdminCodeAssetsPage: React.FC = () => {
           </Row>
         </Spin>
       ) : (
+        <>
+        {listReadError ? <Alert type="error" showIcon message="资产列表未更新" description={listReadError} action={<Button onClick={() => actionRef.current?.reload()}>重试列表</Button>} /> : null}
         <ProTable<V2AdminCodeAsset>
           actionRef={actionRef}
-          rowKey={(r) => r.assetId || r.id || r.name || String(Math.random())}
+          rowKey={(r) => r.assetId || r.id || ''}
           columns={columns}
           search={{ labelWidth: 'auto' }}
           scroll={{ x: 960 }}
-          pagination={{ pageSize: 20, showSizeChanger: true }}
+          pagination={{ defaultPageSize: 20, showSizeChanger: true }}
           request={async (params, sort) => {
             const sortEntry = Object.entries(sort || {})[0];
             let sortBy: string = 'UPDATED_AT';
@@ -1801,18 +1847,20 @@ const AdminCodeAssetsPage: React.FC = () => {
                 },
                 { skipErrorHandler: true },
               );
-              const pageData = normalizeAdminCodeAssetPage(res);
+              const pageData = normalizeAdminCodeAssetPage(res, true);
+              setListReadError(undefined);
               return {
                 data: pageData.items,
                 success: true,
                 total: pageData.total,
               };
             } catch (e: unknown) {
-              message.error(getApiErrorMessage(e, '加载管理员代码资产失败'));
+              setListReadError(getApiErrorMessage(e, '加载管理员代码资产失败'));
               return { data: [], success: false, total: 0 };
             }
           }}
         />
+        </>
       )}
 
       <Modal

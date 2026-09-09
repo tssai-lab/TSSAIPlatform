@@ -82,9 +82,13 @@ const result = await build({
             qa.calls.push(url);
             if (url === '/system/user/list') return {code:200, data:{list:[{id:1,username:'qa-owner',role:'普通用户',status:'启用'}],total:1}};
             if (search.get('view') === 'assets' && url.startsWith('/v2/admin/')) {
-              qa.assetCalls.push({url, method:options.method});
+              qa.assetCalls.push({url, method:options.method, params: options.params});
               const assets = ['a','b'].map(id => ({id:'asset-' + id,name:'测试资产 ' + id.toUpperCase(),ownerUserId:1,assetRevision:2,trainingProfile:'cv'}));
-              if (url === '/v2/admin/code-assets') return {items:assets,totalElements:2};
+              if (url === '/v2/admin/code-assets') {
+                if (qa.assetMode === 'list-error') throw new Error('测试资产列表失败');
+                if (qa.assetMode === 'list-invalid') return {errorCode:'DENIED',items:[]};
+                return {items:assets,totalElements:2};
+              }
               const match = url.match(new RegExp('^/v2/admin/code-assets/(asset-[ab])(/versions)?$'));
               const mode = qa.assetMode;
               if (match) {
@@ -99,8 +103,15 @@ const result = await build({
                 if (mode === 'detail-invalid') return {success:false,id:match[1]};
                 return assets.find(item => item.id === match[1]);
               }
-              if (url.endsWith('/tree')) return [{path:'train.py',type:'FILE'}, {path:'README.md',type:'FILE'}];
-              if (url.endsWith('/files/content')) return {content:'只读文件 ' + options.params.path + ' · ' + url.split('/')[4]};
+              if (url.endsWith('/tree')) {
+                if (mode === 'tree-error') throw new Error('测试目录读取失败');
+                return [{path:'train.py',type:'FILE'}, {path:'README.md',type:'FILE'}];
+              }
+              if (url.endsWith('/files/content')) {
+                if (mode === 'file-error') throw new Error('测试文件读取失败');
+                if (mode === 'file-held') await new Promise(resolve => qa.held.push(resolve));
+                return {content:'只读文件 ' + options.params.path + ' · ' + url.split('/')[4]};
+              }
               throw new Error('资产夹具未声明接口: ' + url);
             }
             if (url === '/v2/admin/code-review-tasks') {

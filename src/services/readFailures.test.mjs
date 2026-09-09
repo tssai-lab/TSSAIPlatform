@@ -183,7 +183,7 @@ function compareLoader({ ids = ['a', 'b'], detail, metrics } = {}) {
   const exports = {};
   vm.runInNewContext(compiled, {
     exports, useCallback: fn => fn, selectedRowKeys: ids, taskList: ids.map(id => ({ id, name: id })),
-    MLFLOW_METRIC_KEYS: ['train_loss'],
+    MLFLOW_METRIC_KEYS: ['train_loss'], compareLoadSequence: { current: 0 },
     fetchTaskDetail: async id => { detailCalls.push(id); return detail ? detail(id) : { data: { id, name: id, runId: id } }; },
     fetchMlflowMetricsBulk: async run => { calls.push(run); return metrics ? metrics(run) : { train_loss: [{ step: 0, value: 1 }] }; },
     setMetricsLoading: value => loading.push(value), setMetricsData: data => snapshots.push(data),
@@ -214,6 +214,23 @@ test('结果对比：真实加载回调区分请求失败、指标为空与成�
       if (scenario === 'partial') assert.ok(messages.some(item => /1 个指标拉取失败/.test(item.text)));
     }
   }
+});
+
+test('结果对比：较早加载的迟到指标不能覆盖最后一次加载', async () => {
+  let resolve;
+  const held = new Promise(yes => { resolve = yes; });
+  let first = true;
+  const state = compareLoader({ metrics: async () => {
+    if (first) { first = false; return held; }
+    return { train_loss: [{ step: 0, value: 2 }] };
+  } });
+  const old = state.load();
+  await new Promise(yes => setImmediate(yes));
+  await state.load();
+  resolve({ train_loss: [{ step: 0, value: 1 }] });
+  await old;
+  assert.equal(state.snapshots.length, 1);
+  assert.equal(state.snapshots[0][0].metrics.train_loss[0].value, 2);
 });
 
 test('对比详情：网络、权限和服务错误不误报没有指标', async () => {
