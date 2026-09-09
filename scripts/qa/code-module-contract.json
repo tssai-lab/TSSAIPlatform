@@ -795,6 +795,7 @@
     "source": "src/services/code.ts",
     "target": "src/services/trainingCode/preview.ts",
     "name": "mapV2TreeFiles",
+    "removed": "G2 后反向审查确认：私有函数，无调用和导出，删除该函数及专用未用导入",
     "body": "1ed241d9a8eb6dfe13ab7e47b8336b056e408317a8827a3bfb4e9da855cf909b"
   },
   {

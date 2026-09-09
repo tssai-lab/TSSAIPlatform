@@ -4,7 +4,6 @@ import { request } from '@umijs/max';
 import {
   extractV2FileText,
   fetchAllV2CodeTreeFiles,
-  flattenV2CodeTree,
   getV2CodeConsumerManifest,
   getV2CodeRiskAssessment,
   getV2CodeVersion,
@@ -143,10 +142,6 @@ function mapV2TreeFileEntries(
     sizeBytes: item.sizeBytes,
     languageId: item.languageId,
   })) as API.ModelCodeFile[];
-}
-
-function mapV2TreeFiles(tree: unknown): API.ModelCodeFile[] {
-  return mapV2TreeFileEntries(flattenV2CodeTree(tree));
 }
 
 async function fetchV2CodeFilesFromTree(
