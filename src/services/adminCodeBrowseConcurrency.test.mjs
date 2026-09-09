@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = readFileSync(new URL('../pages/task/trainingCode/adminAssets/index.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../pages/task/trainingCode/adminAssets/useAdminCodeBrowser.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
 function visit(node) {

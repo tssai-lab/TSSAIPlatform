@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = readFileSync(new URL('../pages/task/trainingCode/adminAssets/index.tsx', import.meta.url), 'utf8');
+const source = ['index.tsx', 'presentation.tsx'].map(file => readFileSync(new URL(`../pages/task/trainingCode/adminAssets/${file}`, import.meta.url), 'utf8')).join('\n');
 const ast = ts.createSourceFile('adminAssets.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
 function visit(node) {
@@ -47,7 +47,7 @@ function page({ detail = async id => record(id), versions = async id => [version
   const names = ['applyAssetMeta', 'loadAssetMeta', 'exitDetail', 'enterAsset', 'submitEdit', 'retryAssetMeta', 'restoreVersionBrowse'];
   const declarations = names.map(name => `const ${name} = ${callbacks[name]};`).join('\n');
   const code = `${callbacks.pickLatestCodeVersion}\n${declarations}\nexports.api = {${names.join(',')}};`;
-  vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, context);
   return { ...context.exports.api, state, context };
 }
 

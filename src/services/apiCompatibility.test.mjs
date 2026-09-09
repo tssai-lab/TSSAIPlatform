@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
-import ts from 'typescript';
 import * as receipt from '../utils/codeUploadReceipt.mjs';
 import * as compatibility from '../utils/apiCompatibility.mjs';
 import * as pagination from './paginatedCandidates.mjs';
+import { loadTypeScriptModule } from '../../scripts/qa/load-typescript-module.mjs';
 
 // 执行真实服务源码，只替换网络与无关浏览器依赖；避免仅测试判断函数却漏掉调用处。
 function loadService(file, request, codeV2 = {}) {
@@ -19,18 +17,7 @@ function loadService(file, request, codeV2 = {}) {
     './paginatedCandidates.mjs': pagination,
     './codeV2': codeV2,
   };
-  const source = ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  const exports = {};
-  vm.runInNewContext(source, {
-    exports, FormData, Blob, URLSearchParams, console,
-    require(name) {
-      assert.ok(name in dependencies, `未声明的测试依赖：${name}`);
-      return dependencies[name];
-    },
-  });
-  return exports;
+  return loadTypeScriptModule(new URL(file, import.meta.url), dependencies);
 }
 
 const operations = [

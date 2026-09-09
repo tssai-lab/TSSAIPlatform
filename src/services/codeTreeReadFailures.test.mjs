@@ -1,15 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
-import ts from 'typescript';
+import { loadTypeScriptModule } from '../../scripts/qa/load-typescript-module.mjs';
 
 function load(file, dependencies) {
-  const exports = {};
-  vm.runInNewContext(ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports, console, require(name) { assert.ok(name in dependencies, name); return dependencies[name]; } });
-  return exports;
+  return loadTypeScriptModule(new URL(file, import.meta.url), dependencies);
 }
 const service = load('./codeV2.ts', { '@umijs/max': {}, '@/constants/request': {} });
 const owner = load('../utils/ownerUserLabel.ts', { react: {}, '@/services/system/user': {} });

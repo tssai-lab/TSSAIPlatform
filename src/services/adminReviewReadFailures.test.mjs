@@ -6,18 +6,11 @@ import ts from 'typescript';
 import * as compatibility from '../utils/apiCompatibility.mjs';
 import * as receipt from '../utils/codeUploadReceipt.mjs';
 import * as pagination from './paginatedCandidates.mjs';
+import { loadTypeScriptModule } from '../../scripts/qa/load-typescript-module.mjs';
 
 // 执行真实服务及正常化函数；网络替身只允许本测试声明的 GET。
 function load(file, dependencies) {
-  const source = ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  const exports = {};
-  vm.runInNewContext(source, {
-    exports, process: { env: {} }, FormData, Blob, URLSearchParams, console,
-    require(name) { assert.ok(name in dependencies, name); return dependencies[name]; },
-  });
-  return exports;
+  return loadTypeScriptModule(new URL(file, import.meta.url), dependencies);
 }
 const row = id => ({ versionId: id, assetId: 'asset', codeName: `代码 ${id}`, fileName: `${id}.py`, trainingProfile: 'cv', approvalStatus: 'PENDING' });
 const asset = id => ({ id, name: `资产 ${id}`, ownerUserId: 1, trainingProfile: 'cv' });

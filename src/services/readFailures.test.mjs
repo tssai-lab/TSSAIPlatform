@@ -7,18 +7,11 @@ import * as compatibility from '../utils/apiCompatibility.mjs';
 import * as receipt from '../utils/codeUploadReceipt.mjs';
 import * as pagination from './paginatedCandidates.mjs';
 import * as metricHistory from './mlflowMetricHistory.mjs';
+import { loadTypeScriptModule } from '../../scripts/qa/load-typescript-module.mjs';
 
 // 直接执行产品服务，替换网络和浏览器存储；不复制被测读取逻辑。
 function load(file, dependencies) {
-  const source = ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  const exports = {};
-  vm.runInNewContext(source, {
-    exports, process: { env: {} }, FormData, Blob, URLSearchParams, console,
-    require(name) { assert.ok(name in dependencies, name); return dependencies[name]; },
-  });
-  return exports;
+  return loadTypeScriptModule(new URL(file, import.meta.url), dependencies);
 }
 
 function metrics(request) {
@@ -167,7 +160,7 @@ test('本人代码：降级后旧接口报错或缺少列表也不能伪装成�
 
 function compareLoader({ ids = ['a', 'b'], detail, metrics } = {}) {
   // 仅提取页面中真实回调表达式，隔离大页面其它交互；不重写指标汇总算法。
-  const path = new URL('../pages/task/compare/index.tsx', import.meta.url);
+  const path = new URL('../pages/task/compare/useCompareData.ts', import.meta.url);
   const sourceFile = ts.createSourceFile(path.pathname, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let initializer;
   const visit = node => {
