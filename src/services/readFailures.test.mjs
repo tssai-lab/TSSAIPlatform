@@ -144,6 +144,7 @@ test('本人代码：错误结构和缺少标识的记录不能静默消失', as
   for (const options of [
     { assets: [null] }, { assets: [{}] },
     { assets: [{ id: 'a' }], versions: async () => ({}) },
+    { assets: [{ id: 'a' }], versions: async () => ({ code: 403, items: [] }) },
     { assets: [{ id: 'a' }], versions: async () => [{}] },
   ]) await assert.rejects(inventory(options).fetchOwnerCodeVersionInventory(), /训练代码.*加载失败/);
 });

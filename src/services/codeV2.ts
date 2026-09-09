@@ -583,7 +583,7 @@ function pickReviewTaskVersionId(task: V2AdminCodeReviewTask): string {
 }
 
 /** 归一化审核队列分页（兼容 {items} / {data:{items}} / 数组） */
-export function normalizeAdminReviewTaskPage(payload?: unknown): {
+export function normalizeAdminReviewTaskPage(payload?: unknown, strict = false): {
   items: V2AdminCodeReviewTask[];
   totalElements: number;
 } {
@@ -593,6 +593,9 @@ export function normalizeAdminReviewTaskPage(payload?: unknown): {
     }
     if (!raw || typeof raw !== 'object' || depth > 3) return null;
     const obj = raw as Record<string, unknown>;
+    if (strict && (obj.errorCode || obj.success === false || (obj.code !== undefined && obj.code !== 200))) {
+      throw new Error('管理员待审核列表响应异常');
+    }
     if (Array.isArray(obj.items)) {
       return {
         items: obj.items as V2AdminCodeReviewTask[],
@@ -603,6 +606,7 @@ export function normalizeAdminReviewTaskPage(payload?: unknown): {
     return null;
   };
   const page = visit(payload);
+  if (strict && !page) throw new Error('管理员待审核列表响应格式异常');
   const items = page?.items ?? [];
   return {
     items,
@@ -1351,6 +1355,7 @@ export type V2AdminCodeAssetPage = {
 /** 归一化管理员代码资产分页（后端字段 items/totalElements） */
 export function normalizeAdminCodeAssetPage(
   payload?: V2AdminCodeAssetPage | null,
+  strict = false,
 ): {
   items: V2AdminCodeAsset[];
   total: number;
@@ -1366,6 +1371,9 @@ export function normalizeAdminCodeAssetPage(
     }
     if (!raw || typeof raw !== 'object' || depth > 3) return null;
     const obj = raw as Record<string, unknown>;
+    if (strict && (obj.errorCode || obj.success === false || (obj.code !== undefined && obj.code !== 200))) {
+      throw new Error('管理员代码资产列表响应异常');
+    }
     if (Array.isArray(obj.items)) {
       return obj as V2AdminCodeAssetPage;
     }
@@ -1373,6 +1381,7 @@ export function normalizeAdminCodeAssetPage(
     return null;
   };
   const page = visit(payload);
+  if (strict && !page) throw new Error('管理员代码资产列表响应格式异常');
   const items = Array.isArray(page?.items) ? page.items : [];
   return {
     items,

@@ -502,10 +502,12 @@ export async function fetchPendingCodeReviewTasks(
     },
     options,
   );
-  const page = normalizeAdminReviewTaskPage(payload);
-  const mapped = page.items
-    .map(mapAdminReviewTaskToListItem)
-    .filter((item) => item.codeVersionId?.trim());
+  // 仅此读取链路开启严格检查，不改变其它旧调用方的兼容行为。
+  const page = normalizeAdminReviewTaskPage(payload, true);
+  const mapped = page.items.map(mapAdminReviewTaskToListItem);
+  if (mapped.some((item) => !item.codeVersionId?.trim())) {
+    throw new Error('管理员待审核列表缺少版本编号');
+  }
   const enriched = await Promise.all(
     mapped.map((item) => enrichAdminReviewListItem(item, options)),
   );
@@ -527,12 +529,19 @@ export async function fetchPendingCodeReviewTasks(
         remoteIds,
         options,
       )
-    : [];
+    : { items: [], incomplete: false, warningMessage: undefined };
+
+  // 无可展示的远端记录且补查未完成时，不能以空列表证明“没有待审核代码”。
+  if (extra.incomplete && enriched.length === 0 && extra.items.length === 0) {
+    throw new Error(extra.warningMessage || '待审核代码补查未完成，请重试');
+  }
 
   return {
     success: true,
-    data: [...extra, ...enriched],
-    total: (page.totalElements ?? enriched.length) + extra.length,
+    data: [...extra.items, ...enriched],
+    total: (page.totalElements ?? enriched.length) + extra.items.length,
+    incomplete: extra.incomplete,
+    warningMessage: extra.warningMessage,
   };
 }
 
@@ -605,7 +614,7 @@ function unwrapVersionList(
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === 'object') {
     const obj = payload as Record<string, unknown>;
-    if (strict && (obj.errorCode || obj.success === false)) {
+    if (strict && (obj.errorCode || obj.success === false || (obj.code !== undefined && obj.code !== 200))) {
       throw new Error('训练代码版本列表响应异常');
     }
     if (Array.isArray(obj.items)) {
@@ -628,7 +637,7 @@ async function fallbackPendingFromAdminAssets(
   },
   existingIds: Set<string>,
   options?: { [key: string]: any },
-): Promise<CodeVersionListItem[]> {
+): Promise<{ items: CodeVersionListItem[]; incomplete: boolean; warningMessage?: string }> {
   const wanted = String(params.approvalStatus || 'PENDING').toUpperCase();
   try {
     const res = await listAdminCodeAssets(
@@ -643,19 +652,26 @@ async function fallbackPendingFromAdminAssets(
       },
       { skipErrorHandler: true, ...(options || {}) },
     );
-    const assets = normalizeAdminCodeAssetPage(res).items;
+    const page = normalizeAdminCodeAssetPage(res, true);
+    const assets = page.items;
     const extras: CodeVersionListItem[] = [];
+    let failedAssets = 0;
     await Promise.all(
       assets.map(async (asset) => {
-        const assetId = (asset.id || asset.assetId || '').trim();
-        if (!assetId) return;
         try {
+          const assetId = (asset.id || asset.assetId || '').trim();
+          if (!assetId) throw new Error('资产缺少编号');
           const versions = unwrapVersionList(
             await listAdminCodeAssetVersions(assetId, {
               skipErrorHandler: true,
               ...(options || {}),
             }),
+            true,
           );
+          // 先确认版本编号完整，再加入补查结果，避免缺失编号的响应冒充完整资产。
+          if (versions.some((version) => !(version.versionId || version.codeVersionId || version.id || '').trim())) {
+            throw new Error('版本缺少编号');
+          }
           versions.forEach((version) => {
             const versionId = (
               version.versionId ||
@@ -696,13 +712,23 @@ async function fallbackPendingFromAdminAssets(
             existingIds.add(versionId);
           });
         } catch {
-          // 单个资产版本失败不影响其它兜底
+          failedAssets += 1;
         }
       }),
     );
-    return extras;
+    const warnings = [
+      failedAssets > 0 ? `${failedAssets} 个资产的版本列表补查失败` : '',
+      page.total > assets.length ? `资产补查仅覆盖当前 ${assets.length} 项，未覆盖全部范围` : '',
+    ].filter(Boolean);
+    return {
+      items: extras,
+      incomplete: warnings.length > 0,
+      warningMessage: warnings.length > 0
+        ? `${warnings.join('；')}，当前待审核列表可能不完整，请重试或到代码资产管理核查。`
+        : undefined,
+    };
   } catch {
-    return [];
+    return { items: [], incomplete: true, warningMessage: '管理员代码资产补查失败，当前待审核列表可能不完整，请重试。' };
   }
 }
 

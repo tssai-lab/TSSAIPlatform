@@ -240,3 +240,65 @@ playwright-cli -s=compare-details snapshot
 playwright-cli -s=compare-details run-code --filename scripts/qa/compare-detail-errors-check.js
 playwright-cli -s=compare-details close
 ```
+
+## G1 推送与 G1d：管理员待审核列表读取（已完成本地验证，2026-09-09）
+
+- 已按用户“先推送”要求，把 `466ed2d`、`20e5964`、`4d546a2`、`c4c8ee6` 推送到 `origin/codex/frontend-read-errors`；远端核验 HEAD 为 `c4c8ee68a5dce22cab932edf99dafd78a970eddc`。未创建 PR、未合并部署分支。
+- 推送前后 `frontend-gpu=8729bb9`、`frontend-dev=72410be` 不变；部署触发仅接受指定前端主线，本次治理分支 push 不触发内外网部署。GitHub 提示默认分支存在依赖安全告警，未逐项验证，本轮不把它们当成已修复或新引入的缺陷。
+- 身份：`delivery-cleanup-frontend` / `codex/frontend-read-errors` / 起点 `c4c8ee6`，工作区干净。下一小阶段只改待审核列表及它的读取辅助逻辑，不改管理员工作区编辑、审核决定、权限、训练或部署。
+- A：后端审核队列支持审核状态、风险、归属、时间和分页；管理员拦截器拒绝非管理员。前端主队列失败时仍返回 `success:true` 并混入本地手工登记；资产补查失败被吞成空数组。已有本人列表采用“明确错误、保留旧表、部分失败持续告警”。
+- A：兼容补查目前只在第一页、无风险/时间筛选、空队列或有关键词时执行；最多查前 50 个资产。原请求条件、审核状态、归属过滤和分页合并公式本轮保持不变，不能暗中全量扫描。
+- B：主队列失败不能以手工登记证明读取成功；补查失败时有已读记录则显示并警告，不足以确认结果时明确报错。正常空队列才显示为空；未知响应结构不当成空列表；超过现有补查范围要提示不完整。
+- B：复用本人代码页的持续告警、原表保留和重试方式。请求先后顺序保护仅用于列表显示，不新增后端事务或架构。
+- C：无需要新增授权的业务决策。不移除本地登记、旧补查或改审批安全校验。可选名称/风险元数据补全、补查合并的历史分页语义、筛选用户名未解析等另列待办，不借此次修复重做全部列表。
+- 测试计划：先复现主队列失败、补查全失败/部分失败/截断、畸形响应和错误本地兜底，再覆盖真实空、旧包装、去重、筛选透传、恢复及迟到响应；浏览器只用隔离夹具操作列表查询/刷新/重试/筛选/分页，不对真实用户和资产执行审核或修改。
+- 一线补充：浏览器选择每页 20 条，实际请求 `pageSize=20`、夹具返回 13 条，但表格仍显示 10 条。HEAD 已有 `pagination.pageSize=10` 的受控固定值，与已启用的条数选择器矛盾；核对本地 ProTable/Antd 实现后，补失败回归并改为 `defaultPageSize=10`。这是同页既有交互的低风险修正，不改资产补查合并公式或后端分页。
+
+### G1d 执行证据与行为对应
+
+| 证据 | 预期—实现—测试 | 结果 |
+| --- | --- | --- |
+| G1d-E01 | `adminReviewReadFailures.test.mjs` 执行真实 `code.ts`、`codeV2.ts` 及 AST 提取的真实页面请求回调；只替换已声明 GET 网络 | 初始 13 项：4 通过、9 失败；先复现吞错、空结果及提示缺失，再修复 |
+| G1d-E02 | `fetchPendingCodeReviewTasks` 严格检查响应；主失败直接上报；补查部分失败或范围截断返回不完整标记；没有任何远端记录且补查失败则报错 | 网络/超时、401/403/404/429/500、业务错误、畸形响应、空态、旧包装、去重、状态与条件透传均覆盖；不增加扫描范围 |
+| G1d-E03 | 待审核页主失败返回 `success:false`，不合并本地登记；保留旧表并持续解释、允许重试；忽略迟到的旧查询结果 | 单元测试及浏览器验证旧表未清空、局部成功可见、重试消除提示、本地登记不能冒充接口成功 |
+| G1d-E04 | 分页从固定 `pageSize` 改为 `defaultPageSize`；严格版本列表额外拒绝非 200 业务码 | 两处均各有修改前的定向失败；最终管理员 14 项全部通过；本人列表同时补业务错误响应回归 |
+| G1d-E05 | `admin-review-read-errors-check.js` 运行真实 React 页面/服务与本地隔离响应 | 27 项断言通过；包括查询、筛选、分页 10/20、刷新、重试、部分失败、范围截断和仅前端角色拒绝展示 |
+| G1d-E06 | 在最终产品代码上重跑 G1/G1b/G1c 浏览器用例 | 对比详情 26、本人分页 19、列表与指标错误 25，均通过；合计 97 项场景断言，不代表 97 个按钮或全站覆盖率 |
+| G1d-E07 | `npm test` / `npx --no-install max setup` / `npm run tsc` / `npm run build` | 最终 153/153，零失败、零跳过；setup 成功、类型零错误、生产构建成功 |
+| G1d-E08 | 修改页及新浏览器脚本单独 Biome lint（不自动格式化）、提交信息校验、`git diff --check` | 均通过；不宣称历史格式基线或全部依赖告警已清零 |
+
+本页实际操作的只读控件：关键词输入、查询、重置、工具栏刷新图标、刷新按钮、新增重试按钮、页码 1/2、上一页/下一页、每页 10/20 条、审核状态四种取值、展开/收起、风险四种取值、归属用户名、排序（版本/提交时间）及升降序。筛选和排序仅验证前端参数透传及夹具结果，不冒充后端查询算法验收。
+
+未执行且不属于本次读取修复：日期选择器、排序的风险/归属两种选项、关键词单独清除图标、其它每页条数、列设置/密度、手工登记界面、逐行复制/审核/拒绝/预览/更多/发现项/重新扫描/制品升级及导航链接。不把这些按钮列为通过；真实审批和上传、下载、删除、训练、推理均未操作。
+
+截图 `output/playwright/admin-review-stale.png`、`admin-review-partial.png` 已查看：分别是“保留上次 13 条列表并说明未更新”和“显示一个成功补查资产并提示另一个失败”。测试证据目录被忽略，不进入生产构建。
+
+最终构建身份：`dist/index.html` SHA256 `70afb14cdde70ea75c1da8559d56fa0a31b5611f2f8675112316d6e7786abb49`；`dist/umi.b863f48f.js` SHA256 `59eeb504cc8e979214e711526677947cab73468a27811b683a753c448486ced8`。
+
+### G1d 反向审查、排障与发布边界
+
+1. 单独第二轮复查发现严格版本读取漏判 `{code:403, items:[]}`；补红测后修复。本人列表也使用该严格入口，因此为它增加同类回归；非严格调用方继续使用旧兼容行为。管理员两种分页正常化函数的严格模式默认关闭，只在本次链路开启。
+2. 对照后端 `V2AdminCodeReviewController`、`V2AdminCodeAssetController` 及管理员授权拦截器：未改接口、权限判断、数据库、审核状态或业务写入；服务层仅 GET。并发序号仅防止旧列表响应覆盖新结果，不宣称新增了审批事务、后端并发保证或页面卸载取消。
+3. 假设与依据：保留远端主列表优先、本地登记仅兼容辅助的现有规则；部分成功沿用本人列表提示方式；固定 50 项补查上限不变，以提示不完整代替扩大扫描。用户选择每页条数应控制表格，与已有条数选择器及组件行为一致。没有擅自新增业务审批决策。
+4. 第一轮夹具构建出现 `CONSISTENCY_TRAINING_PROFILE` 星号导出冲突，按实际聚合模块来源改为显式导出；只修测试夹具。测试原先拟用不存在的“代码名称”排序选项，核对页面后改用现有“版本”，未为通过测试添加产品功能。每页 20 条仍只显示 10 条则是通过真实组件复现的产品问题，已修复，不混同测试故障。
+5. 尚未解决：可选名称/风险元数据读取失败的旧兜底、管理员资产详情吞错、用户名解析失败、首屏补查合并的历史分页语义、初始目录补全失败；这些单独审查后再决定最小修复。不能因主列表有错误提示就声称所有数据一定完整。
+6. 未验证风险：真实管理员/普通用户身份、真实接口故障注入、旧服务器联调和部署验收。夹具只拒绝非 GET，不连接真实 API；非管理员用例只证明前端拒绝展示意图，不代替后端权限测试。Antd 仍有既有 Modal 弃用及静态消息上下文告警，未见页面崩溃；不扩展为主题或弹窗架构重做。
+7. 沿用 G1c 已记录的本地提交约束：局部 `HUSKY=0` 避免自动整页重排和给 Playwright 函数表达式添加末尾分号；分别执行 lint、commitlint、全部测试、类型及构建，不修改钩子、依赖或远端保护。历史完整格式检查不通过仍作为已知限制，未删测试或绕过部署验收。
+8. 按用户要求，本阶段作为独立提交推到同一治理分支 `codex/frontend-read-errors`；推送前重新核验远端，普通 push，不强推、不创建 PR、不合并部署主线。未接触线上服务器和另一工作区的后端安装包变更；已有训练及内外网服务未因本轮操作改变。
+9. 结论：G1d 本地修复与相邻回归通过，可进入只读联调/合入候选，暂不直接上线。仍需核对目标分支最新增量、完成真实只读联调并确定允许短暂停机的部署窗口；这不是整个交付版本或全部代码治理完成的结论。
+
+### G1d 复验入口
+
+```powershell
+node --test src/services/adminReviewReadFailures.test.mjs src/services/readFailures.test.mjs
+node scripts/qa/read-errors-harness.mjs
+# 另一个终端：使用已安装的 Playwright CLI；不连接真实后端
+playwright-cli -s=admin-read open 'http://127.0.0.1:18893/?view=admin'
+playwright-cli -s=admin-read run-code --filename scripts/qa/admin-review-read-errors-check.js
+playwright-cli -s=admin-read goto 'http://127.0.0.1:18893/?view=compare'
+playwright-cli -s=admin-read run-code --filename scripts/qa/compare-detail-errors-check.js
+playwright-cli -s=admin-read goto 'http://127.0.0.1:18893/'
+playwright-cli -s=admin-read run-code --filename scripts/qa/code-list-pagination-check.js
+playwright-cli -s=admin-read run-code --filename scripts/qa/read-errors-check.js
+playwright-cli -s=admin-read close
+```

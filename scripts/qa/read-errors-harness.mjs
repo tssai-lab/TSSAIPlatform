@@ -19,9 +19,11 @@ const result = await build({
     import Metrics from './src/components/TrainingMetricsPanel';
     import CodeList from './src/pages/task/trainingCode/list';
     import TaskCompare from './src/pages/task/compare';
+    import PendingCodes from './src/pages/task/trainingCode/pending';
     window.__qa = {
       metrics: 'success', code: 'success', calls: [], held: [],
       compare: {}, detailCalls: [],
+      adminMode: 'success', adminCalls: [], navigation: [],
       release() { this.held.splice(0).forEach(resolve => resolve()); },
     };
     function Harness() {
@@ -37,10 +39,12 @@ const result = await build({
         <section id="code-list"><CodeList/></section>
       </main>;
     }
-    const compareView = new URLSearchParams(location.search).get('view') === 'compare';
-    createRoot(document.getElementById('root')).render(<React.StrictMode>{compareView
+    const view = new URLSearchParams(location.search).get('view');
+    createRoot(document.getElementById('root')).render(<React.StrictMode>{view === 'compare'
       ? <main style={{padding:24}}><h1>本地对比测试（无真实后端连接）</h1><TaskCompare/></main>
-      : <Harness/>}</React.StrictMode>);
+      : view === 'admin'
+        ? <main style={{padding:24}}><h1>本地管理员队列测试（无真实后端连接）</h1><PendingCodes/></main>
+        : <Harness/>}</React.StrictMode>);
   `, resolveDir: root, loader: 'jsx' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
   define: { 'process.env.NODE_ENV': '"development"', 'process.env.REACT_APP_MLFLOW_BASE_PATH': '"/qa-metrics"' },
@@ -51,18 +55,55 @@ const result = await build({
       builder.onResolve({ filter: /^@\/services\/platform$/ }, () => ({ path: 'platform', namespace: 'qa' }));
       builder.onResolve({ filter: /^@\// }, args => builder.resolve(path.resolve(root, 'src', args.path.slice(2)), { resolveDir: root, kind: args.kind }));
       builder.onLoad({ filter: /^platform$/, namespace: 'qa' }, () => ({
-        contents: `export * from './src/services/code'; export * from './src/services/mlflow'; export * from './src/services/task';`, resolveDir: root,
+        contents: `export * from './src/services/code'; export * from './src/services/mlflow';
+          export { fetchTaskDetail, fetchTaskList, listExperimentVersions, CONSISTENCY_TRAINING_PROFILE } from './src/services/task';`, resolveDir: root,
       }));
       builder.onLoad({ filter: /^umi$/, namespace: 'qa' }, () => ({
         contents: `
           const search = new URLSearchParams(location.search);
           export const useSearchParams = () => [search];
-          export const useAccess = () => ({isAdmin: false});
-          export const history = {push: () => {throw new Error('夹具禁止业务导航');}};
+          export const useAccess = () => ({isAdmin: search.get('view') === 'admin' && search.get('role') !== 'user'});
+          export const history = {
+            push: () => {throw new Error('夹具禁止业务导航');},
+            replace: path => { window.__qa.navigation.push(path); },
+          };
           export async function request(url, options = {}) {
             if (options.method && options.method !== 'GET') throw new Error('夹具禁止写接口');
             const qa = window.__qa;
             qa.calls.push(url);
+            if (url === '/system/user/list') return {code:200, data:{list:[{id:1,username:'qa-owner',role:'普通用户',status:'启用'}],total:1}};
+            if (url === '/v2/admin/code-review-tasks') {
+              const mode = qa.adminMode;
+              const params = options.params;
+              qa.adminCalls.push({url, params});
+              if (mode === 'primary-error') throw new Error('测试审核队列不可用');
+              if (mode === 'primary-invalid') return {success:false, items:[]};
+              if (mode === 'held') await new Promise(resolve => qa.held.push(resolve));
+              let items = ['success', 'held'].includes(mode) ? Array.from({length:13}, (_, index) => ({
+                versionId:'review-' + index, assetId:'review-asset-' + index, codeName:'待审代码 ' + index,
+                fileName:'train-' + index + '.py', trainingProfile:'cv', approvalStatus:'PENDING',
+                riskLevel:'LOW', riskStatus:'COMPLETED', validationStatus:'PASSED', ownerUserId:1,
+                submittedAt:'2026-09-09T00:00:00Z',
+              })) : [];
+              items = items.filter(item => (!params.keyword || item.codeName.includes(params.keyword) || item.fileName.includes(params.keyword))
+                && (!params.approvalStatus || item.approvalStatus === params.approvalStatus)
+                && (!params.riskLevel || item.riskLevel === params.riskLevel));
+              return {items:items.slice(params.page * params.pageSize, (params.page + 1) * params.pageSize), totalElements:items.length};
+            }
+            if (url === '/v2/admin/code-assets') {
+              qa.adminCalls.push({url, params:options.params});
+              if (qa.adminMode === 'fallback-error') throw new Error('测试资产补查不可用');
+              const items = ['partial', 'versions-error', 'truncated'].includes(qa.adminMode)
+                ? [{id:'extra-a',name:'补查代码 A'}, {id:'extra-b',name:'补查代码 B'}] : [];
+              return {items, totalElements:qa.adminMode === 'truncated' ? 51 : items.length};
+            }
+            const adminVersions = url.match(new RegExp('^/v2/admin/code-assets/(extra-[ab])/versions$'));
+            if (adminVersions) {
+              qa.adminCalls.push({url});
+              if (qa.adminMode === 'versions-error' || (qa.adminMode === 'partial' && adminVersions[1] === 'extra-b')) throw new Error('测试补查版本不可用');
+              return [{id:'version-' + adminVersions[1], fileName:'train-extra.py', trainingProfile:'cv', approvalStatus:'PENDING',
+                riskLevel:'LOW', riskStatus:'COMPLETED', validationStatus:'PASSED'}];
+            }
             const tasks = ['a', 'b', 'c'].map(id => ({id, name:'任务 ' + id.toUpperCase(),
               modelId:'model', datasetId:'dataset', modelName:'测试模型', datasetName:'测试数据集',
               status:'success', createTime:'2026-09-09T00:00:00Z'}));
