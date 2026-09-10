@@ -99,6 +99,7 @@ public class ManifestZipReader {
                 }
             }
             throw invalidManifest(
+                    ManifestFailureKind.UNSUPPORTED_SAMPLE_FILE,
                     "manifestPath",
                     normalizedPath,
                     "unsupported manifest compression method: " + manifest.method(),
@@ -145,6 +146,11 @@ public class ManifestZipReader {
             String reason,
             Throwable cause
     ) {
+        return invalidManifest(ManifestFailureKind.INVALID_MANIFEST, field, path, reason, cause);
+    }
+
+    private static ManifestValidationException invalidManifest(ManifestFailureKind kind,
+            String field, String path, String reason, Throwable cause) {
         LinkedHashMap<String, Object> details = new LinkedHashMap<>();
         details.put("field", field);
         if (path != null && !path.isBlank()) {
@@ -154,8 +160,8 @@ public class ManifestZipReader {
         String message = "field " + field
                 + (path == null || path.isBlank() ? "" : ", path: " + path)
                 + ", reason: " + reason;
-        return new ManifestValidationException(
-                "INVALID_MANIFEST",
+        return ManifestValidationException.classified(
+                kind,
                 message,
                 Map.copyOf(details),
                 cause

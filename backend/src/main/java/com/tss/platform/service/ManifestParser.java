@@ -111,7 +111,7 @@ public class ManifestParser {
                     null
             );
             if (!externalIds.add(externalId)) {
-                throw error(
+                throw error(ManifestFailureKind.DUPLICATE_SAMPLE,
                         sampleField + ".external_id",
                         externalId,
                         null,
@@ -127,7 +127,7 @@ public class ManifestParser {
                     null
             );
             if (!sampleIndexes.add(sampleIndex)) {
-                throw error(
+                throw error(ManifestFailureKind.DUPLICATE_SAMPLE,
                         sampleField + ".sample_index",
                         externalId,
                         null,
@@ -236,6 +236,7 @@ public class ManifestParser {
             }
             String path = validatedDeclaredPath(
                     item,
+                    false,
                     "path",
                     dataField + ".path",
                     externalId,
@@ -250,7 +251,7 @@ public class ManifestParser {
                     path
             );
             if (!DATA_TYPES.contains(dataType)) {
-                throw error(
+                throw error(ManifestFailureKind.UNSUPPORTED_SAMPLE_FILE,
                         dataField + ".data_type",
                         externalId,
                         path,
@@ -346,6 +347,7 @@ public class ManifestParser {
             }
             String path = validatedDeclaredPath(
                     item,
+                    true,
                     "path",
                     annotationField + ".path",
                     externalId,
@@ -395,7 +397,7 @@ public class ManifestParser {
                         externalId
                 );
                 if (!currentSampleData.containsKey(refDataPath)) {
-                    throw error(
+                    throw error(ManifestFailureKind.ANNOTATION_TARGET_NOT_FOUND,
                             annotationField + ".ref_data_path",
                             externalId,
                             refDataPath,
@@ -428,6 +430,7 @@ public class ManifestParser {
 
     private String validatedDeclaredPath(
             JsonNode item,
+            boolean annotationReference,
             String jsonField,
             String errorField,
             String externalId,
@@ -451,7 +454,7 @@ public class ManifestParser {
             );
         }
         if (!zipEntryMap.containsKey(path)) {
-            throw error(
+            throw error(annotationReference ? ManifestFailureKind.ANNOTATION_TARGET_NOT_FOUND : ManifestFailureKind.INVALID_MANIFEST,
                     errorField,
                     externalId,
                     path,
@@ -599,8 +602,8 @@ public class ManifestParser {
                 details.put("line", exception.getLocation().getLineNr());
                 details.put("column", exception.getLocation().getColumnNr());
             }
-            throw new ManifestValidationException(
-                    "INVALID_MANIFEST",
+            throw ManifestValidationException.classified(
+                    ManifestFailureKind.INVALID_MANIFEST,
                     "invalid manifest JSON: " + exception.getOriginalMessage(),
                     details,
                     exception
@@ -795,7 +798,7 @@ public class ManifestParser {
             String path,
             String reason
     ) {
-        return error(field, externalId, path, reason, Map.of());
+        return error(ManifestFailureKind.INVALID_MANIFEST, field, externalId, path, reason, Map.of());
     }
 
     private static ManifestValidationException error(
@@ -805,6 +808,17 @@ public class ManifestParser {
             String reason,
             Map<String, Object> additionalDetails
     ) {
+        return error(ManifestFailureKind.INVALID_MANIFEST, field, externalId, path, reason, additionalDetails);
+    }
+
+    private static ManifestValidationException error(ManifestFailureKind kind,
+            String field, String externalId, String path, String reason) {
+        return error(kind, field, externalId, path, reason, Map.of());
+    }
+
+    private static ManifestValidationException error(ManifestFailureKind kind,
+            String field, String externalId, String path, String reason,
+            Map<String, Object> additionalDetails) {
         String displayField = displayField(field);
         StringBuilder message = new StringBuilder("field ").append(leafField(displayField));
         if (!displayField.equals(leafField(displayField))) {
@@ -826,8 +840,8 @@ public class ManifestParser {
         if (additionalDetails != null) {
             details.putAll(additionalDetails);
         }
-        return new ManifestValidationException(
-                "INVALID_MANIFEST",
+        return ManifestValidationException.classified(
+                kind,
                 message.toString(),
                 details
         );

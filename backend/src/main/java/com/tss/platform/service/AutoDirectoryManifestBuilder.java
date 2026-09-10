@@ -46,9 +46,7 @@ public class AutoDirectoryManifestBuilder {
             }
             String path = entry.normalizedPath();
             if (path == null || path.isBlank()) {
-                throw new ManifestValidationException(
-                        "AUTO_DIRECTORY ZIP entry path cannot be blank"
-                );
+                throw ManifestValidationException.classified(ManifestFailureKind.INVALID_SAMPLE_DIRECTORY, "AUTO_DIRECTORY ZIP entry path cannot be blank", Map.of());
             }
             String[] parts = path.split("/");
             if (parts.length < 2 || parts[0].isBlank()) {
@@ -71,20 +69,14 @@ public class AutoDirectoryManifestBuilder {
         }
 
         if (groups.isEmpty()) {
-            throw new ManifestValidationException(
-                    "AUTO_DIRECTORY must contain at least one sample"
-            );
+            throw ManifestValidationException.classified(ManifestFailureKind.INVALID_SAMPLE_DIRECTORY, "AUTO_DIRECTORY must contain at least one sample", Map.of());
         }
         if (groups.size() > MAX_SAMPLES) {
-            throw new ManifestValidationException(
-                    "AUTO_DIRECTORY samples count exceeds 10000"
-            );
+            throw ManifestValidationException.classified(ManifestFailureKind.INVALID_SAMPLE_DIRECTORY, "AUTO_DIRECTORY samples count exceeds 10000", Map.of());
         }
         long lastIndex = (long) generatedSampleIndexStart + groups.size() - 1;
         if (lastIndex > Integer.MAX_VALUE) {
-            throw new ManifestValidationException(
-                    "AUTO_DIRECTORY generated sample_index exceeds integer range"
-            );
+            throw ManifestValidationException.classified(ManifestFailureKind.INVALID_SAMPLE_DIRECTORY, "AUTO_DIRECTORY generated sample_index exceeds integer range", Map.of());
         }
 
         List<ManifestSample> samples = new ArrayList<>(groups.size());
@@ -219,14 +211,14 @@ public class AutoDirectoryManifestBuilder {
                         .toList();
             }
             if (matches.isEmpty()) {
-                throw validation(
+                throw validation(ManifestFailureKind.ANNOTATION_TARGET_NOT_FOUND,
                         "annotation data match not found",
                         externalId,
                         path
                 );
             }
             if (matches.size() > 1) {
-                throw validation(
+                throw validation(ManifestFailureKind.ANNOTATION_TARGET_AMBIGUOUS,
                         "annotation data match is ambiguous",
                         externalId,
                         path
@@ -304,7 +296,7 @@ public class AutoDirectoryManifestBuilder {
                             extension,
                             "application/octet-stream"
                     );
-            default -> throw validation(
+            default -> throw validation(ManifestFailureKind.UNSUPPORTED_SAMPLE_FILE,
                     "unsupported data extension: " + extension,
                     externalId,
                     path
@@ -325,7 +317,7 @@ public class AutoDirectoryManifestBuilder {
             case "csv" -> new AnnotationDescriptor("CSV", "text/csv");
             case "yaml", "yml" ->
                     new AnnotationDescriptor("YAML", "application/yaml");
-            default -> throw validation(
+            default -> throw validation(ManifestFailureKind.UNSUPPORTED_SAMPLE_FILE,
                     "unsupported annotation extension: " + extension,
                     externalId,
                     path
@@ -361,6 +353,11 @@ public class AutoDirectoryManifestBuilder {
             String externalId,
             String path
     ) {
+        return validation(ManifestFailureKind.INVALID_SAMPLE_DIRECTORY, reason, externalId, path);
+    }
+
+    private static ManifestValidationException validation(ManifestFailureKind kind,
+            String reason, String externalId, String path) {
         StringBuilder message = new StringBuilder("AUTO_DIRECTORY ").append(reason);
         if (externalId != null) {
             message.append(", external_id: ").append(externalId);
@@ -368,7 +365,7 @@ public class AutoDirectoryManifestBuilder {
         if (path != null) {
             message.append(", path: ").append(path);
         }
-        return new ManifestValidationException(message.toString());
+        return ManifestValidationException.classified(kind, message.toString(), Map.of());
     }
 
     private record DataTypeDescriptor(

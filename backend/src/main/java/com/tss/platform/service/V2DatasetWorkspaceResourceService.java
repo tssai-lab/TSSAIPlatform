@@ -46,6 +46,8 @@ import java.util.UUID;
 @Service
 public class V2DatasetWorkspaceResourceService {
 
+    private static final DatasetWorkspaceResourcePolicy FIELD_POLICY = new DatasetWorkspaceResourcePolicy("INVALID_REQUEST");
+
     private static final Set<String> SAMPLE_PATCH_FIELDS =
             Set.of("expectedWorkspaceRevision", "tags", "metadata");
     private static final Set<String> DATA_PATCH_FIELDS = Set.of(
@@ -67,9 +69,6 @@ public class V2DatasetWorkspaceResourceService {
             "fileName",
             "contentType",
             "metadata"
-    );
-    private static final Set<String> DATA_TYPES = Set.of(
-            "IMAGE", "TEXT", "POINT_CLOUD", "AUDIO", "VIDEO", "OTHER"
     );
 
     private final DatasetWorkspaceCommandService commandService;
@@ -126,7 +125,7 @@ public class V2DatasetWorkspaceResourceService {
                         pageable
                 );
         PageResponse<V2DatasetSampleListItem> response = new PageResponse<>();
-        response.setData(result.getContent().stream().map(this::toSampleItem).toList());
+        response.setData(result.getContent().stream().map(DatasetWorkspaceResourceMapper::toSampleItem).toList());
         response.setTotal(result.getTotalElements());
         response.setPage(safePage);
         response.setPageSize(safePageSize);
@@ -390,7 +389,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 data.getChecksum()
         );
-        return mutation(workspaceId, revision, toData(data));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toData(data));
     }
 
     @Transactional(readOnly = true)
@@ -401,7 +400,7 @@ public class V2DatasetWorkspaceResourceService {
     ) {
         commandService.requireReadable(workspaceId);
         requireSample(workspaceId, sampleId, false);
-        return toData(readData(workspaceId, sampleId, dataId));
+        return DatasetWorkspaceResourceMapper.toData(readData(workspaceId, sampleId, dataId));
     }
 
     @Transactional
@@ -477,7 +476,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 data.getChecksum()
         );
-        return mutation(workspaceId, revision, toData(data));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toData(data));
     }
 
     @Transactional
@@ -537,7 +536,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 data.getChecksum()
         );
-        return mutation(workspaceId, revision, toData(data));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toData(data));
     }
 
     @Transactional
@@ -555,7 +554,7 @@ public class V2DatasetWorkspaceResourceService {
             return mutation(
                     workspaceId,
                     commandService.revision(access.workspace()),
-                    toData(data)
+                    DatasetWorkspaceResourceMapper.toData(data)
             );
         }
         if (annotationRepo.countByDatasetVersionIdAndSampleDataIdAndDeletedFalse(
@@ -588,7 +587,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 data.getChecksum()
         );
-        return mutation(workspaceId, revision, toData(data));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toData(data));
     }
 
     @Transactional
@@ -606,7 +605,7 @@ public class V2DatasetWorkspaceResourceService {
             return mutation(
                     workspaceId,
                     commandService.revision(access.workspace()),
-                    toData(data)
+                    DatasetWorkspaceResourceMapper.toData(data)
             );
         }
         data.setDeleted(false);
@@ -631,7 +630,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 data.getChecksum()
         );
-        return mutation(workspaceId, revision, toData(data));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toData(data));
     }
 
     @Transactional
@@ -700,7 +699,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 annotation.getChecksum()
         );
-        return mutation(workspaceId, revision, toAnnotation(annotation));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toAnnotation(annotation));
     }
 
     @Transactional(readOnly = true)
@@ -711,7 +710,7 @@ public class V2DatasetWorkspaceResourceService {
     ) {
         commandService.requireReadable(workspaceId);
         requireSample(workspaceId, sampleId, false);
-        return toAnnotation(readAnnotation(
+        return DatasetWorkspaceResourceMapper.toAnnotation(readAnnotation(
                 workspaceId,
                 sampleId,
                 annotationId
@@ -797,7 +796,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 annotation.getChecksum()
         );
-        return mutation(workspaceId, revision, toAnnotation(annotation));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toAnnotation(annotation));
     }
 
     @Transactional
@@ -862,7 +861,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 annotation.getChecksum()
         );
-        return mutation(workspaceId, revision, toAnnotation(annotation));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toAnnotation(annotation));
     }
 
     @Transactional
@@ -884,7 +883,7 @@ public class V2DatasetWorkspaceResourceService {
             return mutation(
                     workspaceId,
                     commandService.revision(access.workspace()),
-                    toAnnotation(annotation)
+                    DatasetWorkspaceResourceMapper.toAnnotation(annotation)
             );
         }
         Instant now = Instant.now();
@@ -903,7 +902,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 annotation.getChecksum()
         );
-        return mutation(workspaceId, revision, toAnnotation(annotation));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toAnnotation(annotation));
     }
 
     @Transactional
@@ -925,7 +924,7 @@ public class V2DatasetWorkspaceResourceService {
             return mutation(
                     workspaceId,
                     commandService.revision(access.workspace()),
-                    toAnnotation(annotation)
+                    DatasetWorkspaceResourceMapper.toAnnotation(annotation)
             );
         }
         validateAnnotationTarget(
@@ -948,7 +947,7 @@ public class V2DatasetWorkspaceResourceService {
                 revision,
                 annotation.getChecksum()
         );
-        return mutation(workspaceId, revision, toAnnotation(annotation));
+        return mutation(workspaceId, revision, DatasetWorkspaceResourceMapper.toAnnotation(annotation));
     }
 
     AttachedResource attachUploadedFile(
@@ -1194,22 +1193,7 @@ public class V2DatasetWorkspaceResourceService {
             String sampleId,
             String sampleDataId
     ) {
-        if (sampleDataId == null) {
-            return;
-        }
-        DatasetSampleData data = dataRepo
-                .findByIdAndDatasetVersionId(sampleDataId, workspaceId)
-                .orElseThrow(() -> conflict(
-                        "ANNOTATION_TARGET_INVALID",
-                        "sampleDataId 不存在或不属于当前工作区"
-                ));
-        if (Boolean.TRUE.equals(data.getDeleted())
-                || !sampleId.equals(data.getSampleId())) {
-            throw conflict(
-                    "ANNOTATION_TARGET_INVALID",
-                    "sampleDataId 已删除或不属于同一样本"
-            );
-        }
+        DatasetWorkspaceResourcePolicy.validateAnnotationTarget(dataRepo, workspaceId, sampleId, sampleDataId);
     }
 
     private void requirePatchObject(JsonNode patch, Set<String> allowedFields) {
@@ -1295,7 +1279,7 @@ public class V2DatasetWorkspaceResourceService {
                         sample.getDatasetVersionId()
                 )
                 .stream()
-                .map(this::toData)
+                .map(DatasetWorkspaceResourceMapper::toData)
                 .toList();
         List<V2DatasetAnnotationResource> annotations = annotationRepo
                 .findBySampleIdAndDatasetVersionIdOrderByCreatedAtAscIdAsc(
@@ -1303,7 +1287,7 @@ public class V2DatasetWorkspaceResourceService {
                         sample.getDatasetVersionId()
                 )
                 .stream()
-                .map(this::toAnnotation)
+                .map(DatasetWorkspaceResourceMapper::toAnnotation)
                 .toList();
         return new V2DatasetSampleDetail(
                 sample.getId(),
@@ -1321,62 +1305,11 @@ public class V2DatasetWorkspaceResourceService {
         );
     }
 
-    private V2DatasetSampleListItem toSampleItem(DatasetSample sample) {
-        return new V2DatasetSampleListItem(
-                sample.getId(),
-                sample.getDatasetVersionId(),
-                sample.getExternalId(),
-                sample.getSampleIndex(),
-                sample.getTags(),
-                sample.getMetadata(),
-                sample.getCreatedAt(),
-                sample.getUpdatedAt(),
-                Boolean.TRUE.equals(sample.getDeleted()),
-                sample.getDeletedAt()
-        );
-    }
 
-    private V2DatasetDataResource toData(DatasetSampleData data) {
-        return new V2DatasetDataResource(
-                data.getId(),
-                data.getSampleId(),
-                data.getDataType(),
-                data.getSensor(),
-                data.getChannel(),
-                data.getSeq(),
-                data.getFormat(),
-                data.getFileName(),
-                data.getSizeBytes(),
-                data.getChecksum(),
-                data.getContentType(),
-                data.getMetadata(),
-                data.getCreatedAt(),
-                data.getUpdatedAt(),
-                Boolean.TRUE.equals(data.getDeleted()),
-                data.getDeletedAt()
-        );
-    }
 
-    private V2DatasetAnnotationResource toAnnotation(
-            DatasetAnnotation annotation
-    ) {
-        return new V2DatasetAnnotationResource(
-                annotation.getId(),
-                annotation.getSampleId(),
-                annotation.getSampleDataId(),
-                annotation.getAnnotationType(),
-                annotation.getFormat(),
-                annotation.getFileName(),
-                annotation.getSizeBytes(),
-                annotation.getChecksum(),
-                annotation.getContentType(),
-                annotation.getMetadata(),
-                annotation.getCreatedAt(),
-                annotation.getUpdatedAt(),
-                Boolean.TRUE.equals(annotation.getDeleted()),
-                annotation.getDeletedAt()
-        );
-    }
+
+
+
 
     private void audit(
             DatasetWorkspaceCommandService.WorkspaceAccess access,
@@ -1424,23 +1357,11 @@ public class V2DatasetWorkspaceResourceService {
     }
 
     private static String dataType(String value) {
-        String normalized = requiredText(
-                value,
-                "dataType 不能为空",
-                32
-        ).toUpperCase(Locale.ROOT);
-        if (!DATA_TYPES.contains(normalized)) {
-            throw invalid("dataType 不受支持");
-        }
-        return normalized;
+        return FIELD_POLICY.dataType(value);
     }
 
     private static int nonNegative(Integer value, String field) {
-        int normalized = value == null ? 0 : value;
-        if (normalized < 0) {
-            throw invalid(field + " 必须是非负整数");
-        }
-        return normalized;
+        return FIELD_POLICY.nonNegative(value, field);
     }
 
     private static String textValue(JsonNode node, String field) {
@@ -1469,33 +1390,19 @@ public class V2DatasetWorkspaceResourceService {
             String message,
             int maxLength
     ) {
-        if (value == null || value.isBlank()) {
-            throw invalid(message);
-        }
-        String normalized = value.trim();
-        if (normalized.length() > maxLength) {
-            throw invalid("字段长度超过限制");
-        }
-        return normalized;
+        return FIELD_POLICY.requiredText(value, message, maxLength);
     }
 
     private static String optionalText(String value, int maxLength) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String normalized = value.trim();
-        if (normalized.length() > maxLength) {
-            throw invalid("字段长度超过限制");
-        }
-        return normalized;
+        return FIELD_POLICY.optionalText(value, maxLength);
     }
 
     private static String fallback(String value, String current) {
-        return value == null || value.isBlank() ? current : value;
+        return DatasetWorkspaceResourcePolicy.fallback(value, current);
     }
 
     private static Map<String, Object> copyMap(Map<String, Object> value) {
-        return value == null ? null : new LinkedHashMap<>(value);
+        return DatasetWorkspaceResourcePolicy.copyMap(value);
     }
 
     private static void requireNotDeleted(

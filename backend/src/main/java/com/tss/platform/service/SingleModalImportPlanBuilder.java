@@ -50,8 +50,9 @@ public class SingleModalImportPlanBuilder {
                 .sorted(Comparator.comparing(ZipEntryInfo::normalizedPath))
                 .toList();
         if (fileEntries.isEmpty()) {
-            throw new ManifestValidationException(
-                    "single-modal ZIP must contain at least one file"
+            throw ManifestValidationException.classified(
+                    ManifestFailureKind.INVALID_MANIFEST,
+                    "single-modal ZIP must contain at least one file", Map.of()
             );
         }
 
@@ -96,8 +97,9 @@ public class SingleModalImportPlanBuilder {
     private static String requireEntryPath(ZipEntryInfo entry) {
         String path = entry.normalizedPath();
         if (path == null || path.isBlank()) {
-            throw new ManifestValidationException(
-                    "single-modal ZIP entry path cannot be blank"
+            throw ManifestValidationException.classified(
+                    ManifestFailureKind.INVALID_MANIFEST,
+                    "single-modal ZIP entry path cannot be blank", Map.of()
             );
         }
         return path;
@@ -231,9 +233,10 @@ public class SingleModalImportPlanBuilder {
     }
 
     private static FileDescriptor unsupported(String extension, String path) {
-        throw new ManifestValidationException(
+        throw ManifestValidationException.classified(
+                ManifestFailureKind.UNSUPPORTED_SAMPLE_FILE,
                 "single-modal ZIP contains unsupported file extension: "
-                        + extension + ", path: " + path
+                        + extension + ", path: " + path, Map.of()
         );
     }
 

@@ -1,5 +1,10 @@
 package com.tss.platform.service;
 
+import com.tss.platform.service.ImportFailureMapper.ImportFailure;
+import static com.tss.platform.service.ImportFailureMapper.importFailure;
+import static com.tss.platform.service.ImportFailureMapper.truncateError;
+import static com.tss.platform.service.ImportFailureMapper.toJson;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.platform.asset.spec.ArtifactSpecIds;
@@ -65,7 +70,6 @@ public class ImportJobService {
     private static final String PACKAGE_ROLE_APPEND = "APPEND";
     private static final String GROUPING_MANIFEST = "MANIFEST";
     private static final String GROUPING_AUTO_DIRECTORY = "AUTO_DIRECTORY";
-    private static final ObjectMapper ERROR_DETAILS_MAPPER = new ObjectMapper();
 
     private final ImportJobRepository jobRepo;
     private final DatasetVersionRepository versionRepo;
@@ -667,7 +671,7 @@ public class ImportJobService {
         return sampleTransaction.execute(status -> {
             Instant now = Instant.now();
             DatasetSample sample =
-                    toSample(version, context.packageId(), manifestSample, now);
+                    ImportSampleMapper.toSample(version, context.packageId(), manifestSample, now);
             Map<String, DatasetSampleData> dataByPath = new LinkedHashMap<>();
             List<DatasetSampleData> dataItems =
                     new ArrayList<>(manifestSample.data().size());
@@ -675,7 +679,7 @@ public class ImportJobService {
                     new ArrayList<>(manifestSample.annotations().size());
 
             for (ManifestData manifestData : manifestSample.data()) {
-                DatasetSampleData data = toSampleData(
+                DatasetSampleData data = ImportSampleMapper.toSampleData(
                         version,
                         sample,
                         context.packageId(),
@@ -696,7 +700,7 @@ public class ImportJobService {
                                     + manifestAnnotation.refDataPath()
                     );
                 }
-                annotations.add(toAnnotation(
+                annotations.add(ImportSampleMapper.toAnnotation(
                         version,
                         sample,
                         referencedData,
@@ -876,7 +880,7 @@ public class ImportJobService {
                 : existing;
         Instant now = Instant.now();
         if (row.getId() == null) {
-            row.setId(id("ijsf"));
+            row.setId(ImportSampleMapper.id("ijsf"));
             row.setImportJobId(context.importJobId());
             row.setDatasetVersionId(context.versionId());
             row.setPackageId(context.packageId());
@@ -1286,226 +1290,9 @@ public class ImportJobService {
     ) {
     }
 
-    private static DatasetSample toSample(
-            DatasetVersion version,
-            String packageId,
-            ManifestSample source,
-            Instant now
-    ) {
-        DatasetSample target = new DatasetSample();
-        target.setId(id("sample"));
-        target.setDatasetVersionId(version.getId());
-        target.setCreatedByPackageId(packageId);
-        target.setExternalId(source.externalId());
-        target.setSampleIndex(source.sampleIndex());
-        target.setTags(source.tags());
-        target.setMetadata(source.metadata());
-        target.setOwnerUserId(version.getOwnerUserId());
-        target.setCreatedAt(now);
-        target.setUpdatedAt(now);
-        target.setDeleted(false);
-        return target;
-    }
 
-    private static DatasetSampleData toSampleData(
-            DatasetVersion version,
-            DatasetSample sample,
-            String packageId,
-            ManifestData source,
-            Instant now
-    ) {
-        ZipEntryInfo entry = source.zipEntryInfo();
-        DatasetSampleData target = new DatasetSampleData();
-        target.setId(id("data"));
-        target.setSampleId(sample.getId());
-        target.setDatasetVersionId(version.getId());
-        target.setPackageId(packageId);
-        target.setDataType(source.dataType());
-        target.setSensor(source.sensor());
-        target.setChannel(source.channel());
-        target.setSeq(source.seq());
-        target.setFormat(source.format());
-        target.setOriginalPath(source.path());
-        target.setFileName(source.fileName());
-        target.setSizeBytes(entry.uncompressedSize());
-        target.setContentType(source.contentType());
-        applyZipIndex(target, entry);
-        target.setMetadata(source.metadata());
-        target.setCreatedAt(now);
-        target.setUpdatedAt(now);
-        return target;
-    }
 
-    private static DatasetAnnotation toAnnotation(
-            DatasetVersion version,
-            DatasetSample sample,
-            DatasetSampleData referencedData,
-            String packageId,
-            ManifestAnnotation source,
-            Instant now
-    ) {
-        ZipEntryInfo entry = source.zipEntryInfo();
-        DatasetAnnotation target = new DatasetAnnotation();
-        target.setId(id("annotation"));
-        target.setSampleId(sample.getId());
-        target.setSampleDataId(referencedData == null ? null : referencedData.getId());
-        target.setDatasetVersionId(version.getId());
-        target.setPackageId(packageId);
-        target.setAnnotationType(source.annotationType());
-        target.setFormat(source.format());
-        target.setOriginalPath(source.path());
-        target.setFileName(source.fileName());
-        target.setSizeBytes(entry.uncompressedSize());
-        target.setContentType(source.contentType());
-        target.setZipEntryOffset(entry.localHeaderOffset());
-        target.setZipDataOffset(entry.zipDataOffset());
-        target.setCompressedSize(entry.compressedSize());
-        target.setUncompressedSize(entry.uncompressedSize());
-        target.setCompressionMethod(compressionMethod(entry.method()));
-        target.setCrc32(entry.crc32());
-        target.setMetadata(source.metadata());
-        target.setCreatedAt(now);
-        return target;
-    }
 
-    private static void applyZipIndex(DatasetSampleData target, ZipEntryInfo entry) {
-        target.setZipEntryOffset(entry.localHeaderOffset());
-        target.setZipDataOffset(entry.zipDataOffset());
-        target.setCompressedSize(entry.compressedSize());
-        target.setUncompressedSize(entry.uncompressedSize());
-        target.setCompressionMethod(compressionMethod(entry.method()));
-        target.setCrc32(entry.crc32());
-    }
-
-    private static String compressionMethod(int method) {
-        return switch (method) {
-            case 0 -> "STORED";
-            case 8 -> "DEFLATED";
-            default -> throw new IllegalArgumentException("unsupported ZIP compression method: " + method);
-        };
-    }
-
-    private static String id(String prefix) {
-        return prefix + "-" + UUID.randomUUID().toString().replace("-", "");
-    }
-
-    private static String rootMessage(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null) {
-            current = current.getCause();
-        }
-        String message = current.getMessage();
-        return message == null || message.isBlank()
-                ? current.getClass().getSimpleName()
-                : message;
-    }
-
-    private static ImportFailure importFailure(Exception exception) {
-        ManifestValidationException validation = findCause(
-                exception,
-                ManifestValidationException.class
-        );
-        if (validation != null) {
-            if (!"INVALID_MANIFEST".equals(validation.getErrorCode())) {
-                return new ImportFailure(
-                        validation.getErrorCode(),
-                        validation.getMessage(),
-                        toJson(validation.getDetails())
-                );
-            }
-            String code = classifyManifestFailure(validation.getMessage());
-            return new ImportFailure(
-                    code,
-                    manifestUserMessage(code),
-                    toJson(validation.getDetails())
-            );
-        }
-
-        String message = rootMessage(exception);
-        if (message.contains("external_id already exists")
-                || message.contains("sample_index already exists")) {
-            return new ImportFailure(
-                    "DUPLICATE_SAMPLE",
-                    "上传内容包含已存在的样本",
-                    null
-            );
-        }
-        return new ImportFailure(
-                "IMPORT_FAILED",
-                "数据导入失败，请检查上传内容后重试",
-                null
-        );
-    }
-
-    private static String classifyManifestFailure(String message) {
-        String normalized = message == null
-                ? ""
-                : message.toLowerCase(java.util.Locale.ROOT);
-        if (normalized.contains("duplicate external_id")
-                || normalized.contains("duplicate sample_index")) {
-            return "DUPLICATE_SAMPLE";
-        }
-        if (normalized.contains("ambiguous")
-                && normalized.contains("annotation")) {
-            return "ANNOTATION_TARGET_AMBIGUOUS";
-        }
-        if (normalized.contains("annotation")
-                && normalized.contains("not found")) {
-            return "ANNOTATION_TARGET_NOT_FOUND";
-        }
-        if (normalized.contains("unsupported")) {
-            return "UNSUPPORTED_SAMPLE_FILE";
-        }
-        if (normalized.contains("sample directory")
-                || normalized.contains("root-level")
-                || normalized.contains("auto_directory")) {
-            return "INVALID_SAMPLE_DIRECTORY";
-        }
-        return "INVALID_MANIFEST";
-    }
-
-    private static String manifestUserMessage(String code) {
-        return switch (code) {
-            case "DUPLICATE_SAMPLE" -> "上传内容包含重复样本";
-            case "ANNOTATION_TARGET_NOT_FOUND" -> "标注文件找不到对应的数据文件";
-            case "ANNOTATION_TARGET_AMBIGUOUS" -> "标注文件对应多个数据文件";
-            case "UNSUPPORTED_SAMPLE_FILE" -> "上传内容包含不支持的样本文件";
-            case "INVALID_SAMPLE_DIRECTORY" -> "样本目录结构不符合要求";
-            default -> "Manifest 内容无效，请检查后重试";
-        };
-    }
-
-    private static String toJson(Map<String, Object> details) {
-        if (details == null || details.isEmpty()) {
-            return null;
-        }
-        try {
-            return ERROR_DETAILS_MAPPER.writeValueAsString(details);
-        } catch (JsonProcessingException exception) {
-            return null;
-        }
-    }
-
-    private static <T extends Throwable> T findCause(
-            Throwable throwable,
-            Class<T> type
-    ) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (type.isInstance(current)) {
-                return type.cast(current);
-            }
-            current = current.getCause();
-        }
-        return null;
-    }
-
-    private static String truncateError(String message) {
-        if (message == null || message.isBlank()) {
-            return "Import failed";
-        }
-        return message.length() > 4000 ? message.substring(0, 4000) : message;
-    }
 
     private record ImportContext(
             String importJobId,
@@ -1524,10 +1311,4 @@ public class ImportJobService {
         }
     }
 
-    private record ImportFailure(
-            String code,
-            String message,
-            String detailsJson
-    ) {
-    }
 }

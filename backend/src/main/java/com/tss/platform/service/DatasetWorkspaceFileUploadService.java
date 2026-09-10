@@ -44,14 +44,13 @@ import java.util.UUID;
 @Service
 public class DatasetWorkspaceFileUploadService {
 
+    private static final DatasetWorkspaceResourcePolicy FIELD_POLICY = new DatasetWorkspaceResourcePolicy("INVALID_UPLOAD_REQUEST");
+
     public static final String PURPOSE = "WORKSPACE_FILE";
     private static final Set<String> TARGET_KINDS =
             Set.of("DATA", "ANNOTATION");
     private static final Set<String> TARGET_OPERATIONS =
             Set.of("CREATE", "REPLACE");
-    private static final Set<String> DATA_TYPES = Set.of(
-            "IMAGE", "TEXT", "POINT_CLOUD", "AUDIO", "VIDEO", "OTHER"
-    );
 
     private final DatasetWorkspaceCommandService commandService;
     private final DatasetWorkspaceTextFilePolicy textFilePolicy;
@@ -647,24 +646,7 @@ public class DatasetWorkspaceFileUploadService {
             String sampleId,
             String sampleDataId
     ) {
-        if (sampleDataId == null) {
-            return;
-        }
-        DatasetSampleData data = dataRepo
-                .findByIdAndDatasetVersionId(sampleDataId, workspaceId)
-                .orElseThrow(() -> new V2BusinessException(
-                        HttpStatus.CONFLICT,
-                        "ANNOTATION_TARGET_INVALID",
-                        "sampleDataId 不存在或不属于当前工作区"
-                ));
-        if (Boolean.TRUE.equals(data.getDeleted())
-                || !sampleId.equals(data.getSampleId())) {
-            throw new V2BusinessException(
-                    HttpStatus.CONFLICT,
-                    "ANNOTATION_TARGET_INVALID",
-                    "sampleDataId 已删除或不属于同一样本"
-            );
-        }
+        DatasetWorkspaceResourcePolicy.validateAnnotationTarget(dataRepo, workspaceId, sampleId, sampleDataId);
     }
 
     private List<DatasetUploadChunk> requireCompleteChunks(
@@ -849,23 +831,11 @@ public class DatasetWorkspaceFileUploadService {
     }
 
     private static String dataType(String value) {
-        String normalized = requireText(
-                value,
-                "dataType 不能为空",
-                32
-        ).toUpperCase(Locale.ROOT);
-        if (!DATA_TYPES.contains(normalized)) {
-            throw invalid("dataType 不受支持");
-        }
-        return normalized;
+        return FIELD_POLICY.dataType(value);
     }
 
     private static int nonNegative(Integer value, String field) {
-        int normalized = value == null ? 0 : value;
-        if (normalized < 0) {
-            throw invalid(field + " 必须是非负整数");
-        }
-        return normalized;
+        return FIELD_POLICY.nonNegative(value, field);
     }
 
     private static String requireText(
@@ -873,33 +843,19 @@ public class DatasetWorkspaceFileUploadService {
             String message,
             int maxLength
     ) {
-        if (value == null || value.isBlank()) {
-            throw invalid(message);
-        }
-        String normalized = value.trim();
-        if (normalized.length() > maxLength) {
-            throw invalid("字段长度超过限制");
-        }
-        return normalized;
+        return FIELD_POLICY.requiredText(value, message, maxLength);
     }
 
     private static String optionalText(String value, int maxLength) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String normalized = value.trim();
-        if (normalized.length() > maxLength) {
-            throw invalid("字段长度超过限制");
-        }
-        return normalized;
+        return FIELD_POLICY.optionalText(value, maxLength);
     }
 
     private static String fallback(String value, String current) {
-        return value == null || value.isBlank() ? current : value;
+        return DatasetWorkspaceResourcePolicy.fallback(value, current);
     }
 
     private static Map<String, Object> copyMap(Map<String, Object> value) {
-        return value == null ? null : new LinkedHashMap<>(value);
+        return DatasetWorkspaceResourcePolicy.copyMap(value);
     }
 
     private static V2BusinessException invalid(String message) {
