@@ -23,6 +23,10 @@ class SaTokenRedisPersistenceContainerTest {
     private static final GenericContainer<?> REDIS = new GenericContainer<>(REDIS_IMAGE)
             .withExposedPorts(6379);
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(REDIS);
+    }
+
     @Test
     void tokenAndSessionRemainAfterDaoRecreation() {
         LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory(

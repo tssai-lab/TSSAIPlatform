@@ -74,6 +74,10 @@ class CodeAssetPostgresContainerTest {
                     .withUsername("code_asset_test")
                     .withPassword("code_asset_test_password");
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(POSTGRES);
+    }
+
     @BeforeAll
     static void migrateFreshDatabase() {
         Flyway.configure()

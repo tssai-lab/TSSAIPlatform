@@ -138,6 +138,10 @@ class CodeAssetPublishIntegrationTest {
                     .forStatusCode(200)
                     .withStartupTimeout(Duration.ofMinutes(2)));
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(POSTGRES, MINIO);
+    }
+
     @DynamicPropertySource
     static void registerContainerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);

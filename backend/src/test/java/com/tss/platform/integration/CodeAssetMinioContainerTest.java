@@ -62,6 +62,10 @@ class CodeAssetMinioContainerTest {
     private static CodeArtifactStorageService storageService;
     private static CodeZipArchiveService archiveService;
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(MINIO);
+    }
+
     @BeforeAll
     static void setUpMinio() throws Exception {
         MinioClient minioClient = MinioClient.builder()

@@ -65,6 +65,10 @@ class DatasetWorkspaceMinioContainerTest {
 
     private static MinioService minioService;
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(MINIO);
+    }
+
     @BeforeAll
     static void setUpMinio() throws Exception {
         MinioClient client = MinioClient.builder()

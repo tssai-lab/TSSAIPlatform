@@ -30,6 +30,10 @@ class DatasetCatalogReadinessPostgresContainerTest {
                     .withUsername("dataset_readiness")
                     .withPassword("dataset_readiness_password");
 
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(POSTGRES);
+    }
+
     @BeforeAll
     static void migrateFreshDatabase() {
         Flyway.configure()

@@ -125,3 +125,69 @@ DatasetWorkspaceMinioContainerTest
 - 先整体形成本地治理提交，再只读核对测试依赖和隔离条件。测试仅用独立容器及项目测试目录；不连接业务库、不占 GPU、不重启共享运行时、不自动拉镜像。条件不足记阻断，不把跳过算通过。
 - B：在真实存储和数据库保护未通过前，保留事务/CAS/权限/补偿编排；可以补独立测试入口和纯规则的职责说明，不为缩短文件继续重构持久化链路。
 - 每次后续实现先登记范围、可观察验收、资源与清理边界，完成后记录命令、版本、结果和第二遍反向审查。
+
+### G5.1 真实依赖测试：本机 WSL（执行前登记）
+
+- 保存提交为 `635677a`。seu5090 只读核实历史 Maven 为 1376/0/0/2；根盘仍 99%，缺固定测试镜像，故不在共享服务器启动测试。
+- 本机 WSL Ubuntu / Docker 29.7.2 当前无运行容器，WSL 可用内存约 14 GiB、Windows C 盘约 48 GiB 可用。仅用项目 `.cache/governance-20260910` 的源码副本、缓存与报告，不安装宿主 JDK、不改 Docker 配置。
+- 明确准备 PostgreSQL 16.6-alpine、MinIO RELEASE.2025-09-07T16-13-09Z、Redis 7.4.11-alpine、Testcontainers 1.21.4 对应 Ryuk 0.12.0/alpine:3.17、Maven 3.9.12 + Java 17。先查 manifest 与体积，受控下载到本机；测试入口本身不下载镜像，不使用 latest 或替换版本来放行。
+- 范围是原先未执行的 10 个套件。测试容器只用随机新数据，串行运行；Maven 限 2 CPU / 2 GiB，依赖容器各限 1 CPU / 1 GiB，端口仅绑定本机。通过 Testcontainers 会话归属清理，不执行 prune 或批量删除。
+- 新增只用于测试的隔离配置和原始 XML 报告检查；10 个套件必须均有实际用例、零失败、零错误、零跳过，缺报告直接失败。先验证报告检查的拒绝场景，再运行真实集成。
+- 验收观察包括真实数据库约束/并发胜者、对象哈希/范围读取、提交失败补偿、跨用户查询和 Redis 会话持久性。认证替身的服务集成仍不等于真实登录或全站验收。
+
+### G5.2 测试上下文收尾（执行前登记）
+
+`backend-full-03` 已有 1414 项、0 失败/错误、2 个集群跳过，10 套容器报告共 38 项通过，但 Surefire 记录测试 JVM 退出 30 秒超时。线程转储显示 Spring 关闭上下文时 Hibernate 仍在向已停止的测试 PostgreSQL 申请连接；3 个仓储容器测试缺少相邻发布/工作区集成测试已有的 `@DirtiesContext(AFTER_CLASS)`。
+
+仅为这 3 个仓储测试补同样的类结束清理声明及一句中文说明，保持容器顺序、所有断言、1 秒循环异常超时、产品配置和生产代码不变。重新完整回归，要求原 1414 项计数一致、十套零跳过，并且不再出现测试 JVM 的 30 秒强制退出；退出后另查容器残留。首轮线程转储和 XML 保留。
+
+### G5 本轮环境问题与处理证据
+
+证据目录：工作区 `.cache/governance-20260910/`。前端独立保存为 `523e5a0`，原后端成果已保存为 `635677a`；本节以后端该提交之上的测试入口和文档为候选，生产 Java、SQL、权限与事务编排未新增修改。
+
+1. seu5090 只读核验历史报告仍为 1376/0/0/2，根盘 99%，因此没有在该共享服务器拉镜像或跑测试。本机 WSL 仅要求没有运行容器；原本已有一个停止的 Redis 容器和旧 Redis 镜像，均保留。
+2. 固定 6 个镜像分层下载、检查压缩摘要和解压层摘要后导入本机。Docker 29 的 containerd 存储下 `.Id` 是 manifest 身份，不能直接和镜像 config 摘要比较；改为导出已加载镜像并对实际 config 字节核验，不放宽摘要判断。Ryuk 镜像有未压缩 tar 层，按声明的层类型处理，不强行当 gzip。准备工具只在项目缓存目录，未进入产品。
+3. `integration-01`：38 项中 18 通过、20 错误、0 跳过，错误集中在 Mockito 初始化。`mock-probe.log` 与 `mock-probe-mounted-cwd.log` 保持同一镜像/依赖，仅换工作目录：容器自身目录动态挂载通过，Windows 挂载目录出现 attach socket 超时；显式加载同版本 agent 通过。未修改 Docker 安全选项、JDK 或业务代码。
+4. `backend-full-02`：准备阶段的 Maven help 插件有 3 个离线传递依赖未缓存，没有进入测试。`mockito-version-probe.log` 保存具体缺项。最终使用 Maven 原有 `${mockito.version}` 属性直接展开 agent 路径，不引入查询插件、新依赖或硬编码第二个 Mockito 版本。
+5. `maven-agent-probe.log` 证明 agent 可运行原治理测试；但 Windows 挂载目录下一个含冷类加载的 1 秒超时用例失败。保留原 1 秒断言，把源码和缓存复制到一次性容器的 Linux 文件系统，消除跨文件系统读写延迟；失败/成功均导出报告，原缓存只读。
+6. `backend-full-03`：1414/0/0/2，十套 38 项均通过，1 秒用例也通过。退出时 Spring 缓存上下文仍向已停的测试数据库取连接，Surefire 等待 30 秒后结束测试 JVM；转储显示 Hibernate schema 清理等待连接。按 G5.2 只补 3 个测试的上下文清理，不把退出超时写成“完全正常”。
+
+参考依据：[Mockito 显式 agent 说明](https://javadoc.io/static/org.mockito/mockito-core/5.17.0/org.mockito/org/mockito/Mockito.html)、[Docker containerd 镜像存储](https://docs.docker.com/engine/storage/containerd/)、[Testcontainers 配置](https://java.testcontainers.org/features/configuration/)。本机 Ubuntu 26.04 是测试运行环境，不新增客户系统支持承诺；交接资料的 Ubuntu 20.04/22.04 起点冲突保持待统一。
+
+### G5 最终结果（2026-09-10）
+
+最终证据是 `.cache/governance-20260910/backend-full-04/`，Maven 完成于 `2026-09-10T07:05:52Z`（北京时间 15:05:52），测试阶段 1 分 43 秒；不是前几轮的中间结果。执行命令：
+
+```powershell
+wsl -d Ubuntu -u root -- env TSS_MAVEN_REPOSITORY=/mnt/c/Users/chaohui/.m2/repository bash /mnt/d/Users/chaohui/Desktop/tssai/delivery-governance-backend/backend/scripts/qa/run-container-integration.sh /mnt/d/Users/chaohui/Desktop/tssai/.cache/governance-20260910/backend-full-04 --all
+```
+
+| 范围 | 最终证据与结果 |
+| --- | --- |
+| 后端完整 `*Test` | **1414 项：1412 通过、0 失败、0 错误、2 跳过**；`maven.log` / `maven-exit.txt`，退出 0 |
+| 原缺失十套真实依赖 | **38/38 通过，0 跳过**；独立 XML 核验见 `integration-summary.json` |
+| 报告保护门自测 | `report-gate-tests.log`，8 项通过，涵盖缺项、过期、零用例、计数/身份矛盾及失败/跳过 |
+| 候选身份 | 源码归档 SHA256 `94c2e31aef5a91d4706be474d0d2c7ec9d056501710b0fae8c3c754158c57da4`；975 个输入文件与当前代码逐字节一致 |
+| 独立汇总 | `backend-full-summary-final.json`，237 份本轮 XML，逐份核对用例计数及跳过原因 |
+| 退出与清理 | 无 30 秒强制退出信息、无线程转储；`remaining-containers.txt` 为空。`backend-containers-final.txt` 仅原停止的 Redis 容器；无运行容器、无测试卷残留 |
+
+十套分项和观察结果：
+
+| 套件 | 通过数 | 业务观察 |
+| --- | --- | --- |
+| CodeAssetMinioContainerTest | 2 | 实际对象读写、范围读取 |
+| CodeAssetPostgresContainerTest | 14 | 数据库迁移、约束和版本竞争 |
+| CodeAssetPublishIntegrationTest | 5 | 发布产物哈希、并发单胜者、审计失败的精确补偿、跨用户查询范围 |
+| SaTokenRedisPersistenceContainerTest | 1 | DAO 重建后的 token/session 持久性，不等于实际网页登录 |
+| DatasetWorkspaceUploadIntegrationTest | 4 | 128 MiB 级文件乱序并发/重传、提交失败回滚与清理、历史版本发布与头版本漂移拒绝 |
+| CatalogKeywordPostgresRepositoryTest | 3 | 名称筛选、用户/类型范围与 LIKE 字面字符 |
+| AssetNameAndAbandonedVersionPostgresRepositoryTest | 3 | 名称归属/唯一性、软删除、放弃版本隐藏 |
+| DatasetUploadFailurePostgresRepositoryTest | 3 | 失败会话恢复、原子清除失败信息、状态约束 |
+| DatasetCatalogReadinessPostgresContainerTest | 1 | 可用性聚合 SQL 和字段映射 |
+| DatasetWorkspaceMinioContainerTest | 2 | 草稿对象下载与继承 ZIP 内容的准确范围读取 |
+
+最终第二遍审查确认：10 个原测试只增加独立运行约束，3 个仓储类补结束清理，原断言全部保留。资源/端口/镜像下载限制只在独立入口生效，不改变默认 CI 或产品行为；本机 Docker socket 被显式固定，不受远端 context 影响。报告和源码在本轮专属目录，构建容器及其内部临时缓存随退出释放；原 Maven 缓存不写入。旧 Java 弃用/泛型、Logback 等提示仍在，不声称全仓零告警。
+
+两项跳过为 `Fabric8KubernetesRealClusterSmokeTest` 和 `Fabric8KubernetesRealGpuSmokeTest`，分别因未设置 `TSS_REAL_K8S_SMOKE` / `TSS_REAL_K8S_GPU_SMOKE`。本轮不连接真实集群，不能算实际 CPU/GPU 作业验收。真实身份权限、上传—草稿—发布—训练—结果读取的整条业务链、全站按钮、客户安装/重启/回滚仍未验证。
+
+维护交付入口为 README → [后端代码维护索引](代码维护索引.md)，与前端维护索引/接口契约指南相互对应。本轮保存本地治理提交，不推送、合并或部署；没有操作并行安装包工作区、共享服务器非项目数据或正在运行的业务服务。结论是可进入真实业务联调的治理候选，不能直接当作交付版上线。剩余长 Service 按功能逐批处理，优先保持事务、CAS 和补偿边界可见。

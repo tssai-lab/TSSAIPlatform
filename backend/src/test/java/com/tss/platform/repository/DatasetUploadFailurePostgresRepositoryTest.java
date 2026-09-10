@@ -14,6 +14,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -31,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers(disabledWithoutDocker = true)
 @Execution(ExecutionMode.SAME_THREAD)
+// 随测试类关闭连接池，避免容器停止后 Spring 退出时仍等待数据库。
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @DataJpaTest(properties = {
         "spring.flyway.enabled=true",
         "spring.jpa.hibernate.ddl-auto=validate",
@@ -49,6 +52,10 @@ class DatasetUploadFailurePostgresRepositoryTest {
                     .withDatabaseName("dataset_upload_failure_it")
                     .withUsername("dataset_upload_failure_it")
                     .withPassword("dataset_upload_failure_it_password");
+
+    static {
+        com.tss.platform.testsupport.IsolatedIntegrationContainers.configure(POSTGRES);
+    }
 
     @DynamicPropertySource
     static void registerPostgres(DynamicPropertyRegistry registry) {
