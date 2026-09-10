@@ -4,6 +4,8 @@
  */
 import { request } from '@umijs/max';
 import { API_CONFIG } from '@/constants/platform';
+import type { CreateTaskRequest, CreateExperimentVersionRequest } from './taskTypes';
+export type { CreateTaskRequest, CreateExperimentVersionRequest, TrainingResourceRequest } from './taskTypes';
 
 /** 获取任务列表 */
 export async function fetchTaskList(options?: {
@@ -25,7 +27,7 @@ export async function fetchTaskList(options?: {
 }
 
 /** 获取任务详情 */
-export async function fetchTaskDetail(id: string, options?: { [key: string]: any }) {
+export async function fetchTaskDetail(id: string, options?: { [key: string]: unknown }) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_DETAIL,
     {
@@ -41,28 +43,8 @@ export const CONSISTENCY_TRAINING_PROFILE = 'image_text_consistency_fusion_logre
 
 /** 发起训练任务（会自动生成 experimentId，并创建 versionNo=1） */
 export async function createTask(
-  params: {
-    name?: string;
-    baseModelVersionId?: string;
-    modelVersionId?: string;
-    codeVersionId?: string;
-    datasetVersionId: string;
-    trainingProfile?: string;
-    planId?: string;
-    planVersion?: string;
-    trainingMode?: string;
-    resourceProfileId?: string;
-    resourceRequest?: {
-      hardwareTargetId?: string;
-      cpuCores?: number;
-      memoryMiB?: number;
-      gpuCount?: number;
-      gpuMemoryLimitMiB?: number;
-    };
-    hyperParams?: Record<string, unknown> | string;
-    remark?: string;
-  },
-  options?: { [key: string]: any },
+  params: CreateTaskRequest,
+  options?: { [key: string]: unknown },
 ) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_CREATE,
@@ -85,7 +67,7 @@ export async function createProfileTrainingTask(
     hyperParams?: Record<string, unknown>;
     remark?: string;
   },
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return createTask(
     {
@@ -101,7 +83,7 @@ export async function createProfileTrainingTask(
 }
 
 /** 按 experimentId 查看历史版本 */
-export async function listExperimentVersions(experimentId: string, options?: { [key: string]: any }) {
+export async function listExperimentVersions(experimentId: string, options?: { [key: string]: unknown }) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion[]; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.EXPERIMENT_VERSIONS(experimentId),
     { method: 'GET', ...(options || {}) },
@@ -112,7 +94,7 @@ export async function listExperimentVersions(experimentId: string, options?: { [
 export async function getExperimentVersion(
   experimentId: string,
   versionNo: number,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.EXPERIMENT_VERSION_DETAIL(experimentId, versionNo),
@@ -125,7 +107,7 @@ export async function updateExperimentHyperParams(
   experimentId: string,
   versionNo: number,
   body: { hyperParams: Record<string, unknown> | string; remark?: string },
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.EXPERIMENT_HYPER_PARAMS_UPDATE(experimentId, versionNo),
@@ -141,27 +123,8 @@ export async function updateExperimentHyperParams(
 /** 创建实验新版本（versionNo 自动递增，不传字段继承最新版本） */
 export async function createExperimentVersion(
   experimentId: string,
-  body: {
-    name?: string;
-    baseModelVersionId?: string;
-    modelVersionId?: string;
-    codeVersionId?: string;
-    datasetVersionId?: string;
-    planId?: string;
-    planVersion?: string;
-    trainingMode?: string;
-    resourceProfileId?: string;
-    resourceRequest?: {
-      hardwareTargetId?: string;
-      cpuCores?: number;
-      memoryMiB?: number;
-      gpuCount?: number;
-      gpuMemoryLimitMiB?: number;
-    };
-    hyperParams?: Record<string, unknown> | string;
-    remark?: string;
-  },
-  options?: { [key: string]: any },
+  body: CreateExperimentVersionRequest,
+  options?: { [key: string]: unknown },
 ) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.EXPERIMENT_VERSION_CREATE(experimentId),
@@ -175,7 +138,7 @@ export async function createExperimentVersion(
 }
 
 /** 终止任务 */
-export async function stopTask(id: string, options?: { [key: string]: any }) {
+export async function stopTask(id: string, options?: { [key: string]: unknown }) {
   return request<{ success: boolean; data: API.TrainingExperimentVersion; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_STOP,
     {
@@ -189,7 +152,7 @@ export async function stopTask(id: string, options?: { [key: string]: any }) {
 /** 将成功训练的核心产物发布为标准模型版本；重复调用保持幂等 */
 export async function publishTrainingModel(
   id: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return request<{
     success: boolean;
@@ -202,8 +165,8 @@ export async function publishTrainingModel(
 }
 
 /** 删除任务 */
-export async function deleteTask(id: string, options?: { [key: string]: any }) {
-  return request<{ success: boolean; data: any; errorMessage?: string }>(
+export async function deleteTask(id: string, options?: { [key: string]: unknown }) {
+  return request<{ success: boolean; data: unknown; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_DELETE,
     {
       method: 'DELETE',
@@ -216,7 +179,7 @@ export async function deleteTask(id: string, options?: { [key: string]: any }) {
 /** 将训练产物发布为结果模型版本，返回更新后的实验版本（含 producedModelVersionId） */
 export async function publishTaskModel(
   id: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return request<{
     success: boolean;

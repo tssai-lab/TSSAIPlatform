@@ -3,7 +3,7 @@ import type {
   DatasetType,
   DatasetUploadCompleteResult,
   DatasetUploadProgress,
-} from './dataset';
+} from './dataset/types';
 
 export class DatasetUploadReceiptError extends Error {}
 const statuses = new Set([

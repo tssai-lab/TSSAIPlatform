@@ -71,9 +71,7 @@
         "**/src/services/pointcloud.ts",
         "**/src/services/system/config.ts",
         "**/src/services/system/user.ts",
-        "**/src/services/task.ts",
         "**/src/services/trainingCode/adminWorkspace.ts",
-        "**/src/services/trainingCode/approval.ts",
         "**/src/services/trainingCode/assets.ts",
         "**/src/services/trainingCode/display.ts",
         "**/src/services/trainingCode/inventory.ts",
@@ -92,6 +90,10 @@
     {
       "includes": [
         "**/src/services/dataset.ts",
+        "**/src/services/dataset/**/*.ts",
+        "**/src/services/task.ts",
+        "**/src/services/taskTypes.ts",
+        "**/src/services/trainingCode/approval.ts",
         "**/src/services/model.ts",
         "**/src/services/datasetUploadResponse.ts",
         "**/src/services/modelReadResponse.ts",

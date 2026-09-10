@@ -22,6 +22,7 @@ npm run dev:local
 npx max setup
 npm run tsc
 npm test
+npm run lint:governance
 npm run build
 ```
 
@@ -31,6 +32,8 @@ npm run build
 - 不手工修改 `node_modules/`、`.umi/`、`dist/`；修复源码后重新生成。
 
 ## 从哪里开始读代码
+
+先查[代码维护索引](docs/代码维护索引.md)定位功能和必跑测试，再查[接口契约与修改指南](docs/接口契约与修改指南.md)确认字段、状态和影响范围。
 
 | 目录或文件 | 职责 |
 | --- | --- |

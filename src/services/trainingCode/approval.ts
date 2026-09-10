@@ -10,9 +10,9 @@ import {
   hasV2ApprovalEvidence,
 } from '../codeV2';
 import { normalizeCodeApprovalStatus } from './common';
-import {
-  type CodeVersionApprovalResult,
-  type CodeVersionTrainingCheckResult,
+import type {
+  CodeVersionApprovalResult,
+  CodeVersionTrainingCheckResult,
 } from './types';
 
 
@@ -20,7 +20,7 @@ import {
 export async function decideCodeVersion(
   codeVersionId: string,
   decision: 'APPROVE' | 'REJECT' | 'REVOKE',
-  options?: { [key: string]: any } & { reason?: string },
+  options?: { [key: string]: unknown } & { reason?: string },
 ) {
   const reason = options?.reason;
   if ((decision === 'REJECT' || decision === 'REVOKE') && !reason?.trim()) {
@@ -108,7 +108,7 @@ export async function decideCodeVersion(
 /** 管理员审核通过训练代码版本（优先 V2 审批证据，仅接口不支持时兼容旧审批）。 */
 export async function approveCodeVersion(
   codeVersionId: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return decideCodeVersion(codeVersionId, 'APPROVE', options);
 }
@@ -116,7 +116,7 @@ export async function approveCodeVersion(
 /** 读取版本当前审批状态（失败时返回 undefined，不抛错） */
 async function peekCodeApprovalStatus(
   codeVersionId: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ): Promise<string | undefined> {
   try {
     const detail = await getV2CodeVersion(codeVersionId, {
@@ -138,7 +138,7 @@ async function peekCodeApprovalStatus(
  */
 export async function autoApproveCodeVersionIfEnabled(
   codeVersionId: string,
-  options?: { [key: string]: any } & { trainingProfile?: string },
+  options?: { [key: string]: unknown } & { trainingProfile?: string },
 ): Promise<CodeVersionApprovalResult | undefined> {
   if (!isTrainingCodeAutoApproveEnabled()) return undefined;
   const id = codeVersionId?.trim();
@@ -193,7 +193,7 @@ export async function autoApproveCodeVersionIfEnabled(
 export async function rejectCodeVersion(
   codeVersionId: string,
   reason: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return decideCodeVersion(codeVersionId, 'REJECT', {
     ...(options || {}),
@@ -205,7 +205,7 @@ export async function rejectCodeVersion(
 export async function revokeCodeVersion(
   codeVersionId: string,
   reason: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   return decideCodeVersion(codeVersionId, 'REVOKE', {
     ...(options || {}),
