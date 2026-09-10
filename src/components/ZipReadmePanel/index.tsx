@@ -1,4 +1,4 @@
-import { Empty, Spin, Typography } from 'antd';
+import { Alert, Button, Empty, Spin, Typography } from 'antd';
 import React, { useEffect, useState } from 'react';
 import MarkdownPreview from '@/pages/dataset/components/MarkdownPreview';
 import {
@@ -16,6 +16,7 @@ import {
   type MultimodalSampleDataItem,
   previewModelCode,
 } from '@/services/platform';
+import { isLegacyEndpointUnavailable } from '@/utils/apiCompatibility.mjs';
 import { getApiErrorMessage } from '@/utils/apiError';
 import { findReadmeNamedFile, findReadmePath } from '@/utils/readmePath';
 
@@ -160,7 +161,8 @@ async function loadMultimodalReadme(versionId: string): Promise<LoadState> {
         break;
       }
     }
-  } catch {
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
     usedManifest = false;
     samples = [];
   }
@@ -297,6 +299,7 @@ const ZipReadmePanel: React.FC<ZipReadmePanelProps> = ({
   datasetType,
 }) => {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
+  const [readAttempt, setReadAttempt] = useState(0);
 
   useEffect(() => {
     if (!versionId) {
@@ -332,7 +335,7 @@ const ZipReadmePanel: React.FC<ZipReadmePanelProps> = ({
     };
     // filePaths 用 join 稳定依赖，避免父组件每次渲染新数组导致重复请求
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, versionId, datasetType, filePaths?.join('\0')]);
+  }, [source, versionId, datasetType, filePaths?.join('\0'), readAttempt]);
 
   if (state.status === 'loading' || state.status === 'idle') {
     return (
@@ -342,7 +345,20 @@ const ZipReadmePanel: React.FC<ZipReadmePanelProps> = ({
     );
   }
 
-  if (state.status === 'empty' || state.status === 'error') {
+  if (state.status === 'error') {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="README 读取失败"
+        description={state.message}
+        action={
+          <Button onClick={() => setReadAttempt((n) => n + 1)}>重试读取</Button>
+        }
+      />
+    );
+  }
+  if (state.status === 'empty') {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}

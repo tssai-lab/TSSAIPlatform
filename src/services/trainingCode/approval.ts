@@ -1,4 +1,4 @@
-/** 审核决策及训练准入检查。仅整理职责；权限、版本 CAS、重试及兼容规则沿用原实现。 */
+/** 审核决策保留既有权限与版本 CAS；完整训练准入不使用包校验替代，也不自动重放。 */
 import { isTrainingCodeAutoApproveEnabled } from '@/constants/trainingCode';
 import { isLegacyEndpointUnavailable } from '@/utils/apiCompatibility.mjs';
 import { request } from '@umijs/max';
@@ -8,7 +8,6 @@ import {
   getAdminCodeReviewTaskDetail,
   getV2CodeVersion,
   hasV2ApprovalEvidence,
-  validateV2CodeVersion,
 } from '../codeV2';
 import { normalizeCodeApprovalStatus } from './common';
 import {
@@ -214,97 +213,43 @@ export async function revokeCodeVersion(
   });
 }
 
-function collectValidationReasons(payload: unknown): string[] {
-  if (!payload || typeof payload !== 'object') return [];
-  const obj = payload as Record<string, unknown>;
-  const reasons: string[] = [];
-  for (const key of ['reasons', 'messages', 'errors']) {
-    const value = obj[key];
-    if (Array.isArray(value)) {
-      value.forEach((item) => {
-        if (typeof item === 'string') reasons.push(item);
-        else if (item && typeof item === 'object') {
-          const msg = (item as Record<string, unknown>).message;
-          if (typeof msg === 'string') reasons.push(msg);
-        }
-      });
-    }
-  }
-  const message = obj.message || obj.errorMessage;
-  if (typeof message === 'string') reasons.push(message);
-  return reasons;
-}
-
-/** 代码包准入校验（现网优先 legacy training-check；失败再试 V2 validate） */
+/**
+ * 完整训练准入由后端 training-check 判定：代码包 + 方案启用/匹配。
+ * V2 validate 仅校验代码包，不是等价替代。任何失败都不换接口或自动重放；
+ * 即使这里是 GET，后端也会刷新校验证据，不能按普通只读请求反复重试。
+ */
 export async function checkCodeVersionForTraining(
   codeVersionId: string,
   trainingProfile: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
-  const legacyCheck = () =>
-    request<{
+  let result: {
     success: boolean;
     data: CodeVersionTrainingCheckResult;
     errorMessage?: string;
-  }>(
-    `/code/version/${encodeURIComponent(
-      codeVersionId,
-    )}/training-check?trainingProfile=${encodeURIComponent(trainingProfile)}`,
-    {
-      method: 'GET',
-      ...(options || {}),
-    },
-  );
-
+    errorCode?: string;
+    code?: number | string;
+  };
   try {
-    return await legacyCheck();
-  } catch {
-    try {
-      const data = await validateV2CodeVersion(
-        codeVersionId,
-        { trainingProfile },
-        options,
-      );
-      const validationStatus = String(
-        data?.validationStatus || data?.status || '',
-      ).toUpperCase();
-      const passed =
-        data?.passed === true ||
-        validationStatus === 'PASSED' ||
-        (data?.valid === true && validationStatus !== 'FAILED');
-      const approvalStatus = String(
-        data?.approvalStatus || '',
-      ).toUpperCase();
-      return {
-        success: true,
-        data: {
-          codeVersionId,
-          trainingProfile,
-          trainingProfileDisplayName: data?.trainingProfileDisplayName as
-            | string
-            | undefined,
-          passed,
-          reused: data?.reused === true,
-          approvalStatus: approvalStatus || undefined,
-          validationStatus: validationStatus || undefined,
-          validationPolicyVersion:
-            typeof data?.policyVersion === 'string'
-              ? data.policyVersion
-              : undefined,
-          artifactSha256:
-            typeof data?.artifactSha256 === 'string'
-              ? data.artifactSha256
-              : undefined,
-          reasonCode:
-            typeof data?.reasonCode === 'string'
-              ? data.reasonCode
-              : undefined,
-          reasons: collectValidationReasons(data),
-          checkedAt: data?.checkedAt as string | undefined,
-        } as CodeVersionTrainingCheckResult,
-      };
-    } catch {
-      return legacyCheck();
+    result = await request<typeof result>(
+      `/code/version/${encodeURIComponent(codeVersionId)}/training-check?trainingProfile=${encodeURIComponent(trainingProfile)}`,
+      { ...(options || {}), method: 'GET' },
+    );
+  } catch (error) {
+    if (isLegacyEndpointUnavailable(error)) {
+      throw new Error('当前后端不支持完整训练准入检查，请确认后端版本后再试');
     }
+    throw error;
   }
+  const data = result?.data;
+  if (result?.success !== true || result.errorCode ||
+      (result.code != null && ![0,200,'0','200'].includes(result.code))) {
+    throw new Error(result?.errorMessage || '训练准入接口返回失败回执');
+  }
+  if (!data || typeof data.passed !== 'boolean' || data.codeVersionId !== codeVersionId ||
+      data.trainingProfile !== trainingProfile || ('errorCode' in data && data.errorCode) ||
+      ('success' in data && data.success === false)) {
+    throw new Error('训练准入回执不完整或与当前代码、方案不匹配');
+  }
+  return result;
 }

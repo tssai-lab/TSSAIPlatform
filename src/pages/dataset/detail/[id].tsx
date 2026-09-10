@@ -63,6 +63,7 @@ import {
   type WorkspaceEditableDatasetType,
 } from '@/utils/datasetWorkspace';
 import { beginDownloadProgress } from '@/utils/downloadProgressToast';
+import { requireMatchingWorkspace, workspaceReadFailure } from '@/utils/datasetWorkspaceRead';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { loadImportJobId, saveImportJobId } from '@/utils/importJobStorage';
 import DatasetPreviewPanel from '../components/DatasetPreviewPanel';
@@ -70,212 +71,16 @@ import MultimodalImportBanner from '../components/MultimodalImportBanner';
 import MultimodalPreviewPanel from '../components/MultimodalPreviewPanel';
 import MultimodalWorkspacePanel from '../components/MultimodalWorkspacePanel';
 import TableEllipsisCell from '../components/TableEllipsisCell';
-
-type DraftVersionContext = {
-  assetId?: string;
-  versions?: API.DatasetVersionDetail[];
-  latestDraftVersionId?: string | null;
-  importJobId?: string | null;
-  importStatus?: string | null;
-  editSessionId?: string | null;
-};
-
-function hasReadyDatasetVersions(
-  versions?: API.DatasetVersionDetail[],
-): boolean {
-  return (versions ?? []).some((v) => v.status === 'READY');
-}
-
-function resolveDetailVersionId(
-  version?: API.DatasetVersionDetail | null,
-  assetId?: string,
-): string | undefined {
-  return resolveDatasetVersionId(version, assetId) ?? version?.id;
-}
-
-/** 首次上传后、ImportJob 尚未完成的 DRAFT */
-function isImportDraftVersion(
-  version?: API.DatasetVersionDetail | null,
-  context?: DraftVersionContext,
-): boolean {
-  if (version?.status !== 'DRAFT') return false;
-  if (version.parentVersionId) return false;
-
-  const vid = resolveDetailVersionId(version, context?.assetId);
-  const versions = context?.versions ?? [];
-  const hasReady = hasReadyDatasetVersions(versions);
-
-  if (hasReady) {
-    const isLatestDraft = !!vid && vid === context?.latestDraftVersionId;
-    const importing =
-      !!context?.importJobId &&
-      isLatestDraft &&
-      ['PENDING', 'RUNNING', 'FAILED', 'PARTIAL'].includes(
-        context?.importStatus ?? '',
-      );
-    return importing;
-  }
-
-  return true;
-}
-
-/** 基于 READY 创建的编辑工作区 DRAFT（可删/恢复样本） */
-function isWorkspaceDraftVersion(
-  version?: API.DatasetVersionDetail | null,
-  context?: DraftVersionContext,
-): boolean {
-  if (version?.status !== 'DRAFT') return false;
-  if (version.parentVersionId) return true;
-
-  const vid = resolveDetailVersionId(version, context?.assetId);
-  if (
-    context?.editSessionId &&
-    vid &&
-    vid === context.editSessionId &&
-    hasReadyDatasetVersions(context.versions)
-  ) {
-    return true;
-  }
-
-  if (isImportDraftVersion(version, context)) return false;
-  return hasReadyDatasetVersions(context?.versions);
-}
-
-function buildDraftContext(
-  datasetInfo?:
-    | (API.DatasetDetail & {
-        latestDraftVersionId?: string | null;
-        importJobId?: string | null;
-        importStatus?: string | null;
-        editSessionId?: string | null;
-      })
-    | null,
-): DraftVersionContext | undefined {
-  if (!datasetInfo) return undefined;
-  return {
-    assetId: datasetInfo.id,
-    versions: datasetInfo.versions,
-    latestDraftVersionId: datasetInfo.latestDraftVersionId,
-    importJobId: datasetInfo.importJobId,
-    importStatus: datasetInfo.importStatus,
-    editSessionId: datasetInfo.editSessionId,
-  };
-}
-
-/** 资产级活动草稿版本 ID（不含 workspaceId；版本表可能暂未带上 DRAFT 行） */
-function resolveActiveDraftId(
-  datasetInfo?:
-    | (API.DatasetDetail & {
-        latestDraftVersionId?: string | null;
-        editSessionId?: string | null;
-        workspaceId?: string | null;
-      })
-    | null,
-  draftContext?: DraftVersionContext,
-): string | undefined {
-  if (!datasetInfo) return undefined;
-  const row = datasetInfo.versions.find((item) =>
-    isWorkspaceDraftVersion(item, draftContext),
-  );
-  if (row) {
-    return resolveDatasetVersionId(row, datasetInfo.id) ?? row.id;
-  }
-  // latestDraftVersionId 可能是导入草稿；仅当它对应工作区草稿行时使用
-  const latest = datasetInfo.latestDraftVersionId || undefined;
-  if (
-    latest &&
-    isWorkspaceDraftVersion(
-      datasetInfo.versions.find(
-        (item) =>
-          (resolveDatasetVersionId(item, datasetInfo.id) ?? item.id) === latest,
-      ),
-      draftContext,
-    )
-  ) {
-    return latest;
-  }
-  return undefined;
-}
-
-function normalizeDatasetVersionInput(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return trimmed;
-  if (/^v?\d+\.\d+\.\d+$/i.test(trimmed)) {
-    return `v${trimmed.replace(/^v/i, '')}`;
-  }
-  if (/^v?\d+$/i.test(trimmed)) {
-    return `v${trimmed.replace(/^v/i, '')}`;
-  }
-  return trimmed;
-}
-
-/**
- * 改名候选：用户填写号 + 其后若干递增。
- * 软删版本标签仍占唯一约束，页面列表看不到，故需自动跳号。
- */
-function buildVersionLabelCandidates(
-  preferred: string,
-  existingVisible: string[],
-  extraAttempts = 8,
-): string[] {
-  const preferredNorm = normalizeDatasetVersionInput(preferred);
-  const occupied = new Set(
-    existingVisible.map((item) => item.trim().toLowerCase()),
-  );
-  const out: string[] = [];
-  const push = (label: string) => {
-    const key = label.toLowerCase();
-    if (
-      !label ||
-      occupied.has(key) ||
-      out.some((x) => x.toLowerCase() === key)
-    ) {
-      return;
-    }
-    out.push(label);
-  };
-  push(preferredNorm);
-  const semver = preferredNorm.match(/^v(\d+)\.(\d+)\.(\d+)$/i);
-  const legacy = preferredNorm.match(/^v(\d+)$/i);
-  if (semver) {
-    const major = Number(semver[1]);
-    const minor = Number(semver[2]);
-    let patch = Number(semver[3]);
-    for (let i = 0; i < extraAttempts; i += 1) {
-      patch += 1;
-      push(`v${major}.${minor}.${patch}`);
-    }
-  } else if (legacy) {
-    let n = Number(legacy[1]);
-    for (let i = 0; i < extraAttempts; i += 1) {
-      n += 1;
-      push(`v${n}`);
-    }
-  } else {
-    push(suggestNextDatasetVersion(existingVisible));
-  }
-  return out;
-}
-
-const DATASET_TYPE_LABEL: Record<string, string> = {
-  CV: 'CV',
-  NLP: 'NLP',
-  POINT_CLOUD: '点云',
-  MULTIMODAL: '多模态',
-  ROBOT: '机器人',
-  LEROBOT: 'LeRobot',
-  OTHER: '其他（暂未归类）',
-};
-
-const DATASET_TYPE_COLOR: Record<string, string> = {
-  CV: 'blue',
-  NLP: 'green',
-  POINT_CLOUD: 'purple',
-  MULTIMODAL: 'magenta',
-  ROBOT: 'default',
-  LEROBOT: 'blue',
-  OTHER: 'default',
-};
+import {
+  buildDraftContext,
+  buildVersionLabelCandidates,
+  DATASET_TYPE_COLOR,
+  DATASET_TYPE_LABEL,
+  isImportDraftVersion,
+  isWorkspaceDraftVersion,
+  normalizeDatasetVersionInput,
+  resolveActiveDraftId,
+} from './datasetVersionPresentation';
 
 const DatasetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -299,6 +104,14 @@ const DatasetDetail: React.FC = () => {
     | null
   >(null);
   const [loading, setLoading] = useState(true);
+  const [detailError, setDetailError] = useState('');
+  const [workspaceReadError, setWorkspaceReadError] = useState('');
+  const detailReadSequence = useRef(0);
+  const detailReadActive = useRef(true);
+  const detailRouteRef = useRef(id);
+  detailRouteRef.current = id;
+  const detailQueryRef = useRef(searchParams.toString());
+  detailQueryRef.current = searchParams.toString();
   const [previewVersionId, setPreviewVersionId] = useState<string>();
   /** Hugging Face 风格详情 Tabs */
   const [detailTab, setDetailTab] = useState<string>('readme');
@@ -315,16 +128,20 @@ const DatasetDetail: React.FC = () => {
     useState<string>();
   /** V2 活动版本工作区（取代 edit-session / draftVersionId 面板） */
   const [activeWorkspace, setActiveWorkspace] = useState<{
+    datasetId: string;
     workspaceId: string;
     workspaceRevision: number;
     targetVersionId?: string;
     targetVersionLabel?: string;
     baseVersionLabel?: string;
   } | null>(null);
+  const activeWorkspaceRef = useRef(activeWorkspace);
+  activeWorkspaceRef.current = activeWorkspace;
   const [versionForm] = Form.useForm();
 
   const applyWorkspaceState = useCallback((ws: V2DatasetWorkspace) => {
     setActiveWorkspace({
+      datasetId: ws.datasetId,
       workspaceId: ws.workspaceId,
       workspaceRevision: ws.workspaceRevision,
       targetVersionId: ws.targetVersion?.versionId,
@@ -358,10 +175,17 @@ const DatasetDetail: React.FC = () => {
   );
 
   const loadDetail = useCallback(async () => {
-    if (!id) return;
+    const query = searchParams.toString();
+    if (!id || !detailReadActive.current || detailRouteRef.current !== id ||
+        detailQueryRef.current !== query) return;
+    const request = ++detailReadSequence.current;
+    const isCurrent = () => detailReadActive.current &&
+      detailRouteRef.current === id && detailQueryRef.current === query &&
+      request === detailReadSequence.current;
     setLoading(true);
     try {
       const res = await fetchDatasetDetail(id, { skipErrorHandler: true });
+      if (!isCurrent()) return;
       const detail =
         (res?.data as
           | (API.DatasetDetail & {
@@ -370,6 +194,11 @@ const DatasetDetail: React.FC = () => {
               editSessionId?: string | null;
             })
           | undefined) ?? null;
+      if (!detail || detail.id !== id || !Array.isArray(detail.versions) ||
+          ('success' in res && res.success === false) || ('errorCode' in res && res.errorCode)) {
+        throw new Error('数据集详情回执不完整或资产不匹配，请重试');
+      }
+      setDetailError('');
       setDatasetInfo(
         detail
           ? {
@@ -400,7 +229,10 @@ const DatasetDetail: React.FC = () => {
           : undefined);
 
       const workspaceId =
-        detail?.workspaceId || detail?.editSessionId || undefined;
+        detail.workspaceId || detail.editSessionId ||
+        // 列表补全暂缺编号时仍核实同资产的已知工作区，不直接解锁旧编辑状态。
+        (activeWorkspaceRef.current?.datasetId === id
+          ? activeWorkspaceRef.current.workspaceId : undefined);
       if (
         workspaceId &&
         detail?.type &&
@@ -410,23 +242,23 @@ const DatasetDetail: React.FC = () => {
           const ws = await getDatasetWorkspace(workspaceId, {
             skipErrorHandler: true,
           });
+          if (!isCurrent()) return;
+          requireMatchingWorkspace(ws, workspaceId, id);
           applyWorkspaceState(ws);
-        } catch {
-          // 工作区已失效时清空；否则保留本地状态由发布/放弃路径清理
-          setActiveWorkspace(null);
-          setPreviewVersionId((prev) => {
-            if (
-              prev &&
-              detail?.versions.some(
-                (v) => (resolveDatasetVersionId(v, assetId) ?? v.id) === prev,
-              )
-            ) {
-              return prev;
-            }
-            return defaultVersionId;
-          });
+          setWorkspaceReadError('');
+        } catch (error) {
+          if (!isCurrent()) return;
+          const failure = workspaceReadFailure(error);
+          setWorkspaceReadError(failure.message);
+          // 网络失败不代表草稿已失效；仅收回明确不可访问的本地编辑引用。
+          // 失败时由错误页阻止旧状态继续编辑，不执行服务器放弃或删除。
+          if (failure.clearLocal) {
+            setActiveWorkspace(null);
+            setPreviewVersionId(defaultVersionId);
+          }
         }
       } else {
+        setWorkspaceReadError('');
         // 列表尚未带回 workspaceId 时不冲掉刚创建的本地工作区
         setPreviewVersionId((prev) => {
           if (
@@ -441,21 +273,32 @@ const DatasetDetail: React.FC = () => {
         });
       }
     } catch (error: unknown) {
-      message.error(
-        getApiErrorMessage(error, '未找到该数据集，或不属于当前账号。'),
-      );
-      setDatasetInfo(null);
-      setPreviewVersionId(undefined);
-      setActiveWorkspace(null);
+      if (isCurrent()) setDetailError(getApiErrorMessage(error, '数据集详情读取失败，请重试。'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [id, searchParams, applyWorkspaceState]);
 
   const previewPanelRef = useRef<PointCloudPreviewPanelRef>(null);
 
   useEffect(() => {
-    loadDetail();
+    setDatasetInfo(null);
+    setPreviewVersionId(undefined);
+    setActiveWorkspace(null);
+    setDetailError('');
+    setWorkspaceReadError('');
+    setVersionModalOpen(false);
+    setEditingVersion(null);
+    setWorkspaceEditSourceVersionId(undefined);
+  }, [id]);
+
+  useEffect(() => {
+    detailReadActive.current = true;
+    void loadDetail();
+    return () => {
+      detailReadActive.current = false;
+      ++detailReadSequence.current;
+    };
   }, [loadDetail]);
 
   const handleDelete = async () => {
@@ -1031,7 +874,7 @@ const DatasetDetail: React.FC = () => {
     [existingVersionNames],
   );
 
-  if (loading) {
+  if (loading || (datasetInfo && datasetInfo.id !== id)) {
     return (
       <PageContainer
         title="数据集详情"
@@ -1042,6 +885,15 @@ const DatasetDetail: React.FC = () => {
         </div>
       </PageContainer>
     );
+  }
+
+  if (detailError || workspaceReadError) {
+    return <PageContainer title="数据集详情" onBack={() => history.push('/dataset/list')}>
+      <Alert type="error" showIcon
+        message={detailError ? '数据集详情读取失败' : '工作区读取未完成'}
+        description={detailError || `${workspaceReadError} 本次读取未执行发布、放弃或删除。`}
+        action={<Button onClick={() => void loadDetail()}>重试详情</Button>} />
+    </PageContainer>;
   }
 
   if (!datasetInfo) {

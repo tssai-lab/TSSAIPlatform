@@ -13,7 +13,7 @@
     "dev:local": "cross-env HOST=127.0.0.1 PORT=8001 REACT_APP_ENV=dev MOCK=none UMI_ENV=dev DEV_API_TARGET=http://127.0.0.1:8080 DEV_MLFLOW_TARGET=http://127.0.0.1:5000 max dev",
     "i18n-remove": "pro i18n-remove --locale=zh-CN --write",
     "postinstall": "max setup",
-    "lint": "npm run biome:lint && npm run tsc",
+    "lint": "npm run biome:lint && npm run lint:governance && npm run tsc",
     "lint-staged": "lint-staged",
     "openapi": "max openapi",
     "prepare": "husky",
@@ -29,7 +29,8 @@
     "start:test": "cross-env REACT_APP_ENV=test MOCK=none UMI_ENV=dev max dev",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "lint:governance": "node scripts/qa/check-service-type-baseline.mjs && biome lint --error-on-warnings src/services/dataset.ts src/services/model.ts src/services/datasetUploadResponse.ts src/services/modelReadResponse.ts src/pages/task/detail/useExperimentVersions.ts"
   },
   "browserslist": [
     "defaults"

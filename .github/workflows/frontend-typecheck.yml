@@ -33,3 +33,6 @@ jobs:
 
       - name: Run TypeScript typecheck
         run: npm run tsc
+
+      - name: Check governed service and read-hook boundaries
+        run: npm run lint:governance

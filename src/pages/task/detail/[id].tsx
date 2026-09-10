@@ -1,9 +1,3 @@
-/**
- * 训练结果详情页 - Page 层
- * 任务信息、训练指标可视化（从 MLflow 获取）、结果文件列表
- * @see MLflow训练指标对接说明.md
- */
-
 import { MoreOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useParams, useSearchParams } from '@umijs/max';
@@ -16,7 +10,6 @@ import {
   Dropdown,
   Form,
   Input,
-  List,
   Modal,
   message,
   Progress,
@@ -33,13 +26,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import InferenceLogPanel from '@/components/inference/InferenceLogPanel';
 import TrainingMetricsPanel from '@/components/TrainingMetricsPanel';
 import TrainingStatusBanner from '@/components/TrainingStatusBanner';
-import { getModelDetail } from '@/services/model';
 import {
-  downloadObjectWithBrowser,
   fetchTaskDetail,
   getExperimentVersion,
-  getModelVersion,
-  listExperimentVersions,
   publishTaskModel,
   publishTrainingModel,
   updateExperimentHyperParams,
@@ -48,10 +37,7 @@ import {
   fetchTrainingPlans,
   type TrainingPlan,
 } from '@/services/trainingPlans';
-import {
-  formatDisplayDateTime,
-  formatDurationBetween,
-} from '@/utils/formatDateTime';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import {
   getCodeVersionDisplayLabel,
   getDatasetVersionDisplayLabel,
@@ -65,362 +51,31 @@ import {
   TASK_POST_FINISH_POLL_TIMES,
   TASK_STATUS_POLL_INTERVAL_MS,
 } from '@/utils/trainingMetrics';
+import { isTrainingTerminal } from '@/utils/trainingStatusDisplay';
 import {
-  getTrainingStatusTagColor,
-  getTrainingStatusText,
-  isTrainingTerminal,
-} from '@/utils/trainingStatusDisplay';
-import {
-  buildTrainingOutputArtifactItems,
-  readHyperParamSummary,
-  resolveTrainingPlanDisplayName,
-} from './trainingDetailPresentation.mjs';
-
-const COMPARE_POOL_KEY = 'comparePoolIds';
-
-function loadComparePool(): string[] {
-  try {
-    const raw = localStorage.getItem(COMPARE_POOL_KEY);
-    const arr = raw ? (JSON.parse(raw) as any[]) : [];
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveComparePool(ids: string[]) {
-  const uniq = Array.from(new Set(ids.map(String))).slice(0, 30);
-  localStorage.setItem(COMPARE_POOL_KEY, JSON.stringify(uniq));
-  return uniq;
-}
-
-/** 任务详情扩展类型 */
-type TaskDetailInfo = API.TaskItem & {
-  completeTime?: string;
-  duration?: string;
-  metrics?: Record<string, any>;
-  files?: { name: string; desc: string; objectName?: string }[];
-  hyperParams?: Record<string, any>;
-  codeVersionId?: string;
-  trainingProfile?: string;
-  producedModelVersionId?: string;
-  modelArtifactPath?: string;
-  modelArtifactSizeBytes?: number;
-  modelPublishStatus?: string;
-  modelPublishError?: string;
-  trainingOutput?: {
-    artifacts?: Array<{
-      format?: string;
-      objectName?: string;
-      path?: string;
-      role?: string;
-      sha256?: string;
-      sizeBytes?: number;
-    }>;
-  };
-};
-
-function _shortId(v?: string, keep = 10) {
-  if (!v) return '-';
-  if (v.length <= keep) return v;
-  return `${v.slice(0, keep)}…`;
-}
-
-function normalizeHyperParams(hp: unknown): Record<string, unknown> | null {
-  if (hp == null) return null;
-  if (typeof hp === 'string') {
-    const trimmed = hp.trim();
-    if (!trimmed) return null;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }
-  if (typeof hp === 'object' && !Array.isArray(hp)) {
-    return hp as Record<string, unknown>;
-  }
-  return null;
-}
-
-function isHyperParamValuePresent(value: unknown): boolean {
-  if (value == null) return false;
-  if (typeof value === 'string') return value.trim().length > 0;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value as object).length > 0;
-  return true;
-}
-
-/** Profile 训练等场景 hyperParams 可能为 {}，不应展示占位摘要 */
-function hasMeaningfulHyperParams(hp: unknown): boolean {
-  const obj = normalizeHyperParams(hp);
-  if (!obj) return false;
-  return Object.values(obj).some(isHyperParamValuePresent);
-}
-
-function renderHyperParamsCell(hp: unknown) {
-  if (!hasMeaningfulHyperParams(hp)) {
-    return '-';
-  }
-  const obj = normalizeHyperParams(hp);
-  if (!obj) return '-';
-  const { epochs, batch, lr } = readHyperParamSummary(obj);
-  const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
-  if (hasSummary) {
-    const txt = `epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`;
-    return (
-      <Tooltip title={JSON.stringify(obj, null, 2)}>
-        <span>{txt}</span>
-      </Tooltip>
-    );
-  }
-  const json = JSON.stringify(obj);
-  const preview = json.length > 80 ? `${json.slice(0, 80)}…` : json;
-  return (
-    <Tooltip title={JSON.stringify(obj, null, 2)}>
-      <span>{preview}</span>
-    </Tooltip>
-  );
-}
-
-/** 详情页：摘要（若有）+ 完整 JSON 合并为一项 */
-function renderHyperParamsDetail(hp: unknown) {
-  if (!hasMeaningfulHyperParams(hp)) {
-    return '-';
-  }
-  const obj = normalizeHyperParams(hp);
-  if (!obj) return '-';
-  const { epochs, batch, lr } = readHyperParamSummary(obj);
-  const hasSummary = [epochs, batch, lr].some(isHyperParamValuePresent);
-  const jsonText = JSON.stringify(obj, null, 2);
-  return (
-    <Space direction="vertical" size={8} style={{ width: '100%' }}>
-      {hasSummary && (
-        <Typography.Text type="secondary">
-          {`epochs=${epochs ?? '-'}，batch=${batch ?? '-'}，lr=${lr ?? '-'}`}
-        </Typography.Text>
-      )}
-      <Typography.Paragraph
-        copyable
-        style={{
-          margin: 0,
-          fontFamily: 'monospace',
-          fontSize: 12,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-        }}
-      >
-        {jsonText}
-      </Typography.Paragraph>
-    </Space>
-  );
-}
-
-function saveContinueTrainingPrefill(record: API.TrainingExperimentVersion) {
-  localStorage.setItem(
-    'taskCreatePrefill',
-    JSON.stringify({
-      fromVersionId: record.id,
-      experimentId: record.experimentId,
-      /** 继续训练应加载此版本的结果模型，而非输入基础权重 */
-      producedModelVersionId: record.producedModelVersionId,
-      baseModelVersionId: record.producedModelVersionId,
-      modelVersionId: record.producedModelVersionId,
-      datasetVersionId: record.datasetVersionId,
-      codeVersionId: record.codeVersionId,
-      hyperParams: JSON.stringify(record.hyperParams ?? {}, null, 2),
-      remark: record.remark
-        ? `基于 v${record.versionNo}：${record.remark}`
-        : `基于 v${record.versionNo} 继续训练`,
-      versionNo: record.versionNo,
-    }),
-  );
-}
-
-function statusText(status?: string) {
-  return getTrainingStatusText(status);
-}
-
-function statusColor(status?: string) {
-  return getTrainingStatusTagColor(status);
-}
-
-function isExperimentId(value?: string) {
-  return !!value && /^exp-/i.test(value);
-}
-
-function mapVersionToTaskDetail(
-  data: API.TrainingExperimentVersion,
-): TaskDetailInfo {
-  return {
-    ...data,
-    name: data.name || `训练 · 第 ${data.versionNo ?? '?'} 版`,
-    createTime: data.createTime || data.createdAt || '',
-    progress: data.progress ?? 0,
-    runId: data.runId || (data as any).run_id,
-  };
-}
-
-function resolveTaskCreatedAt(task: TaskDetailInfo): string | undefined {
-  return task.createTime || (task as { createdAt?: string }).createdAt;
-}
-
-/** 完成时间：优先后端 finishedAt；已结束但未回填时用 updatedAt 兜底 */
-function resolveTaskFinishedAt(task: TaskDetailInfo): string | undefined {
-  if (task.completeTime?.trim()) return task.completeTime;
-  if (task.finishedAt?.trim()) return task.finishedAt;
-  if (isTrainingTerminal(task.status)) {
-    return (task as { updatedAt?: string }).updatedAt;
-  }
-  return undefined;
-}
-
-function resolveTaskDurationText(task: TaskDetailInfo): string {
-  if (task.duration?.trim()) return task.duration;
-  const start = task.startedAt?.trim() || resolveTaskCreatedAt(task);
-  const end = resolveTaskFinishedAt(task);
-  return formatDurationBetween(start, end);
-}
-
-const CONSISTENCY_PROFILE = 'image_text_consistency_fusion_logreg';
-
-const CONSISTENCY_SPLITS = ['train', 'val', 'test'] as const;
-
-const CONSISTENCY_METRIC_KEYS = [
-  'accuracy',
-  'precision',
-  'recall',
-  'f1',
-  'roc_auc',
-] as const;
-
-const CONSISTENCY_ARTIFACT_FILES = [
-  'fusion_model.pkl',
-  'fusion_model.zip',
-  'metrics.json',
-  'val_predictions.csv',
-  'test_predictions.csv',
-] as const;
-
-function isConsistencyProfileTask(metrics?: Record<string, any>) {
-  return metrics?.trainingProfile === CONSISTENCY_PROFILE;
-}
-
-function formatMetricValue(value: unknown) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value.toFixed(4);
-  }
-  return value != null && value !== '' ? String(value) : '-';
-}
-
-function buildConsistencyMetricsRows(metrics?: Record<string, any>) {
-  if (!metrics) return [];
-  return CONSISTENCY_SPLITS.map((split) => {
-    const label =
-      split === 'train' ? '训练集' : split === 'val' ? '验证集' : '测试集';
-    const row: Record<string, string | number> = {
-      key: split,
-      split: label,
-      rows: metrics[`${split}_rows`] ?? '-',
-      positive: metrics[`${split}_positive`] ?? '-',
-      negative: metrics[`${split}_negative`] ?? '-',
-    };
-    CONSISTENCY_METRIC_KEYS.forEach((metric) => {
-      row[metric] = formatMetricValue(metrics[`${split}_${metric}`]);
-    });
-    return row;
-  });
-}
-
-function buildConsistencyArtifactItems(outputPath?: string, logPath?: string) {
-  const items: {
-    name: string;
-    desc: string;
-    objectName?: string;
-  }[] = [];
-  if (outputPath) {
-    const base = minioPathToObjectName(outputPath);
-    CONSISTENCY_ARTIFACT_FILES.forEach((fileName) => {
-      if (!base) return;
-      items.push({
-        name: fileName,
-        desc: `minio://${base}/${fileName}`,
-        objectName: `${base}/${fileName}`,
-      });
-    });
-  }
-  if (logPath) {
-    const logObj = logPath.replace(/^minio:\/\//, '').replace(/\/$/, '');
-    items.push({ name: 'train.log', desc: logPath, objectName: logObj });
-  }
-  return items;
-}
-
-function minioPathToObjectName(path?: string): string | undefined {
-  if (!path) return undefined;
-  // Worker stores artifacts under the full key training-results/<id>/artifacts/<file>
-  // in the default MinIO bucket, so only strip the minio:// scheme (not path segments).
-  const normalized = path.replace(/^minio:\/\//, '').replace(/\/$/, '');
-  const parts = normalized.split('/');
-  // Be tolerant of minio://<bucket>/training-results/... style paths.
-  if (parts.length > 1 && parts[1] === 'training-results') {
-    return parts.slice(1).join('/');
-  }
-  return normalized;
-}
-
-function isLikelyDirectoryPath(path?: string) {
-  if (!path) return false;
-  const normalized = path.replace(/^minio:\/\//, '');
-  if (normalized.endsWith('/')) return true;
-  const basename = normalized.split('/').pop() || '';
-  return !basename.includes('.');
-}
-
-async function errorMessageFromDownloadError(error: any) {
-  const data = error?.response?.data;
-  if (data instanceof Blob) {
-    try {
-      const text = await data.text();
-      const json = JSON.parse(text);
-      return json?.errorMessage || json?.message || text;
-    } catch {
-      return '文件不存在或下载失败';
-    }
-  }
-  return (
-    error?.response?.data?.errorMessage ||
-    error?.response?.data?.message ||
-    error?.message ||
-    '文件不存在或下载失败'
-  );
-}
-
-/**
- * 将任务详情加载错误转换为用户可读文案。
- * 从「服务器详情」等入口可能点到他人创建的任务，后端会返回
- * "experiment not found or no permission" 这类英文原文；这里将其
- * 映射为友好的中文提示（不向当前用户暴露该任务是否真实存在）。
- */
-function resolveDetailLoadError(error: any): string {
-  const status = error?.response?.status;
-  const bizMessage =
-    error?.info?.errorMessage || error?.info?.message || error?.message || '';
-  const isPermissionDenied =
-    status === 401 ||
-    status === 403 ||
-    /no permission|permission denied|无权|没有权限|无权限/i.test(
-      String(bizMessage),
-    );
-  if (isPermissionDenied) {
-    return '该训练任务由其他用户创建或已不存在，您没有权限查看详情。如需访问，请联系任务创建者或管理员。';
-  }
-  return bizMessage || '训练任务详情加载失败，请检查后端服务';
-}
+  buildConsistencyMetricsRows,
+  CONSISTENCY_METRIC_KEYS,
+  CONSISTENCY_PROFILE,
+  hasMeaningfulHyperParams,
+  isConsistencyProfileTask,
+  isExperimentId,
+  loadComparePool,
+  mapVersionToTaskDetail,
+  renderHyperParamsCell,
+  renderHyperParamsDetail,
+  resolveDetailLoadError,
+  resolveTaskCreatedAt,
+  resolveTaskDurationText,
+  resolveTaskFinishedAt,
+  saveComparePool,
+  saveContinueTrainingPrefill,
+  statusColor,
+  statusText,
+  type TaskDetailInfo,
+} from './detailPresentation';
+import { TrainingArtifactsList } from './TrainingArtifactsList';
+import { resolveTrainingPlanDisplayName } from './trainingDetailPresentation.mjs';
+import { useExperimentVersions } from './useExperimentVersions';
 
 const TaskDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -450,7 +105,6 @@ const TaskDetail: React.FC = () => {
   const [runIdInput, setRunIdInput] = useState('');
   const [manualRunId, setManualRunId] = useState('');
   const [taskLastUpdatedAt, setTaskLastUpdatedAt] = useState('');
-  const [versions, setVersions] = useState<API.TrainingExperimentVersion[]>([]);
   const [remarkModalOpen, setRemarkModalOpen] = useState(false);
   const [remarkModalLoading, setRemarkModalLoading] = useState(false);
   const [publishingModel, setPublishingModel] = useState(false);
@@ -483,6 +137,13 @@ const TaskDetail: React.FC = () => {
 
   const runId = taskInfo?.runId || manualRunId;
   const experimentId = taskInfo?.experimentId;
+  const {
+    versions,
+    setVersions,
+    error: versionsError,
+    loading: versionsLoading,
+    refreshVersions,
+  } = useExperimentVersions(experimentId);
   const trainingPlanDisplayName = resolveTrainingPlanDisplayName(
     taskInfo?.trainingProfile,
     trainingPlans,
@@ -625,18 +286,7 @@ const TaskDetail: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (!experimentId) {
-      setVersions([]);
-      setVersionHistoryPage(1);
-      return;
-    }
     setVersionHistoryPage(1);
-    listExperimentVersions(experimentId, { skipErrorHandler: true })
-      .then((res: any) => {
-        const list = Array.isArray(res?.data) ? res.data : [];
-        setVersions(list);
-      })
-      .catch(() => setVersions([]));
   }, [experimentId]);
 
   // 版本表只解析当前页展示名，避免一次对全部版本打详情
@@ -676,16 +326,6 @@ const TaskDetail: React.FC = () => {
       setVersionHistoryPage(page);
       setVersionHistoryPageSize(pageSize);
     },
-  };
-  const refreshVersions = async (expId: string) => {
-    try {
-      const res: any = await listExperimentVersions(expId, {
-        skipErrorHandler: true,
-      });
-      setVersions(Array.isArray(res?.data) ? res.data : []);
-    } catch {
-      setVersions([]);
-    }
   };
 
   const handleContinueSameExperiment = async (
@@ -1338,6 +978,22 @@ const TaskDetail: React.FC = () => {
         }
         style={{ marginBottom: 16 }}
       >
+        {versionsError && (
+          <Alert
+            type="error"
+            showIcon
+            message="版本历史读取失败"
+            description={versionsError}
+            action={
+              <Button
+                loading={versionsLoading}
+                onClick={() => void refreshVersions()}
+              >
+                重试读取
+              </Button>
+            }
+          />
+        )}
         {!experimentId && (
           <Alert
             type="warning"
@@ -1661,361 +1317,6 @@ const TaskDetail: React.FC = () => {
         />
       </Drawer>
     </PageContainer>
-  );
-};
-
-type ArtifactListItem = {
-  key: string;
-  name: string;
-  desc: string;
-  objectName?: string;
-  kind?: 'resultModel' | 'file';
-  producedModelVersionId?: string;
-};
-
-function formatArtifactSize(sizeBytes?: number) {
-  if (sizeBytes == null || Number.isNaN(sizeBytes)) return '';
-  if (sizeBytes < 1024) return `${sizeBytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = sizeBytes / 1024;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i += 1;
-  }
-  return `${value.toFixed(2)} ${units[i]}`;
-}
-
-function fileNameFromObjectName(objectName?: string) {
-  if (!objectName) return undefined;
-  const parts = objectName.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || undefined;
-}
-
-const TrainingArtifactsList: React.FC<{
-  taskId: string;
-  taskStatus?: string;
-  outputPath?: string;
-  logPath?: string;
-  files?: { name: string; desc: string; objectName?: string }[];
-  trainingOutput?: TaskDetailInfo['trainingOutput'];
-  consistencyProfile?: boolean;
-  producedModelVersionId?: string;
-  modelArtifactPath?: string;
-  modelArtifactSizeBytes?: number;
-  modelPublishStatus?: string;
-  onPublished?: () => void;
-}> = ({
-  taskId,
-  taskStatus,
-  outputPath,
-  logPath,
-  files,
-  trainingOutput,
-  consistencyProfile,
-  producedModelVersionId,
-  modelArtifactPath,
-  modelArtifactSizeBytes,
-  modelPublishStatus,
-  onPublished,
-}) => {
-  const [downloadingKey, setDownloadingKey] = useState<string>();
-  const [publishing, setPublishing] = useState(false);
-
-  const resultModelItem = useMemo((): ArtifactListItem | null => {
-    const sizeText = formatArtifactSize(modelArtifactSizeBytes);
-    if (producedModelVersionId || modelArtifactPath) {
-      const objectName = modelArtifactPath
-        ? minioPathToObjectName(modelArtifactPath)
-        : undefined;
-      return {
-        key: 'result-model',
-        name: '结果模型',
-        desc: [
-          producedModelVersionId
-            ? `producedModelVersionId: ${producedModelVersionId}`
-            : null,
-          objectName ? `path: ${objectName}` : modelArtifactPath || null,
-          sizeText ? `size: ${sizeText}` : null,
-          modelPublishStatus ? `status: ${modelPublishStatus}` : null,
-        ]
-          .filter(Boolean)
-          .join(' · '),
-        objectName,
-        kind: 'resultModel',
-        producedModelVersionId,
-      };
-    }
-    if (taskStatus === 'success') {
-      return {
-        key: 'result-model',
-        name: '结果模型',
-        desc: modelPublishStatus
-          ? `尚未可下载（${modelPublishStatus}）`
-          : '训练已成功，尚未发布为模型版本',
-        kind: 'resultModel',
-      };
-    }
-    return null;
-  }, [
-    modelArtifactPath,
-    modelArtifactSizeBytes,
-    modelPublishStatus,
-    producedModelVersionId,
-    taskStatus,
-  ]);
-
-  const outputItems = useMemo(
-    () => buildTrainingOutputArtifactItems(trainingOutput),
-    [trainingOutput],
-  );
-  const consistencyItems = useMemo(
-    () =>
-      consistencyProfile
-        ? buildConsistencyArtifactItems(outputPath, logPath)
-        : [],
-    [consistencyProfile, outputPath, logPath],
-  );
-  const legacyItems = useMemo(() => {
-    const list: ArtifactListItem[] = (files || []).map((f, i) => ({
-      key: `file-${i}-${f.name}`,
-      name: f.name,
-      desc: f.desc,
-      objectName: f.objectName,
-      kind: 'file' as const,
-    }));
-    if (logPath) {
-      list.push({
-        key: 'train-log',
-        name: 'train.log',
-        desc: logPath,
-        objectName: minioPathToObjectName(logPath),
-        kind: 'file',
-      });
-    }
-    if (outputPath) {
-      const outputObjectName = minioPathToObjectName(outputPath);
-      list.push({
-        key: 'output-dir',
-        name: '训练输出目录',
-        desc: outputPath,
-        objectName: isLikelyDirectoryPath(outputPath)
-          ? undefined
-          : outputObjectName,
-        kind: 'file',
-      });
-    }
-    return list;
-  }, [files, logPath, outputPath]);
-
-  const fileItems = outputItems.length
-    ? outputItems.map((item, i) => ({
-        key: `output-${i}-${item.name}`,
-        name: item.name,
-        desc: item.desc,
-        objectName: item.objectName,
-        kind: 'file' as const,
-      }))
-    : consistencyItems.length
-      ? consistencyItems.map((item, i) => ({
-          key: `c-${i}-${item.name}`,
-          name: item.name,
-          desc: item.desc,
-          objectName: item.objectName,
-          kind: 'file' as const,
-        }))
-      : legacyItems;
-
-  const items: ArtifactListItem[] = [
-    ...(resultModelItem ? [resultModelItem] : []),
-    ...fileItems,
-  ];
-
-  const resolveResultModelDownload = async (): Promise<{
-    objectName: string;
-    fileName: string;
-  } | null> => {
-    if (modelArtifactPath) {
-      const objectName = minioPathToObjectName(modelArtifactPath);
-      if (objectName) {
-        return {
-          objectName,
-          fileName: fileNameFromObjectName(objectName) || 'result-model.bin',
-        };
-      }
-    }
-    if (!producedModelVersionId) return null;
-    try {
-      const verRes: any = await getModelVersion(producedModelVersionId, {
-        skipErrorHandler: true,
-      });
-      const ver = verRes?.data;
-      if (ver?.storagePath) {
-        return {
-          objectName: minioPathToObjectName(ver.storagePath) || ver.storagePath,
-          fileName:
-            ver.fileName ||
-            fileNameFromObjectName(ver.storagePath) ||
-            'result-model.zip',
-        };
-      }
-    } catch {
-      // fall through
-    }
-    try {
-      const detailRes: any = await getModelDetail(producedModelVersionId, {
-        skipErrorHandler: true,
-      });
-      const d = detailRes?.data;
-      if (d?.storagePath) {
-        return {
-          objectName: minioPathToObjectName(d.storagePath) || d.storagePath,
-          fileName:
-            d.fileName ||
-            fileNameFromObjectName(d.storagePath) ||
-            'result-model.zip',
-        };
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  };
-
-  const handleDownload = async (item: ArtifactListItem) => {
-    const downloadKey = item.key;
-    setDownloadingKey(downloadKey);
-    try {
-      if (item.kind === 'resultModel') {
-        const resolved = await resolveResultModelDownload();
-        if (!resolved) {
-          message.warning('结果模型文件路径不可用，请先发布结果模型后再试');
-          return;
-        }
-        await downloadObjectWithBrowser(resolved.objectName, resolved.fileName);
-        return;
-      }
-      if (!item.objectName) {
-        message.warning('该产物暂无下载路径');
-        return;
-      }
-      await downloadObjectWithBrowser(item.objectName, item.name);
-    } catch (error: any) {
-      message.error(await errorMessageFromDownloadError(error));
-    } finally {
-      setDownloadingKey(undefined);
-    }
-  };
-
-  const handlePublish = async () => {
-    setPublishing(true);
-    try {
-      const res = await publishTaskModel(taskId, { skipErrorHandler: true });
-      if (!res?.success && !res?.data?.producedModelVersionId) {
-        message.error(res?.errorMessage || '发布结果模型失败');
-        return;
-      }
-      message.success('结果模型已发布');
-      onPublished?.();
-    } catch (error: any) {
-      message.error(error?.message || '发布结果模型失败');
-    } finally {
-      setPublishing(false);
-    }
-  };
-
-  if (!items.length) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        message="暂无训练产物"
-        description="任务完成后，结果模型与产物文件（fusion_model.pkl、metrics.json、predictions、train.log 等）将在此展示。"
-      />
-    );
-  }
-
-  return (
-    <List
-      size="small"
-      dataSource={items}
-      renderItem={(item) => {
-        const canDownload =
-          item.kind === 'resultModel'
-            ? Boolean(producedModelVersionId || modelArtifactPath)
-            : Boolean(item.objectName);
-        const actions: React.ReactNode[] = [];
-        if (canDownload) {
-          actions.push(
-            <Button
-              type="link"
-              key="download"
-              loading={downloadingKey === item.key}
-              onClick={() => void handleDownload(item)}
-            >
-              下载
-            </Button>,
-          );
-        }
-        if (
-          item.kind === 'resultModel' &&
-          !producedModelVersionId &&
-          taskStatus === 'success'
-        ) {
-          actions.push(
-            <Button
-              type="link"
-              key="publish"
-              loading={publishing}
-              onClick={() => void handlePublish()}
-            >
-              发布结果模型
-            </Button>,
-          );
-        }
-        if (item.kind === 'resultModel' && producedModelVersionId) {
-          actions.push(
-            <Button
-              type="link"
-              key="open"
-              onClick={() =>
-                history.push(
-                  `/model/detail/${encodeURIComponent(producedModelVersionId)}`,
-                )
-              }
-            >
-              查看模型
-            </Button>,
-          );
-        }
-        return (
-          <List.Item actions={actions.length ? actions : undefined}>
-            <List.Item.Meta
-              title={
-                <Space>
-                  {item.name}
-                  {item.kind === 'resultModel' && (
-                    <Tag color={producedModelVersionId ? 'green' : 'default'}>
-                      {producedModelVersionId ? '已发布' : '结果模型'}
-                    </Tag>
-                  )}
-                </Space>
-              }
-              description={
-                <Typography.Text
-                  copyable={Boolean(
-                    item.producedModelVersionId || item.objectName || item.desc,
-                  )}
-                  style={{ fontFamily: 'monospace', fontSize: 12 }}
-                >
-                  {item.desc}
-                </Typography.Text>
-              }
-            />
-          </List.Item>
-        );
-      }}
-    />
   );
 };
 

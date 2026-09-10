@@ -8,7 +8,6 @@
       "!**/.umi-production/**",
       "!**/.umi-test/**",
       "!**/.umi-test-production/**",
-      "!**/src/services/**",
       "!**/mock/**",
       "!**/dist/**",
       "!**/server/**",
@@ -44,5 +43,71 @@
     "formatter": {
       "quoteStyle": "single"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**/src/services/**/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "recommended": false,
+          "suspicious": {
+            "noExplicitAny": "error"
+          },
+          "correctness": {
+            "noUnusedImports": "warn"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/src/services/ant-design-pro/api.ts",
+        "**/src/services/ant-design-pro/login.ts",
+        "**/src/services/ant-design-pro/typings.d.ts",
+        "**/src/services/files.ts",
+        "**/src/services/mlflow.ts",
+        "**/src/services/pointcloud.ts",
+        "**/src/services/system/config.ts",
+        "**/src/services/system/user.ts",
+        "**/src/services/task.ts",
+        "**/src/services/trainingCode/adminWorkspace.ts",
+        "**/src/services/trainingCode/approval.ts",
+        "**/src/services/trainingCode/assets.ts",
+        "**/src/services/trainingCode/display.ts",
+        "**/src/services/trainingCode/inventory.ts",
+        "**/src/services/trainingCode/preview.ts",
+        "**/src/services/trainingCode/v2Content.ts",
+        "**/src/services/trainingCode/workspace.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "warn"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "**/src/services/dataset.ts",
+        "**/src/services/model.ts",
+        "**/src/services/datasetUploadResponse.ts",
+        "**/src/services/modelReadResponse.ts",
+        "**/src/pages/task/detail/useExperimentVersions.ts"
+      ],
+      "linter": {
+        "rules": {
+          "recommended": true,
+          "suspicious": {
+            "noExplicitAny": "error"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "error"
+          }
+        }
+      }
+    }
+  ]
 }

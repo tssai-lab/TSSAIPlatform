@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const text = readFileSync(new URL('../pages/task/trainingCode/detail/[codeVersionId].tsx', import.meta.url), 'utf8');
+const text = readFileSync(new URL('../pages/task/trainingCode/detail/useOwnerCodeDetailReads.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('page.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const callbacks = {};
 function visit(node) { if (ts.isVariableDeclaration(node) && node.initializer) callbacks[node.name.getText(ast)] = node.initializer.getText(ast); ts.forEachChild(node, visit); }
