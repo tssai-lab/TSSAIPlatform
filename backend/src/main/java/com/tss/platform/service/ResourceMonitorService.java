@@ -10,6 +10,7 @@ import com.tss.platform.training.TrainingExecutorRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,7 @@ public class ResourceMonitorService {
     private final ComputeProperties computeProperties;
     private final TrainingExecutorRouter trainingExecutorRouter;
     private final InferenceExecutorRouter inferenceExecutorRouter;
+    private GpuDeviceObservationStore gpuObservationStore;
 
     public ResourceMonitorService(
             ComputeServerRepository serverRepo,
@@ -63,6 +65,11 @@ public class ResourceMonitorService {
         this.computeProperties = computeProperties;
         this.trainingExecutorRouter = trainingExecutorRouter;
         this.inferenceExecutorRouter = inferenceExecutorRouter;
+    }
+
+    @Autowired
+    void setGpuObservationStore(GpuDeviceObservationStore gpuObservationStore) {
+        this.gpuObservationStore = gpuObservationStore;
     }
 
     // ────────── 5.1 SUMMARY ──────────
@@ -494,6 +501,16 @@ public class ResourceMonitorService {
         item.setServerIp(server.getServerIp());
         item.setHostname(server.getHostname());
         item.setEnabled(server.getEnabled());
+        if (gpuObservationStore != null) {
+            gpuObservationStore.fresh(server.getServerIp(), Instant.now())
+                    .or(() -> gpuObservationStore.fresh(server.getK8sNodeName(), Instant.now()))
+                    .ifPresent(observation -> item.setGpuDevices(observation.devices().stream()
+                            .map(device -> new GpuDeviceItem(
+                                    device.hostGpuIndex(), device.uuid(), device.modelName(),
+                                    device.totalMemoryMiB(), device.freeMemoryMiB(),
+                                    device.utilizationRate(), device.temperatureCelsius()))
+                            .toList()));
+        }
 
         if (snap != null) {
             item.setCpuRate(snap.getCpuRate());

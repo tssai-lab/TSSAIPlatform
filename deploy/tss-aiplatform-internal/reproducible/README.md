@@ -13,7 +13,7 @@ offline bundle is needed.
 | PostgreSQL, Redis, MinIO, MLflow-lite and backend | `../platform/platform-images.lock` | Run the `export-platform-images` workflow task, or run `platform/scripts/export-platform-images.sh` on any registry-connected Docker host. |
 | Historical four-worker runtime inventory | `runtime-images.lock` | Retained as the wider CV/NLP inventory; the same commit can rebuild it with `runtime-images.yml`. |
 | Minimal CPU training and inference images | `cpu-runtime-images.lock` | Export and stage the locked CV training, NLP training and CPU inference images with the internal validation workflow. |
-| Minimal GPU training images | `gpu-runtime-images.lock` | Export and stage only the digest-locked CV/NLP GPU workers from `backend-gpu`; this does not enable GPU discovery or submit workloads. |
+| Minimal GPU runtime images | `gpu-runtime-images.lock` | Export and stage the digest-locked CV/NLP training workers and GPU inference worker from `backend-gpu`; this does not enable GPU discovery or submit workloads. |
 | Frontend source | `frontend-source.lock` | Check out the exact `frontend-dev` commit and build from its lock file. Do not copy `/var/www` from Main. |
 | Public Nginx routes | `nginx/frontend.conf.template` | Replace the five `REPLACE_*` values, review, run `nginx -t`, then install it for that environment. |
 | Node and platform configuration | `../config/*.example` and `../platform/platform.env.example` | Create environment-owned files outside Git. |
@@ -135,9 +135,12 @@ containerd PID do not change.
 
 ## Stage the minimal GPU runtime bundle
 
-The GPU bundle contains only the CV and NLP workers built from the same full
-commit. Their shared CUDA/PyTorch base layer is stored once in the combined
-archive. Build, export, stage and import remain separate operations:
+The new GPU bundle contains the CV and NLP training workers plus the GPU
+inference worker built from the same full commit. A historical two-image lock
+remains importable during the rolling upgrade, but exact GPU inference must not
+be enabled until the lock contains `gpu-inference`. Shared CUDA/PyTorch layers
+are stored once in the combined archive. Build, export, stage and import remain
+separate operations:
 
 ```bash
 gh workflow run tss-aiplatform-internal-validation.yml \

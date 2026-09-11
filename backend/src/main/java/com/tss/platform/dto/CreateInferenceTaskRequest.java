@@ -11,6 +11,8 @@ public class CreateInferenceTaskRequest {
     private String datasetVersionId;
     private String inputObjectName;
     private String resourceProfileId;
+    private String hardwareTargetId;
+    private Long gpuMemoryLimitMiB;
     private Object params;
     private String remark;
 }

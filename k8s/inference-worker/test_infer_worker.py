@@ -322,5 +322,32 @@ class ModelCacheTest(unittest.TestCase):
         ):
             self.assertEqual(0, infer_worker.main())
 
+    def test_gpu_budget_runs_user_script_through_cuda_wrapper(self) -> None:
+        workspace = Path(self.temp.name) / "workspace"
+        workspace.mkdir()
+        entry = workspace / "infer.py"
+        entry.write_text("print('ok')\n", encoding="utf-8")
+        with (
+            patch.dict(os.environ, {"TSS_GPU_MEMORY_LIMIT_MIB": "4096"}, clear=True),
+            patch.object(infer_worker, "WORKSPACE", workspace),
+        ):
+            command = infer_worker.gpu_entry_command(entry)
+
+        wrapper = Path(command[1])
+        self.assertEqual("4096", command[2])
+        self.assertEqual(str(entry), command[3])
+        self.assertIn("torch.cuda.set_per_process_memory_fraction", wrapper.read_text())
+        self.assertIn("sys.path[0] = str(Path(entry_file).resolve().parent)", wrapper.read_text())
+        self.assertIn("TSS CUDA soft budget applied", wrapper.read_text())
+
+    def test_selected_gpu_uuid_must_be_visible(self) -> None:
+        result = types.SimpleNamespace(returncode=0, stdout="GPU-other\n")
+        with (
+            patch.dict(os.environ, {"TSS_SELECTED_GPU_UUID": "GPU-selected"}, clear=True),
+            patch.object(infer_worker.subprocess, "run", return_value=result),
+            self.assertRaisesRegex(RuntimeError, "only visible device"),
+        ):
+            infer_worker.validate_selected_gpu()
+
 if __name__ == "__main__":
     unittest.main()

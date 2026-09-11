@@ -7,7 +7,7 @@ import com.tss.platform.entity.ComputeServer;
 import java.util.Map;
 
 /** Shared node eligibility rules used by both assignment and read-only resource discovery. */
-final class ComputeServerSchedulingPolicy {
+public final class ComputeServerSchedulingPolicy {
 
     static final String PLATFORM_SCHEDULABLE_LABEL = "tss.ai/platform-schedulable";
     static final String PLATFORM_MAX_ACTIVE_TASKS_LABEL = "tss.ai/platform-max-active-tasks";
@@ -22,16 +22,28 @@ final class ComputeServerSchedulingPolicy {
         if (selector == null || selector.isEmpty()) {
             return true;
         }
+        // 主机名决定精确选卡落到哪台机器，先独立核对，不能被损坏的标签 JSON 绕过。
+        String requiredHostname = selector.get("kubernetes.io/hostname");
+        if (requiredHostname != null && !requiredHostname.equals(node.getK8sNodeName())) {
+            return false;
+        }
+        if (requiredHostname != null && selector.size() == 1) {
+            return true;
+        }
         boolean acceleratorRequired = selector.containsKey("tss.ai/accelerator");
         try {
             JsonNode labels = labels(node);
-            if (labels == null) return !acceleratorRequired;
             if (acceleratorRequired
+                    && labels != null
                     && "false".equalsIgnoreCase(labels.path(GPU_SCHEDULABLE_LABEL).asText())) {
                 return false;
             }
             for (Map.Entry<String, String> entry : selector.entrySet()) {
-                String actual = labels.has(entry.getKey()) ? labels.get(entry.getKey()).asText() : null;
+                if ("kubernetes.io/hostname".equals(entry.getKey())) continue;
+                // Kubernetes 主机名就是节点身份；数据库无需再重复保存一个同名标签。
+                String actual = labels != null && labels.has(entry.getKey())
+                        ? labels.get(entry.getKey()).asText()
+                        : null;
                 if (!entry.getValue().equals(actual)) return false;
             }
             return true;
@@ -40,7 +52,7 @@ final class ComputeServerSchedulingPolicy {
         }
     }
 
-    static boolean isCacheReady(ComputeServer node) {
+    public static boolean isCacheReady(ComputeServer node) {
         try {
             JsonNode labels = labels(node);
             return labels != null && "true".equalsIgnoreCase(
@@ -50,7 +62,7 @@ final class ComputeServerSchedulingPolicy {
         }
     }
 
-    static boolean isPlatformSchedulable(ComputeServer node) {
+    public static boolean isPlatformSchedulable(ComputeServer node) {
         try {
             JsonNode labels = labels(node);
             if (labels == null) return true;
@@ -62,7 +74,7 @@ final class ComputeServerSchedulingPolicy {
         }
     }
 
-    static boolean isGpuSchedulable(ComputeServer node) {
+    public static boolean isGpuSchedulable(ComputeServer node) {
         try {
             JsonNode labels = labels(node);
             return labels == null || !"false".equalsIgnoreCase(

@@ -920,7 +920,7 @@ def run_user_script(input_path: Path) -> None:
             "INPUT_MODE": env("INPUT_MODE"),
         }
     )
-    command = [sys.executable, str(entry_path)]
+    command = gpu_entry_command(entry_path)
     log(f"run inference script: {' '.join(command)}")
     completed = subprocess.run(
         command,
@@ -935,6 +935,66 @@ def run_user_script(input_path: Path) -> None:
         file.write(completed.stdout or "")
     if completed.returncode != 0:
         raise RuntimeError(f"inference script failed with exit code {completed.returncode}")
+
+
+def validate_selected_gpu() -> None:
+    """核对 DRA 实际暴露的卡，避免页面选择与容器拿到的设备不一致。"""
+    selected_uuid = env("TSS_SELECTED_GPU_UUID")
+    if not selected_uuid:
+        return
+    completed = subprocess.run(
+        ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    visible_uuids = {line.strip() for line in completed.stdout.splitlines() if line.strip()}
+    if completed.returncode != 0 or visible_uuids != {selected_uuid}:
+        raise RuntimeError(
+            f"selected GPU must be the only visible device: expected={selected_uuid}, "
+            f"visible={sorted(visible_uuids)}"
+        )
+    log(
+        f"selected physical GPU: host-index={env('TSS_HOST_GPU_INDEX', '?')}, uuid={selected_uuid}"
+    )
+
+
+def gpu_entry_command(entry_path: Path) -> list[str]:
+    """GPU 显存预算必须在用户脚本同一进程里设置，父进程设置不会生效。"""
+    raw_budget = env("TSS_GPU_MEMORY_LIMIT_MIB")
+    if not raw_budget:
+        return [sys.executable, str(entry_path)]
+    budget_mib = int(raw_budget)
+    if budget_mib <= 0:
+        raise ValueError("TSS_GPU_MEMORY_LIMIT_MIB must be a positive integer")
+    wrapper = WORKSPACE / ".tss_cuda_entrypoint.py"
+    wrapper.write_text(
+        """import runpy
+import sys
+import torch
+from pathlib import Path
+
+budget_mib = int(sys.argv[1])
+entry_file = sys.argv[2]
+if not torch.cuda.is_available():
+    raise RuntimeError("selected GPU is not available to PyTorch")
+total_mib = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+fraction = min(1.0, budget_mib / total_mib)
+torch.cuda.set_per_process_memory_fraction(fraction, 0)
+print(
+    f"TSS CUDA soft budget applied: requestedMiB={budget_mib}, "
+    f"deviceTotalMiB={total_mib:.0f}, fraction={fraction:.6f}",
+    flush=True,
+)
+# 模拟直接执行用户脚本，保证同目录模块仍能正常 import。
+sys.path[0] = str(Path(entry_file).resolve().parent)
+sys.argv = [entry_file, *sys.argv[3:]]
+runpy.run_path(entry_file, run_name="__main__")
+""",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(wrapper), str(budget_mib), str(entry_path)]
 
 
 def main() -> int:
@@ -962,6 +1022,7 @@ def main() -> int:
     output_path = None
     try:
         with model_cache_read_lock():
+            validate_selected_gpu()
             callback("running", 10)
             input_path = prepare_workspace(client, bucket)
             callback("running", 35)

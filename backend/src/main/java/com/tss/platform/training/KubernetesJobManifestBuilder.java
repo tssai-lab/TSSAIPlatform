@@ -27,6 +27,7 @@ public class KubernetesJobManifestBuilder {
     private final TrainingKubernetesProperties properties;
     private final TrainingRunSpecCodec runSpecCodec;
     private final TrainingRuntimeImageService runtimeImageService;
+    private final GpuDeviceClaimManifestBuilder gpuClaimBuilder;
     private static final Logger LOGGER = LoggerFactory.getLogger(KubernetesJobManifestBuilder.class);
     private static final Pattern SHA256_PATTERN = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern LINUX_ABSOLUTE_PATH = Pattern.compile("/[A-Za-z0-9._/-]+");
@@ -51,6 +52,7 @@ public class KubernetesJobManifestBuilder {
         this.properties = properties;
         this.runSpecCodec = runSpecCodec;
         this.runtimeImageService = runtimeImageService;
+        this.gpuClaimBuilder = new GpuDeviceClaimManifestBuilder(properties);
     }
     @Autowired
     void setModelCacheProperties(InferenceModelCacheProperties modelCacheProperties) {
@@ -77,6 +79,14 @@ public class KubernetesJobManifestBuilder {
     ) {
         TrainingRunSpec runSpec = runSpecCodec.decode(task);
         boolean gpuRuntimeRequired = validateDeviceResources(runSpec);
+        boolean exactGpu = gpuRuntimeRequired
+                && runSpec.resources().gpuUuid() != null
+                && !runSpec.resources().gpuUuid().isBlank();
+        if (exactGpu && targetNodeName != null
+                && runSpec.resources().gpuNodeName() != null
+                && !targetNodeName.equals(runSpec.resources().gpuNodeName())) {
+            throw new IllegalStateException("scheduled node does not match the selected GPU node");
+        }
         String jobName = KubernetesJobNaming.jobNameForTraining(task.getId());
         String trainingLabel = KubernetesJobNaming.sanitizeLabelValue(task.getId());
         long deadlineSeconds = Math.min(properties.getJobActiveDeadlineSeconds(), runSpec.security().maxRuntimeSeconds());
@@ -107,7 +117,10 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 4, "tss.ai/training-id: " + quote(trainingLabel));
         line(yaml, 0, "spec:");
         line(yaml, 2, "backoffLimit: 0");
-        line(yaml, 2, "activeDeadlineSeconds: " + deadlineSeconds);
+        // 精确选卡可能长时间等卡；运行时限从容器真正启动后由 timeout 计算。
+        if (!exactGpu) {
+            line(yaml, 2, "activeDeadlineSeconds: " + deadlineSeconds);
+        }
         line(yaml, 2, "ttlSecondsAfterFinished: " + effectiveJobTtlSecondsAfterFinished());
         line(yaml, 2, "template:");
         line(yaml, 4, "metadata:");
@@ -121,10 +134,21 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 6, "serviceAccountName: " + properties.getServiceAccount());
         line(yaml, 6, "automountServiceAccountToken: false");
         line(yaml, 6, "restartPolicy: Never");
-        if (targetNodeName != null && !targetNodeName.isBlank()) {
+        // DRA 依赖调度器分配声明，精确选卡不能用 nodeName 绕过调度器。
+        if (exactGpu && targetNodeName != null && !targetNodeName.isBlank()) {
+            line(yaml, 6, "nodeSelector:");
+            line(yaml, 8, "kubernetes.io/hostname: " + quote(targetNodeName));
+        } else if (targetNodeName != null && !targetNodeName.isBlank()) {
             line(yaml, 6, "nodeName: " + targetNodeName);
         } else {
             appendNodeSelector(yaml, runSpec.resources().nodeSelector());
+        }
+        if (exactGpu) {
+            appendExactGpuTolerations(yaml);
+            line(yaml, 6, "resourceClaims:");
+            line(yaml, 8, "- name: gpu");
+            line(yaml, 10, "resourceClaimTemplateName: "
+                    + gpuClaimBuilder.claimTemplateName(runSpec.resources().gpuUuid()));
         }
         line(yaml, 6, "securityContext:");
         line(yaml, 8, "runAsNonRoot: " + runSpec.security().runAsNonRoot());
@@ -143,6 +167,9 @@ public class KubernetesJobManifestBuilder {
         }
         line(yaml, 6, "containers:");
         line(yaml, 8, "- name: training-worker");
+        if (exactGpu) {
+            appendRuntimeTimeoutCommand(yaml, deadlineSeconds, "/app/train.py");
+        }
         line(yaml, 10, "image: " + quote(image));
         line(yaml, 10, "imagePullPolicy: " + runSpec.runtime().imagePullPolicy());
         // The container runtime creates a missing workingDir before the worker
@@ -173,6 +200,10 @@ public class KubernetesJobManifestBuilder {
         if (runSpec.resources().gpuMemoryLimitMiB() != null) {
             appendEnv(yaml, "TSS_GPU_MEMORY_LIMIT_MIB", runSpec.resources().gpuMemoryLimitMiB().toString());
         }
+        if (exactGpu) {
+            appendEnv(yaml, "TSS_SELECTED_GPU_UUID", runSpec.resources().gpuUuid());
+            appendEnv(yaml, "TSS_HOST_GPU_INDEX", runSpec.resources().gpuHostIndex());
+        }
         if (modelCache.enabled()) {
             appendEnv(yaml, "MODEL_CACHE_ENABLED", "true");
             appendEnv(yaml, "MODEL_CACHE_LOCK_PATH", "/var/run/tss-model-cache/model.lock");
@@ -185,15 +216,32 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 14, "cpu: " + quote(runSpec.resources().cpuLimit()));
         line(yaml, 14, "memory: " + quote(runSpec.resources().memoryLimit()));
         line(yaml, 14, "ephemeral-storage: " + quote(runSpec.resources().ephemeralStorageLimit()));
-        if (gpuRuntimeRequired) {
+        if (gpuRuntimeRequired && !exactGpu) {
             line(yaml, 14, "nvidia.com/gpu: " + quote(runSpec.resources().gpuCount().toString()));
+        }
+        if (exactGpu) {
+            line(yaml, 12, "claims:");
+            line(yaml, 14, "- name: gpu");
         }
         line(yaml, 10, "securityContext:");
         line(yaml, 12, "allowPrivilegeEscalation: " + runSpec.security().allowPrivilegeEscalation());
         line(yaml, 12, "capabilities:");
         line(yaml, 14, "drop:");
         line(yaml, 16, "- ALL");
-        return yaml.toString();
+        String jobYaml = yaml.toString();
+        return exactGpu
+                ? gpuClaimBuilder.prependClaimTemplate(jobYaml, runSpec.resources().gpuUuid())
+                : jobYaml;
+    }
+
+    private void appendRuntimeTimeoutCommand(StringBuilder yaml, long deadlineSeconds, String workerPath) {
+        line(yaml, 10, "command:");
+        line(yaml, 12, "- /usr/bin/timeout");
+        line(yaml, 12, "- --signal=TERM");
+        line(yaml, 12, "- --kill-after=30s");
+        line(yaml, 12, "- " + deadlineSeconds + "s");
+        line(yaml, 12, "- python");
+        line(yaml, 12, "- " + workerPath);
     }
 
     private boolean validateDeviceResources(TrainingRunSpec runSpec) {
@@ -409,6 +457,16 @@ public class KubernetesJobManifestBuilder {
         line(yaml, 6, "nodeSelector:");
         nodeSelector.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> line(yaml, 8, quote(entry.getKey()) + ": " + quote(entry.getValue())));
+    }
+
+    private void appendExactGpuTolerations(StringBuilder yaml) {
+        line(yaml, 6, "tolerations:");
+        line(yaml, 8, "- key: node-role.kubernetes.io/control-plane");
+        line(yaml, 10, "operator: Exists");
+        line(yaml, 10, "effect: NoSchedule");
+        line(yaml, 8, "- key: nvidia.com/gpu");
+        line(yaml, 10, "operator: Exists");
+        line(yaml, 10, "effect: NoSchedule");
     }
 
     private void appendEnv(StringBuilder yaml, String name, String value) {

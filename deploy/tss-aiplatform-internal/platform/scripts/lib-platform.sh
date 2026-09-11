@@ -41,6 +41,10 @@ load_platform_config() {
 
   # Optional for backwards-compatible CPU-only platform configurations.
   TSS_ENABLE_GPU_WORKER="${TSS_ENABLE_GPU_WORKER:-false}"
+  TSS_K8S_CLIENT_MODE="${TSS_K8S_CLIENT_MODE:-fabric8}"
+  TSS_EXACT_GPU_SELECTION_ENABLED="${TSS_EXACT_GPU_SELECTION_ENABLED:-false}"
+  TSS_GPU_DEVICE_CLASS_NAME="${TSS_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}"
+  TSS_GPU_INFERENCE_WORKER_IMAGE="${TSS_GPU_INFERENCE_WORKER_IMAGE:-tss-inference-worker-gpu:local}"
 
   local name
   for name in \
@@ -69,6 +73,22 @@ load_platform_config() {
     || die "worker and control-plane IPs must differ"
   validate_dns_label TSS_PLATFORM_WORKER_NODE
   validate_bool TSS_ENABLE_GPU_WORKER
+  validate_bool TSS_EXACT_GPU_SELECTION_ENABLED
+  [[ $TSS_K8S_CLIENT_MODE == fabric8 || $TSS_K8S_CLIENT_MODE == kubectl ]] \
+    || die "TSS_K8S_CLIENT_MODE must be fabric8 or kubectl"
+  [[ $TSS_GPU_DEVICE_CLASS_NAME =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] \
+    || die "TSS_GPU_DEVICE_CLASS_NAME is invalid"
+  if [[ $TSS_EXACT_GPU_SELECTION_ENABLED == true ]]; then
+    [[ $TSS_ENABLE_GPU_WORKER == true ]] \
+      || die "exact GPU selection requires TSS_ENABLE_GPU_WORKER=true"
+    [[ $TSS_K8S_CLIENT_MODE == kubectl ]] \
+      || die "exact GPU selection requires TSS_K8S_CLIENT_MODE=kubectl"
+    [[ $TSS_GPU_INFERENCE_WORKER_IMAGE =~ @sha256:[0-9a-f]{64}$ ]] \
+      || die "exact GPU selection requires an immutable GPU inference image digest"
+    grep -F "|${TSS_GPU_INFERENCE_WORKER_IMAGE}|gpu-inference|" \
+      "${internal_root}/reproducible/gpu-runtime-images.lock" >/dev/null \
+      || die "GPU inference image is absent from the committed runtime lock"
+  fi
 
   for name in TSS_PLATFORM_ROOT TSS_REPOSITORY_ROOT TSS_KUBECTL_PATH TSS_ADMIN_KUBECONFIG; do
     validate_path "$name"

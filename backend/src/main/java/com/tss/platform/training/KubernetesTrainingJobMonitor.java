@@ -167,6 +167,10 @@ public class KubernetesTrainingJobMonitor {
             }
             return;
         }
+        if ("FailedScheduling".equals(status.podWaitingReason())) {
+            markWaitingForSelectedResource(task.getId(), status.podWaitingMessage());
+            return;
+        }
         if (status.active() > 0 && !"running".equals(task.getStatus())) {
             markRunning(task.getId());
         }
@@ -306,6 +310,24 @@ public class KubernetesTrainingJobMonitor {
                 version.setStartedAt(Instant.now());
             }
             version.setUpdatedAt(Instant.now());
+            if (version.getErrorMessage() != null
+                    && version.getErrorMessage().startsWith("等待所选资源")) {
+                version.setErrorMessage(null);
+            }
+            repository.save(version);
+        }));
+    }
+
+    private void markWaitingForSelectedResource(String trainingId, String detail) {
+        transactionTemplate.executeWithoutResult(tx -> repository.findById(trainingId).ifPresent(version -> {
+            if (TERMINAL_STATUSES.contains(version.getStatus())) return;
+            String suffix = detail == null || detail.isBlank()
+                    ? ""
+                    : "：" + TrainingFailureDiagnosticService.redact(detail)
+                            .replaceAll("\\s+", " ").trim();
+            String message = "等待所选资源" + suffix;
+            version.setErrorMessage(message.length() > 1000 ? message.substring(0, 1000) : message);
+            version.setUpdatedAt(Instant.now());
             repository.save(version);
         }));
     }
@@ -318,6 +340,10 @@ public class KubernetesTrainingJobMonitor {
             version.setStatus("success");
             version.setProgress(100);
             version.setFinishedAt(Instant.now());
+            if (version.getErrorMessage() != null
+                    && version.getErrorMessage().startsWith("等待所选资源")) {
+                version.setErrorMessage(null);
+            }
             if (version.getProducedModelVersionId() == null
                     && version.getModelPublishStatus() == null) {
                 if (version.getRunSpecJson() != null && !version.getRunSpecJson().isBlank()) {

@@ -35,7 +35,19 @@ public class GpuDeviceObservationStore {
         return Optional.of(observation);
     }
 
-    public record DeviceObservation(String modelName, Long totalMemoryMiB, Long freeMemoryMiB) {
+    public record DeviceObservation(
+            String hostGpuIndex,
+            String uuid,
+            String modelName,
+            Long totalMemoryMiB,
+            Long freeMemoryMiB,
+            Double utilizationRate,
+            Double temperatureCelsius
+    ) {
+        /** 兼容旧测试和旧采集调用；这类记录不会被当成可精确选择的物理卡。 */
+        public DeviceObservation(String modelName, Long totalMemoryMiB, Long freeMemoryMiB) {
+            this(null, null, modelName, totalMemoryMiB, freeMemoryMiB, null, null);
+        }
     }
 
     public record NodeObservation(List<DeviceObservation> devices, Instant observedAt) {

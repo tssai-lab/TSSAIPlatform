@@ -242,14 +242,14 @@ class ServerMetricsCollectorTest {
     void parsesIndependentDcgmUtilizationMemoryAndTemperatureMetrics() {
         ServerMetricsCollector.GpuMetrics metrics = ServerMetricsCollector.parseGpuMetrics("""
                 # HELP ignored
-                DCGM_FI_DEV_GPU_UTIL{gpu="0"} 0
-                DCGM_FI_DEV_GPU_UTIL{gpu="1"} 20
-                DCGM_FI_DEV_FB_USED{gpu="0",modelName="RTX 4080"} 100
-                DCGM_FI_DEV_FB_USED{gpu="1",modelName="RTX 4080"} 300
-                DCGM_FI_DEV_FB_TOTAL{gpu="0",modelName="RTX 4080"} 1000
-                DCGM_FI_DEV_FB_TOTAL{gpu="1",modelName="RTX 4080"} 1000
-                DCGM_FI_DEV_GPU_TEMP{gpu="0"} 40
-                DCGM_FI_DEV_GPU_TEMP{gpu="1"} 50
+                DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-aaaaaaaa",modelName="RTX 4080"} 0
+                DCGM_FI_DEV_GPU_UTIL{gpu="1",UUID="GPU-bbbbbbbb",modelName="RTX 4080"} 20
+                DCGM_FI_DEV_FB_USED{gpu="0",UUID="GPU-aaaaaaaa",modelName="RTX 4080"} 100
+                DCGM_FI_DEV_FB_USED{gpu="1",UUID="GPU-bbbbbbbb",modelName="RTX 4080"} 300
+                DCGM_FI_DEV_FB_TOTAL{gpu="0",UUID="GPU-aaaaaaaa",modelName="RTX 4080"} 1000
+                DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-bbbbbbbb",modelName="RTX 4080"} 1000
+                DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-aaaaaaaa",modelName="RTX 4080"} 40
+                DCGM_FI_DEV_GPU_TEMP{gpu="1",UUID="GPU-bbbbbbbb",modelName="RTX 4080"} 50
                 """);
 
         assertThat(metrics.utilizationRate()).isEqualTo(10.0);
@@ -260,6 +260,10 @@ class ServerMetricsCollectorTest {
         assertThat(metrics.devices().get(0).modelName()).isEqualTo("RTX 4080");
         assertThat(metrics.devices().get(0).totalMemoryMiB()).isEqualTo(1000L);
         assertThat(metrics.devices().get(0).freeMemoryMiB()).isEqualTo(900L);
+        assertThat(metrics.devices().get(0).hostGpuIndex()).isEqualTo("0");
+        assertThat(metrics.devices().get(0).uuid()).isEqualTo("GPU-aaaaaaaa");
+        assertThat(metrics.devices().get(0).utilizationRate()).isEqualTo(0.0);
+        assertThat(metrics.devices().get(0).temperatureCelsius()).isEqualTo(40.0);
     }
 
     @Test

@@ -54,8 +54,9 @@ done
 )
 cmp "${internal_root}/reproducible/gpu-runtime-images.lock" "${bundle_dir}/sources.lock" >/dev/null \
   || die "GPU runtime bundle sources do not match the committed lock"
-[[ $(grep -Evc '^(#|$)' "${bundle_dir}/sources.lock") -eq 2 ]] \
-  || die "GPU runtime source lock must contain exactly two images"
+locked_image_count=$(grep -Evc '^(#|$)' "${bundle_dir}/sources.lock")
+[[ $locked_image_count -eq 2 || $locked_image_count -eq 3 ]] \
+  || die "GPU runtime source lock must contain two or three images"
 
 systemctl is-active --quiet tss-aiplatform-containerd.service \
   || die "isolated project containerd is not active"
@@ -67,8 +68,8 @@ system_containerd_pid="$(systemctl show containerd -p MainPID --value)"
 [[ $system_containerd_pid =~ ^[1-9][0-9]*$ ]] || die "shared system containerd PID is invalid"
 docker_container_count="$(docker ps -q | wc -l)"
 
-echo "PASS: GPU runtime checksums and two locked image sources verified"
-echo "PLAN: import one CV and one NLP GPU training image into node=${TSS_NODE_NAME}"
+echo "PASS: GPU runtime checksums and ${locked_image_count} locked image sources verified"
+echo "PLAN: import the locked GPU training images and optional inference image into node=${TSS_NODE_NAME}"
 echo "PLAN: do not install the Device Plugin and do not submit a training Job"
 if [[ $mode == --check ]]; then
   echo "GPU runtime bundle check passed without image writes: node=${TSS_NODE_NAME}"
@@ -87,7 +88,7 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
   [[ $source_ref == ghcr.io/tssai-lab/* \
     && $manifest_digest =~ ^sha256:[0-9a-f]{64}$ \
     && $image_id =~ ^sha256:[0-9a-f]{64}$ \
-    && ( $purpose == cv-gpu-training || $purpose == nlp-gpu-training ) ]] \
+    && ( $purpose == cv-gpu-training || $purpose == nlp-gpu-training || $purpose == gpu-inference ) ]] \
     || die "invalid GPU runtime source line after import"
   image_line="$(ctr --address "$TSS_CONTAINERD_SOCKET" --namespace k8s.io images list \
     | awk -v ref="$source_ref" '$1 == ref {print}')"
@@ -123,6 +124,6 @@ done < <(grep -Ev '^(#|$)' "${bundle_dir}/sources.lock")
 [[ $(docker ps -q | wc -l) -eq $docker_container_count ]] \
   || die "shared Docker container count changed during GPU runtime import"
 logger -t tss-aiplatform-images \
-  "GPU runtime import complete node=${TSS_NODE_NAME} locked_images=2 plugin_enabled=false" \
+  "GPU runtime import complete node=${TSS_NODE_NAME} locked_images=${locked_image_count} plugin_enabled=false" \
   2>/dev/null || true
 echo "GPU runtime image import complete without enabling GPU workloads: node=${TSS_NODE_NAME}"

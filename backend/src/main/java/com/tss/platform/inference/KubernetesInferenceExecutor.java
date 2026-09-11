@@ -301,6 +301,9 @@ public class KubernetesInferenceExecutor implements InferenceExecutor {
                     }
                     task.setServerIp(serverIp);
                     task.setStatus("scheduled");
+                    if (task.getGpuUuid() != null && !task.getGpuUuid().isBlank()) {
+                        task.setErrorMessage("等待所选物理 GPU 空闲；平台不会自动换卡");
+                    }
                     task.setUpdatedAt(Instant.now());
                     taskRepository.save(task);
                     return true;

@@ -217,7 +217,24 @@ public class KubectlKubernetesWorkloadClient implements KubernetesWorkloadClient
             if (waiting.waitingReason() != null) {
                 return waiting;
             }
-            return firstWaitingState(status.path("containerStatuses"), createdAt);
+            waiting = firstWaitingState(status.path("containerStatuses"), createdAt);
+            if (waiting.waitingReason() != null) {
+                return waiting;
+            }
+            JsonNode conditions = status.path("conditions");
+            if (conditions.isArray()) {
+                for (JsonNode condition : conditions) {
+                    if ("PodScheduled".equals(condition.path("type").asText())
+                            && "False".equals(condition.path("status").asText())) {
+                        return new PodStartupState(
+                                condition.path("reason").asText("FailedScheduling"),
+                                condition.path("message").asText(null),
+                                createdAt
+                        );
+                    }
+                }
+            }
+            return PodStartupState.empty();
         } catch (Exception exception) {
             throw new KubernetesWorkloadException("kubectl training Pod status output cannot be parsed", exception);
         }

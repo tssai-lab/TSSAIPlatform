@@ -261,7 +261,8 @@ For a reviewed GPU worker, the same installer also provisions the separate
 `tss-aiplatform-internal-deploy-gpu-runtime` helper. Run the three
 `export-gpu-runtime-images`, `stage-gpu-runtime-images` and
 `deploy-gpu-runtime-images` workflow tasks from `backend-gpu` with one exact
-source SHA and export run ID. Importing these two images does not enable the
+source SHA and export run ID. The current bundle contains three images: CV
+training, NLP training and GPU inference. Importing these images does not enable the
 Device Plugin or start a training workload.
 
 ## C7 internal frontend (manual, independent target)

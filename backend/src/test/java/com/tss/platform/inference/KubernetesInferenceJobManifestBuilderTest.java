@@ -12,6 +12,7 @@ import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.service.ModelCachePolicyService;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -247,6 +248,58 @@ class KubernetesInferenceJobManifestBuilderTest {
                 () -> builder.buildJobYaml(
                         task, modelVersion, scriptVersion, null, "access", "secret", "models")
         );
+    }
+
+    @Test
+    void gpuInferenceUsesSelectedDraClaimImageAndSoftMemoryBudget() {
+        TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
+        properties.setInternalCallbackToken("internal-token");
+        properties.setExactGpuSelectionEnabled(true);
+        InferenceResourceProfileService profiles = new InferenceResourceProfileService(
+                new InferenceKubernetesResourceProperties(), properties);
+        KubernetesInferenceJobManifestBuilder builder = new KubernetesInferenceJobManifestBuilder(
+                properties, new InferenceModelCacheProperties(), profiles);
+        ReflectionTestUtils.setField(builder, "workerImage", "cpu-worker:test");
+        ReflectionTestUtils.setField(builder, "gpuWorkerImage", "gpu-worker:test");
+        ReflectionTestUtils.setField(builder, "workerImagePullPolicy", "IfNotPresent");
+
+        InferenceTask task = new InferenceTask();
+        task.setId("infer-gpu-1");
+        task.setCurrentAttempt(1);
+        task.setResourceProfileId("gpu-one");
+        task.setModelVersionId("model-ver-1");
+        task.setScriptVersionId("script-ver-1");
+        task.setInputMode("SINGLE_OBJECT");
+        task.setGpuNodeName("worker-gpu");
+        task.setGpuHostIndex("1");
+        task.setGpuUuid("GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        task.setGpuMemoryLimitMiB(4096L);
+
+        ModelVersion model = new ModelVersion();
+        model.setStoragePath("users/7/models/model.zip");
+        InferenceScriptVersion script = new InferenceScriptVersion();
+        script.setStoragePath("users/7/scripts/script.zip");
+        script.setEntryFile("infer.py");
+
+        String yaml = builder.buildJobYaml(
+                task, model, script, null, "access", "secret", "models", "worker-gpu");
+
+        assertTrue(yaml.contains("kind: ResourceClaimTemplate"));
+        assertTrue(yaml.contains("image: gpu-worker:test"));
+        assertTrue(yaml.contains("resourceClaimTemplateName: tss-gpu-"));
+        assertTrue(yaml.contains("name: TSS_SELECTED_GPU_UUID"));
+        assertTrue(yaml.contains("value: \"GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\""));
+        assertTrue(yaml.contains("name: TSS_GPU_MEMORY_LIMIT_MIB"));
+        assertTrue(yaml.contains("value: \"4096\""));
+        assertTrue(yaml.contains("claims:\n              - name: gpu"));
+        assertFalse(yaml.contains("nvidia.com/gpu:"));
+        assertTrue(yaml.contains("kubernetes.io/hostname: \"worker-gpu\""));
+        assertFalse(yaml.contains("nodeName: \"worker-gpu\""));
+        assertTrue(yaml.contains("key: node-role.kubernetes.io/control-plane"));
+        assertTrue(yaml.contains("key: nvidia.com/gpu"));
+        assertFalse(yaml.contains("activeDeadlineSeconds:"));
+        assertTrue(yaml.contains("- /usr/bin/timeout"));
+        assertTrue(yaml.contains("- /app/infer_worker.py"));
     }
 
     private static InferenceResourceProfileService resourceProfileService() {

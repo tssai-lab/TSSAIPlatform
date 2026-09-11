@@ -1,6 +1,7 @@
 package com.tss.platform.inference;
 
 import com.tss.platform.config.InferenceKubernetesResourceProperties;
+import com.tss.platform.config.TrainingKubernetesProperties;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,5 +45,20 @@ class InferenceResourceProfileServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.resolveForCreate("gpu-1"));
         assertThrows(IllegalArgumentException.class, () -> service.resolveForExecution("cpu-unbounded"));
+    }
+
+    @Test
+    void exposesSingleGpuProfileOnlyWhenExactSelectionUsesKubectl() {
+        TrainingKubernetesProperties kubernetes = new TrainingKubernetesProperties();
+        kubernetes.setExactGpuSelectionEnabled(true);
+        InferenceResourceProfileService service = new InferenceResourceProfileService(
+                new InferenceKubernetesResourceProperties(), kubernetes);
+
+        assertEquals("gpu-one", service.listEnabledProfiles().get(1).id());
+        assertEquals("NVIDIA_GPU", service.resolveForCreate("gpu-one").deviceType());
+        assertEquals(1, service.resolveForCreate("gpu-one").gpuCount());
+
+        kubernetes.setClientMode(TrainingKubernetesProperties.ClientMode.FABRIC8);
+        assertThrows(IllegalArgumentException.class, () -> service.resolveForCreate("gpu-one"));
     }
 }

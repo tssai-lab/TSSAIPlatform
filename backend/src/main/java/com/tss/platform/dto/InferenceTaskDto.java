@@ -15,6 +15,13 @@ public class InferenceTaskDto {
     private String datasetVersionId;
     private String inputObjectName;
     private String resourceProfileId;
+    private String hardwareTargetId;
+    private String gpuNodeName;
+    private String gpuHostIndex;
+    private String gpuUuid;
+    private String gpuModel;
+    private Long gpuTotalMemoryMiB;
+    private Long gpuMemoryLimitMiB;
     private JsonNode params;
     private String status;
     private Integer progress;

@@ -71,8 +71,8 @@ PROFILES = {
         "checksum_files": {
             "gpu-runtime.sha256": ["gpu-runtime-amd64.tar", "sources.lock"],
         },
-        # CV and NLP share the same 4.18 GB CUDA/PyTorch base layer. Export
-        # them in one Docker archive so that layer is stored only once, while
+        # CV training and GPU inference share the CUDA/PyTorch layers. Export
+        # all GPU workers in one archive so shared layers are stored once, while
         # retaining GitHub's 10 GiB artifact ceiling as the hard limit.
         "max_bytes": 10 * 1024**3,
     },

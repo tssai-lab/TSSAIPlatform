@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -240,6 +241,38 @@ class GenericTrainingWorkerTest(unittest.TestCase):
         with patch.dict(os.environ, {"MODEL_CACHE_ENABLED": "true"}, clear=True):
             with self.assertRaisesRegex(worker.WorkerError, "lock mount is missing"):
                 worker.acquire_model_cache_read_lock()
+
+    def test_gpu_budget_wraps_training_in_same_python_process(self):
+        spec = run_spec()
+        spec["resources"].update({
+            "gpuUuid": "GPU-selected",
+            "gpuMemoryLimitMiB": 4096,
+        })
+        with tempfile.TemporaryDirectory() as temp:
+            config_dir = Path(temp)
+            with (
+                patch.dict(os.environ, {"TSS_GPU_MEMORY_LIMIT_MIB": "4096"}, clear=True),
+                patch.object(worker, "CONFIG_DIR", config_dir),
+            ):
+                command = worker.training_entry_argv(spec)
+
+            wrapper = Path(command[1])
+            self.assertEqual("4096", command[2])
+            self.assertEqual("/workspace/job/code/train.py", command[3])
+            self.assertIn("torch.cuda.set_per_process_memory_fraction", wrapper.read_text())
+            self.assertIn("sys.path[0] = str(Path(entry_file).resolve().parent)", wrapper.read_text())
+            self.assertIn("TSS CUDA soft budget applied", wrapper.read_text())
+
+    def test_selected_gpu_must_be_the_only_visible_device(self):
+        spec = run_spec()
+        spec["resources"]["gpuUuid"] = "GPU-selected"
+        result = types.SimpleNamespace(returncode=0, stdout="GPU-selected\nGPU-other\n")
+        with (
+            patch.dict(os.environ, {"TSS_SELECTED_GPU_UUID": "GPU-selected"}, clear=True),
+            patch.object(worker.subprocess, "run", return_value=result),
+            self.assertRaisesRegex(worker.WorkerError, "expected only GPU-selected"),
+        ):
+            worker.validate_selected_gpu(spec)
 
 
 if __name__ == "__main__":

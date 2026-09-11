@@ -40,6 +40,27 @@ public class InferenceTask {
     @Column(name = "resource_profile_id", length = 64)
     private String resourceProfileId;
 
+    @Column(name = "hardware_target_id", length = 64)
+    private String hardwareTargetId;
+
+    @Column(name = "gpu_node_name", length = 255)
+    private String gpuNodeName;
+
+    @Column(name = "gpu_host_index", length = 16)
+    private String gpuHostIndex;
+
+    @Column(name = "gpu_uuid", length = 128)
+    private String gpuUuid;
+
+    @Column(name = "gpu_model", length = 255)
+    private String gpuModel;
+
+    @Column(name = "gpu_total_memory_mib")
+    private Long gpuTotalMemoryMiB;
+
+    @Column(name = "gpu_memory_limit_mib")
+    private Long gpuMemoryLimitMiB;
+
     @Column(name = "params_json", columnDefinition = "TEXT")
     private String paramsJson;
 

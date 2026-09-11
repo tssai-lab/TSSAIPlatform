@@ -514,7 +514,7 @@ def install_user_requirements() -> None:
 
 
 def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
-    argv = spec["execution"]["argv"]
+    argv = training_entry_argv(spec)
     entrypoint = Path(argv[1])
     if not entrypoint.is_file():
         raise WorkerError("ENTRYPOINT_INVALID", f"approved entrypoint is missing: {entrypoint}")
@@ -569,6 +569,77 @@ def execute_training(spec: dict[str, Any], reporter: CallbackReporter) -> tuple[
     for record in metric_history:
         event_metrics[record["key"]] = record["value"]
     return process.wait(), metric_history, event_metrics
+
+
+def validate_selected_gpu(spec: dict[str, Any]) -> None:
+    """核对 DRA 只暴露了任务选中的那张物理卡。"""
+    selected_uuid = spec.get("resources", {}).get("gpuUuid")
+    env_uuid = env("TSS_SELECTED_GPU_UUID")
+    if not selected_uuid:
+        if env_uuid:
+            raise WorkerError("GPU_IDENTITY_INVALID", "CPU task received a selected GPU UUID")
+        return
+    if env_uuid != selected_uuid:
+        raise WorkerError("GPU_IDENTITY_INVALID", "selected GPU UUID differs from RunSpec")
+    completed = subprocess.run(
+        ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    visible = {line.strip() for line in completed.stdout.splitlines() if line.strip()}
+    if completed.returncode != 0 or visible != {selected_uuid}:
+        raise WorkerError(
+            "GPU_IDENTITY_INVALID",
+            f"expected only {selected_uuid}, visible={sorted(visible)}",
+        )
+    log(
+        f"selected physical GPU: host-index={env('TSS_HOST_GPU_INDEX', '?')}, "
+        f"uuid={selected_uuid}"
+    )
+
+
+def training_entry_argv(spec: dict[str, Any]) -> list[str]:
+    """在训练脚本同一进程里设置 PyTorch CUDA 显存软预算。"""
+    argv = list(spec["execution"]["argv"])
+    budget = spec.get("resources", {}).get("gpuMemoryLimitMiB")
+    raw_budget = env("TSS_GPU_MEMORY_LIMIT_MIB")
+    if budget is None:
+        if raw_budget:
+            raise WorkerError("GPU_BUDGET_INVALID", "RunSpec has no GPU memory budget")
+        return argv
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
+        raise WorkerError("GPU_BUDGET_INVALID", "GPU memory budget must be a positive integer")
+    if raw_budget != str(budget):
+        raise WorkerError("GPU_BUDGET_INVALID", "GPU memory budget differs from RunSpec")
+    wrapper = CONFIG_DIR / "tss_cuda_entrypoint.py"
+    wrapper.write_text(
+        """import runpy
+import sys
+import torch
+from pathlib import Path
+
+budget_mib = int(sys.argv[1])
+entry_file = sys.argv[2]
+if not torch.cuda.is_available():
+    raise RuntimeError("selected GPU is not available to PyTorch")
+total_mib = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+fraction = min(1.0, budget_mib / total_mib)
+torch.cuda.set_per_process_memory_fraction(fraction, 0)
+print(
+    f"TSS CUDA soft budget applied: requestedMiB={budget_mib}, "
+    f"deviceTotalMiB={total_mib:.0f}, fraction={fraction:.6f}",
+    flush=True,
+)
+# 模拟直接执行用户脚本，保证同目录模块仍能正常 import。
+sys.path[0] = str(Path(entry_file).resolve().parent)
+sys.argv = [entry_file, *sys.argv[3:]]
+runpy.run_path(entry_file, run_name="__main__")
+""",
+        encoding="utf-8",
+    )
+    return [sys.executable, str(wrapper), str(budget), argv[1], *argv[2:]]
 
 
 def parse_training_event(line: str) -> dict[str, Any] | None:
@@ -733,6 +804,7 @@ def run() -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     LOG_HANDLE = log_path.open("a", encoding="utf-8")
     log(f"TSS generic training worker start trainingId={training_id} runSpecSha256={run_spec_sha256}")
+    validate_selected_gpu(spec)
 
     if Minio is None:
         raise WorkerError("WORKER_DEPENDENCY_MISSING", "minio package is not installed")

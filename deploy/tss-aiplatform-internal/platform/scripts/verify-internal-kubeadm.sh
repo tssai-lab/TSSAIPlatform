@@ -14,6 +14,8 @@ kube=("$KUBECTL" --kubeconfig "$KUBECONFIG_PATH" --request-timeout=15s)
 for permission in \
   'create jobs.batch' \
   'delete jobs.batch' \
+  'create resourceclaimtemplates.resource.k8s.io' \
+  'patch resourceclaimtemplates.resource.k8s.io' \
   'create pods' \
   'delete pods' \
   'get pods/log' \
@@ -49,6 +51,40 @@ for node in "${cluster_nodes[@]}"; do
     END {exit !found}
   ' || { echo "Metrics API has no complete usage for node: $node" >&2; exit 1; }
 done
+
+if [[ ${TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:-false} == true ]]; then
+  [[ ${TRAINING_K8S_CLIENT_MODE:-} == kubectl ]] \
+    || { echo "exact GPU selection requires the kubectl client" >&2; exit 1; }
+  device_class="${TRAINING_K8S_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}"
+  [[ $("${kube[@]}" auth can-i get deviceclasses.resource.k8s.io) == yes \
+    && $("${kube[@]}" auth can-i list resourceslices.resource.k8s.io) == yes ]] \
+    || { echo "restricted backend identity cannot inspect DRA devices" >&2; exit 1; }
+  "${kube[@]}" get deviceclass "$device_class" >/dev/null \
+    || { echo "configured DRA DeviceClass is unavailable: $device_class" >&2; exit 1; }
+  dra_slices=$("${kube[@]}" get resourceslices.resource.k8s.io -o json)
+  grep -Eq '"driver"[[:space:]]*:[[:space:]]*"gpu\.nvidia\.com"' <<<"$dra_slices" \
+    || { echo "NVIDIA DRA ResourceSlice is unavailable" >&2; exit 1; }
+  grep -Eq '"gpu\.nvidia\.com/uuid"[[:space:]]*:' <<<"$dra_slices" \
+    || { echo "NVIDIA DRA ResourceSlice has no GPU UUID attribute" >&2; exit 1; }
+
+  cat <<YAML | "${kube[@]}" create --dry-run=server -f - >/dev/null
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: tss-dra-permission-probe
+  namespace: ${namespace}
+spec:
+  spec:
+    devices:
+      requests:
+        - name: gpu
+          exactly:
+            deviceClassName: ${device_class}
+            selectors:
+              - cel:
+                  expression: "device.attributes['gpu.nvidia.com'].type == 'gpu'"
+YAML
+fi
 
 cat <<'YAML' | "${kube[@]}" create --dry-run=server -f - >/dev/null
 apiVersion: batch/v1

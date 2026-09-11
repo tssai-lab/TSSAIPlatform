@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.tss.platform.config.InferenceModelCacheProperties;
+import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.TrainingResourceRequest;
 import com.tss.platform.dto.resource.TrainingHardwareOptionDto;
 import com.tss.platform.entity.ComputeServer;
@@ -21,7 +22,7 @@ import static org.mockito.Mockito.when;
 class TrainingHardwareOptionServiceTest {
 
     @Test
-    void returnsConcreteGpuModelsWithoutNodeIdentityAndResolvesTrustedSelector() {
+    void returnsEveryPhysicalGpuAndResolvesItsUuidAndNode() {
         Fixture fixture = fixture(gpuProfile());
         ComputeServer rtx4080 = gpuNode("private-worker-a", "rtx-4080", 2);
         ComputeServer rtx5090 = gpuNode("private-worker-b", "rtx-5090", 1);
@@ -35,13 +36,16 @@ class TrainingHardwareOptionServiceTest {
 
         List<TrainingHardwareOptionDto> options = fixture.service.options("plan", "v2");
 
-        assertThat(options).extracting(TrainingHardwareOptionDto::displayName)
-                .containsExactly("NVIDIA GeForce RTX 4080", "NVIDIA GeForce RTX 5090");
+        assertThat(options).hasSize(3);
+        assertThat(options).extracting(option -> option.gpu().model())
+                .containsExactlyInAnyOrder(
+                        "NVIDIA GeForce RTX 4080",
+                        "NVIDIA GeForce RTX 4080",
+                        "NVIDIA GeForce RTX 5090");
         assertThat(options).extracting(TrainingHardwareOptionDto::hardwareTargetId)
                 .allMatch(id -> id.matches("hw-[0-9a-f]{24}"));
-        assertThat(options.toString())
-                .doesNotContain("private-worker-a")
-                .doesNotContain("private-worker-b");
+        assertThat(options.get(0).gpu().uuid()).startsWith("GPU-");
+        assertThat(options.get(0).gpu().hostGpuIndex()).isNotBlank();
 
         TrainingHardwareOptionDto selected = options.get(0);
         TrainingResourceRequest request = new TrainingResourceRequest();
@@ -56,8 +60,9 @@ class TrainingHardwareOptionServiceTest {
 
         assertThat(selection.hardwareTargetId()).isEqualTo(selected.hardwareTargetId());
         assertThat(selection.nodeSelector())
-                .containsEntry("tss.ai/hardware-class", "rtx-4080")
-                .doesNotContainKey("kubernetes.io/hostname");
+                .containsEntry("kubernetes.io/hostname", "private-worker-a");
+        assertThat(selection.gpuUuid()).isEqualTo(selected.gpu().uuid());
+        assertThat(selection.gpuHostIndex()).isEqualTo(selected.gpu().hostGpuIndex());
     }
 
     @Test
@@ -86,7 +91,7 @@ class TrainingHardwareOptionServiceTest {
     }
 
     @Test
-    void doesNotOfferUnlabelledMixedGpuModelsBecauseKubernetesCannotSelectThemSafely() {
+    void exactSelectionSafelyOffersUnlabelledMixedGpuModels() {
         Fixture fixture = fixture(gpuProfile());
         ComputeServer first = gpuNode("first", null, 1);
         ComputeServer second = gpuNode("second", null, 1);
@@ -94,11 +99,11 @@ class TrainingHardwareOptionServiceTest {
         fixture.store.update("first", List.of(device("RTX 4080", 16078, 10000)), Instant.now());
         fixture.store.update("second", List.of(device("RTX 5090", 32607, 20000)), Instant.now());
 
-        assertThat(fixture.service.options("plan", "v2")).isEmpty();
+        assertThat(fixture.service.options("plan", "v2")).hasSize(2);
     }
 
     @Test
-    void doesNotOfferAutomaticGpuTargetWhenAnyCandidateObservationIsMissing() {
+    void exactSelectionOnlyOffersCardsWithFreshIdentity() {
         Fixture fixture = fixture(gpuProfile());
         ComputeServer observed = gpuNode("observed", null, 1);
         ComputeServer missing = gpuNode("missing", null, 1);
@@ -106,11 +111,23 @@ class TrainingHardwareOptionServiceTest {
         fixture.store.update("observed", List.of(
                 device("RTX 4080", 16078, 10000)), Instant.now());
 
+        assertThat(fixture.service.options("plan", "v2")).hasSize(1);
+    }
+
+    @Test
+    void exactSelectionHidesCardsWithoutAKubernetesNodeName() {
+        Fixture fixture = fixture(gpuProfile());
+        ComputeServer unmapped = gpuNode("unmapped", null, 1);
+        unmapped.setK8sNodeName(null);
+        when(fixture.repository.findByDeletedFalse()).thenReturn(List.of(unmapped));
+        fixture.store.update("unmapped", List.of(
+                device("RTX 4080", 16078, 10000)), Instant.now());
+
         assertThat(fixture.service.options("plan", "v2")).isEmpty();
     }
 
     @Test
-    void doesNotOfferUnlabelledTargetAlongsideASelectableLabelledPool() {
+    void exactSelectionDoesNotMergeLabelledAndUnlabelledCards() {
         Fixture fixture = fixture(gpuProfile());
         ComputeServer automatic = gpuNode("automatic", null, 1);
         ComputeServer labelled = gpuNode("labelled", "rtx-4080", 1);
@@ -118,16 +135,16 @@ class TrainingHardwareOptionServiceTest {
         fixture.store.update("automatic", List.of(
                 device("RTX 4080", 16078, 10000)), Instant.now());
         fixture.store.update("labelled", List.of(
-                device("RTX 4080", 16078, 10000)), Instant.now());
+                device("RTX 4080", 16078, 9999)), Instant.now());
 
         List<TrainingHardwareOptionDto> options = fixture.service.options("plan", "v2");
 
-        assertThat(options).hasSize(1);
+        assertThat(options).hasSize(2);
         TrainingResourceRequest request = new TrainingResourceRequest();
         request.setHardwareTargetId(options.get(0).hardwareTargetId());
         assertThat(fixture.service.requireSelection(
                 fixture.plan, fixture.runtime, fixture.profile, request).nodeSelector())
-                .containsEntry("tss.ai/hardware-class", "rtx-4080");
+                .containsKey("kubernetes.io/hostname");
     }
 
     @Test
@@ -184,8 +201,11 @@ class TrainingHardwareOptionServiceTest {
         when(registry.requireEnabled("plan", "v2")).thenReturn(plan);
         ComputeServerRepository repository = mock(ComputeServerRepository.class);
         GpuDeviceObservationStore store = new GpuDeviceObservationStore();
+        TrainingKubernetesProperties kubernetesProperties = new TrainingKubernetesProperties();
+        kubernetesProperties.setExactGpuSelectionEnabled(true);
         TrainingHardwareOptionService service = new TrainingHardwareOptionService(
-                registry, repository, store, new InferenceModelCacheProperties());
+                registry, repository, store, new GpuDeviceTargetService(store),
+                new InferenceModelCacheProperties(), kubernetesProperties);
         return new Fixture(plan, runtime, profile, repository, store, service);
     }
 
@@ -229,7 +249,10 @@ class TrainingHardwareOptionServiceTest {
             String model, long totalMemoryMiB, long freeMemoryMiB
     ) {
         return new GpuDeviceObservationStore.DeviceObservation(
-                model, totalMemoryMiB, freeMemoryMiB);
+                String.valueOf(Math.abs((model + freeMemoryMiB).hashCode()) % 8),
+                "GPU-" + Integer.toUnsignedString((model + totalMemoryMiB + freeMemoryMiB).hashCode(), 16)
+                        + "abcd1234",
+                model, totalMemoryMiB, freeMemoryMiB, 0.0, 40.0);
     }
 
     private record Fixture(

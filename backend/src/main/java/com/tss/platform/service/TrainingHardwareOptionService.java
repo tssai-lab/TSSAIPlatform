@@ -1,6 +1,7 @@
 package com.tss.platform.service;
 
 import com.tss.platform.config.InferenceModelCacheProperties;
+import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.TrainingResourceRequest;
 import com.tss.platform.dto.resource.TrainingHardwareOptionDto;
 import com.tss.platform.entity.ComputeServer;
@@ -35,18 +36,24 @@ public class TrainingHardwareOptionService {
     private final TrainingPlanRegistry planRegistry;
     private final ComputeServerRepository serverRepository;
     private final GpuDeviceObservationStore gpuObservationStore;
+    private final GpuDeviceTargetService gpuDeviceTargetService;
     private final InferenceModelCacheProperties modelCacheProperties;
+    private final TrainingKubernetesProperties kubernetesProperties;
 
     public TrainingHardwareOptionService(
             TrainingPlanRegistry planRegistry,
             ComputeServerRepository serverRepository,
             GpuDeviceObservationStore gpuObservationStore,
-            InferenceModelCacheProperties modelCacheProperties
+            GpuDeviceTargetService gpuDeviceTargetService,
+            InferenceModelCacheProperties modelCacheProperties,
+            TrainingKubernetesProperties kubernetesProperties
     ) {
         this.planRegistry = planRegistry;
         this.serverRepository = serverRepository;
         this.gpuObservationStore = gpuObservationStore;
+        this.gpuDeviceTargetService = gpuDeviceTargetService;
         this.modelCacheProperties = modelCacheProperties;
+        this.kubernetesProperties = kubernetesProperties;
     }
 
     @Transactional(readOnly = true)
@@ -78,6 +85,10 @@ public class TrainingHardwareOptionService {
     ) {
         String requestedId = request == null ? null : trimToNull(request.getHardwareTargetId());
         if (requestedId == null) {
+            if (kubernetesProperties.isExactGpuSelectionEnabled()
+                    && runtime.deviceType() == TrainingPlanDefinition.DeviceType.NVIDIA_GPU) {
+                throw new IllegalArgumentException("GPU 训练必须选择一张具体物理卡");
+            }
             return HardwareSelection.legacyAutomatic();
         }
 
@@ -87,7 +98,16 @@ public class TrainingHardwareOptionService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "所选硬件型号当前不可用、指标已过期或与训练方案不兼容"));
         validateRequestedCapacity(selected, profile, request);
-        return new HardwareSelection(requestedId, selected.nodeSelector());
+        GpuDeviceTargetService.GpuDeviceTarget target = selected.gpuTarget();
+        return new HardwareSelection(
+                requestedId,
+                selected.nodeSelector(),
+                target == null ? null : target.nodeName(),
+                target == null ? null : target.hostGpuIndex(),
+                target == null ? null : target.uuid(),
+                target == null ? null : target.model(),
+                target == null ? null : target.totalMemoryMiB()
+        );
     }
 
     private List<DetectedGroup> groupsFor(
@@ -112,6 +132,13 @@ public class TrainingHardwareOptionService {
                 .toList();
 
         if (runtime.deviceType() == TrainingPlanDefinition.DeviceType.NVIDIA_GPU) {
+            if (kubernetesProperties.isExactGpuSelectionEnabled()) {
+                if (kubernetesProperties.getClientMode()
+                        != TrainingKubernetesProperties.ClientMode.KUBECTL) {
+                    return List.of();
+                }
+                return exactGpuGroups(plan, runtime, profile, candidates);
+            }
             return gpuGroups(plan, runtime, profile, candidates);
         }
         return cpuGroups(plan, runtime, profile, candidates);
@@ -144,7 +171,8 @@ public class TrainingHardwareOptionService {
                     ? detectedModels.iterator().next()
                     : "CPU 计算资源";
             groups.add(buildGroup(
-                    plan, runtime, profile, entry.getKey(), displayName, nodes, List.of(), null));
+                    plan, runtime, profile, entry.getKey(), displayName,
+                    nodes, List.of(), null, null));
         }
         return groups;
     }
@@ -222,9 +250,33 @@ public class TrainingHardwareOptionService {
                     .min(Comparator.naturalOrder()).orElse(null);
             groups.add(buildGroup(
                     plan, runtime, profile, first.hardwareClass(), first.model(),
-                    nodes, devices, observedAt));
+                    nodes, devices, observedAt, null));
         }
         return groups;
+    }
+
+    private List<DetectedGroup> exactGpuGroups(
+            TrainingPlanDefinition plan,
+            TrainingPlanDefinition.RuntimeVariant runtime,
+            TrainingPlanDefinition.ResourceProfile profile,
+            List<ComputeServer> candidates
+    ) {
+        return gpuDeviceTargetService.freshTargets(candidates).stream()
+                .map(target -> buildGroup(
+                        plan,
+                        runtime,
+                        profile,
+                        firstText(ComputeServerSchedulingPolicy.hardwareClass(target.server()), AUTOMATIC_CLASS),
+                        target.displayName(),
+                        List.of(target.server()),
+                        List.of(new GpuDeviceObservationStore.DeviceObservation(
+                                target.hostGpuIndex(), target.uuid(), target.model(),
+                                target.totalMemoryMiB(), target.freeMemoryMiB(),
+                                target.utilizationRate(), target.temperatureCelsius())),
+                        target.observedAt(),
+                        target
+                ))
+                .toList();
     }
 
     private DetectedGroup buildGroup(
@@ -235,7 +287,8 @@ public class TrainingHardwareOptionService {
             String displayName,
             List<ComputeServer> nodes,
             List<GpuDeviceObservationStore.DeviceObservation> devices,
-            Instant observedAt
+            Instant observedAt,
+            GpuDeviceTargetService.GpuDeviceTarget exactTarget
     ) {
         double profileCpuLimit = KubernetesQuantityParser.cpuCores(profile.cpuLimit());
         long profileMemoryLimitMiB = toMiB(profile.memoryLimit());
@@ -261,13 +314,24 @@ public class TrainingHardwareOptionService {
                 .filter(value -> value != null && value >= 0)
                 .max(Long::compareTo).orElse(null);
         boolean gpu = runtime.deviceType() == TrainingPlanDefinition.DeviceType.NVIDIA_GPU;
-        String targetId = targetId(plan, profile, hardwareClass, displayName);
-        Map<String, String> selector = AUTOMATIC_CLASS.equals(hardwareClass)
-                ? Map.of()
-                : Map.of(ComputeServerSchedulingPolicy.HARDWARE_CLASS_LABEL, hardwareClass);
+        String targetId = exactTarget == null
+                ? targetId(plan, profile, hardwareClass, displayName)
+                : gpuDeviceTargetService.scopedTargetId(
+                        String.join("\n", plan.id(), plan.version(), profile.id()), exactTarget);
+        Map<String, String> selector = exactTarget != null
+                ? Map.of("kubernetes.io/hostname", exactTarget.nodeName())
+                : AUTOMATIC_CLASS.equals(hardwareClass)
+                        ? Map.of()
+                        : Map.of(ComputeServerSchedulingPolicy.HARDWARE_CLASS_LABEL, hardwareClass);
         TrainingHardwareOptionDto.GpuCapability gpuCapability = gpu
                 ? new TrainingHardwareOptionDto.GpuCapability(
-                        displayName, devices.size(), safeTotal, maxFree, gpuMemoryComplete)
+                        exactTarget == null ? displayName : exactTarget.model(),
+                        devices.size(), safeTotal, maxFree, gpuMemoryComplete,
+                        exactTarget == null ? null : exactTarget.hostGpuIndex(),
+                        exactTarget == null ? null : exactTarget.uuid(),
+                        exactTarget == null ? null : exactTarget.nodeName(),
+                        exactTarget == null ? null : exactTarget.utilizationRate(),
+                        exactTarget == null ? null : exactTarget.temperatureCelsius())
                 : null;
         TrainingHardwareOptionDto option = new TrainingHardwareOptionDto(
                 targetId,
@@ -283,11 +347,13 @@ public class TrainingHardwareOptionService {
                 gpuCapability,
                 TrainingHardwareOptionDto.DataStatus.AVAILABLE,
                 observedAt,
-                gpu
+                exactTarget != null
+                        ? "将按 GPU UUID 绑定这张物理卡；编号是该卡当前在宿主机上的编号"
+                        : gpu
                         ? "硬件型号和 GPU 指标已检测；空闲显存仅供参考，提交时资源仍可能变化"
                         : "硬件资源已检测；提交时可用容量仍可能变化"
         );
-        return new DetectedGroup(option, selector, nodes);
+        return new DetectedGroup(option, selector, nodes, exactTarget);
     }
 
     private void validateRequestedCapacity(
@@ -358,20 +424,29 @@ public class TrainingHardwareOptionService {
         return normalized == null ? fallback : normalized;
     }
 
-    public record HardwareSelection(String hardwareTargetId, Map<String, String> nodeSelector) {
+    public record HardwareSelection(
+            String hardwareTargetId,
+            Map<String, String> nodeSelector,
+            String gpuNodeName,
+            String gpuHostIndex,
+            String gpuUuid,
+            String gpuModel,
+            Long gpuTotalMemoryMiB
+    ) {
         public HardwareSelection {
             nodeSelector = nodeSelector == null ? Map.of() : Map.copyOf(nodeSelector);
         }
 
         static HardwareSelection legacyAutomatic() {
-            return new HardwareSelection(null, Map.of());
+            return new HardwareSelection(null, Map.of(), null, null, null, null, null);
         }
     }
 
     private record DetectedGroup(
             TrainingHardwareOptionDto option,
             Map<String, String> nodeSelector,
-            List<ComputeServer> nodes
+            List<ComputeServer> nodes,
+            GpuDeviceTargetService.GpuDeviceTarget gpuTarget
     ) {
     }
 

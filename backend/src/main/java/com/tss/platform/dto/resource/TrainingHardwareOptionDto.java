@@ -30,8 +30,23 @@ public record TrainingHardwareOptionDto(
             int observedGpuCount,
             Long safeTotalMemoryMiB,
             Long maxFreeMemoryMiB,
-            boolean metricsComplete
+            boolean metricsComplete,
+            String hostGpuIndex,
+            String uuid,
+            String nodeName,
+            Double utilizationRate,
+            Double temperatureCelsius
     ) {
+        public GpuCapability(
+                String model,
+                int observedGpuCount,
+                Long safeTotalMemoryMiB,
+                Long maxFreeMemoryMiB,
+                boolean metricsComplete
+        ) {
+            this(model, observedGpuCount, safeTotalMemoryMiB, maxFreeMemoryMiB,
+                    metricsComplete, null, null, null, null, null);
+        }
     }
 
     public enum DataStatus {

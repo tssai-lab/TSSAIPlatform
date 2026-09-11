@@ -11,6 +11,7 @@ import com.tss.platform.modelcache.ModelCachePolicy;
 import com.tss.platform.modelcache.ModelCacheVolumeNaming;
 import com.tss.platform.service.JobTtlPolicyService;
 import com.tss.platform.service.ModelCachePolicyService;
+import com.tss.platform.training.GpuDeviceClaimManifestBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ public class KubernetesInferenceJobManifestBuilder {
 
     private final TrainingKubernetesProperties properties;
     private final InferenceModelCacheProperties modelCacheProperties;
+    private final GpuDeviceClaimManifestBuilder gpuClaimBuilder;
     private JobTtlPolicyService jobTtlPolicyService;
     private ModelCachePolicyService modelCachePolicyService;
 
@@ -38,6 +40,9 @@ public class KubernetesInferenceJobManifestBuilder {
 
     @Value("${inference.kubernetes.worker-image-pull-policy:IfNotPresent}")
     private String workerImagePullPolicy;
+
+    @Value("${inference.kubernetes.gpu-worker-image:tss-inference-worker-gpu:local}")
+    private String gpuWorkerImage;
 
     private final InferenceResourceProfileService resourceProfileService;
 
@@ -49,6 +54,7 @@ public class KubernetesInferenceJobManifestBuilder {
         this.properties = properties;
         this.modelCacheProperties = modelCacheProperties;
         this.resourceProfileService = resourceProfileService;
+        this.gpuClaimBuilder = new GpuDeviceClaimManifestBuilder(properties);
     }
 
     @Autowired
@@ -100,8 +106,19 @@ public class KubernetesInferenceJobManifestBuilder {
         );
         InferenceResourceProfileDto resourceProfile =
                 resourceProfileService.resolveForExecution(task.getResourceProfileId());
+        boolean gpu = "NVIDIA_GPU".equals(resourceProfile.deviceType());
+        if (gpu && (task.getGpuUuid() == null || task.getGpuUuid().isBlank())) {
+            throw new IllegalStateException("GPU inference task has no selected GPU UUID");
+        }
+        if (!gpu && task.getGpuUuid() != null) {
+            throw new IllegalStateException("CPU inference task cannot contain a GPU UUID");
+        }
+        if (gpu && targetNodeName != null && task.getGpuNodeName() != null
+                && !targetNodeName.equals(task.getGpuNodeName())) {
+            throw new IllegalStateException("scheduled node does not match the selected GPU node");
+        }
 
-        return """
+        String jobYaml = """
                 apiVersion: batch/v1
                 kind: Job
                 metadata:
@@ -113,7 +130,7 @@ public class KubernetesInferenceJobManifestBuilder {
                     tss.ai/inference-id: "%s"
                 spec:
                   backoffLimit: 0
-                  activeDeadlineSeconds: %d
+                %s
                   ttlSecondsAfterFinished: %d
                   template:
                     metadata:
@@ -121,6 +138,7 @@ public class KubernetesInferenceJobManifestBuilder {
                         app.kubernetes.io/name: tss-inference-job
                         tss.ai/inference-id: "%s"
                     spec:
+                %s
                       serviceAccountName: %s
                       automountServiceAccountToken: false
                       restartPolicy: Never
@@ -137,6 +155,7 @@ public class KubernetesInferenceJobManifestBuilder {
                           emptyDir: {}
                 %s%s      containers:
                         - name: inference-worker
+                %s
                           image: %s
                           imagePullPolicy: %s
                           workingDir: /workspace/job
@@ -182,7 +201,7 @@ public class KubernetesInferenceJobManifestBuilder {
                               value: "%s"
                             - name: OUTPUT_OBJECT_PREFIX
                               value: "%s"
-                %s          resources:
+                %s%s          resources:
                             requests:
                               cpu: "%s"
                               memory: "%s"
@@ -191,6 +210,7 @@ public class KubernetesInferenceJobManifestBuilder {
                               cpu: "%s"
                               memory: "%s"
                               ephemeral-storage: "%s"
+                %s
                           securityContext:
                             allowPrivilegeEscalation: false
                             capabilities:
@@ -200,14 +220,17 @@ public class KubernetesInferenceJobManifestBuilder {
                 jobName,
                 properties.getNamespace(),
                 inferenceLabel,
-                properties.getJobActiveDeadlineSeconds(),
+                gpu ? "" : "  activeDeadlineSeconds: "
+                        + properties.getJobActiveDeadlineSeconds(),
                 effectiveJobTtlSecondsAfterFinished(),
                 inferenceLabel,
+                gpu ? gpuPodSpecYaml(task) : "",
                 properties.getServiceAccount(),
-                placementYaml(targetNodeName, modelCache),
+                placementYaml(targetNodeName, modelCache, gpu),
                 modelCache.volumeYaml(),
                 modelCache.initContainerYaml(),
-                workerImage,
+                gpu ? runtimeTimeoutCommandYaml(properties.getJobActiveDeadlineSeconds()) : "",
+                gpu ? gpuWorkerImage : workerImage,
                 workerImagePullPolicy,
                 modelCache.mainVolumeMountYaml(),
                 escapeYaml(task.getId()),
@@ -230,13 +253,51 @@ public class KubernetesInferenceJobManifestBuilder {
                 escapeYaml(properties.requireInternalCallbackToken()),
                 escapeYaml(outputObjectPrefix(task)),
                 modelCache.mainEnvYaml(),
+                gpu ? gpuEnvYaml(task) : "",
                 resourceProfile.cpuRequest(),
                 resourceProfile.memoryRequest(),
                 resourceProfile.ephemeralStorageRequest(),
                 resourceProfile.cpuLimit(),
                 resourceProfile.memoryLimit(),
-                resourceProfile.ephemeralStorageLimit()
+                resourceProfile.ephemeralStorageLimit(),
+                gpu ? gpuContainerClaimYaml() : ""
         );
+        return gpu ? gpuClaimBuilder.prependClaimTemplate(jobYaml, task.getGpuUuid()) : jobYaml;
+    }
+
+    private String gpuPodSpecYaml(InferenceTask task) {
+        return "      runtimeClassName: " + properties.getGpuRuntimeClassName() + "\n"
+                + "      resourceClaims:\n"
+                + "        - name: gpu\n"
+                + "          resourceClaimTemplateName: "
+                + gpuClaimBuilder.claimTemplateName(task.getGpuUuid());
+    }
+
+    private String gpuEnvYaml(InferenceTask task) {
+        StringBuilder yaml = new StringBuilder();
+        yaml.append("            - name: TSS_SELECTED_GPU_UUID\n")
+                .append("              value: \"").append(escapeYaml(task.getGpuUuid())).append("\"\n")
+                .append("            - name: TSS_HOST_GPU_INDEX\n")
+                .append("              value: \"").append(escapeYaml(task.getGpuHostIndex())).append("\"\n");
+        if (task.getGpuMemoryLimitMiB() != null) {
+            yaml.append("            - name: TSS_GPU_MEMORY_LIMIT_MIB\n")
+                    .append("              value: \"").append(task.getGpuMemoryLimitMiB()).append("\"\n");
+        }
+        return yaml.toString();
+    }
+
+    private String gpuContainerClaimYaml() {
+        return "            claims:\n              - name: gpu";
+    }
+
+    private String runtimeTimeoutCommandYaml(int deadlineSeconds) {
+        return "          command:\n"
+                + "            - /usr/bin/timeout\n"
+                + "            - --signal=TERM\n"
+                + "            - --kill-after=30s\n"
+                + "            - " + deadlineSeconds + "s\n"
+                + "            - python\n"
+                + "            - /app/infer_worker.py";
     }
 
     private int effectiveJobTtlSecondsAfterFinished() {
@@ -397,7 +458,25 @@ public class KubernetesInferenceJobManifestBuilder {
         return path;
     }
 
-    private String placementYaml(String targetNodeName, ModelCacheSpec modelCache) {
+    private String placementYaml(String targetNodeName, ModelCacheSpec modelCache, boolean exactGpu) {
+        // DRA 依赖调度器分配声明，精确选卡不能用 nodeName 绕过调度器。
+        if (exactGpu) {
+            StringBuilder yaml = new StringBuilder();
+            if (targetNodeName != null && !targetNodeName.isBlank()) {
+                yaml.append("      nodeSelector:\n")
+                        .append("        kubernetes.io/hostname: \"")
+                        .append(escapeYaml(targetNodeName.trim()))
+                        .append("\"\n");
+            }
+            yaml.append("      tolerations:\n")
+                    .append("        - key: node-role.kubernetes.io/control-plane\n")
+                    .append("          operator: Exists\n")
+                    .append("          effect: NoSchedule\n")
+                    .append("        - key: nvidia.com/gpu\n")
+                    .append("          operator: Exists\n")
+                    .append("          effect: NoSchedule\n");
+            return yaml.toString();
+        }
         if (targetNodeName != null && !targetNodeName.isBlank()) {
             return "      nodeName: \"" + escapeYaml(targetNodeName.trim()) + "\"\n";
         }

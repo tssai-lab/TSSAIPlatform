@@ -191,7 +191,9 @@ grep -F "steps.scope.outputs.deploy_main == 'true'" "$backend_workflow" >/dev/nu
 grep -F 'github.event_name }}" == "workflow_dispatch"' "$backend_workflow" >/dev/null
 grep -F 'bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh' "$internal_workflow" >/dev/null
 grep -F 'environment: tss-aiplatform-internal' "$internal_workflow" >/dev/null
-grep -F 'TRAINING_K8S_CLIENT_MODE: fabric8' "$internal_compose" >/dev/null
+grep -F 'TRAINING_K8S_CLIENT_MODE: ${TSS_K8S_CLIENT_MODE:-fabric8}' "$internal_compose" >/dev/null
+grep -F 'TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:' "$internal_compose" >/dev/null
+grep -F 'INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:' "$internal_compose" >/dev/null
 grep -F 'inputs.task == '\''runner-smoke'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''resolve-artifact-lock'\''' "$internal_workflow" >/dev/null
 grep -F 'inputs.task == '\''export-airgap-bundles'\''' "$internal_workflow" >/dev/null
@@ -421,8 +423,14 @@ while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose pr
 done < <(grep -Ev '^(#|$)' "$cpu_runtime_lock")
 
 gpu_runtime_lock="${internal_dir}/reproducible/gpu-runtime-images.lock"
-[[ $(grep -Evc '^(#|$)' "$gpu_runtime_lock") -eq 2 ]]
-[[ $(awk -F'|' '!/^#/ {print $5}' "$gpu_runtime_lock" | sort) == $'cv-gpu-training\nnlp-gpu-training' ]]
+gpu_runtime_count=$(grep -Evc '^(#|$)' "$gpu_runtime_lock")
+[[ $gpu_runtime_count -eq 2 || $gpu_runtime_count -eq 3 ]]
+gpu_runtime_purposes=$(awk -F'|' '!/^#/ {print $5}' "$gpu_runtime_lock" | sort)
+if [[ $gpu_runtime_count -eq 3 ]]; then
+  [[ $gpu_runtime_purposes == $'cv-gpu-training\ngpu-inference\nnlp-gpu-training' ]]
+else
+  [[ $gpu_runtime_purposes == $'cv-gpu-training\nnlp-gpu-training' ]]
+fi
 if grep -F ':latest' "$gpu_runtime_lock" >/dev/null; then
   echo "GPU runtime image lock must not use latest tags." >&2
   exit 1
@@ -430,12 +438,16 @@ fi
 [[ $(awk -F'|' '!/^#/ {split($1, fields, ":"); print fields[2]}' \
   "$gpu_runtime_lock" | sort -u | wc -l) -eq 1 ]]
 while IFS='|' read -r source_ref manifest_digest image_id runtime_ref purpose producer_run; do
-  [[ $source_ref =~ ^ghcr\.io/tssai-lab/tss-(cv|nlp)-worker:[0-9a-f]{40}$ ]]
+  [[ $source_ref =~ ^ghcr\.io/tssai-lab/tss-(cv-worker|nlp-worker|inference-worker-gpu):[0-9a-f]{40}$ ]]
   [[ $manifest_digest =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ $runtime_ref == *@"$manifest_digest" ]]
   [[ -n $purpose && $producer_run =~ ^[1-9][0-9]*$ ]]
 done < <(grep -Ev '^(#|$)' "$gpu_runtime_lock")
+grep -F 'purpose == gpu-inference' \
+  "${internal_dir}/ci/export-gpu-runtime-images.sh" >/dev/null
+grep -F 'purpose == gpu-inference' \
+  "${internal_dir}/scripts/import-gpu-runtime-images.sh" >/dev/null
 grep -F 'PLAN: do not install the Device Plugin and do not submit a training Job' \
   "${internal_dir}/scripts/import-gpu-runtime-images.sh" >/dev/null
 grep -F 'shared Docker container count changed during GPU runtime import' \
@@ -606,6 +618,14 @@ grep -F 'install-dcgm-exporter.sh' \
   "${internal_dir}/platform/scripts/bootstrap-platform-kubernetes.sh" >/dev/null
 grep -F 'TSS_ENABLE_GPU_WORKER=false' \
   "${internal_dir}/platform/platform.env.example" >/dev/null
+grep -F 'TSS_EXACT_GPU_SELECTION_ENABLED=false' \
+  "${internal_dir}/platform/platform.env.example" >/dev/null
+grep -F 'exact GPU selection requires TSS_K8S_CLIENT_MODE=kubectl' \
+  "${internal_dir}/platform/scripts/lib-platform.sh" >/dev/null
+grep -F 'configured DRA DeviceClass is unavailable' \
+  "${internal_dir}/platform/scripts/verify-internal-kubeadm.sh" >/dev/null
+grep -F 'resources: ["deviceclasses", "resourceslices"]' \
+  "${internal_dir}/platform/k8s/backend-access.yaml" >/dev/null
 
 gpu_worker_base='FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2'
 for gpu_dockerfile in \

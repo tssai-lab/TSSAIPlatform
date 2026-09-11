@@ -4,6 +4,8 @@ import com.tss.platform.config.InferenceModelCacheProperties;
 import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.entity.ComputeServer;
 import com.tss.platform.entity.InferenceTask;
+import com.tss.platform.dto.InferenceResourceProfileDto;
+import com.tss.platform.inference.InferenceResourceProfileService;
 import com.tss.platform.entity.TrainingExperimentVersion;
 import com.tss.platform.repository.ComputeServerRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
@@ -47,6 +49,7 @@ public class JobScheduler {
     private final TrainingExecutorRouter executorRouter;
     private final TransactionTemplate transactionTemplate;
     private InferenceModelCacheProperties modelCacheProperties = new InferenceModelCacheProperties();
+    private InferenceResourceProfileService inferenceResourceProfileService;
 
 
     public JobScheduler(
@@ -69,6 +72,11 @@ public class JobScheduler {
         this.modelCacheProperties = modelCacheProperties;
     }
 
+    @Autowired
+    void setInferenceResourceProfileService(InferenceResourceProfileService service) {
+        this.inferenceResourceProfileService = service;
+    }
+
     /**
      * 为训练任务分配节点。从 task.runSpecJson 读取资源需求，匹配 nodeSelector 的在线节点中选剩余最多的。
      * @return 分配的 nodeName，资源不足返回 null
@@ -81,8 +89,11 @@ public class JobScheduler {
 
     public String assignNodeForInference(InferenceTask task, String modelDigest) {
         double[] req = resolveResourceRequest(task);
-        return assignNode(Map.of("tss.ai/node-pool", "cpu"),
-                req[0], req[1], null, modelDigest);
+        boolean gpu = task.getGpuUuid() != null && !task.getGpuUuid().isBlank();
+        Map<String, String> selector = gpu
+                ? Map.of("kubernetes.io/hostname", task.getGpuNodeName())
+                : Map.of();
+        return assignNode(selector, req[0], req[1], gpu ? 1 : null, modelDigest);
     }
 
 
@@ -344,8 +355,16 @@ public class JobScheduler {
         };
     }
 
-    /** 推理任务暂用全局配置，后续可扩展 */
     double[] resolveResourceRequest(InferenceTask task) {
+        if (inferenceResourceProfileService != null) {
+            InferenceResourceProfileDto profile = inferenceResourceProfileService
+                    .resolveForExecution(task.getResourceProfileId());
+            return new double[]{
+                    parseCpuToCores(profile.cpuRequest()),
+                    parseMemToGib(profile.memoryRequest()),
+                    profile.gpuCount() == null ? 0 : profile.gpuCount()
+            };
+        }
         return new double[]{
                 parseCpuToCores(k8sProperties.getCpuRequest()),
                 parseMemToGib(k8sProperties.getMemoryRequest()), 0

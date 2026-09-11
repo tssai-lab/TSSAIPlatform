@@ -48,6 +48,14 @@ public class TrainingKubernetesProperties {
     @Pattern(regexp = "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$", message = "must be a valid RuntimeClass name")
     private String gpuRuntimeClassName = "nvidia";
 
+    /** 开启后，GPU 任务必须按 UUID 通过 Kubernetes DRA 申请一张物理卡。 */
+    private boolean exactGpuSelectionEnabled = false;
+
+    /** NVIDIA DRA 驱动注册的设备类。 */
+    @Pattern(regexp = "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?)+$",
+            message = "must be a qualified Kubernetes device class name")
+    private String gpuDeviceClassName = "gpu.nvidia.com";
+
     /** 项目根目录相对路径，用于定位脚本与 kubeconfig */
     private String projectRoot = "..";
 

@@ -146,6 +146,24 @@ class KubectlKubernetesWorkloadClientTest {
     }
 
     @Test
+    void exposesFailedSchedulingInsteadOfCallingAPendingPodRunning() {
+        String podJson = """
+                {"items":[{"metadata":{"creationTimestamp":"2026-09-02T12:00:00Z"},
+                "status":{"conditions":[{"type":"PodScheduled","status":"False",
+                "reason":"FailedScheduling","message":"selected ResourceClaim is not available"}]}}]}
+                """;
+        when(shellCommandRunner.run(statusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success(",,1"));
+        when(shellCommandRunner.run(podStatusCommand, projectRoot, 30))
+                .thenReturn(ShellCommandRunner.CommandResult.success(podJson));
+
+        var status = client.getTrainingJobStatus(NAMESPACE, JOB_NAME).orElseThrow();
+
+        assertEquals("FailedScheduling", status.podWaitingReason());
+        assertEquals("selected ResourceClaim is not available", status.podWaitingMessage());
+    }
+
+    @Test
     void returnsEmptyOnlyWhenJobIsAbsent() {
         when(shellCommandRunner.run(statusCommand, projectRoot, 30))
                 .thenReturn(ShellCommandRunner.CommandResult.success(""));

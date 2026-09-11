@@ -594,6 +594,7 @@ public class ServerMetricsCollector {
             if (isMetric(line, "DCGM_FI_DEV_GPU_UTIL")) {
                 totalUtil += value;
                 utilCount++;
+                device(devices, line).utilizationRate = value;
             } else if (isMetric(line, "DCGM_FI_DEV_FB_USED")) {
                 totalMem += value;
                 usedMemCount++;
@@ -609,6 +610,7 @@ public class ServerMetricsCollector {
             } else if (isMetric(line, "DCGM_FI_DEV_GPU_TEMP")) {
                 totalTemp += value;
                 tempCount++;
+                device(devices, line).temperatureCelsius = value;
             }
         }
 
@@ -630,10 +632,16 @@ public class ServerMetricsCollector {
 
     private static DeviceAccumulator device(Map<String, DeviceAccumulator> devices, String line) {
         Map<String, String> labels = metricLabels(line);
-        String id = labels.get("gpu");
-        if (id == null || id.isBlank()) id = labels.get("UUID");
+        String id = labels.get("UUID");
+        if (id == null || id.isBlank()) id = labels.get("gpu");
         if (id == null || id.isBlank()) id = "unidentified";
         DeviceAccumulator device = devices.computeIfAbsent(id, ignored -> new DeviceAccumulator());
+        if (device.hostGpuIndex == null) {
+            device.hostGpuIndex = firstLabel(labels, "gpu");
+        }
+        if (device.uuid == null) {
+            device.uuid = firstLabel(labels, "UUID", "uuid");
+        }
         if (device.modelName == null) {
             device.modelName = firstLabel(labels, "modelName", "model", "product");
         }
@@ -831,10 +839,14 @@ public class ServerMetricsCollector {
     }
 
     private static final class DeviceAccumulator {
+        private String hostGpuIndex;
+        private String uuid;
         private String modelName;
         private Double usedMiB;
         private Double freeMiB;
         private Double totalMiB;
+        private Double utilizationRate;
+        private Double temperatureCelsius;
 
         private GpuDeviceObservationStore.DeviceObservation toObservation() {
             double total = totalMiB != null ? totalMiB
@@ -846,7 +858,9 @@ public class ServerMetricsCollector {
             long totalRounded = Math.round(total);
             long freeRounded = Math.min(totalRounded, Math.round(free));
             return new GpuDeviceObservationStore.DeviceObservation(
-                    modelName, totalRounded, freeRounded);
+                    hostGpuIndex, uuid, modelName, totalRounded, freeRounded,
+                    utilizationRate == null ? null : roundOneDecimal(utilizationRate),
+                    temperatureCelsius == null ? null : roundOneDecimal(temperatureCelsius));
         }
     }
 }

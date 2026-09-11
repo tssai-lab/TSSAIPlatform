@@ -15,7 +15,9 @@ import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.ModelAsset;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.inference.InferenceExecutorRouter;
+import com.tss.platform.inference.InferenceHardwareOptionService;
 import com.tss.platform.inference.InferenceResourceProfileService;
+import com.tss.platform.dto.InferenceResourceProfileDto;
 import com.tss.platform.repository.DatasetAssetRepository;
 import com.tss.platform.repository.DatasetVersionRepository;
 import com.tss.platform.repository.InferenceTaskRepository;
@@ -68,6 +70,7 @@ public class InferenceTaskService {
     private final InferenceScriptService scriptService;
     private final InferenceExecutorRouter executorRouter;
     private final InferenceResourceProfileService resourceProfileService;
+    private final InferenceHardwareOptionService hardwareOptionService;
     private final MinioService minioService;
     private final MinioDeleteTaskService minioDeleteTaskService;
     private final AuthContext authContext;
@@ -83,6 +86,7 @@ public class InferenceTaskService {
             InferenceScriptService scriptService,
             InferenceExecutorRouter executorRouter,
             InferenceResourceProfileService resourceProfileService,
+            InferenceHardwareOptionService hardwareOptionService,
             MinioService minioService,
             MinioDeleteTaskService minioDeleteTaskService,
             AuthContext authContext,
@@ -97,6 +101,7 @@ public class InferenceTaskService {
         this.scriptService = scriptService;
         this.executorRouter = executorRouter;
         this.resourceProfileService = resourceProfileService;
+        this.hardwareOptionService = hardwareOptionService;
         this.minioService = minioService;
         this.minioDeleteTaskService = minioDeleteTaskService;
         this.authContext = authContext;
@@ -121,9 +126,12 @@ public class InferenceTaskService {
         }
 
         JsonNode params = toJsonNode(req.getParams(), "params 必须是合法 JSON");
-        String resourceProfileId = resourceProfileService
-                .resolveForCreate(req.getResourceProfileId())
-                .id();
+        InferenceResourceProfileDto resourceProfile = resourceProfileService
+                .resolveForCreate(req.getResourceProfileId());
+        String resourceProfileId = resourceProfile.id();
+        InferenceHardwareOptionService.HardwareSelection hardwareSelection =
+                hardwareOptionService.requireForCreate(
+                        resourceProfile, req.getHardwareTargetId(), req.getGpuMemoryLimitMiB());
         String taskId = "infer-task-" + UUID.randomUUID().toString().replace("-", "");
         Instant now = Instant.now();
 
@@ -136,6 +144,13 @@ public class InferenceTaskService {
         task.setDatasetVersionId(datasetVersionId);
         task.setInputObjectName(inputObjectName);
         task.setResourceProfileId(resourceProfileId);
+        task.setHardwareTargetId(hardwareSelection.hardwareTargetId());
+        task.setGpuNodeName(hardwareSelection.nodeName());
+        task.setGpuHostIndex(hardwareSelection.hostGpuIndex());
+        task.setGpuUuid(hardwareSelection.gpuUuid());
+        task.setGpuModel(hardwareSelection.gpuModel());
+        task.setGpuTotalMemoryMiB(hardwareSelection.gpuTotalMemoryMiB());
+        task.setGpuMemoryLimitMiB(hardwareSelection.gpuMemoryLimitMiB());
         task.setParamsJson(writeJson(params, "params 必须是合法 JSON"));
         task.setStatus(STATUS_PENDING);
         task.setProgress(progressOf(STATUS_PENDING));
@@ -337,6 +352,13 @@ public class InferenceTaskService {
         dto.setDatasetVersionId(task.getDatasetVersionId());
         dto.setInputObjectName(task.getInputObjectName());
         dto.setResourceProfileId(task.getResourceProfileId());
+        dto.setHardwareTargetId(task.getHardwareTargetId());
+        dto.setGpuNodeName(task.getGpuNodeName());
+        dto.setGpuHostIndex(task.getGpuHostIndex());
+        dto.setGpuUuid(task.getGpuUuid());
+        dto.setGpuModel(task.getGpuModel());
+        dto.setGpuTotalMemoryMiB(task.getGpuTotalMemoryMiB());
+        dto.setGpuMemoryLimitMiB(task.getGpuMemoryLimitMiB());
         dto.setParams(fromJson(task.getParamsJson()));
         dto.setStatus(task.getStatus());
         dto.setProgress(task.getProgress());
@@ -407,6 +429,11 @@ public class InferenceTaskService {
         }
         if (req.getErrorMessage() != null) {
             task.setErrorMessage(blankToNull(req.getErrorMessage()));
+        }
+        if (("running".equals(nextStatus) || "success".equals(nextStatus))
+                && task.getErrorMessage() != null
+                && task.getErrorMessage().startsWith("等待所选物理 GPU")) {
+            task.setErrorMessage(null);
         }
         if (req.getStartedAt() != null) {
             task.setStartedAt(req.getStartedAt());

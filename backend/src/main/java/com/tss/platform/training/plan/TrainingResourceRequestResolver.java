@@ -25,7 +25,12 @@ final class TrainingResourceRequestResolver {
             TrainingPlanDefinition.ResourceProfile profile,
             TrainingResourceRequest request,
             String hardwareTargetId,
-            Map<String, String> hardwareSelector
+            Map<String, String> hardwareSelector,
+            String gpuNodeName,
+            String gpuHostIndex,
+            String gpuUuid,
+            String gpuModel,
+            Long gpuTotalMemoryMiB
     ) {
         Map<String, String> resolvedSelector = new LinkedHashMap<>();
         if (profile.nodeSelector() != null) {
@@ -47,7 +52,8 @@ final class TrainingResourceRequestResolver {
             return new TrainingRunSpec.Resources(
                     profile.id(), hardwareTargetId, profile.cpuRequest(), profile.cpuLimit(),
                     profile.memoryRequest(), profile.memoryLimit(), profile.ephemeralStorageLimit(),
-                    profileGpuCount, null, nodeSelector
+                    profileGpuCount, null, nodeSelector,
+                    gpuNodeName, gpuHostIndex, gpuUuid, gpuModel, gpuTotalMemoryMiB
             );
         }
 
@@ -96,8 +102,20 @@ final class TrainingResourceRequestResolver {
 
         return new TrainingRunSpec.Resources(
                 profile.id(), hardwareTargetId, cpuRequest, cpuLimit, memoryRequest, memoryLimit,
-                profile.ephemeralStorageLimit(), gpuCount, gpuMemoryLimitMiB, nodeSelector
+                profile.ephemeralStorageLimit(), gpuCount, gpuMemoryLimitMiB, nodeSelector,
+                gpuNodeName, gpuHostIndex, gpuUuid, gpuModel, gpuTotalMemoryMiB
         );
+    }
+
+    static TrainingRunSpec.Resources resolve(
+            TrainingPlanDefinition.RuntimeVariant runtime,
+            TrainingPlanDefinition.ResourceProfile profile,
+            TrainingResourceRequest request,
+            String hardwareTargetId,
+            Map<String, String> hardwareSelector
+    ) {
+        return resolve(runtime, profile, request, hardwareTargetId, hardwareSelector,
+                null, null, null, null, null);
     }
 
     static TrainingRunSpec.Resources resolve(
@@ -105,7 +123,8 @@ final class TrainingResourceRequestResolver {
             TrainingPlanDefinition.ResourceProfile profile,
             TrainingResourceRequest request
     ) {
-        return resolve(runtime, profile, request, null, Map.of());
+        return resolve(runtime, profile, request, null, Map.of(),
+                null, null, null, null, null);
     }
 
     private static void validateDeviceContract(

@@ -137,8 +137,30 @@ public record TrainingRunSpec(
             String ephemeralStorageLimit,
             Integer gpuCount,
             Long gpuMemoryLimitMiB,
-            Map<String, String> nodeSelector
+            Map<String, String> nodeSelector,
+            String gpuNodeName,
+            String gpuHostIndex,
+            String gpuUuid,
+            String gpuModel,
+            Long gpuTotalMemoryMiB
     ) {
+        public Resources(
+                String profileId,
+                String hardwareTargetId,
+                String cpuRequest,
+                String cpuLimit,
+                String memoryRequest,
+                String memoryLimit,
+                String ephemeralStorageLimit,
+                Integer gpuCount,
+                Long gpuMemoryLimitMiB,
+                Map<String, String> nodeSelector
+        ) {
+            this(profileId, hardwareTargetId, cpuRequest, cpuLimit, memoryRequest, memoryLimit,
+                    ephemeralStorageLimit, gpuCount, gpuMemoryLimitMiB, nodeSelector,
+                    null, null, null, null, null);
+        }
+
         public Resources(
                 String profileId,
                 String cpuRequest,
@@ -151,7 +173,8 @@ public record TrainingRunSpec(
                 Map<String, String> nodeSelector
         ) {
             this(profileId, null, cpuRequest, cpuLimit, memoryRequest, memoryLimit,
-                    ephemeralStorageLimit, gpuCount, gpuMemoryLimitMiB, nodeSelector);
+                    ephemeralStorageLimit, gpuCount, gpuMemoryLimitMiB, nodeSelector,
+                    null, null, null, null, null);
         }
     }
 

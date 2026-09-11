@@ -161,7 +161,10 @@ public class TrainingRunSpecFactory {
                         command.resourceRequest());
         TrainingRunSpec.Resources resources = TrainingResourceRequestResolver.resolve(
                 resolvedRuntime.runtime(), resolvedRuntime.resourceProfile(), command.resourceRequest(),
-                hardwareSelection.hardwareTargetId(), hardwareSelection.nodeSelector());
+                hardwareSelection.hardwareTargetId(), hardwareSelection.nodeSelector(),
+                hardwareSelection.gpuNodeName(), hardwareSelection.gpuHostIndex(),
+                hardwareSelection.gpuUuid(), hardwareSelection.gpuModel(),
+                hardwareSelection.gpuTotalMemoryMiB());
         TrainingRunSpec.Workspace workspace = TrainingRunSpec.Workspace.standard();
         TrainingRunSpec runSpec = new TrainingRunSpec(
                 TrainingRunSpec.SCHEMA_VERSION,

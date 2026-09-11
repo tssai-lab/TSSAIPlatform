@@ -72,9 +72,10 @@ class KubernetesJobManifestBuilderTest {
     }
 
     @Test
-    void gpuRunRequestsTheExactGpuCountWithoutChangingTheClientContract() {
+    void gpuRunUsesDraClaimForTheSelectedUuid() {
         TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
         properties.setInternalCallbackToken("test-callback-token");
+        properties.setExactGpuSelectionEnabled(true);
 
         TrainingExperimentVersion task = mock(TrainingExperimentVersion.class);
         when(task.getId()).thenReturn("train-gpu-test");
@@ -98,6 +99,9 @@ class KubernetesJobManifestBuilderTest {
         when(resources.memoryLimit()).thenReturn("2Gi");
         when(resources.gpuCount()).thenReturn(1);
         when(resources.gpuMemoryLimitMiB()).thenReturn(8192L);
+        when(resources.gpuUuid()).thenReturn("GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        when(resources.gpuHostIndex()).thenReturn("1");
+        when(resources.gpuNodeName()).thenReturn("seu4080");
         when(runSpec.runtime()).thenReturn(runtime);
         when(runtime.deviceType()).thenReturn(TrainingPlanDefinition.DeviceType.NVIDIA_GPU);
         when(runtime.imagePullPolicy()).thenReturn(TrainingPlanDefinition.ImagePullPolicy.IfNotPresent);
@@ -111,11 +115,23 @@ class KubernetesJobManifestBuilderTest {
 
         String yaml = builder.buildJobYaml(task, "access", "secret", "models", "seu4080");
 
-        assertTrue(yaml.contains("nvidia.com/gpu: \"1\""));
+        assertTrue(yaml.contains("kind: ResourceClaimTemplate"));
+        assertTrue(yaml.contains("deviceClassName: gpu.nvidia.com"));
+        assertTrue(yaml.contains("uuid == 'GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'"));
+        assertTrue(yaml.contains("resourceClaimTemplateName: tss-gpu-"));
+        assertTrue(yaml.contains("claims:\n              - name: gpu"));
+        assertFalse(yaml.contains("nvidia.com/gpu:"));
         assertTrue(yaml.contains("runtimeClassName: nvidia"));
-        assertTrue(yaml.contains("nodeName: seu4080"));
+        assertTrue(yaml.contains("kubernetes.io/hostname: \"seu4080\""));
+        assertFalse(yaml.contains("nodeName: seu4080"));
+        assertTrue(yaml.contains("key: node-role.kubernetes.io/control-plane"));
+        assertTrue(yaml.contains("key: nvidia.com/gpu"));
         assertTrue(yaml.contains("name: TSS_GPU_MEMORY_LIMIT_MIB"));
         assertTrue(yaml.contains("value: \"8192\""));
+        assertTrue(yaml.contains("name: TSS_SELECTED_GPU_UUID"));
+        assertFalse(yaml.contains("activeDeadlineSeconds:"));
+        assertTrue(yaml.contains("- /usr/bin/timeout"));
+        assertTrue(yaml.contains("- /app/train.py"));
     }
 
     @Test

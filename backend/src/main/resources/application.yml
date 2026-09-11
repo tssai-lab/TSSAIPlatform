@@ -148,6 +148,9 @@ training:
     namespace: ${TRAINING_K8S_NAMESPACE:tss-training}
     service-account: ${TRAINING_K8S_SERVICE_ACCOUNT:tss-training-worker}
     gpu-runtime-class-name: ${TRAINING_K8S_GPU_RUNTIME_CLASS_NAME:nvidia}
+    # 只有集群已安装 NVIDIA DRA 且后端使用 kubectl 客户端时才开启。
+    exact-gpu-selection-enabled: ${TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:false}
+    gpu-device-class-name: ${TRAINING_K8S_GPU_DEVICE_CLASS_NAME:gpu.nvidia.com}
     project-root: ${TRAINING_K8S_PROJECT_ROOT:..}
     kubeconfig: ${TRAINING_K8S_KUBECONFIG:k8s/.kube/config}
     kind-path: ${TRAINING_K8S_KIND_PATH:.tools/bin/kind}
@@ -186,6 +189,21 @@ training:
 
 inference:
   kubernetes:
+    worker-image: ${INFERENCE_KUBERNETES_WORKER_IMAGE:tss-inference-worker-cpu:local}
+    gpu-worker-image: ${INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:tss-inference-worker-gpu:local}
+    worker-image-pull-policy: ${INFERENCE_KUBERNETES_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
+    cpu-request: ${INFERENCE_KUBERNETES_CPU_REQUEST:500m}
+    cpu-limit: ${INFERENCE_KUBERNETES_CPU_LIMIT:2}
+    memory-request: ${INFERENCE_KUBERNETES_MEMORY_REQUEST:512Mi}
+    memory-limit: ${INFERENCE_KUBERNETES_MEMORY_LIMIT:4Gi}
+    ephemeral-storage-request: ${INFERENCE_KUBERNETES_EPHEMERAL_STORAGE_REQUEST:2Gi}
+    ephemeral-storage-limit: ${INFERENCE_KUBERNETES_EPHEMERAL_STORAGE_LIMIT:12Gi}
+    gpu-cpu-request: ${INFERENCE_KUBERNETES_GPU_CPU_REQUEST:1}
+    gpu-cpu-limit: ${INFERENCE_KUBERNETES_GPU_CPU_LIMIT:4}
+    gpu-memory-request: ${INFERENCE_KUBERNETES_GPU_MEMORY_REQUEST:2Gi}
+    gpu-memory-limit: ${INFERENCE_KUBERNETES_GPU_MEMORY_LIMIT:8Gi}
+    gpu-ephemeral-storage-request: ${INFERENCE_KUBERNETES_GPU_EPHEMERAL_STORAGE_REQUEST:2Gi}
+    gpu-ephemeral-storage-limit: ${INFERENCE_KUBERNETES_GPU_EPHEMERAL_STORAGE_LIMIT:12Gi}
     model-cache:
       enabled: ${INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED:false}
       node-path: ${INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH:/opt/tss-platform/model-cache}

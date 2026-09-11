@@ -13,6 +13,7 @@ import com.tss.platform.entity.InferenceTask;
 import com.tss.platform.entity.MinioDeleteTask;
 import com.tss.platform.entity.ModelVersion;
 import com.tss.platform.inference.InferenceExecutorRouter;
+import com.tss.platform.inference.InferenceHardwareOptionService;
 import com.tss.platform.inference.InferenceResourceProfileService;
 import com.tss.platform.inference.KubernetesInferenceExecutor;
 import com.tss.platform.repository.DatasetAssetRepository;
@@ -47,6 +48,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,6 +64,7 @@ class InferenceTaskServiceTest {
     private FakeMinioService minioService;
     private FakeMinioDeleteTaskService minioDeleteTaskService;
     private ModelArtifactAttestationService attestation;
+    private InferenceHardwareOptionService hardwareOptionService;
     private InferenceTaskService service;
 
     @BeforeEach
@@ -87,6 +91,13 @@ class InferenceTaskServiceTest {
             );
         });
 
+        hardwareOptionService = mock(InferenceHardwareOptionService.class);
+        when(hardwareOptionService.requireForCreate(
+                any(), nullable(String.class), nullable(Long.class)))
+                .thenReturn(new InferenceHardwareOptionService.HardwareSelection(
+                        null, null, null, null, null, null, null));
+        TrainingKubernetesProperties kubernetesProperties = new TrainingKubernetesProperties();
+        kubernetesProperties.setExactGpuSelectionEnabled(true);
         service = new InferenceTaskService(
                 taskRepo.proxy(),
                 modelVersionRepo.proxy(),
@@ -96,7 +107,9 @@ class InferenceTaskServiceTest {
                 emptyProxy(DatasetAssetRepository.class),
                 scriptService,
                 executorRouter,
-                new InferenceResourceProfileService(new InferenceKubernetesResourceProperties()),
+                new InferenceResourceProfileService(
+                        new InferenceKubernetesResourceProperties(), kubernetesProperties),
+                hardwareOptionService,
                 minioService,
                 minioDeleteTaskService,
                 new FakeAuthContext(),
@@ -166,6 +179,32 @@ class InferenceTaskServiceTest {
         assertEquals(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT, dto.getInputMode());
         assertEquals("users/7/files/input.jpg", dto.getInputObjectName());
         assertEquals(dto.getId(), executorRouter.startedTaskId);
+    }
+
+    @Test
+    void persistsSelectedGpuIdentityAndSoftBudget() {
+        modelVersionRepo.model = modelVersion();
+        scriptService.version = scriptVersion();
+        when(hardwareOptionService.requireForCreate(any(), anyString(), any()))
+                .thenReturn(new InferenceHardwareOptionService.HardwareSelection(
+                        "hw-gpu-1", "tss-ai-worker-01", "1", "GPU-selected",
+                        "RTX 4080", 16376L, 4096L));
+
+        CreateInferenceTaskRequest req = new CreateInferenceTaskRequest();
+        req.setModelVersionId("model-ver-1");
+        req.setScriptVersionId("script-ver-1");
+        req.setInputMode(InferenceTaskService.INPUT_MODE_SINGLE_OBJECT);
+        req.setInputObjectName("users/7/files/input.jpg");
+        req.setResourceProfileId(InferenceResourceProfileService.GPU_PROFILE_ID);
+        req.setHardwareTargetId("hw-gpu-1");
+        req.setGpuMemoryLimitMiB(4096L);
+
+        InferenceTaskDto dto = service.createTask(req);
+
+        assertEquals("GPU-selected", dto.getGpuUuid());
+        assertEquals("tss-ai-worker-01", dto.getGpuNodeName());
+        assertEquals("1", dto.getGpuHostIndex());
+        assertEquals(4096L, dto.getGpuMemoryLimitMiB());
     }
 
     @Test
@@ -257,6 +296,11 @@ class InferenceTaskServiceTest {
         task.setStartedAt(java.time.Instant.parse("2026-08-10T01:00:00Z"));
         task.setFinishedAt(java.time.Instant.parse("2026-08-10T01:01:00Z"));
         task.setServerIp("10.0.0.10");
+        task.setGpuNodeName("tss-ai-worker-01");
+        task.setGpuHostIndex("1");
+        task.setGpuUuid("GPU-selected");
+        task.setHardwareTargetId("hw-gpu-1");
+        task.setGpuMemoryLimitMiB(4096L);
         task.setQueueSortIndex(9);
         taskRepo.tasks.put(task.getId(), task);
 
@@ -274,6 +318,9 @@ class InferenceTaskServiceTest {
         assertNull(saved.getStartedAt());
         assertNull(saved.getFinishedAt());
         assertNull(saved.getServerIp());
+        assertEquals("GPU-selected", saved.getGpuUuid());
+        assertEquals("tss-ai-worker-01", saved.getGpuNodeName());
+        assertEquals(4096L, saved.getGpuMemoryLimitMiB());
         assertEquals(0, saved.getQueueSortIndex());
         assertEquals("infer-task-1", executorRouter.stoppedTaskId);
         assertEquals("infer-task-1", executorRouter.startedTaskId);

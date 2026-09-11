@@ -19,6 +19,7 @@ public class ServerItem {
     private Double networkIn;
     private Double networkOut;
     private Double gpuTemp;
+    private List<GpuDeviceItem> gpuDevices;
     private String metricsStatus;  // fresh / temporarily_unavailable / stale / unavailable
     private Instant metricsLastSuccessAt;
     private Instant metricsLastAttemptAt;

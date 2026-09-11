@@ -1,7 +1,9 @@
 package com.tss.platform.inference;
 
 import com.tss.platform.config.InferenceKubernetesResourceProperties;
+import com.tss.platform.config.TrainingKubernetesProperties;
 import com.tss.platform.dto.InferenceResourceProfileDto;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -9,21 +11,34 @@ import java.util.List;
 /**
  * Server-side whitelist for inference resources.
  *
- * The first CPU-only delivery intentionally exposes one usable profile. GPU fields stay in the
- * contract so a later GPU profile does not require another public API shape change.
+ * CPU 始终可用；精确选卡和 kubectl 客户端同时启用后，才开放单卡 GPU 规格。
  */
 @Service
 public class InferenceResourceProfileService {
 
     public static final String DEFAULT_PROFILE_ID = "cpu-small";
+    public static final String GPU_PROFILE_ID = "gpu-one";
 
     private final InferenceKubernetesResourceProperties properties;
+    private final TrainingKubernetesProperties kubernetesProperties;
 
     public InferenceResourceProfileService(InferenceKubernetesResourceProperties properties) {
+        this(properties, new TrainingKubernetesProperties());
+    }
+
+    @Autowired
+    public InferenceResourceProfileService(
+            InferenceKubernetesResourceProperties properties,
+            TrainingKubernetesProperties kubernetesProperties
+    ) {
         this.properties = properties;
+        this.kubernetesProperties = kubernetesProperties;
     }
 
     public List<InferenceResourceProfileDto> listEnabledProfiles() {
+        if (gpuInferenceEnabled()) {
+            return List.of(cpuSmall(), gpuOne());
+        }
         return List.of(cpuSmall());
     }
 
@@ -40,6 +55,9 @@ public class InferenceResourceProfileService {
     }
 
     private InferenceResourceProfileDto resolve(String profileId) {
+        if (GPU_PROFILE_ID.equals(profileId) && gpuInferenceEnabled()) {
+            return gpuOne();
+        }
         if (!DEFAULT_PROFILE_ID.equals(profileId)) {
             throw new IllegalArgumentException("不支持的推理资源规格: " + profileId);
         }
@@ -60,6 +78,28 @@ public class InferenceResourceProfileService {
                 properties.getEphemeralStorageLimit(),
                 0
         );
+    }
+
+    private InferenceResourceProfileDto gpuOne() {
+        return new InferenceResourceProfileDto(
+                GPU_PROFILE_ID,
+                "GPU 单卡",
+                "按 UUID 绑定一张指定的物理 GPU",
+                "NVIDIA_GPU",
+                properties.getGpuCpuRequest(),
+                properties.getGpuCpuLimit(),
+                properties.getGpuMemoryRequest(),
+                properties.getGpuMemoryLimit(),
+                properties.getGpuEphemeralStorageRequest(),
+                properties.getGpuEphemeralStorageLimit(),
+                1
+        );
+    }
+
+    public boolean gpuInferenceEnabled() {
+        return kubernetesProperties.isExactGpuSelectionEnabled()
+                && kubernetesProperties.getClientMode()
+                == TrainingKubernetesProperties.ClientMode.KUBECTL;
     }
 
     private static String normalize(String value) {

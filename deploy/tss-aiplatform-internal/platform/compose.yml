@@ -147,13 +147,15 @@ services:
       TRAINING_MLFLOW_ENABLED: "true"
       TRAINING_MLFLOW_TRACKING_URI: http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT}
       TRAINING_K8S_ENABLED: "true"
-      TRAINING_K8S_CLIENT_MODE: fabric8
+      TRAINING_K8S_CLIENT_MODE: ${TSS_K8S_CLIENT_MODE:-fabric8}
       TRAINING_K8S_AUTO_CREATE: "false"
       TRAINING_K8S_VERIFY_ON_STARTUP: "true"
       TRAINING_K8S_FALLBACK_TO_LOCAL: "false"
       TRAINING_K8S_CLUSTER_NAME: tss-aiplatform-internal
       TRAINING_K8S_NAMESPACE: tss-training
       TRAINING_K8S_SERVICE_ACCOUNT: tss-training-worker
+      TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED: "${TSS_EXACT_GPU_SELECTION_ENABLED:-false}"
+      TRAINING_K8S_GPU_DEVICE_CLASS_NAME: ${TSS_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}
       TRAINING_K8S_PROJECT_ROOT: /opt/tss-platform
       TRAINING_K8S_KUBECONFIG: /opt/tss-platform/k8s/backend.kubeconfig
       TRAINING_K8S_KUBECTL_PATH: /opt/tss-platform/.tools/bin/kubectl
@@ -163,6 +165,7 @@ services:
       TRAINING_K8S_MINIO_SERVICE_URL: http://tss-minio:9000
       TRAINING_K8S_MLFLOW_SERVICE_URL: http://tss-mlflow:5000
       INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"
+      INFERENCE_KUBERNETES_GPU_WORKER_IMAGE: ${TSS_GPU_INFERENCE_WORKER_IMAGE:-tss-inference-worker-gpu:local}
     volumes:
       - ${TSS_PLATFORM_ROOT}/logs/backend:/app/logs
       - ${TSS_PLATFORM_ROOT}/config/backend.kubeconfig:/opt/tss-platform/k8s/backend.kubeconfig:ro
