@@ -204,9 +204,9 @@ class PlanTest(unittest.TestCase):
 
     def test_catalog_includes_each_required_role_and_no_mutable_sources(self):
         catalog = collect_catalog(ROOT)
-        # artifacts.lock 13 + platform 5 + CPU 3 + GPU 2 + frontend 1。
-        self.assertEqual(len(catalog['images']), 24)
-        self.assertEqual(len({x['digest'] for x in catalog['images']}), 24)
+        # artifacts.lock 13 + platform 5 + CPU 3 + GPU 3 + frontend 1。
+        self.assertEqual(len(catalog['images']), 25)
+        self.assertEqual(len({x['digest'] for x in catalog['images']}), 25)
         self.assertEqual(len([x for x in catalog['images'] if x['store'] == 'docker']), 5)
         self.assertTrue(any('metrics-server' in x['source'] for x in catalog['images']))
         for row in catalog['images']:

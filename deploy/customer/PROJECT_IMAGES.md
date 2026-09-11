@@ -4,13 +4,13 @@
 
 ## 交付内容
 
-每个业务用途只选当前锁定版本，合计 11 个镜像，分成四个压缩归档。分组内由原生导出工具复用相同镜像层，不另外逐个镜像重复打包。不引入跨组自定义层拼装格式，保持原生导入能力。
+每个业务用途只选当前锁定版本，合计 12 个镜像，分成四个压缩归档。分组内由原生导出工具复用相同镜像层，不另外逐个镜像重复打包。不引入跨组自定义层拼装格式，保持原生导入能力。
 
 | 目录 | 镜像数 | 用途 | 目标运行时 |
 | --- | --- | --- | --- |
 | `platform/` | 5 | PostgreSQL、Redis、MinIO、MLflow-lite、后端 | Docker |
 | `cpu/` | 3 | CV CPU 训练、NLP CPU 训练、CPU 推理 | 项目 containerd 的 `k8s.io` |
-| `gpu/` | 2 | CV GPU 训练、NLP GPU 训练 | 项目 containerd 的 `k8s.io` |
+| `gpu/` | 3 | CV GPU 训练、NLP GPU 训练、GPU 推理 | 项目 containerd 的 `k8s.io` |
 | `frontend/` | 1 | 前端 | 项目 containerd 的 `k8s.io` |
 
 每组包含同名 `.tar.gz` 和 `GROUP_COMPLETE.json`。包根目录另有 `online-infrastructure.json`（13 个联网基础组件及清单来源）和最后生成的 `BUNDLE_COMPLETE.json`（完整文件集合、校验和与源码锁摘要）。四组缺一、归档损坏、源锁变化或额外文件均不能通过整包校验。
@@ -28,7 +28,7 @@ sha256sum /path/to/project-images/BUNDLE_COMPLETE.json
 python3 deploy/customer/image_bundle.py --verify /path/to/project-images
 ```
 
-`/path/to/project-images` 换成接收后的实际目录。脚本会读取源码中的五份镜像锁，核对包的版本身份与全部归档内容校验和；只读、不拉镜像、不连接集群。输出 `VERIFIED 11 project images; no installation performed` 才表示包完整。
+`/path/to/project-images` 换成接收后的实际目录。脚本会读取源码中的五份镜像锁，核对包的版本身份与全部归档内容校验和；只读、不拉镜像、不连接集群。输出 `VERIFIED 12 project images; no installation performed` 才表示包完整。
 
 如果使用单独发送的校验工具，必须同时提供 `image_bundle.py`、`image_catalog.py` 和本批受信任的完整 `catalog.json`，运行：
 

@@ -15,7 +15,9 @@ from image_catalog import collect_catalog
 
 GROUPS = {'platform': {'postgres', 'redis', 'minio', 'mlflow-lite', 'backend'},
           'cpu': {'cv-training', 'nlp-training', 'cpu-inference'},
-          'gpu': {'cv-gpu-training', 'nlp-gpu-training'}, 'frontend': {'frontend'}}
+          'gpu': {'cv-gpu-training', 'nlp-gpu-training', 'gpu-inference'},
+          'frontend': {'frontend'}}
+PROJECT_IMAGE_COUNT = sum(len(purposes) for purposes in GROUPS.values())
 CHUNK = 4 * 1024 * 1024
 
 
@@ -252,9 +254,11 @@ def finish_bundle(directory, catalog):
     files = {name + '/GROUP_COMPLETE.json': hash_file(directory / name / 'GROUP_COMPLETE.json') for name in GROUPS}
     files.update({name + '/' + receipts[name]['archive']: receipts[name]['archive_sha256'] for name in GROUPS})
     files['online-infrastructure.json'] = hash_file(directory / 'online-infrastructure.json')
-    write_json(directory / 'BUNDLE_COMPLETE.json', dict(schema_version=1, project_images=11,
+    write_json(directory / 'BUNDLE_COMPLETE.json', dict(schema_version=1,
+               project_images=PROJECT_IMAGE_COUNT,
                files=files, lock_sha256=catalog['lock_sha256'], installation_verified=False))
-    print('BUNDLE_COMPLETE 11 project images; installation is NOT verified', flush=True)
+    print('BUNDLE_COMPLETE {} project images; installation is NOT verified'.format(
+          PROJECT_IMAGE_COUNT), flush=True)
 
 
 def verify_bundle(directory, catalog):
@@ -264,7 +268,8 @@ def verify_bundle(directory, catalog):
     manifest = load_json(safe_path(directory / 'BUNDLE_COMPLETE.json').read_text(encoding='utf-8'))
     expected_files = {'online-infrastructure.json'} | {group + '/' + filename for group in GROUPS
                         for filename in ('GROUP_COMPLETE.json', group + '.tar.gz')}
-    if (manifest.get('schema_version') != 1 or manifest.get('project_images') != 11
+    if (manifest.get('schema_version') != 1
+            or manifest.get('project_images') != PROJECT_IMAGE_COUNT
             or manifest.get('lock_sha256') != catalog['lock_sha256']
             or manifest.get('installation_verified') is not False
             or set(manifest.get('files', {})) != expected_files):
@@ -279,7 +284,7 @@ def verify_bundle(directory, catalog):
                 raise ValueError('bundle archive receipt mismatch')
         elif hash_file(directory / name) != digest:
             raise ValueError('bundle metadata checksum mismatch')
-    return 11
+    return PROJECT_IMAGE_COUNT
 
 
 def main():

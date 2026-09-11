@@ -320,7 +320,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Export only the locked CV and NLP GPU training images
+      - name: Export the locked GPU training and inference images
         run: |
           bash deploy/tss-aiplatform-internal/ci/export-gpu-runtime-images.sh \
             "$RUNNER_TEMP/tss-aiplatform-gpu-runtime"
@@ -861,7 +861,7 @@ jobs:
             cmp "$RUNNER_TEMP/exported-gpu-runtime-images.lock" sources.lock
             cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/gpu-runtime-images.lock" \
               sources.lock
-            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 2
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 3
           )
 
       - name: Record staged GPU runtime result
@@ -875,7 +875,7 @@ jobs:
             echo "- Export run: \`${GPU_RUNTIME_RUN_ID}\`"
             echo "- Source SHA: \`${GPU_RUNTIME_HEAD_SHA}\`"
             echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${GPU_RUNTIME_HEAD_SHA}-${GPU_RUNTIME_RUN_ID}\`"
-            echo "- Checksums and two-source lock: passed"
+            echo "- Checksums and three-source lock: passed"
             echo "- sudo, containerd import, Device Plugin and workloads: not attempted"
           } >> "$GITHUB_STEP_SUMMARY"
 

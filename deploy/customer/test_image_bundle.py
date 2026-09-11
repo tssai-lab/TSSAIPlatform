@@ -10,8 +10,9 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from image_bundle import (GROUPS, create_group, finish_bundle, hash_file, inspect_archive, project_groups,
-                          require_new_directory, verify_bundle, verify_group, write_json)
+from image_bundle import (GROUPS, PROJECT_IMAGE_COUNT, create_group, finish_bundle, hash_file,
+                          inspect_archive, project_groups, require_new_directory, verify_bundle,
+                          verify_group, write_json)
 from image_catalog import collect_catalog
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,10 +38,11 @@ def fixture(path, *, corrupt=False, extra=None, ref='example/image:v1'):
 
 
 class ImageBundleTest(unittest.TestCase):
-    def test_partition_is_exactly_eleven_project_and_thirteen_online(self):
+    def test_partition_is_exactly_twelve_project_and_thirteen_online(self):
         groups = project_groups(collect_catalog(ROOT))
         self.assertEqual({key: len(value) for key, value in groups.items()},
-                         {'platform': 5, 'cpu': 3, 'gpu': 2, 'frontend': 1})
+                         {'platform': 5, 'cpu': 3, 'gpu': 3, 'frontend': 1})
+        self.assertEqual(PROJECT_IMAGE_COUNT, 12)
         self.assertEqual(set(groups), set(GROUPS))
         self.assertFalse(any(row['purpose'] == 'kubernetes' for rows in groups.values() for row in rows))
 
@@ -190,7 +192,7 @@ class ImageBundleTest(unittest.TestCase):
                            archive=archive.name, archive_bytes=archive.stat().st_size,
                            archive_sha256=hash_file(archive), images=rows, installation_verified=False))
             finish_bundle(root, catalog)
-            self.assertEqual(verify_bundle(root, catalog), 11)
+            self.assertEqual(verify_bundle(root, catalog), PROJECT_IMAGE_COUNT)
             with self.assertRaises(ValueError):
                 finish_bundle(root, catalog)
             (root / 'online-infrastructure.json').write_text('{}')

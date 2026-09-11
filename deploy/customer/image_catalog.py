@@ -73,7 +73,8 @@ def collect_catalog(root):
     source, digest, alias, image_id, fingerprint, _budget = frontend_rows[0].split('|')
     add(source, digest, alias, 'frontend', 'containerd:k8s.io', image_id, fingerprint)
     required = {'postgres', 'redis', 'minio', 'mlflow-lite', 'backend', 'frontend',
-                'cv-training', 'nlp-training', 'cpu-inference', 'cv-gpu-training', 'nlp-gpu-training'}
+                'cv-training', 'nlp-training', 'cpu-inference', 'cv-gpu-training',
+                'nlp-gpu-training', 'gpu-inference'}
     if not required.issubset({row['purpose'] for row in images}):
         raise ValueError('清单缺少当前业务镜像')
     return dict(schema_version=1, architecture='linux/amd64', images=images,

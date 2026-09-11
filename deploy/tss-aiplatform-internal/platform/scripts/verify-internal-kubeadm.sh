@@ -11,19 +11,27 @@ kube=("$KUBECTL" --kubeconfig "$KUBECONFIG_PATH" --request-timeout=15s)
 
 "${kube[@]}" wait --for=condition=Ready node --all --timeout=30s >/dev/null
 "${kube[@]}" get namespace "$namespace" >/dev/null
-for permission in \
-  'create jobs.batch' \
-  'delete jobs.batch' \
-  'create resourceclaimtemplates.resource.k8s.io' \
-  'patch resourceclaimtemplates.resource.k8s.io' \
-  'create pods' \
-  'delete pods' \
-  'get pods/log' \
-  'get resourcequota/tss-training-quota' \
-  'patch resourcequota/tss-training-quota' \
-  'get configmap/tss-model-cache-policy' \
-  'list nodes' \
-  'list nodes.metrics.k8s.io'; do
+exact_gpu_enabled="${TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:-false}"
+required_permissions=(
+  'create jobs.batch'
+  'delete jobs.batch'
+  'create pods'
+  'delete pods'
+  'get pods/log'
+  'get resourcequota/tss-training-quota'
+  'patch resourcequota/tss-training-quota'
+  'get configmap/tss-model-cache-policy'
+  'list nodes'
+  'list nodes.metrics.k8s.io'
+)
+# 只有打开精确选卡时，才要求后端具备 DRA 资源模板权限。
+if [[ $exact_gpu_enabled == true ]]; then
+  required_permissions+=(
+    'create resourceclaimtemplates.resource.k8s.io'
+    'patch resourceclaimtemplates.resource.k8s.io'
+  )
+fi
+for permission in "${required_permissions[@]}"; do
   read -r verb resource <<<"$permission"
   [[ $("${kube[@]}" auth can-i "$verb" "$resource" -n "$namespace") == yes ]] \
     || { echo "required Kubernetes permission is missing: $permission" >&2; exit 1; }
@@ -52,7 +60,7 @@ for node in "${cluster_nodes[@]}"; do
   ' || { echo "Metrics API has no complete usage for node: $node" >&2; exit 1; }
 done
 
-if [[ ${TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:-false} == true ]]; then
+if [[ $exact_gpu_enabled == true ]]; then
   [[ ${TRAINING_K8S_CLIENT_MODE:-} == kubectl ]] \
     || { echo "exact GPU selection requires the kubectl client" >&2; exit 1; }
   device_class="${TRAINING_K8S_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}"
