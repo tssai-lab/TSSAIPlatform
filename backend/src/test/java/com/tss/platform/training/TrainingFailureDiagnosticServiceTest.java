@@ -178,6 +178,53 @@ class TrainingFailureDiagnosticServiceTest {
     }
 
     @Test
+    void stopSnapshotIsArchivedWhileThePodIsStillRunning() throws Exception {
+        TrainingExperimentVersion task = failedTask("train-stop", 7);
+        task.setStatus("running");
+        task.setErrorMessage(null);
+        when(shellCommandRunner.run(anyList(), any(Path.class), anyInt()))
+                .thenAnswer(invocation -> {
+                    List<String> command = invocation.getArgument(0);
+                    if (containsSequence(command, "get", "job")) {
+                        return ShellCommandRunner.CommandResult.success("JOB_ACTIVE=1\nJOB_FAILED=0\n");
+                    }
+                    if (containsSequence(command, "get", "pods")) {
+                        return ShellCommandRunner.CommandResult.success("pod-1\n");
+                    }
+                    if (containsSequence(command, "get", "pod")) {
+                        return ShellCommandRunner.CommandResult.success(
+                                "POD_PHASE=Running\nCONTAINER_NAME=worker\n"
+                        );
+                    }
+                    return ShellCommandRunner.CommandResult.success("last training line\n");
+                });
+
+        TrainingFailureDiagnosticService.CaptureResult result = service.archiveBeforeStop(
+                task,
+                "tss-train-train-stop"
+        );
+
+        assertTrue(result.archived());
+        verify(minioService).uploadStream(any(), any(InputStream.class), anyLong(), any());
+    }
+
+    @Test
+    void databaseFailureIsArchivedAfterTheWorkloadDisappears() throws Exception {
+        TrainingExperimentVersion task = failedTask("train-no-workload", 7);
+        task.setServerIp(null);
+        when(shellCommandRunner.run(anyList(), any(Path.class), anyInt()))
+                .thenReturn(ShellCommandRunner.CommandResult.success(""));
+
+        TrainingFailureDiagnosticService.CaptureResult result = service.archive(
+                task,
+                "tss-train-train-no-workload"
+        );
+
+        assertTrue(result.archived());
+        verify(minioService).uploadStream(any(), any(InputStream.class), anyLong(), any());
+    }
+
+    @Test
     void imagePullBackOffIsArchivedAsFailureEvidence() throws Exception {
         TrainingExperimentVersion task = failedTask("train-image-pull", 7);
         when(shellCommandRunner.run(anyList(), any(Path.class), anyInt()))

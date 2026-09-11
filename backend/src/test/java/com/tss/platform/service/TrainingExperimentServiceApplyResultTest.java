@@ -262,6 +262,29 @@ class TrainingExperimentServiceApplyResultTest {
     }
 
     @Test
+    void stopTrainingAttachesTheSnapshotCapturedBeforeJobDeletion() {
+        TrainingExperimentVersion version = runningVersion("train-stop-log", 42);
+        version.setOwnerUserId(7);
+        String logPath = "minio://users/7/training-failure-diagnostics/train-stop-log/failure.log";
+        when(repo.findById("train-stop-log")).thenReturn(Optional.of(version));
+        when(repo.stopIfActive(eq("train-stop-log"), any())).thenAnswer(invocation -> {
+            version.setStatus("stopped");
+            return 1;
+        });
+        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(failureDiagnosticService.archiveBeforeStop(eq(version), anyString()))
+                .thenReturn(new TrainingFailureDiagnosticService.CaptureResult(true, logPath));
+
+        var result = service.stopTraining("train-stop-log");
+
+        assertEquals("stopped", result.getStatus());
+        assertEquals(logPath, result.getLogPath());
+        var order = org.mockito.Mockito.inOrder(failureDiagnosticService, executor);
+        order.verify(failureDiagnosticService).archiveBeforeStop(eq(version), anyString());
+        order.verify(executor).stop("train-stop-log");
+    }
+
+    @Test
     void completionDuringExternalStopIsReturnedWithoutOverwritingItsResult() {
         TrainingExperimentVersion initial = runningVersion("race", 42);
         TrainingExperimentVersion completed = runningVersion("race", 100);

@@ -227,7 +227,7 @@ public class KubernetesTrainingJobMonitor {
         int retryWindowSeconds = Math.max(60, properties.getFailureDiagnosticsRetryWindowSeconds());
         Instant cutoff = Instant.now().minus(Duration.ofSeconds(retryWindowSeconds));
         List<TrainingExperimentVersion> candidates = repository
-                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
                         "failed",
                         cutoff
                 );

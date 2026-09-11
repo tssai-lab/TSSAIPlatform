@@ -27,6 +27,7 @@ import com.tss.platform.repository.TrainingExperimentVersionRepository;
 import com.tss.platform.security.AuthContext;
 import com.tss.platform.training.TrainingExecutorRouter;
 import com.tss.platform.training.TrainingFailureDiagnosticService;
+import com.tss.platform.training.KubernetesJobNaming;
 import com.tss.platform.training.plan.TrainingOutputValidator;
 import com.tss.platform.training.plan.TrainingRunSnapshot;
 import com.tss.platform.training.plan.TrainingRunSpecFactory;
@@ -383,13 +384,35 @@ public class TrainingExperimentService {
         if (!"queued".equals(version.getStatus()) && !"scheduled".equals(version.getStatus()) && !"running".equals(version.getStatus())) {
             throw new IllegalArgumentException("只有调度中、已分配或训练中的任务可以停止");
         }
-        trainingExecutorRouter.stop(version.getId());
+        // Job 删除后日志会消失，因此先保存一份有界、脱敏的现场。
+        TrainingFailureDiagnosticService.CaptureResult capture = failureDiagnosticService.archiveBeforeStop(
+                version,
+                KubernetesJobNaming.jobNameForTraining(version.getId())
+        );
+        try {
+            trainingExecutorRouter.stop(version.getId());
+        } catch (RuntimeException exception) {
+            if (capture != null && capture.archived()) {
+                failureDiagnosticService.enqueueDeletion(version, capture.logPath());
+            }
+            throw exception;
+        }
         // 外部停止完成后用短事务读取最新记录；并发完成已落库时保留其结果。
         return transactionTemplate.execute(tx -> {
             repo.stopIfActive(version.getId(), Instant.now());
             TrainingExperimentVersion current = repo.findById(version.getId())
                     .orElseThrow(() -> new IllegalArgumentException("训练任务不存在"));
             requireExperimentAccess(current);
+            if (capture != null && capture.archived() && capture.logPath() != null) {
+                if ("stopped".equals(current.getStatus())
+                        && (current.getLogPath() == null || current.getLogPath().isBlank())) {
+                    current.setLogPath(capture.logPath());
+                    current.setUpdatedAt(Instant.now());
+                    current = repo.save(current);
+                } else if (!capture.logPath().equals(current.getLogPath())) {
+                    failureDiagnosticService.enqueueDeletion(version, capture.logPath());
+                }
+            }
             return toDto(current);
         });
     }

@@ -67,7 +67,7 @@ class KubernetesTrainingJobMonitorTest {
         when(environmentService.isKubernetesReady()).thenReturn(true);
         when(repository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
         when(repository
-                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
                         any(),
                         any(Instant.class)
                 ))
@@ -86,8 +86,9 @@ class KubernetesTrainingJobMonitorTest {
     @Test
     void retriesWorkerCallbackRaceAndAttachesArchivedLog() {
         TrainingExperimentVersion task = failedTask("train-race");
+        task.setServerIp(null);
         when(repository
-                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
                         any(),
                         any(Instant.class)
                 ))
@@ -112,7 +113,7 @@ class KubernetesTrainingJobMonitorTest {
     void unattachedObjectIsQueuedForDeletion() {
         TrainingExperimentVersion task = failedTask("train-deleted");
         when(repository
-                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
                         any(),
                         any(Instant.class)
                 ))
@@ -265,7 +266,7 @@ class KubernetesTrainingJobMonitorTest {
         task.setErrorMessage("Pod 启动失败: ImagePullBackOff");
         String jobName = KubernetesJobNaming.jobNameForTraining(task.getId());
         when(repository
-                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+                .findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
                         any(),
                         any(Instant.class)
                 ))

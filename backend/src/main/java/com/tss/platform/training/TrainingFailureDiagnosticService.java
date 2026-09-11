@@ -64,6 +64,8 @@ public class TrainingFailureDiagnosticService {
             "(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
     );
     private static final Pattern JOB_FAILED_COUNT = Pattern.compile("(?m)^JOB_FAILED=[1-9][0-9]*\\s*$");
+    private static final Pattern JOB_ACTIVE_COUNT = Pattern.compile("(?m)^JOB_ACTIVE=[1-9][0-9]*\\s*$");
+    private static final Pattern POD_ACTIVE_PHASE = Pattern.compile("(?m)^POD_PHASE=(?:Pending|Running)\\s*$");
     private static final Pattern JOB_FAILED_CONDITION = Pattern.compile(
             "(?m)^JOB_CONDITION_TYPE=Failed\\RJOB_CONDITION_STATUS=True\\s*$"
     );
@@ -126,6 +128,19 @@ public class TrainingFailureDiagnosticService {
     }
 
     public CaptureResult archive(TrainingExperimentVersion task, String jobName) {
+        return archive(task, jobName, true);
+    }
+
+    /** 停止前保存现场，此时任务仍在运行，不能要求已有失败标记。 */
+    public CaptureResult archiveBeforeStop(TrainingExperimentVersion task, String jobName) {
+        return archive(task, jobName, false);
+    }
+
+    private CaptureResult archive(
+            TrainingExperimentVersion task,
+            String jobName,
+            boolean requireFailureEvidence
+    ) {
         if (!properties.isFailureDiagnosticsEnabled()) {
             return CaptureResult.notArchived();
         }
@@ -144,7 +159,11 @@ public class TrainingFailureDiagnosticService {
 
         try {
             DiagnosticReport report = collect(task, jobName);
-            if (!report.hasFailureEvidence()) {
+            boolean databaseFailure = "failed".equals(task.getStatus())
+                    && task.getErrorMessage() != null
+                    && !task.getErrorMessage().isBlank()
+                    && !report.hasActiveWorkload();
+            if (requireFailureEvidence && !report.hasFailureEvidence() && !databaseFailure) {
                 return CaptureResult.notArchived();
             }
             int maxBytes = Math.min(
@@ -266,6 +285,7 @@ public class TrainingFailureDiagnosticService {
         appendLine(report, "runtimeImageDigest=" + text(task.getRuntimeImageDigest()));
 
         boolean failureEvidence = false;
+        boolean activeWorkload = false;
         ShellCommandRunner.CommandResult jobStatus = kubectl(
                 15,
                 "get", "job", jobName,
@@ -279,6 +299,7 @@ public class TrainingFailureDiagnosticService {
         );
         appendResult(report, "job-status", jobStatus);
         failureEvidence |= hasJobFailure(jobStatus);
+        activeWorkload |= hasJobActive(jobStatus);
         ShellCommandRunner.CommandResult jobEvents = warningEvents("Job", jobName);
         appendResult(report, "job-warning-events", jobEvents);
 
@@ -306,6 +327,7 @@ public class TrainingFailureDiagnosticService {
             );
             appendResult(report, "pod-status " + podName, podStatus);
             failureEvidence |= hasPodFailure(podStatus);
+            activeWorkload |= hasPodActive(podStatus);
             ShellCommandRunner.CommandResult podEvents = warningEvents("Pod", podName);
             appendResult(report, "pod-warning-events " + podName, podEvents);
             for (String container : containerNames(podStatus.output())) {
@@ -337,7 +359,7 @@ public class TrainingFailureDiagnosticService {
                 }
             }
         }
-        return new DiagnosticReport(report.toString(), failureEvidence);
+        return new DiagnosticReport(report.toString(), failureEvidence, activeWorkload);
     }
 
     private ShellCommandRunner.CommandResult warningEvents(String kind, String name) {
@@ -397,6 +419,10 @@ public class TrainingFailureDiagnosticService {
                 || JOB_FAILED_CONDITION.matcher(output).find();
     }
 
+    private boolean hasJobActive(ShellCommandRunner.CommandResult result) {
+        return hasOutput(result) && JOB_ACTIVE_COUNT.matcher(result.output()).find();
+    }
+
     private boolean hasPodFailure(ShellCommandRunner.CommandResult result) {
         if (!hasOutput(result)) {
             return false;
@@ -406,6 +432,10 @@ public class TrainingFailureDiagnosticService {
                 || POD_FAILURE_WAITING.matcher(output).find()
                 || POD_FAILURE_TERMINATED.matcher(output).find()
                 || POD_NONZERO_EXIT.matcher(output).find();
+    }
+
+    private boolean hasPodActive(ShellCommandRunner.CommandResult result) {
+        return hasOutput(result) && POD_ACTIVE_PHASE.matcher(result.output()).find();
     }
 
     private boolean hasOutput(ShellCommandRunner.CommandResult result) {
@@ -516,6 +546,10 @@ public class TrainingFailureDiagnosticService {
         }
     }
 
-    private record DiagnosticReport(String text, boolean hasFailureEvidence) {
+    private record DiagnosticReport(
+            String text,
+            boolean hasFailureEvidence,
+            boolean hasActiveWorkload
+    ) {
     }
 }

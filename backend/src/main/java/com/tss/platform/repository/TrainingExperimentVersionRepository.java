@@ -111,14 +111,14 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
 
     List<TrainingExperimentVersion> findByStatus(String status);
 
-    List<TrainingExperimentVersion> findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterAndServerIpIsNotNullOrderByFinishedAtAsc(
+    List<TrainingExperimentVersion> findTop100ByStatusAndLogPathIsNullAndFinishedAtAfterOrderByFinishedAtAsc(
             String status,
             Instant finishedAfter
     );
 
     @Query("""
             select v from TrainingExperimentVersion v
-             where v.status = 'failed'
+             where v.status in ('failed', 'stopped')
                and v.finishedAt < :finishedBefore
                and v.logPath like :diagnosticPathPattern
              order by v.finishedAt asc

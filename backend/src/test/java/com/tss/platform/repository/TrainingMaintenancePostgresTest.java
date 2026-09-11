@@ -167,6 +167,34 @@ class TrainingMaintenancePostgresTest {
     }
 
     @Test
+    void continuationUsesTheSelectedResultModelWithoutMutatingTheRequest() {
+        String experiment = "result-model-" + UUID.randomUUID();
+        var original = task(experiment, 1, 78);
+        original.setModelVersionId("previous-input-model");
+        original.setTrainingPlanId("test-plan");
+        original.setHyperParamsJson("{}");
+        repository.saveAndFlush(original);
+        ServiceFixture fixture = trainingService(78);
+        var request = new com.tss.platform.dto.CreateExperimentVersionRequest();
+        request.setSubmissionKey(UUID.randomUUID().toString());
+        request.setBaseModelVersionId("test-model");
+
+        var created = transaction.execute(tx -> fixture.service().createVersion(experiment, request));
+
+        assertNotNull(created);
+        assertEquals(2, created.getVersionNo());
+        assertEquals("test-model", created.getModelVersionId());
+        assertEquals("test-model", request.getBaseModelVersionId());
+        assertNull(request.getModelVersionId());
+        assertEquals(
+                "test-model",
+                repository.findById(created.getId()).orElseThrow().getModelVersionId()
+        );
+        org.mockito.Mockito.verify(fixture.scheduler(), org.mockito.Mockito.timeout(5000))
+                .enqueueTask(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void realCreationServiceReplaysOneTaskAndKeepsTheCallerRequestUnchanged() throws Exception {
         ServiceFixture fixture = trainingService(77);
         var request = new com.tss.platform.dto.CreateTrainingExperimentRequest();
@@ -207,6 +235,29 @@ class TrainingMaintenancePostgresTest {
         assertEquals(1, repository.searchLatestExperiments(76, null, null, "%" + prefix + "-foreign%", PageRequest.of(0, 20)).getTotalElements());
         System.out.println("TRAINING_PAGING_EVIDENCE historicalRows=10000 latestRows=250 pageRows=20 seedAndChecksMs="
                 + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+    }
+
+    @Test
+    void diagnosticRetentionCoversFailedAndStoppedTasks() {
+        Instant old = Instant.now().minusSeconds(2 * 24 * 60 * 60);
+        var failed = task("diagnostic-failed-" + UUID.randomUUID(), 1, 79);
+        failed.setStatus("failed");
+        failed.setFinishedAt(old);
+        failed.setLogPath("minio://users/79/training-failure-diagnostics/" + failed.getId() + "/failure.log");
+        var stopped = task("diagnostic-stopped-" + UUID.randomUUID(), 1, 79);
+        stopped.setStatus("stopped");
+        stopped.setFinishedAt(old);
+        stopped.setLogPath("minio://users/79/training-failure-diagnostics/" + stopped.getId() + "/failure.log");
+        repository.saveAllAndFlush(List.of(failed, stopped));
+
+        var expired = repository.findExpiredFailureDiagnostics(
+                Instant.now().minusSeconds(24 * 60 * 60),
+                "%/training-failure-diagnostics/%",
+                PageRequest.of(0, 10)
+        );
+
+        assertTrue(expired.stream().anyMatch(item -> item.getId().equals(failed.getId())));
+        assertTrue(expired.stream().anyMatch(item -> item.getId().equals(stopped.getId())));
     }
 
     private TrainingExperimentVersionDto create(AtomicInteger creates) {
