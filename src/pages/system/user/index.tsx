@@ -1,6 +1,7 @@
 import {
   DeleteOutlined,
   EditOutlined,
+  KeyOutlined,
   SafetyCertificateOutlined,
   UserSwitchOutlined,
 } from '@ant-design/icons';
@@ -33,6 +34,7 @@ import {
   editUser,
   fetchUserList as fetchUserListService,
   promoteUserToNormalAdmin,
+  resetUserPassword,
   toggleUserStatus,
   type UserItem,
   type UserListParams,
@@ -49,7 +51,7 @@ import ApiPolicyModal from './ApiPolicyModal';
 
 /**
  * 用户管理页
- * 超管：可管理全部用户；可将普通用户指定为普通管理员
+ * 超管：可管理全部用户，可修改用户名、重置密码并指定普通管理员
  * 普管：仅管理普通用户；无权指定/调整管理员
  */
 const UserManagement: React.FC = () => {
@@ -57,10 +59,13 @@ const UserManagement: React.FC = () => {
   const { initialState } = useModel('@@initialState');
   const currentUser = initialState?.currentUser;
   const [form] = Form.useForm();
+  const [passwordForm] = Form.useForm();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
+  const [passwordTarget, setPasswordTarget] = useState<UserItem | null>(null);
   const [_usernameChecking, setUsernameChecking] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
   const [apiPolicyTarget, setApiPolicyTarget] = useState<UserItem | null>(null);
   const actionRef = useRef<ActionType>(null);
 
@@ -80,6 +85,10 @@ const UserManagement: React.FC = () => {
       });
     }
   }, [modalVisible, editingUser, form]);
+
+  useEffect(() => {
+    if (passwordTarget) passwordForm.resetFields();
+  }, [passwordTarget, passwordForm]);
 
   if (!access.canAccessSystemUser) return null;
 
@@ -150,6 +159,37 @@ const UserManagement: React.FC = () => {
     setModalVisible(true);
   };
 
+  const handleResetPassword = async () => {
+    if (!passwordTarget || passwordLoading) return;
+    try {
+      const values = await passwordForm.validateFields();
+      setPasswordLoading(true);
+      const response = await resetUserPassword({
+        userId: passwordTarget.id,
+        newPassword: values.newPassword,
+      });
+      if (response.code !== 200) {
+        message.error(response.message || '密码修改失败');
+        return;
+      }
+
+      const changedSelf = isCurrentLoginAccount(passwordTarget, currentUser);
+      setPasswordTarget(null);
+      passwordForm.resetFields();
+      message.success(
+        changedSelf
+          ? '密码修改成功，请使用新密码重新登录'
+          : '密码修改成功，该账号需要重新登录',
+      );
+      if (changedSelf) history.replace('/user/login');
+    } catch (error: unknown) {
+      const err = error as { errorFields?: unknown[] };
+      if (!err?.errorFields?.length) notifyRequestError(error, '密码修改失败');
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
   const validateUsername = async (_: unknown, value: string) => {
     if (!value) return Promise.reject(new Error('用户名不能为空'));
     if (editingUser && value === editingUser.username) return Promise.resolve();
@@ -215,9 +255,20 @@ const UserManagement: React.FC = () => {
           status,
         });
         if (response.code === 200) {
-          message.success('编辑成功');
+          const changedSelfUsername =
+            isCurrentLoginAccount(editingUser, currentUser) &&
+            username !== editingUser.username;
+          message.success(
+            changedSelfUsername
+              ? '用户名修改成功，请使用新用户名重新登录'
+              : '编辑成功',
+          );
           setModalVisible(false);
           form.resetFields();
+          if (changedSelfUsername) {
+            history.replace('/user/login');
+            return;
+          }
           actionRef.current?.reload();
           return;
         }
@@ -426,7 +477,7 @@ const UserManagement: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 280,
       align: 'center',
       hideInSearch: true,
       render: (_, record) => {
@@ -455,6 +506,16 @@ const UserManagement: React.FC = () => {
                   设为管理员
                 </Button>
               </Popconfirm>
+            )}
+            {isSuperAdmin && (
+              <Button
+                type="link"
+                size="small"
+                icon={<KeyOutlined />}
+                onClick={() => setPasswordTarget(record)}
+              >
+                改密码
+              </Button>
             )}
             <Button
               type="link"
@@ -609,6 +670,59 @@ const UserManagement: React.FC = () => {
                   editingUser && isCurrentLoginAccount(editingUser, currentUser)
                 )
               }
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title={passwordTarget ? `修改密码 - ${passwordTarget.username}` : '修改密码'}
+        open={!!passwordTarget}
+        onCancel={() => {
+          setPasswordTarget(null);
+          passwordForm.resetFields();
+        }}
+        onOk={handleResetPassword}
+        confirmLoading={passwordLoading}
+        okText="确定修改"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={passwordForm} layout="vertical" preserve={false}>
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              {
+                pattern: /^\w{6,16}$/,
+                message: '密码须为6-16位字母、数字或下划线',
+              },
+            ]}
+          >
+            <Input.Password
+              placeholder="请输入新密码"
+              autoComplete="new-password"
+            />
+          </Form.Item>
+          <Form.Item
+            name="confirmPassword"
+            label="确认新密码"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: '请再次输入新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('两次输入的密码不一致'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password
+              placeholder="请再次输入新密码"
+              autoComplete="new-password"
             />
           </Form.Item>
         </Form>

@@ -59,6 +59,12 @@ export interface EditUserParams {
   status: string;
 }
 
+/** 超级管理员重置指定账号密码 */
+export interface ResetUserPasswordParams {
+  userId: number;
+  newPassword: string;
+}
+
 /** 通用响应结构 */
 export interface CommonResponse<T = any> {
   code: number;
@@ -264,6 +270,18 @@ export async function editUser(params: EditUserParams) {
     headers: { 'Content-Type': 'application/json' },
     data: params,
   });
+}
+
+/** 重置指定账号密码；权限由后端再次校验，成功后该账号现有会话失效。 */
+export async function resetUserPassword(params: ResetUserPasswordParams) {
+  return request<CommonResponse>(
+    SYSTEM_API_CONFIG.ENDPOINTS.USER_RESET_PASSWORD,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      data: params,
+    },
+  );
 }
 
 /** 删除用户 DELETE /api/system/user/delete */
