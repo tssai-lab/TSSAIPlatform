@@ -5,6 +5,7 @@ import com.tss.platform.module1.mapper.UserMapper;
 import com.tss.platform.module1.security.UserSessionInvalidator;
 import com.tss.platform.module1.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.Test;
+import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,7 +26,11 @@ class UserServiceSessionInvalidationTest {
         when(mapper.updateById(any(User.class))).thenReturn(1);
         UserServiceImpl service = service(mapper, invalidator);
 
-        assertThat(service.resetPassword(7, "Replacement-123")).isTrue();
+        assertThat(service.resetPassword(7, "Replacement_123")).isTrue();
+        var updatedUser = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(mapper).updateById(updatedUser.capture());
+        assertThat(updatedUser.getValue().getPassword()).isNotEqualTo("Replacement_123");
+        assertThat(BCrypt.checkpw("Replacement_123", updatedUser.getValue().getPassword())).isTrue();
         verify(invalidator).invalidateAfterCommit(7);
 
         UserSessionInvalidator failedInvalidator = mock(UserSessionInvalidator.class);
@@ -34,7 +39,7 @@ class UserServiceSessionInvalidationTest {
         when(failedMapper.updateById(any(User.class))).thenReturn(0);
         UserServiceImpl failedService = service(failedMapper, failedInvalidator);
 
-        assertThat(failedService.resetPassword(8, "Replacement-456")).isFalse();
+        assertThat(failedService.resetPassword(8, "Replacement_456")).isFalse();
         verify(failedInvalidator, never()).invalidateAfterCommit(8);
     }
 

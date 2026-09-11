@@ -40,24 +40,21 @@ class UserControllerPermissionTest {
     }
 
     @Test
-    void legacyPasswordResetCannotBypassTargetRolePolicy() {
+    void onlySuperAdministratorCanResetAnotherUsersPassword() {
         UserService userService = mock(UserService.class);
         UserAdministrationPolicy policy = mock(UserAdministrationPolicy.class);
-        User targetAdministrator = new User();
-        targetAdministrator.setId(20);
-        targetAdministrator.setRoleId(2);
-        when(userService.getById(20)).thenReturn(targetAdministrator);
-        doThrow(new UserAdministrationForbiddenException("普通管理员只能管理普通用户"))
-                .when(policy).requireCanManage(targetAdministrator);
+        doThrow(new UserAdministrationForbiddenException("仅超级管理员可操作"))
+                .when(policy).requireSuperAdministrator();
         UserController controller = controller(userService, policy);
         ResetPasswordDTO request = new ResetPasswordDTO();
         request.setUserId(20);
-        request.setNewPassword("Replacement-123");
+        request.setNewPassword("Replacement_123");
 
         Result<?> result = controller.resetPassword(request, new MockHttpServletRequest());
 
         assertThat(result.getCode()).isEqualTo(Result.NO_AUTH_CODE);
-        verify(userService, never()).resetPassword(20, "Replacement-123");
+        verify(userService, never()).getById(20);
+        verify(userService, never()).resetPassword(20, "Replacement_123");
     }
 
     @Test

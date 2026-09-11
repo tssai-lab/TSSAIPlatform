@@ -102,6 +102,8 @@ public class UserController {
             return Result.fail("用户ID不能为空");
         }
         try {
+            // 重置他人密码属于高风险账号操作，只允许超级管理员执行。
+            userAdministrationPolicy.requireSuperAdministrator();
             userAdministrationPolicy.requireCanManage(userService.getById(dto.getUserId()));
         } catch (UserAdministrationForbiddenException exception) {
             return Result.noAuth(exception.getMessage());
