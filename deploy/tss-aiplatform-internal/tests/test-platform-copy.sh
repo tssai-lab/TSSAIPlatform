@@ -184,11 +184,14 @@ grep -F 'deploy-backend' "$workflow" >/dev/null
 
 gateway="$platform_root/scripts/internal-runner-gateway.sh"
 deployer="$platform_root/scripts/deploy-internal-backend.sh"
+frontend_deployer="$platform_root/scripts/deploy-internal-frontend.sh"
 installer="$platform_root/scripts/install-internal-runner-gateway.sh"
 grep -F 'current_project_id=$(docker image inspect --format' "$deployer" >/dev/null
 grep -F 'candidate_id=$(docker image inspect --format' "$deployer" >/dev/null
 grep -F 'if [[ $candidate_id != "$current_project_id" ]]; then' "$deployer" >/dev/null
 grep -F 'TSS_BACKEND_IMAGE="$old_image" \' "$deployer" >/dev/null
+grep -F 'rm -f "$bundle_path"' "$deployer" >/dev/null
+grep -F 'rm -f "$bundle_path"' "$frontend_deployer" >/dev/null
 grep -F 'stage-source\ *)' "$gateway" >/dev/null
 grep -F 'source_bundle_ref=refs/tss-aiplatform/internal-release' "$gateway" >/dev/null
 grep -F 'fetch --no-tags "$source_bundle_path"' "$gateway" >/dev/null

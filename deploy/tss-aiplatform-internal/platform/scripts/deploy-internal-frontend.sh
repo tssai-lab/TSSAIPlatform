@@ -100,6 +100,8 @@ rollback() {
         --ignore-not-found --wait=true >/dev/null 2>&1 || true
     fi
   fi
+  # 部署尝试结束后清掉暂存包，避免旧文件拦住下一次安全重试。
+  rm -f "$bundle_path"
   rm -rf "$work_dir"
   exit "$exit_code"
 }
