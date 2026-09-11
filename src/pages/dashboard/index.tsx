@@ -131,8 +131,8 @@ const Dashboard: React.FC = () => {
         await Promise.all([
           fetchModelList({ current: 1, pageSize: 1 }),
           fetchDatasetList({ current: 1, pageSize: 1 }),
-          fetchTaskList({ current: 1, pageSize: 100 }),
-          fetchTaskList({ current: 1, pageSize: 100, status: 'running' }),
+          fetchTaskList({ current: 1, pageSize: 1 }),
+          fetchTaskList({ current: 1, pageSize: 1, status: 'running' }),
           fetchResourceMonitorSummary(),
         ]);
 
@@ -152,7 +152,7 @@ const Dashboard: React.FC = () => {
       const allTasks = parseTaskList(taskRes);
       const runningTasks = parseTaskList(runningRes);
       const latest = pickLatestTask(allTasks);
-      // 首页只展示「最近一次」名称，勿对整表 100 条逐个打模型/数据集详情
+      // 首页只取最新一条；统计使用后台总数，不受分页大小影响。
       const enrichedLatest = latest
         ? (
             await enrichTaskItemsWithDisplayNames([latest], {
@@ -167,9 +167,7 @@ const Dashboard: React.FC = () => {
         modelTotal: modelRes?.total ?? modelRes?.data?.length ?? 0,
         datasetTotal: datasetRes?.total ?? datasetRes?.data?.length ?? 0,
         taskTotal: parseTaskTotal(taskRes, allTasks.length),
-        runningTotal: runningRes
-          ? countTasksByStatus(runningTasks, 'running')
-          : countTasksByStatus(allTasks, 'running'),
+        runningTotal: parseTaskTotal(runningRes, countTasksByStatus(runningTasks, 'running')),
       });
       setLatestTask(enrichedLatest);
     } catch (error) {

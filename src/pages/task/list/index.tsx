@@ -88,16 +88,10 @@ const TaskList: React.FC = () => {
   const fetchTaskList = async (params: any) => {
     try {
       const res = await fetchTaskListService(params);
-      let list = (res as any)?.data?.data ?? [];
-      const experimentKeyword = params.experimentId?.trim?.();
-      if (experimentKeyword) {
-        list = list.filter((item: API.TaskItem) =>
-          String(item.experimentId || '').includes(experimentKeyword),
-        );
-      }
-      const total = experimentKeyword
-        ? list.length
-        : ((res as any)?.data?.total ?? list.length);
+      if (res?.success === false) throw new Error(res.errorMessage || '训练任务加载失败');
+      const list = res?.data?.data ?? [];
+      // 筛选和总数由后台在分页前计算，不能只过滤当前页。
+      const total = res?.data?.total ?? list.length;
       const enriched = await enrichTaskItemsWithDisplayNames(list, {
         skipErrorHandler: true,
       });
@@ -111,8 +105,9 @@ const TaskList: React.FC = () => {
 
   const handleStop = async (taskId: string) => {
     try {
-      await stopTask(taskId);
-      message.success('任务已终止');
+      const res = await stopTask(taskId);
+      if (res?.success === false) throw new Error(res.errorMessage || '终止失败');
+      message.success(`任务状态：${getTrainingStatusText(res.data.status)}`);
       actionRef.current?.reload();
     } catch (error: any) {
       message.error(error?.info?.message || error?.message || '终止失败');

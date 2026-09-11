@@ -12,15 +12,17 @@ export async function fetchTaskList(options?: {
   current?: number;
   pageSize?: number;
   status?: string;
+  name?: string;
+  experimentId?: string;
   skipErrorHandler?: boolean;
   [key: string]: unknown;
 }) {
-  const { current, pageSize, status, ...rest } = options || {};
+  const { current, pageSize, status, name, experimentId, ...rest } = options || {};
   return request<{ success: boolean; data: { data: API.TaskItem[]; total: number }; errorMessage?: string }>(
     API_CONFIG.ENDPOINTS.TASK_LIST,
     {
       method: 'GET',
-      params: { current, pageSize, status },
+      params: { current, pageSize, status, name, experimentId },
       ...rest,
     },
   );

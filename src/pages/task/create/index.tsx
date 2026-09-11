@@ -32,6 +32,7 @@ const TaskCreate: React.FC = () => {
     handlePrev,
     handleNext,
     handleSubmit,
+    submitting,
     tourProps,
   } = state;
   return (
@@ -102,7 +103,7 @@ const TaskCreate: React.FC = () => {
 
         <Space data-tour="train-actions">
           {currentStep > 0 && (
-            <Button htmlType="button" onClick={handlePrev}>
+            <Button htmlType="button" onClick={handlePrev} disabled={submitting}>
               上一步
             </Button>
           )}
@@ -121,6 +122,7 @@ const TaskCreate: React.FC = () => {
                 )
               }
               onClick={handleSubmit}
+              loading={submitting}
             >
               {isExperimentContinue ? '提交并创建新版本' : '提交 K8s 训练'}
             </Button>

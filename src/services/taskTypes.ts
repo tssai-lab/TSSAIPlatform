@@ -10,6 +10,8 @@ export type TrainingResourceRequest = {
 
 /** 新建和续训共用的字段；续训省略字段时沿用后端现有继承规则。 */
 type TrainingVersionFields = {
+  /** 同次提交与超时重试共用；主动新建训练时更换。 */
+  submissionKey?: string;
   name?: string;
   /** API 别名，后端落到 modelVersionId。 */
   baseModelVersionId?: string;

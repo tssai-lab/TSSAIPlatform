@@ -81,12 +81,12 @@ test('资产与版本写接口保留编号编码、版本别名和调用方对�
   assert.equal(calls[2][1].data.status, 'ARCHIVED');
 });
 
-test('详情以资产和版本接口为主体，列表只补既有元数据', async () => {
+test('详情按资产编号补元数据，不受列表前 200 条限制', async () => {
   const api = load(async url => {
     if (url === '/dataset-assets/a') return { data: { id: 'a', name: 'asset', type: 'OTHER' } };
     if (url === '/dataset-versions') return { data: [{ id: 'version-1', assetId: 'a', version: 'v1', sizeBytes: 1024 }] };
-    assert.equal(url, '/dataset/list');
-    return { data: { data: [{ assetId: 'a', versionId: 'version-1', workspaceId: 'draft', workspaceRevision: 3, hasDraft: true }] } };
+    assert.equal(url, '/dataset/a/summary');
+    return { success: true, data: { assetId: 'a', versionId: 'version-1', workspaceId: 'draft', workspaceRevision: 3, hasDraft: true } };
   });
   const { data } = await api.fetchDatasetDetail('a');
   assert.equal(data.id, 'a');
@@ -97,14 +97,22 @@ test('详情以资产和版本接口为主体，列表只补既有元数据', as
   assert.equal(data.workspaceRevision, 3);
 });
 
-test('详情列表补全失败保留原主体读取契约，不杜撰工作区', async () => {
+test('详情元数据读取失败必须报错，不能被当作没有草稿', async () => {
   const api = load(async url => {
     if (url === '/dataset-assets/a') return { data: { id: 'a', name: 'asset' } };
     if (url === '/dataset-versions') return { data: [] };
     throw new Error('metadata unavailable');
   });
-  const { data } = await api.fetchDatasetDetail('a');
-  assert.equal(data.id, 'a');
-  assert.equal(data.versions.length, 0);
-  assert.equal(data.workspaceId, undefined);
+  await assert.rejects(api.fetchDatasetDetail('a'), /metadata unavailable/);
+});
+
+test('详情拒绝业务失败、空回执和其他资产的元数据', async () => {
+  for (const receipt of [{ success: false, errorMessage: 'denied' }, { data: null }, { data: { assetId: 'other' } }]) {
+    const api = load(async url => {
+      if (url === '/dataset-assets/a') return { data: { id: 'a', name: 'asset' } };
+      if (url === '/dataset-versions') return { data: [] };
+      return receipt;
+    });
+    await assert.rejects(api.fetchDatasetDetail('a'));
+  }
 });

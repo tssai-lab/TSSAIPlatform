@@ -203,7 +203,7 @@ const TaskCompare: React.FC = () => {
         setTaskList(enriched);
         const hints = [
           failures ? `${failures} 个指定训练版本读取失败` : '',
-          list.length >= 200
+          (res?.data?.total ?? list.length) > list.length
             ? '候选列表最多展示首页 200 条，可通过训练编号加载历史版本'
             : '',
         ].filter(Boolean);

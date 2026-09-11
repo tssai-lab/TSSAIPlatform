@@ -247,7 +247,7 @@ export async function fetchAllDatasetList() {
   );
 }
 
-/** 数据集资产详情（兼容旧 `fetchDatasetDetail`：无独立 `/detail` 时走资产接口） */
+/** 主体与版本保持原入口；草稿/导入信息按资产编号查询。 */
 export async function fetchDatasetDetail(
   id: string,
   options?: { [key: string]: unknown },
@@ -260,9 +260,18 @@ export async function fetchDatasetDetail(
   if (!asset) {
     return { data: undefined };
   }
-  let listLatestVersionId: string | undefined;
-  let currentVersionId: string | undefined;
-  let importMeta: Pick<
+  const summary = await request<{
+    success: boolean;
+    data?: DatasetListItem;
+    errorMessage?: string;
+  }>(`/dataset/${encodeURIComponent(id)}/summary`, { method: 'GET', ...options });
+  const row = summary?.data;
+  if (summary?.success === false || !row || (row.assetId || row.id) !== asset.id) {
+    throw new Error(summary?.errorMessage || '数据集详情状态读取失败');
+  }
+  const listLatestVersionId = row.versionId;
+  const currentVersionId = row.versionId;
+  const importMeta: Pick<
     DatasetListItem,
     | 'latestDraftVersionId'
     | 'importJobId'
@@ -274,34 +283,18 @@ export async function fetchDatasetDetail(
     | 'workspaceId'
     | 'workspaceRevision'
     | 'hasDraft'
-  > = {};
-  try {
-    const listRes = await getDatasetList(
-      { pageSize: 200, type: asset.type as DatasetType },
-      options,
-    );
-    const row = (listRes?.data?.data ?? []).find(
-      (item: DatasetListItem) => (item.assetId || item.id) === asset.id,
-    );
-    listLatestVersionId = row?.versionId;
-    currentVersionId = row?.versionId;
-    if (row) {
-      importMeta = {
-        latestDraftVersionId: row.latestDraftVersionId,
-        importJobId: row.importJobId,
-        importStatus: row.importStatus,
-        importProgress: row.importProgress,
-        importErrorMessage: row.importErrorMessage,
-        displayStatus: row.displayStatus,
-        editSessionId: row.editSessionId,
-        workspaceId: row.workspaceId,
-        workspaceRevision: row.workspaceRevision,
-        hasDraft: row.hasDraft,
-      };
-    }
-  } catch {
-    // 列表兜底失败不影响详情主流程
-  }
+  > = {
+    latestDraftVersionId: row.latestDraftVersionId,
+    importJobId: row.importJobId,
+    importStatus: row.importStatus,
+    importProgress: row.importProgress,
+    importErrorMessage: row.importErrorMessage,
+    displayStatus: row.displayStatus,
+    editSessionId: row.editSessionId,
+    workspaceId: row.workspaceId,
+    workspaceRevision: row.workspaceRevision,
+    hasDraft: row.hasDraft,
+  };
 
   const versions = normalizeDatasetVersionList(versionRes?.data)
     .map((version) => mapDatasetVersion(version, asset.id))
@@ -340,7 +333,7 @@ export async function fetchDatasetDetail(
       uploadTime: latestVersion?.createdAt ?? asset.createdAt,
       latestVersion,
       versions,
-      /** 列表接口返回的当前推荐版本 ID */
+      /** 版本列表选出的默认版本；currentVersionId 为后台当前版本。 */
       defaultVersionId,
       currentVersionId,
       ...importMeta,

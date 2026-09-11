@@ -46,3 +46,26 @@ test('训练写请求失败只上抛一次；业务失败回执原样交给页�
   const receipt = { success: false, errorMessage: '方案已停用' };
   assert.equal(await load(async () => receipt).createTask({ datasetVersionId: 'v1' }), receipt);
 });
+
+test('列表筛选进入查询参数，页码和总数采用后端结果', async () => {
+  const response = { success: true, data: { data: [{ id: 'task-201' }], total: 240 } };
+  const api = load(async (url, options) => {
+    assert.equal(url, '/task/list');
+    assert.equal(options.params.current, 11);
+    assert.equal(options.params.pageSize, 20);
+    assert.equal(options.params.name, '训练');
+    assert.equal(options.params.experimentId, 'exp-');
+    assert.equal(options.params.status, 'running');
+    assert.equal(options.skipErrorHandler, true);
+    return response;
+  });
+  assert.equal(await api.fetchTaskList({ current: 11, pageSize: 20, name: '训练', experimentId: 'exp-', status: 'running', skipErrorHandler: true }), response);
+});
+
+test('创建与续训都透传办理编号，不自动更换或重试', async () => {
+  const calls = [];
+  const api = load(async (url, options) => { calls.push(options.data.submissionKey); return { success: true }; });
+  await api.createTask({ datasetVersionId: 'd', submissionKey: 'stable-request-key' });
+  await api.createExperimentVersion('e', { submissionKey: 'stable-request-key' });
+  assert.deepEqual(calls, ['stable-request-key', 'stable-request-key']);
+});

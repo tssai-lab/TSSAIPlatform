@@ -46,6 +46,7 @@ import {
   isSpecDrivenInput,
 } from './trainingAssetCompatibility.mjs';
 import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
+import { createTrainingSubmission } from './trainingSubmission';
 import {
   buildTrainingResourceRequest,
   resourceStatusPresentation,
@@ -72,6 +73,8 @@ export function useTrainingCreate() {
   const selectedResourceProfileId = Form.useWatch('resourceProfileId', form);
   const resourceMode = Form.useWatch('resourceMode', form) || 'recommended';
   const [currentStep, setCurrentStep] = useState(0);
+  const submission = useRef(createTrainingSubmission());
+  const [submitting, setSubmitting] = useState(false);
 
   const [modelOptions, setModelOptions] = useState<API.ModelItem[]>([]);
   const [datasetOptions, setDatasetOptions] = useState<API.DatasetItem[]>([]);
@@ -1104,110 +1107,124 @@ export function useTrainingCreate() {
   };
 
   const handleSubmit = async () => {
+    // 必须在第一个 await 前挡住连点，按钮状态更新本身不是同步锁。
+    if (!submission.current.begin()) return;
+    setSubmitting(true);
     try {
-      await validateResourceSection();
-    } catch {
-      setCurrentStep(4);
-      return;
-    }
-    if (!codeCheck.passed) {
-      Modal.error({
-        title: '训练代码校验未通过',
-        content: (codeCheck.reasons || ['未知原因']).join('；'),
-      });
-      setCurrentStep(3);
-      return;
-    }
-    if (
-      !isCodeApproved(selectedCodeApprovalStatus || codeCheck.approvalStatus)
-    ) {
-      Modal.warning({
-        title: '训练代码尚未审核通过',
-        content: isTrainingCodeAutoApproveEnabled()
-          ? '请回到训练配置步骤刷新后重试，或改选已审核通过的版本。'
-          : '请等待管理员审核通过后提交，或改选已审核通过的训练代码版本。',
-      });
-      setCurrentStep(3);
-      return;
-    }
-    if (!selectedBaseModelVersionId || !selectedDatasetVersionId) {
-      message.error('请完成基础模型权重与数据集选择');
-      return;
-    }
-    if (!selectedCodeVersionId) {
-      message.error('请选择或上传训练代码');
-      setCurrentStep(3);
-      return;
-    }
-    const values = form.getFieldsValue(true);
-    let hyperParams: Record<string, unknown> = {};
-    try {
-      hyperParams = JSON.parse(values.hyperParams || '{}');
-    } catch {
-      message.error('hyperParams JSON 格式不正确');
-      setCurrentStep(3);
-      return;
-    }
+      try {
+        await validateResourceSection();
+      } catch {
+        setCurrentStep(4);
+        return;
+      }
+      if (!codeCheck.passed) {
+        Modal.error({
+          title: '训练代码校验未通过',
+          content: (codeCheck.reasons || ['未知原因']).join('；'),
+        });
+        setCurrentStep(3);
+        return;
+      }
+      if (
+        !isCodeApproved(selectedCodeApprovalStatus || codeCheck.approvalStatus)
+      ) {
+        Modal.warning({
+          title: '训练代码尚未审核通过',
+          content: isTrainingCodeAutoApproveEnabled()
+            ? '请回到训练配置步骤刷新后重试，或改选已审核通过的版本。'
+            : '请等待管理员审核通过后提交，或改选已审核通过的训练代码版本。',
+        });
+        setCurrentStep(3);
+        return;
+      }
+      if (!selectedBaseModelVersionId || !selectedDatasetVersionId) {
+        message.error('请完成基础模型权重与数据集选择');
+        return;
+      }
+      if (!selectedCodeVersionId) {
+        message.error('请选择或上传训练代码');
+        setCurrentStep(3);
+        return;
+      }
+      const values = form.getFieldsValue(true);
+      let hyperParams: Record<string, unknown> = {};
+      try {
+        hyperParams = JSON.parse(values.hyperParams || '{}');
+      } catch {
+        message.error('hyperParams JSON 格式不正确');
+        setCurrentStep(3);
+        return;
+      }
 
-    try {
-      let data: API.TrainingExperimentVersion | undefined;
-      const submittedHardwareOption = hardwareOptions.find(
-        (option) => option.hardwareTargetId === values.hardwareTargetId,
-      );
-      const submittedResourceProfile = resourceProfiles.find(
-        (profile) => profile.id === values.resourceProfileId,
-      );
-      if (!submittedHardwareOption || !submittedResourceProfile) {
-        throw new Error('所选硬件型号已不可用，请返回资源配置重新选择');
-      }
-      const resourceRequest = buildTrainingResourceRequest(
-        values.resourceMode,
-        values,
-        submittedResourceProfile,
-        submittedHardwareOption,
-        values.hardwareTargetId,
-      );
-      const payload = {
-        name: values.name,
-        baseModelVersionId: selectedBaseModelVersionId,
-        datasetVersionId: selectedDatasetVersionId,
-        remark: values.remark,
-        hyperParams,
-        codeVersionId: selectedCodeVersionId,
-        planId: selectedTrainingPlanId || values.trainingProfile,
-        planVersion: selectedTrainingPlan?.version || values.planVersion,
-        trainingMode: values.trainingMode,
-        resourceProfileId: values.resourceProfileId,
-        resourceRequest,
-      };
-      if (isExperimentContinue) {
-        const res: any = await createExperimentVersion(experimentId, payload, {
-          skipErrorHandler: true,
-        });
-        if (res?.success === false) {
-          throw new Error(res?.errorMessage || '创建实验新版本失败');
+      try {
+        let data: API.TrainingExperimentVersion | undefined;
+        const submittedHardwareOption = hardwareOptions.find(
+          (option) => option.hardwareTargetId === values.hardwareTargetId,
+        );
+        const submittedResourceProfile = resourceProfiles.find(
+          (profile) => profile.id === values.resourceProfileId,
+        );
+        if (!submittedHardwareOption || !submittedResourceProfile) {
+          throw new Error('所选硬件型号已不可用，请返回资源配置重新选择');
         }
-        data = res?.data;
-        message.success(`已创建第 ${data?.versionNo ?? '?'} 版训练`);
-      } else {
-        const taskPayload = {
-          ...payload,
-          trainingProfile: selectedTrainingPlanId || values.trainingProfile,
+        const resourceRequest = buildTrainingResourceRequest(
+          values.resourceMode,
+          values,
+          submittedResourceProfile,
+          submittedHardwareOption,
+          values.hardwareTargetId,
+        );
+        const payload = {
+          name: values.name,
+          baseModelVersionId: selectedBaseModelVersionId,
+          datasetVersionId: selectedDatasetVersionId,
+          remark: values.remark,
+          hyperParams,
+          codeVersionId: selectedCodeVersionId,
+          planId: selectedTrainingPlanId || values.trainingProfile,
+          planVersion: selectedTrainingPlan?.version || values.planVersion,
+          trainingMode: values.trainingMode,
+          resourceProfileId: values.resourceProfileId,
+          resourceRequest,
         };
-        const res: any = await createTask(taskPayload, {
-          skipErrorHandler: true,
-        });
-        if (res?.success === false) {
-          throw new Error(res?.errorMessage || '创建训练任务失败');
+        if (isExperimentContinue) {
+          const res: any = await createExperimentVersion(experimentId, {
+            ...payload,
+            submissionKey: submission.current.keyFor(experimentId, payload),
+          }, {
+            skipErrorHandler: true,
+          });
+          if (res?.success === false) {
+            throw new Error(res?.errorMessage || '创建实验新版本失败');
+          }
+          data = res?.data;
+        } else {
+          const taskPayload = {
+            ...payload,
+            trainingProfile: selectedTrainingPlanId || values.trainingProfile,
+          };
+          const res: any = await createTask({
+            ...taskPayload,
+            submissionKey: submission.current.keyFor('new', taskPayload),
+          }, {
+            skipErrorHandler: true,
+          });
+          if (res?.success === false) {
+            throw new Error(res?.errorMessage || '创建训练任务失败');
+          }
+          data = res?.data;
         }
-        data = res?.data;
-        message.success('K8s 训练任务已创建');
+        if (!data?.id) throw new Error('未收到训练编号，请重试查询本次提交结果');
+        message.success(isExperimentContinue ? `已创建第 ${data.versionNo ?? '?'} 版训练` : 'K8s 训练任务已创建');
+        history.push(`/task/detail/${data.id}`);
+      } catch (error: any) {
+        message.error(
+          error?.errorMessage || error?.message || '创建失败，请重试',
+        );
       }
-      history.push(`/task/detail/${data?.id}`);
-    } catch (error: any) {
-      message.error(
-        error?.errorMessage || error?.message || '创建失败，请重试',
-      );
+    } finally {
+      submission.current.finish();
+      setSubmitting(false);
     }
   };
 
@@ -1274,6 +1291,7 @@ export function useTrainingCreate() {
     handlePrev,
     handleNext,
     handleSubmit,
+    submitting,
     tourProps,
   };
 }
