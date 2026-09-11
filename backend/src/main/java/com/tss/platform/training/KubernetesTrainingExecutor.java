@@ -20,7 +20,7 @@ import java.util.Set;
 public class KubernetesTrainingExecutor implements TrainingExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesTrainingExecutor.class);
-    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped", "cancelled");
 
     private final TrainingKubernetesProperties properties;
     private final TrainingEnvironmentService environmentService;
@@ -85,6 +85,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             workloadClient.deleteTrainingJob(properties.getNamespace(), jobName);
         } catch (RuntimeException exception) {
             LOG.warn("Failed to delete K8s Job: trainingId={}, error={}", trainingId, exception.getMessage());
+            throw exception;
         }
     }
 
@@ -93,6 +94,7 @@ public class KubernetesTrainingExecutor implements TrainingExecutor {
             // 1. 根据训练ID查数据库拿到任务实体
             TrainingExperimentVersion task = repository.findById(trainingId)
                     .orElseThrow(() -> new IllegalArgumentException("training task does not exist: " + trainingId));
+            if (task.getStatus() != null && TERMINAL_STATUSES.contains(task.getStatus())) return;
 
             // 2. 获取要调度到的K8s节点IP，即JobScheduler绑定出来的节点
             String targetNode = resolveNodeName(task.getServerIp());

@@ -44,11 +44,16 @@ public class TrainingTaskController {
     }
 
     @GetMapping("/list")
-    public ApiResponse<Map<String, Object>> list() {
-        List<TrainingExperimentVersionDto> data = service.listLatestExperiments();
+    public ApiResponse<Map<String, Object>> list(
+            @RequestParam(required = false) Integer current,
+            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String experimentId) {
+        var page = service.listLatestExperiments(current, pageSize, status, name, experimentId);
         Map<String, Object> result = new HashMap<>();
-        result.put("data", data);
-        result.put("total", data.size());
+        result.put("data", page.getContent());
+        result.put("total", page.getTotalElements());
         return ApiResponse.ok(result);
     }
 

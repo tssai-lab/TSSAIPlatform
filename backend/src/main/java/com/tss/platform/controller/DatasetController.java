@@ -13,6 +13,7 @@ import com.tss.platform.service.DatasetCatalogQueryService;
 import com.tss.platform.service.DatasetVersionFileCountService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -74,6 +75,15 @@ public class DatasetController {
         return ApiResponse.ok(result);
     }
 
+    @GetMapping("/{id}/summary")
+    public ApiResponse<Map<String, Object>> summary(@PathVariable String id) {
+        try {
+            return ApiResponse.ok(toListItem(catalogQueryService.getByAssetId(id)));
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.fail(exception.getMessage());
+        }
+    }
+
     private Map<String, Object> toListItem(
             DatasetCatalogQueryService.CatalogItem catalogItem
     ) {
@@ -116,6 +126,9 @@ public class DatasetController {
         item.put("createdAt", asset.getCreatedAt());
         item.put("updatedAt", asset.getUpdatedAt());
         item.put("latestDraftVersionId", latestDraft != null ? latestDraft.getId() : null);
+        item.put("workspaceId", latestDraft != null ? latestDraft.getId() : null);
+        item.put("workspaceRevision", latestDraft != null ? latestDraft.getWorkspaceRevision() : null);
+        item.put("hasDraft", latestDraft != null);
         item.put("importJobId", importJob != null ? importJob.getId() : null);
         item.put("importStatus", importJob != null ? importJob.getStatus() : null);
         item.put("importProgress", importJob != null ? importJob.getProgress() : null);

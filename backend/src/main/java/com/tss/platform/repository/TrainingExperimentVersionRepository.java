@@ -14,6 +14,33 @@ import java.util.List;
 import java.util.Optional;
 
 public interface TrainingExperimentVersionRepository extends JpaRepository<TrainingExperimentVersion, String> {
+    /** 停止只更新仍活跃的记录，同时丢弃请求线程缓存中的旧实体。 */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update TrainingExperimentVersion v set v.status = 'stopped',
+                v.progress = coalesce(v.progress, 0), v.finishedAt = :now, v.updatedAt = :now,
+                v.lockRevision = v.lockRevision + 1
+            where v.id = :id and v.status in ('queued', 'scheduled', 'running')
+            """)
+    int stopIfActive(@Param("id") String id, @Param("now") Instant now);
+
+    /** 先选每个实验最新版本，再筛选分页，避免读出整份训练历史。 */
+    @Query("""
+            select v from TrainingExperimentVersion v
+             where (:owner is null or v.ownerUserId = :owner)
+               and v.versionNo = (select max(n.versionNo) from TrainingExperimentVersion n
+                    where n.experimentId = v.experimentId and (:owner is null or n.ownerUserId = :owner))
+               and (:status is null or v.status = :status)
+               and (:name is null or lower(v.name) like :name escape '!')
+               and (:experiment is null or lower(v.experimentId) like :experiment escape '!')
+             order by v.createdAt desc nulls last, v.id desc
+            """)
+    org.springframework.data.domain.Page<TrainingExperimentVersion> searchLatestExperiments(
+            @Param("owner") Integer owner,
+            @Param("status") String status,
+            @Param("name") String name,
+            @Param("experiment") String experiment,
+            org.springframework.data.domain.Pageable pageable);
     List<TrainingExperimentVersion> findByExperimentIdOrderByVersionNoAsc(String experimentId);
 
     Optional<TrainingExperimentVersion> findByExperimentIdAndVersionNo(String experimentId, Integer versionNo);
@@ -45,6 +72,7 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
             update TrainingExperimentVersion v
                set v.modelPublishStatus = 'PUBLISHING',
                    v.modelPublishError = null,
+                   v.lockRevision = v.lockRevision + 1,
                    v.updatedAt = :now
              where v.id = :id
                and v.status = 'success'
@@ -62,6 +90,7 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
             update TrainingExperimentVersion v
                set v.modelPublishStatus = 'PENDING',
                    v.modelPublishError = :message,
+                   v.lockRevision = v.lockRevision + 1,
                    v.updatedAt = :now
              where v.modelPublishStatus = 'PUBLISHING'
                and v.updatedAt < :staleBefore
@@ -128,6 +157,7 @@ public interface TrainingExperimentVersionRepository extends JpaRepository<Train
             update TrainingExperimentVersion v
                set v.serverIp = :serverIp,
                    v.status = 'scheduled',
+                   v.lockRevision = v.lockRevision + 1,
                    v.updatedAt = :now
              where v.id = :id
                and v.serverIp is null

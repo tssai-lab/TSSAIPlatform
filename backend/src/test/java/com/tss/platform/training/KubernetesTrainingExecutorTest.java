@@ -9,6 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,7 +37,7 @@ class KubernetesTrainingExecutorTest {
     }
 
     @Test
-    void stopDoesNotCrashTheCallerWhenTheSelectedClientFails() {
+    void stopFailureReachesTheCallerInsteadOfBeingReportedAsStopped() {
         TrainingKubernetesProperties properties = new TrainingKubernetesProperties();
         KubernetesWorkloadClient workloadClient = mock(KubernetesWorkloadClient.class);
         org.mockito.Mockito.doThrow(new KubernetesWorkloadException("unavailable"))
@@ -52,7 +53,7 @@ class KubernetesTrainingExecutorTest {
                 workloadClient
         );
 
-        assertDoesNotThrow(() -> executor.stop("training-42"));
+        assertThrows(KubernetesWorkloadException.class, () -> executor.stop("training-42"));
     }
 
     @Test

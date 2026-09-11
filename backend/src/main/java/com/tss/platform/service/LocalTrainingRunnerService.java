@@ -343,6 +343,8 @@ public class LocalTrainingRunnerService {
             boolean finished
     ) {
         transactionTemplate.executeWithoutResult(statusTx -> repository.findById(trainingId).ifPresent(version -> {
+            // 旧本地执行路径也不能用迟到进度恢复已结束任务。
+            if (version.getStatus() != null && java.util.Set.of("success", "failed", "stopped", "cancelled").contains(version.getStatus())) return;
             version.setStatus(status);
             version.setProgress(progress);
             if (version.getStartedAt() == null && ("running".equals(status) || "success".equals(status))) {

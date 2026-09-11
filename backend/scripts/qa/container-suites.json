@@ -7,6 +7,7 @@
   "com.tss.platform.repository.CatalogKeywordPostgresRepositoryTest",
   "com.tss.platform.repository.AssetNameAndAbandonedVersionPostgresRepositoryTest",
   "com.tss.platform.repository.DatasetUploadFailurePostgresRepositoryTest",
+  "com.tss.platform.repository.TrainingMaintenancePostgresTest",
   "com.tss.platform.persistence.DatasetCatalogReadinessPostgresContainerTest",
   "com.tss.platform.service.DatasetWorkspaceMinioContainerTest"
 ]

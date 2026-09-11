@@ -731,6 +731,7 @@ public class ResourceMonitorService {
 
     private void updateTaskStatus(String taskId, String status, String errorMessage) {
         trainingRepo.findById(taskId).ifPresent(t -> {
+            if (t.getStatus() != null && java.util.Set.of("success", "failed", "stopped", "cancelled").contains(t.getStatus())) return;
             t.setStatus(status);
             t.setQueueSortIndex(0);
             if (errorMessage != null) t.setErrorMessage(errorMessage);

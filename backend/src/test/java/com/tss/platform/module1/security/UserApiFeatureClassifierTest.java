@@ -25,6 +25,7 @@ class UserApiFeatureClassifierTest {
             "/api/inference/scripts,INFERENCE_TASK",
             "/api/user/reset-password,SYSTEM_ADMIN_AUDIT",
             "/api/system/config,SYSTEM_ADMIN_AUDIT",
+            "/api/v2/admin/demo-assets/model/asset-1,SYSTEM_ADMIN_AUDIT",
             "/api/resource-monitor/servers,SYSTEM_ADMIN_AUDIT",
             "/api/log/query,SYSTEM_ADMIN_AUDIT"
     })

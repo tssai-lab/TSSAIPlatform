@@ -98,7 +98,8 @@ class TrainingCodeVersionSecurityTest {
                 new ObjectMapper(),
                 authContext,
                 mock(MlflowTrackingService.class),
-                mock(com.tss.platform.training.TrainingFailureDiagnosticService.class)
+                mock(com.tss.platform.training.TrainingFailureDiagnosticService.class),
+                new TrainingSubmissionGuard(null, new ObjectMapper())
         );
 
         doNothing().when(authContext).requireOwnerAccess(anyInt(), org.mockito.ArgumentMatchers.anyString());

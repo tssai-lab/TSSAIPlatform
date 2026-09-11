@@ -24,6 +24,27 @@ import static org.mockito.Mockito.when;
 
 class PermissionInterceptorApiPolicyTest {
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+            "/api/task/create,TRAINING_TASK,3",
+            "/api/task/list,TRAINING_TASK,3",
+            "/api/task/stop,TRAINING_TASK,3",
+            "/api/experiments/exp-1/versions,TRAINING_TASK,3",
+            "/api/dataset/asset-201/summary,DATASET_ASSET,3",
+            "/api/v2/admin/demo-assets/model/asset-1,SYSTEM_ADMIN_AUDIT,1"
+    })
+    void affectedRoutesHonorDisabledFeatures(String path, UserApiFeatureGroup group, int role) throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.policyService.resolve(7, group))
+                .thenReturn(UserApiPolicyDecision.explicit(7, group, false, null, 1L, null));
+        var response = new MockHttpServletResponse();
+        try (MockedStatic<StpUtil> stp = loggedInUser(7, role)) {
+            assertThat(fixture.interceptor.preHandle(new MockHttpServletRequest("POST", path), response, new Object())).isFalse();
+        }
+        assertThat(response.getStatus()).isEqualTo(403);
+        verify(fixture.policyService).resolve(7, group);
+    }
+
     @Test
     void disabledFeatureIsRejectedByBackendWithHttp403() throws Exception {
         Fixture fixture = fixture();

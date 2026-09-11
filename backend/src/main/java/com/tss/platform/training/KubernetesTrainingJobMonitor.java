@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 public class KubernetesTrainingJobMonitor {
 
     private static final Logger LOG = LoggerFactory.getLogger(KubernetesTrainingJobMonitor.class);
-    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped", "cancelled");
     private static final Set<String> FATAL_POD_STARTUP_REASONS = Set.of(
             "ImagePullBackOff",
             "ErrImagePull",

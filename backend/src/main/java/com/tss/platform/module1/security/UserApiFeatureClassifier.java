@@ -63,6 +63,7 @@ public class UserApiFeatureClassifier {
         }
         if (startsWithAny(uri,
                 "/api/system/",
+                "/api/v2/admin/demo-assets",
                 "/api/log/",
                 "/api/role/",
                 "/api/resource-monitor/",

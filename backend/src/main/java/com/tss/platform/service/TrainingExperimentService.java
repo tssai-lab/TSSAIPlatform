@@ -33,6 +33,9 @@ import com.tss.platform.training.plan.TrainingRunSpecFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -62,7 +65,7 @@ public class TrainingExperimentService {
             "failed",
             "stopped"
     );
-    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped");
+    private static final Set<String> TERMINAL_STATUSES = Set.of("success", "failed", "stopped", "cancelled");
 
     private final TrainingExperimentVersionRepository repo;
     private final ModelVersionRepository modelVersionRepo;
@@ -82,6 +85,7 @@ public class TrainingExperimentService {
     private final AuthContext authContext;
     private final MlflowTrackingService mlflowTrackingService;
     private final TrainingFailureDiagnosticService failureDiagnosticService;
+    private final TrainingSubmissionGuard submissionGuard;
 
     private static final Logger LOG = LoggerFactory.getLogger(TrainingExperimentService.class);
 
@@ -103,7 +107,8 @@ public class TrainingExperimentService {
             ObjectMapper objectMapper,
             AuthContext authContext,
             MlflowTrackingService mlflowTrackingService,
-            TrainingFailureDiagnosticService failureDiagnosticService
+            TrainingFailureDiagnosticService failureDiagnosticService,
+            TrainingSubmissionGuard submissionGuard
     ) {
         this.repo = repo;
         this.modelVersionRepo = modelVersionRepo;
@@ -123,10 +128,16 @@ public class TrainingExperimentService {
         this.authContext = authContext;
         this.mlflowTrackingService = mlflowTrackingService;
         this.failureDiagnosticService = failureDiagnosticService;
+        this.submissionGuard = submissionGuard;
     }
 
     @Transactional
     public TrainingExperimentVersionDto createExperiment(CreateTrainingExperimentRequest req) {
+        return submissionGuard.createOnce(authContext.currentUserId(), "new", req.getSubmissionKey(), req,
+                () -> doCreateExperiment(req), this::getByIdOrExperimentId);
+    }
+
+    private TrainingExperimentVersionDto doCreateExperiment(CreateTrainingExperimentRequest req) {
         requireText(req.getCodeVersionId(), "codeVersionId 不能为空");
         requireText(req.getDatasetVersionId(), "datasetVersionId 不能为空");
         String trainingProfile = blankToNull(req.getTrainingProfile());
@@ -149,7 +160,6 @@ public class TrainingExperimentService {
         if (initialParams == null) {
             initialParams = Map.of();
         }
-        req.setModelVersionId(baseModelVersionId);
 
         String experimentId = "exp-" + System.currentTimeMillis() + "-"
                 + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
@@ -160,7 +170,7 @@ public class TrainingExperimentService {
         version.setExperimentId(experimentId); //同一个实验的多版本共用experimentId
         version.setVersionNo(1); //新建实验，第一个版本号=1
         version.setName(defaultName(req.getName(), experimentId)); //名字为空就用默认名
-        version.setModelVersionId(blankToNull(req.getModelVersionId()));
+        version.setModelVersionId(baseModelVersionId);
         version.setCodeVersionId(req.getCodeVersionId().trim());
         version.setTrainingProfile(effectivePlanId);
         version.setTrainingMode("FROM_SCRATCH"); //固定训练模式：从头训练（非微调续训）
@@ -204,6 +214,13 @@ public class TrainingExperimentService {
 
     @Transactional
     public TrainingExperimentVersionDto createVersion(String experimentId, CreateExperimentVersionRequest req) {
+        return submissionGuard.createOnce(authContext.currentUserId(), "version:" + experimentId, req.getSubmissionKey(), req,
+                () -> doCreateVersion(experimentId, req), this::getByIdOrExperimentId);
+    }
+
+    private TrainingExperimentVersionDto doCreateVersion(String experimentId, CreateExperimentVersionRequest req) {
+        // 同实验的两个不同创建请求排队分配编号，唯一约束仍作最终兜底。
+        submissionGuard.lockExperiment(experimentId);
         TrainingExperimentVersion latest = repo.findTopByExperimentIdOrderByVersionNoDesc(experimentId)
                 .orElseThrow(() -> new IllegalArgumentException("experimentId 不存在"));
         requireExperimentAccess(latest);
@@ -299,20 +316,27 @@ public class TrainingExperimentService {
 
     @Transactional(readOnly = true)
     public List<TrainingExperimentVersionDto> listLatestExperiments() {
-        Map<String, TrainingExperimentVersion> latestByExperiment = new LinkedHashMap<>();
-        List<TrainingExperimentVersion> source = authContext.isAdmin()
-                ? repo.findAllByOrderByCreatedAtDesc()
-                : repo.findAllByOwnerUserIdOrderByCreatedAtDesc(authContext.currentUserId());
-        for (TrainingExperimentVersion item : source) {
-            TrainingExperimentVersion current = latestByExperiment.get(item.getExperimentId());
-            if (current == null || item.getVersionNo() > current.getVersionNo()) {
-                latestByExperiment.put(item.getExperimentId(), item);
-            }
-        }
-        return latestByExperiment.values()
-                .stream()
-                .map(this::toDto)
-                .collect(Collectors.toList());
+        return listLatestExperiments(null, null, null, null, null).getContent();
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TrainingExperimentVersionDto> listLatestExperiments(
+            Integer current, Integer pageSize, String status, String name, String experimentId) {
+        // 不传分页参数的旧客户端保持兼容；平台页面传入页码，每页最多 200 条。
+        Pageable pageable = pageSize == null
+                ? Pageable.unpaged()
+                : PageRequest.of(
+                        Math.max(1, current == null ? 1 : current) - 1, Math.min(200, Math.max(1, pageSize)));
+        String normalizedStatus = blankToNull(status);
+        if (normalizedStatus != null) normalizedStatus = normalizedStatus.toLowerCase(Locale.ROOT);
+        return repo.searchLatestExperiments(authContext.isAdmin() ? null : authContext.currentUserId(),
+                normalizedStatus, listKeyword(name), listKeyword(experimentId), pageable).map(this::toDto);
+    }
+
+    private static String listKeyword(String value) {
+        if (value == null || value.isBlank()) return null;
+        return "%" + value.trim().toLowerCase(Locale.ROOT).replace("!", "!!")
+                .replace("%", "!%").replace("_", "!_") + "%";
     }
 
     @Transactional
@@ -350,21 +374,24 @@ public class TrainingExperimentService {
         return toDto(repo.save(version));
     }
 
-    @Transactional
     public TrainingExperimentVersionDto stopTraining(String idOrExperimentId) {
         TrainingExperimentVersion version = repo.findById(idOrExperimentId)
                 .orElseGet(() -> repo.findTopByExperimentIdOrderByVersionNoDesc(idOrExperimentId)
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
+        if (version.getStatus() != null && TERMINAL_STATUSES.contains(version.getStatus())) return toDto(version);
         if (!"queued".equals(version.getStatus()) && !"scheduled".equals(version.getStatus()) && !"running".equals(version.getStatus())) {
             throw new IllegalArgumentException("只有调度中、已分配或训练中的任务可以停止");
         }
         trainingExecutorRouter.stop(version.getId());
-        version.setStatus("stopped");
-        version.setProgress(currentProgress(version));
-        version.setFinishedAt(Instant.now());
-        version.setUpdatedAt(Instant.now());
-        return toDto(repo.save(version));
+        // 外部停止完成后用短事务读取最新记录；并发完成已落库时保留其结果。
+        return transactionTemplate.execute(tx -> {
+            repo.stopIfActive(version.getId(), Instant.now());
+            TrainingExperimentVersion current = repo.findById(version.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("训练任务不存在"));
+            requireExperimentAccess(current);
+            return toDto(current);
+        });
     }
 
     @Transactional
@@ -374,6 +401,7 @@ public class TrainingExperimentService {
                         .orElseThrow(() -> new IllegalArgumentException("训练任务不存在")));
         requireExperimentAccess(version);
         String normalizedStatus = normalizeStatus(status);
+        if (version.getStatus() != null && TERMINAL_STATUSES.contains(version.getStatus())) return toDto(version);
         version.setStatus(normalizedStatus);
         version.setProgress(nextProgress(version, normalizedStatus, null));
         version.setUpdatedAt(Instant.now());
@@ -631,6 +659,7 @@ public class TrainingExperimentService {
         String nextStatus = req.getStatus() == null || req.getStatus().isBlank()
                 ? version.getStatus()
                 : normalizeStatus(req.getStatus());
+        if (version.getStatus() != null && TERMINAL_STATUSES.contains(version.getStatus()) && !version.getStatus().equals(nextStatus)) return;
         boolean wasSuccess = "success".equals(version.getStatus());
         TrainingOutputValidator.ValidatedOutput validatedOutput = null;
         if ("success".equals(nextStatus) && version.getRunSpecJson() != null) {
@@ -945,6 +974,7 @@ public class TrainingExperimentService {
                 LOG.warn("scheduleOrStart task not found, trainingId={}", trainingId);
                 return null;
             }
+            if (task.getStatus() != null && TERMINAL_STATUSES.contains(task.getStatus())) return null;
             LOG.info("scheduleOrStart in tx, trainingId={}, planId={}", trainingId, task.getTrainingPlanId());
             if (task.getTrainingPlanId() != null && !task.getTrainingPlanId().isBlank()) {
                 Map<String, String> nodeSelector = jobScheduler.resolveNodeSelector(task);

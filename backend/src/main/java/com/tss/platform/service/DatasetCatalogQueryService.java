@@ -129,7 +129,27 @@ public class DatasetCatalogQueryService {
                     );
         }
 
-        List<DatasetAsset> assets = assetPage.getContent();
+        PageResponse<CatalogItem> response = new PageResponse<>();
+        response.setData(catalogItems(assetPage.getContent()));
+        response.setTotal(assetPage.getTotalElements());
+        response.setPage(pageNo);
+        response.setPageSize(unpaged ? safeTotalAsPageSize(assetPage.getTotalElements()) : size);
+        response.setTotalPages(unpaged
+                ? (assetPage.getTotalElements() == 0 ? 0 : 1)
+                : assetPage.getTotalPages());
+        return response;
+    }
+
+    /** 详情按编号查同一套聚合信息，不依赖资产在列表中的位置。 */
+    @Transactional(readOnly = true)
+    public CatalogItem getByAssetId(String assetId) {
+        DatasetAsset asset = assetRepo.findByIdAndDeletedFalse(assetId)
+                .filter(value -> authContext.canAccessOwner(value.getOwnerUserId()))
+                .orElseThrow(() -> new IllegalArgumentException("not found or no permission: " + assetId));
+        return catalogItems(List.of(asset)).get(0);
+    }
+
+    private List<CatalogItem> catalogItems(List<DatasetAsset> assets) {
         Set<String> assetIds = assets.stream()
                 .map(DatasetAsset::getId)
                 .filter(id -> id != null && !id.isBlank())
@@ -151,7 +171,7 @@ public class DatasetCatalogQueryService {
                 .collect(Collectors.toSet());
         Map<String, List<ImportJob>> jobsByVersion = importJobsByVersion(draftIds);
 
-        List<CatalogItem> items = assets.stream()
+        return assets.stream()
                 .map(asset -> {
                     List<DatasetVersion> assetVersions =
                             versionsByAsset.getOrDefault(asset.getId(), List.of());
@@ -174,15 +194,6 @@ public class DatasetCatalogQueryService {
                 })
                 .toList();
 
-        PageResponse<CatalogItem> response = new PageResponse<>();
-        response.setData(items);
-        response.setTotal(assetPage.getTotalElements());
-        response.setPage(pageNo);
-        response.setPageSize(unpaged ? safeTotalAsPageSize(assetPage.getTotalElements()) : size);
-        response.setTotalPages(unpaged
-                ? (assetPage.getTotalElements() == 0 ? 0 : 1)
-                : assetPage.getTotalPages());
-        return response;
     }
 
     private static String normalizeKeyword(String keyword) {

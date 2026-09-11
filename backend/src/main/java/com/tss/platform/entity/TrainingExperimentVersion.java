@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.Instant;
 
 @Getter
@@ -31,6 +32,11 @@ public class TrainingExperimentVersion {
     @Id
     @Column(name = "id", length = 64)
     private String id;
+
+    /** 每次保存核对修订号，拒绝用旧快照覆盖停止、完成或结果发布。 */
+    @Version
+    @Column(name = "lock_revision", nullable = false)
+    private Long lockRevision;
 
     @Column(name = "experiment_id", nullable = false, length = 64)
     private String experimentId;

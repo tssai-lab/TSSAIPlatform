@@ -43,6 +43,7 @@ class TrainingExperimentServiceApplyResultTest {
     private TrainingFailureDiagnosticService failureDiagnosticService;
     private TrainingOutputValidator trainingOutputValidator;
     private MlflowTrackingService mlflowTrackingService;
+    private TrainingExecutorRouter executor;
 
     @BeforeEach
     void setUp() {
@@ -51,6 +52,7 @@ class TrainingExperimentServiceApplyResultTest {
         failureDiagnosticService = mock(TrainingFailureDiagnosticService.class);
         trainingOutputValidator = mock(TrainingOutputValidator.class);
         mlflowTrackingService = mock(MlflowTrackingService.class);
+        executor = mock(TrainingExecutorRouter.class);
         doNothing().when(authContext).requireOwnerAccess(anyInt(), anyString());
         service = new TrainingExperimentService(
                 repo,
@@ -64,14 +66,15 @@ class TrainingExperimentServiceApplyResultTest {
                 mock(CodeVersionService.class),
                 mock(TrainingRunSpecFactory.class),
                 trainingOutputValidator,
-                mock(TrainingExecutorRouter.class),
+                executor,
                 mock(JobScheduler.class),
                 new org.springframework.transaction.support.TransactionTemplate(
                         mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new ObjectMapper(),
                 authContext,
                 mlflowTrackingService,
-                failureDiagnosticService
+                failureDiagnosticService,
+                mock(TrainingSubmissionGuard.class)
         );
     }
 
@@ -247,12 +250,55 @@ class TrainingExperimentServiceApplyResultTest {
     void stopTrainingPreservesExistingProgress() {
         TrainingExperimentVersion version = runningVersion("train-3", 42);
         when(repo.findById("train-3")).thenReturn(Optional.of(version));
-        when(repo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repo.stopIfActive(eq("train-3"), any())).thenAnswer(invocation -> {
+            version.setStatus("stopped");
+            return 1;
+        });
 
         service.stopTraining("train-3");
 
         assertEquals("stopped", version.getStatus());
         assertEquals(42, version.getProgress());
+    }
+
+    @Test
+    void completionDuringExternalStopIsReturnedWithoutOverwritingItsResult() {
+        TrainingExperimentVersion initial = runningVersion("race", 42);
+        TrainingExperimentVersion completed = runningVersion("race", 100);
+        completed.setStatus("success");
+        completed.setProducedModelVersionId("result-model");
+        when(repo.findById("race")).thenReturn(Optional.of(initial), Optional.of(completed));
+        var result = service.stopTraining("race");
+        assertEquals("success", result.getStatus());
+        assertEquals("result-model", result.getProducedModelVersionId());
+        verify(executor).stop("race");
+        verify(repo).stopIfActive(eq("race"), any());
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void failedExternalStopDoesNotWriteStoppedAndFinishedTasksNeedNoExternalStop() {
+        TrainingExperimentVersion version = runningVersion("stop-failure", 42);
+        when(repo.findById("stop-failure")).thenReturn(Optional.of(version));
+        org.mockito.Mockito.doThrow(new IllegalStateException("cluster unavailable")).when(executor).stop("stop-failure");
+        assertThrows(IllegalStateException.class, () -> service.stopTraining("stop-failure"));
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).stopIfActive(anyString(), any());
+        version.setStatus("success");
+        assertEquals("success", service.stopTraining("stop-failure").getStatus());
+        org.mockito.Mockito.verify(executor, org.mockito.Mockito.times(1)).stop("stop-failure");
+    }
+
+    @Test
+    void cancelledTasksIgnoreLateInternalProgress() {
+        TrainingExperimentVersion version = runningVersion("cancelled", 42);
+        version.setStatus("cancelled");
+        when(repo.findById("cancelled")).thenReturn(Optional.of(version));
+        UpdateTrainingResultRequest request = new UpdateTrainingResultRequest();
+        request.setStatus("running");
+        request.setProgress(90);
+        assertEquals("cancelled", service.updateResultInternal("cancelled", request).getStatus());
+        assertEquals(42, version.getProgress());
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).save(any());
     }
 
     @Test

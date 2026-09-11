@@ -20,6 +20,52 @@ import static org.mockito.Mockito.when;
 class DatasetCatalogQueryServiceTest {
 
     @Test
+    void detailReadsOnlyRequestedAssetWithDraftAndImportMetadata() {
+        var assets = mock(DatasetAssetRepository.class);
+        var versions = mock(DatasetVersionRepository.class);
+        var jobs = mock(ImportJobRepository.class);
+        var auth = mock(AuthContext.class);
+        var asset = new com.tss.platform.entity.DatasetAsset();
+        asset.setId("asset-outside-first-200");
+        asset.setOwnerUserId(7);
+        var draft = new com.tss.platform.entity.DatasetVersion();
+        draft.setId("draft-201");
+        draft.setAssetId(asset.getId());
+        draft.setStatus("DRAFT");
+        var job = new com.tss.platform.entity.ImportJob();
+        job.setId("import-201");
+        job.setDatasetVersionId(draft.getId());
+        job.setStatus("RUNNING");
+        when(assets.findByIdAndDeletedFalse(asset.getId())).thenReturn(java.util.Optional.of(asset));
+        when(auth.canAccessOwner(7)).thenReturn(true);
+        when(versions.findByAssetIdInAndDeletedFalse(java.util.Set.of(asset.getId()))).thenReturn(List.of(draft));
+        when(jobs.findByDatasetVersionIdIn(java.util.Set.of(draft.getId()))).thenReturn(List.of(job));
+        var service = new DatasetCatalogQueryService(assets, versions, jobs, mock(DatasetVersionFileCountService.class), auth);
+
+        var detail = service.getByAssetId(asset.getId());
+
+        org.junit.jupiter.api.Assertions.assertSame(draft, detail.latestDraft());
+        org.junit.jupiter.api.Assertions.assertSame(job, detail.latestDraftImportJob());
+        verify(assets).findByIdAndDeletedFalse(asset.getId());
+        org.mockito.Mockito.verifyNoMoreInteractions(assets);
+    }
+
+    @Test
+    void detailRejectsMissingDeletedAndForeignAssetsBeforeReadingTheirVersions() {
+        var assets = mock(DatasetAssetRepository.class);
+        var versions = mock(DatasetVersionRepository.class);
+        var jobs = mock(ImportJobRepository.class);
+        var auth = mock(AuthContext.class);
+        var service = new DatasetCatalogQueryService(assets, versions, jobs, mock(DatasetVersionFileCountService.class), auth);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> service.getByAssetId("missing-or-deleted"));
+        var foreign = new com.tss.platform.entity.DatasetAsset();
+        foreign.setOwnerUserId(8);
+        when(assets.findByIdAndDeletedFalse("foreign")).thenReturn(java.util.Optional.of(foreign));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> service.getByAssetId("foreign"));
+        org.mockito.Mockito.verifyNoInteractions(versions, jobs);
+    }
+
+    @Test
     void normalizesAndEscapesNameKeywordForOwnerCatalog() {
         DatasetAssetRepository assetRepo = mock(DatasetAssetRepository.class);
         AuthContext authContext = mock(AuthContext.class);
