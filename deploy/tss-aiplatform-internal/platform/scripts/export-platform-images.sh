@@ -67,9 +67,10 @@ while IFS='|' read -r source_ref source_digest project_ref expected_id expected_
     docker image inspect "$immutable_ref" \
       | python3 "${script_dir}/image-runtime-fingerprint.py"
   )"
-  [[ $actual_fingerprint == "$expected_fingerprint" ]] \
-    || { echo "ERROR: registry image runtime content differs from lock: $source_ref" >&2; exit 1; }
+  # 精确 config ID 未变时直接采用更强的字节身份；仅在运行时重写 ID 时用指纹兜底。
   if [[ $actual_id != "$expected_id" ]]; then
+    [[ $actual_fingerprint == "$expected_fingerprint" ]] \
+      || { echo "ERROR: registry image runtime content differs from lock: $source_ref" >&2; exit 1; }
     echo "INFO: local image ID was rewritten, but locked registry/runtime content matches: $source_ref" >&2
   fi
   [[ $actual_platform == linux/amd64 ]] \
