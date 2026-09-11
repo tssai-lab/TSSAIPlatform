@@ -39,6 +39,17 @@ export type TaskDetailInfo = API.TaskItem & {
   modelArtifactSizeBytes?: number;
   modelPublishStatus?: string;
   modelPublishError?: string;
+  runSpec?: {
+    resources?: {
+      profileId?: string;
+      gpuNodeName?: string;
+      gpuHostIndex?: string;
+      gpuUuid?: string;
+      gpuModel?: string;
+      gpuTotalMemoryMiB?: number;
+      gpuMemoryLimitMiB?: number;
+    };
+  };
   trainingOutput?: {
     artifacts?: Array<{
       format?: string;

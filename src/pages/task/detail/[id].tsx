@@ -148,6 +148,7 @@ const TaskDetail: React.FC = () => {
     taskInfo?.trainingProfile,
     trainingPlans,
   );
+  const selectedResources = taskInfo?.runSpec?.resources;
 
   useEffect(() => {
     fetchTrainingPlans({ skipErrorHandler: true })
@@ -806,6 +807,26 @@ const TaskDetail: React.FC = () => {
                 （内部 ID：
                 <code>{(taskInfo as TaskDetailInfo).trainingProfile}</code>）
               </Typography.Text>
+            </Descriptions.Item>
+          )}
+          {selectedResources?.profileId && (
+            <Descriptions.Item label="资源规格">
+              {selectedResources.profileId}
+            </Descriptions.Item>
+          )}
+          {selectedResources?.gpuUuid && (
+            <Descriptions.Item label="指定物理 GPU" span={2}>
+              {selectedResources.gpuModel || 'NVIDIA GPU'} ·{' '}
+              {selectedResources.gpuNodeName || '-'} · GPU{' '}
+              {selectedResources.gpuHostIndex ?? '-'} ·{' '}
+              <Typography.Text copyable>
+                {selectedResources.gpuUuid}
+              </Typography.Text>
+            </Descriptions.Item>
+          )}
+          {selectedResources?.gpuMemoryLimitMiB && (
+            <Descriptions.Item label="GPU 显存软预算">
+              {selectedResources.gpuMemoryLimitMiB} MiB
             </Descriptions.Item>
           )}
           {hasMeaningfulHyperParams(

@@ -412,6 +412,39 @@ const ServerDetail = () => {
         </Descriptions>
       </Card>
 
+      {!!server.gpuDevices?.length && (
+        <Card title="物理 GPU 明细" style={{ marginBottom: 16 }}>
+          <Table
+            rowKey={(item) => item.uuid || item.hostGpuIndex}
+            pagination={false}
+            dataSource={server.gpuDevices}
+            columns={[
+              {
+                title: '宿主机编号',
+                dataIndex: 'hostGpuIndex',
+                render: (value) => (value === null || value === undefined ? '-' : `GPU ${value}`),
+              },
+              { title: '型号', dataIndex: 'model', render: (value) => value || '-' },
+              { title: 'UUID（绑定依据）', dataIndex: 'uuid', render: (value) => value || '-' },
+              {
+                title: '使用率',
+                dataIndex: 'utilizationRate',
+                render: (value) => formatMetric(value, '%'),
+              },
+              {
+                title: '空闲 / 总显存',
+                render: (_, item) => `${item.freeMemoryMiB ?? '-'} / ${item.totalMemoryMiB ?? '-'} MiB`,
+              },
+              {
+                title: '温度',
+                dataIndex: 'temperatureCelsius',
+                render: (value) => formatMetric(value, ' °C'),
+              },
+            ]}
+          />
+        </Card>
+      )}
+
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {usageItems.map((item) => (
           <Col xs={24} sm={12} md={8} lg={4} key={item.label}>

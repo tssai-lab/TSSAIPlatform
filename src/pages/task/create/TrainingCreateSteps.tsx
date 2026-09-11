@@ -653,14 +653,14 @@ export function TrainingStep4({
         )}
       <Form.Item
         name="hardwareTargetId"
-        label="可训练硬件型号"
-        extra="Kubernetes 会自动分配并隔离一张当前可用的同型号 GPU；GPU 0/1 是节点本地编号，不由页面固定指定。"
-        rules={[{ required: true, message: '请选择可训练硬件型号' }]}
+        label="计算硬件"
+        extra="GPU 选项会写出宿主机编号；提交后按 UUID 固定到这张卡，卡忙时等待，不会自动换卡。"
+        rules={[{ required: true, message: '请选择计算硬件' }]}
       >
         <Select
           loading={hardwareOptionsLoading}
           disabled={!hardwareOptions.length}
-          placeholder="请选择检测到的硬件型号"
+          placeholder="请选择检测到的 CPU 或物理 GPU"
           onChange={(hardwareTargetId: string) => {
             const option = hardwareOptions.find(
               (item) => item.hardwareTargetId === hardwareTargetId,
@@ -744,10 +744,13 @@ export function TrainingStep4({
                   （当前训练方案仅支持单卡）
                 </Descriptions.Item>
                 <Descriptions.Item label="GPU 分配方式">
-                  Kubernetes 自动分配并隔离空闲卡
+                  按 UUID 固定到所选物理卡
                 </Descriptions.Item>
-                <Descriptions.Item label="集群检测到的同型号 GPU">
-                  {selectedHardwareOption.gpu?.observedGpuCount ?? 0} 张
+                <Descriptions.Item label="宿主机编号">
+                  GPU {selectedHardwareOption.gpu?.hostGpuIndex ?? '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="GPU UUID">
+                  {selectedHardwareOption.gpu?.uuid ?? '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="单卡总显存">
                   {formatMiB(selectedHardwareOption.gpu?.safeTotalMemoryMiB)}

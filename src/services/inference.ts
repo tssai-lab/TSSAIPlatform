@@ -67,6 +67,13 @@ export type InferenceTask = {
   inputObjectName?: string | null;
   /** 新任务会固化资源档位；历史任务可能为空并沿用旧全局配置。 */
   resourceProfileId?: string | null;
+  hardwareTargetId?: string | null;
+  gpuNodeName?: string | null;
+  gpuHostIndex?: string | null;
+  gpuUuid?: string | null;
+  gpuModel?: string | null;
+  gpuTotalMemoryMiB?: number | null;
+  gpuMemoryLimitMiB?: number | null;
   params?: Record<string, unknown>;
   status: InferenceTaskStatus | string;
   progress?: number;
@@ -119,6 +126,8 @@ export type CreateInferenceTaskBody = {
   datasetVersionId?: string;
   inputObjectName?: string;
   resourceProfileId?: string;
+  hardwareTargetId?: string;
+  gpuMemoryLimitMiB?: number;
   params?: Record<string, unknown>;
   remark?: string;
 };
@@ -136,6 +145,22 @@ export type InferenceResourceProfile = {
   ephemeralStorageRequest: string;
   ephemeralStorageLimit: string;
   gpuCount: number;
+};
+
+/** 后端实时检测到的一张可用于推理的物理 GPU。 */
+export type InferenceHardwareOption = {
+  hardwareTargetId: string;
+  displayName: string;
+  nodeName: string;
+  hostGpuIndex: string;
+  uuid: string;
+  model: string;
+  totalMemoryMiB: number;
+  freeMemoryMiB?: number | null;
+  utilizationRate?: number | null;
+  temperatureCelsius?: number | null;
+  observedAt: string;
+  message: string;
 };
 
 /** 推理任务分页列表 */
@@ -263,6 +288,19 @@ export async function listInferenceResourceProfiles(
 ) {
   return request<{ data: InferenceResourceProfile[] }>(
     '/inference/resource-profiles',
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
+}
+
+/** 获取可精确选择的物理 GPU；指标过期的卡不会返回。 */
+export async function listInferenceHardwareOptions(
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: InferenceHardwareOption[] }>(
+    '/inference/hardware-options',
     {
       method: 'GET',
       ...(options || {}),

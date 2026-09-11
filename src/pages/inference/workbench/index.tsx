@@ -18,6 +18,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Modal,
   message,
   Popconfirm,
@@ -28,6 +29,7 @@ import {
   Steps,
   Tag,
   Tour,
+  Tooltip,
   Typography,
   Upload,
 } from 'antd';
@@ -48,10 +50,12 @@ import {
   getInferenceTask,
   getInferenceTaskResult,
   type InferenceInputMode,
+  type InferenceHardwareOption,
   type InferenceResourceProfile,
   type InferenceScriptVersion,
   type InferenceTask,
   listInferenceResourceProfiles,
+  listInferenceHardwareOptions,
   listInferenceScripts,
   listInferenceTasks,
   objectNameFromMinioPath,
@@ -62,7 +66,7 @@ import {
 } from '@/services/platform';
 import {
   defaultInferenceResourceProfileId,
-  listUsableCpuInferenceProfiles,
+  listUsableInferenceProfiles,
 } from './resourceProfilePresentation.mjs';
 import { requireSavedInferenceScriptVersion } from './inferenceScriptUploadResult.mjs';
 
@@ -96,12 +100,13 @@ function optionLabel(
   return found ? found.label : value;
 }
 
-function statusTag(status?: string) {
+function statusTag(status?: string, detail?: string | null) {
   const item = STATUS_MAP[status || ''] || {
     color: 'default',
     text: status || '-',
   };
-  return <Tag color={item.color}>{item.text}</Tag>;
+  const tag = <Tag color={item.color}>{item.text}</Tag>;
+  return detail?.trim() ? <Tooltip title={detail}>{tag}</Tooltip> : tag;
 }
 
 function parseJson(text?: string) {
@@ -133,6 +138,10 @@ const InferenceWorkbench: React.FC = () => {
     'resourceProfileId',
     taskForm,
   );
+  const selectedHardwareTargetId = Form.useWatch(
+    'hardwareTargetId',
+    taskForm,
+  );
   const [scriptForm] = Form.useForm();
   const actionRef = useRef<ActionType | undefined>(undefined);
   const prefillAppliedRef = useRef(false);
@@ -151,6 +160,9 @@ const InferenceWorkbench: React.FC = () => {
   const [resourceProfileOptions, setResourceProfileOptions] = useState<
     InferenceResourceProfile[]
   >([]);
+  const [hardwareOptions, setHardwareOptions] = useState<
+    InferenceHardwareOption[]
+  >([]);
   const [createStep, setCreateStep] = useState(0);
   const [loadingAssets, setLoadingAssets] = useState(false);
   // 引导段 S4：推理工作台讲解
@@ -167,11 +179,14 @@ const InferenceWorkbench: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const usableResourceProfiles = useMemo(
-    () => listUsableCpuInferenceProfiles(resourceProfileOptions),
+    () => listUsableInferenceProfiles(resourceProfileOptions),
     [resourceProfileOptions],
   );
   const selectedResourceProfile = usableResourceProfiles.find(
     (profile) => profile.id === selectedResourceProfileId,
+  );
+  const selectedHardwareOption = hardwareOptions.find(
+    (option) => option.hardwareTargetId === selectedHardwareTargetId,
   );
 
   /** 打开结果抽屉，并拉取最新 result / logPath / outputPath */
@@ -279,13 +294,15 @@ const InferenceWorkbench: React.FC = () => {
       setLoadingAssets(false);
     }
     try {
-      const resourceProfileRes = await listInferenceResourceProfiles({
-        skipErrorHandler: true,
-      });
-      const nextProfiles = listUsableCpuInferenceProfiles(
+      const [resourceProfileRes, hardwareOptionRes] = await Promise.all([
+        listInferenceResourceProfiles({ skipErrorHandler: true }),
+        listInferenceHardwareOptions({ skipErrorHandler: true }),
+      ]);
+      const nextProfiles = listUsableInferenceProfiles(
         resourceProfileRes?.data ?? [],
       );
       setResourceProfileOptions(nextProfiles);
+      setHardwareOptions(hardwareOptionRes?.data ?? []);
       const currentProfileId = taskForm.getFieldValue('resourceProfileId');
       if (!nextProfiles.some((profile) => profile.id === currentProfileId)) {
         taskForm.setFieldValue(
@@ -295,6 +312,7 @@ const InferenceWorkbench: React.FC = () => {
       }
     } catch (error: any) {
       setResourceProfileOptions([]);
+      setHardwareOptions([]);
       taskForm.setFieldValue('resourceProfileId', undefined);
       message.error(error?.message || '推理资源规格加载失败');
     }
@@ -377,14 +395,28 @@ const InferenceWorkbench: React.FC = () => {
 
   /** 创建推理任务；单文件模式会先 uploadObject 再提交 */
   const handleCreateTask = async () => {
-    await taskForm.validateFields(['resourceProfileId']);
+    await taskForm.validateFields([
+      'resourceProfileId',
+      ...(selectedResourceProfile?.deviceType === 'NVIDIA_GPU'
+        ? ['hardwareTargetId', 'gpuMemoryLimitMiB']
+        : []),
+    ]);
     const values = taskForm.getFieldsValue(true);
     if (
-      !usableResourceProfiles.some(
+        !usableResourceProfiles.some(
         (profile) => profile.id === values.resourceProfileId,
       )
     ) {
-      message.error('请选择后端当前启用的 CPU 推理资源规格');
+      message.error('请选择后端当前启用的推理资源规格');
+      return;
+    }
+    if (
+      selectedResourceProfile?.deviceType === 'NVIDIA_GPU' &&
+      !hardwareOptions.some(
+        (option) => option.hardwareTargetId === values.hardwareTargetId,
+      )
+    ) {
+      message.error('请选择后端当前检测到的一张物理 GPU');
       return;
     }
     setCreating(true);
@@ -416,6 +448,14 @@ const InferenceWorkbench: React.FC = () => {
           inputObjectName:
             values.inputMode === 'SINGLE_OBJECT' ? inputObjectName : undefined,
           resourceProfileId: values.resourceProfileId,
+          hardwareTargetId:
+            selectedResourceProfile?.deviceType === 'NVIDIA_GPU'
+              ? values.hardwareTargetId
+              : undefined,
+          gpuMemoryLimitMiB:
+            selectedResourceProfile?.deviceType === 'NVIDIA_GPU'
+              ? values.gpuMemoryLimitMiB
+              : undefined,
           params,
           remark: values.remark,
         },
@@ -455,7 +495,7 @@ const InferenceWorkbench: React.FC = () => {
         return;
       }
       if (!usableResourceProfiles.length) {
-        message.error('后端当前没有可用的 CPU 推理资源规格');
+        message.error('后端当前没有可用的推理资源规格');
         return;
       }
       setCreateStep(1);
@@ -575,7 +615,7 @@ const InferenceWorkbench: React.FC = () => {
           { text: item.text },
         ]),
       ),
-      render: (_, record) => statusTag(record.status),
+      render: (_, record) => statusTag(record.status, record.errorMessage),
     },
     {
       title: '重试',
@@ -868,14 +908,14 @@ const InferenceWorkbench: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                     message="选择本次推理使用的资源规格"
-                    description="当前只启用 CPU。资源数值来自后端白名单，任务脚本不能自行突破 CPU、内存和临时磁盘上限。"
+                    description="CPU、内存和临时磁盘来自后端白名单；GPU 任务还会按 UUID 固定到所选物理卡。"
                   />
                   {!usableResourceProfiles.length && (
                     <Alert
                       type="error"
                       showIcon
                       style={{ marginBottom: 16 }}
-                      message="没有可用的 CPU 推理资源规格"
+                      message="没有可用的推理资源规格"
                       description="请刷新资源；若仍为空，需要先检查后端资源配置接口。"
                     />
                   )}
@@ -886,12 +926,91 @@ const InferenceWorkbench: React.FC = () => {
                   >
                     <Select
                       disabled={!usableResourceProfiles.length}
+                      onChange={() =>
+                        taskForm.setFieldsValue({
+                          hardwareTargetId: undefined,
+                          gpuMemoryLimitMiB: undefined,
+                        })
+                      }
                       options={usableResourceProfiles.map((profile) => ({
                         value: profile.id,
                         label: `${profile.displayName} (${profile.id})`,
                       }))}
                     />
                   </Form.Item>
+                  {selectedResourceProfile?.deviceType === 'NVIDIA_GPU' && (
+                    <>
+                      {!hardwareOptions.length && (
+                        <Alert
+                          type="error"
+                          showIcon
+                          style={{ marginBottom: 16 }}
+                          message="当前没有可精确选择的 GPU"
+                          description="请检查 GPU 指标是否新鲜，以及集群是否已启用 NVIDIA DRA。"
+                        />
+                      )}
+                      <Form.Item
+                        name="hardwareTargetId"
+                        label="指定物理 GPU"
+                        rules={[{ required: true, message: '请选择一张物理 GPU' }]}
+                        extra="GPU 0/1 是宿主机编号；真正绑定使用下方 UUID。若该卡忙，任务会等待，不会换卡。"
+                      >
+                        <Select
+                          disabled={!hardwareOptions.length}
+                          options={hardwareOptions.map((option) => ({
+                            value: option.hardwareTargetId,
+                            label: option.displayName,
+                          }))}
+                        />
+                      </Form.Item>
+                      {selectedHardwareOption && (
+                        <Descriptions size="small" column={1} bordered>
+                          <Descriptions.Item label="宿主机编号">
+                            GPU {selectedHardwareOption.hostGpuIndex}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="GPU UUID">
+                            {selectedHardwareOption.uuid}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="总显存">
+                            {selectedHardwareOption.totalMemoryMiB} MiB
+                          </Descriptions.Item>
+                          <Descriptions.Item label="当前空闲显存（参考）">
+                            {selectedHardwareOption.freeMemoryMiB ?? '-'} MiB
+                          </Descriptions.Item>
+                        </Descriptions>
+                      )}
+                      <Form.Item
+                        name="gpuMemoryLimitMiB"
+                        label="GPU 显存软预算（可选）"
+                        rules={[
+                          {
+                            validator: async (_, value) => {
+                              if (value === undefined || value === null) return;
+                              if (
+                                !Number.isInteger(value) ||
+                                value <= 0 ||
+                                !selectedHardwareOption ||
+                                value > selectedHardwareOption.totalMemoryMiB
+                              ) {
+                                throw new Error('显存预算必须是所选 GPU 总显存以内的正整数');
+                              }
+                            },
+                          },
+                        ]}
+                        extra="该值会在用户推理脚本启动前传给 PyTorch CUDA 分配器；这是软限制。"
+                      >
+                        <InputNumber
+                          min={1}
+                          max={selectedHardwareOption?.totalMemoryMiB}
+                          step={256}
+                          precision={0}
+                          disabled={!selectedHardwareOption}
+                          style={{ width: '100%' }}
+                          addonAfter="MiB"
+                        />
+                      </Form.Item>
+                    </>
+                  )}
                   {selectedResourceProfile && (
                     <Descriptions size="small" column={1} bordered>
                       <Descriptions.Item label="设备">
@@ -1134,6 +1253,18 @@ const InferenceWorkbench: React.FC = () => {
               <Descriptions.Item label="资源规格">
                 {selectedTask.resourceProfileId || '历史任务（旧全局配置）'}
               </Descriptions.Item>
+              {selectedTask.gpuUuid && (
+                <Descriptions.Item label="物理 GPU">
+                  {selectedTask.gpuModel} · {selectedTask.gpuNodeName || '-'} · GPU{' '}
+                  {selectedTask.gpuHostIndex} ·{' '}
+                  {selectedTask.gpuUuid}
+                </Descriptions.Item>
+              )}
+              {selectedTask.gpuMemoryLimitMiB && (
+                <Descriptions.Item label="显存软预算">
+                  {selectedTask.gpuMemoryLimitMiB} MiB
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="输入">
                 {selectedTask.inputMode === 'DATASET_VERSION'
                   ? optionLabel(

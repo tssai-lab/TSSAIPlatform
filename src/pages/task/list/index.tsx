@@ -128,7 +128,7 @@ const TaskList: React.FC = () => {
     const text = getTrainingStatusText(status);
     const color = getTrainingStatusTagColor(status);
     const tag = <Tag color={color}>{text}</Tag>;
-    if (status === 'failed' && errorMessage?.trim()) {
+    if ((status === 'failed' || status === 'scheduled') && errorMessage?.trim()) {
       return (
         <Tooltip title={errorMessage} overlayStyle={{ maxWidth: 480 }}>
           {tag}

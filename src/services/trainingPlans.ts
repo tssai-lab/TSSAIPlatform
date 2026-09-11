@@ -100,6 +100,11 @@ export type TrainingHardwareOption = {
     safeTotalMemoryMiB?: number;
     maxFreeMemoryMiB?: number;
     metricsComplete: boolean;
+    hostGpuIndex?: string;
+    uuid?: string;
+    nodeName?: string;
+    utilizationRate?: number;
+    temperatureCelsius?: number;
   };
   dataStatus: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE';
   observedAt?: string;

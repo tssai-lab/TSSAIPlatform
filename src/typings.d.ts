@@ -175,7 +175,7 @@ declare namespace API {
     modelId?: string;
     datasetId?: string;
     createTime: string;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    status: 'pending' | 'queued' | 'scheduled' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
     modelVersionId?: string;
     baseModelVersionId?: string;
@@ -193,6 +193,17 @@ declare namespace API {
     trainingPlanVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    runSpec?: {
+      resources?: {
+        profileId?: string;
+        gpuNodeName?: string;
+        gpuHostIndex?: string;
+        gpuUuid?: string;
+        gpuModel?: string;
+        gpuTotalMemoryMiB?: number;
+        gpuMemoryLimitMiB?: number;
+      };
+    };
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
     metrics?: Record<string, any>;
@@ -234,9 +245,20 @@ declare namespace API {
     trainingPlanVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    runSpec?: {
+      resources?: {
+        profileId?: string;
+        gpuNodeName?: string;
+        gpuHostIndex?: string;
+        gpuUuid?: string;
+        gpuModel?: string;
+        gpuTotalMemoryMiB?: number;
+        gpuMemoryLimitMiB?: number;
+      };
+    };
     datasetVersionId: string;
     hyperParams?: Record<string, any>;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    status: 'pending' | 'queued' | 'scheduled' | 'running' | 'success' | 'failed' | 'stopped';
     progress?: number;
     metrics?: Record<string, any>;
     runId?: string;
@@ -396,6 +418,15 @@ declare namespace API {
     networkOut?: number | null;
     gpuMemRate?: number | null;
     gpuTemp?: number | null;
+    gpuDevices?: Array<{
+      hostGpuIndex?: string | null;
+      uuid?: string | null;
+      model?: string | null;
+      totalMemoryMiB?: number | null;
+      freeMemoryMiB?: number | null;
+      utilizationRate?: number | null;
+      temperatureCelsius?: number | null;
+    }>;
     metricsStatus:
       | 'fresh'
       | 'temporarily_unavailable'
