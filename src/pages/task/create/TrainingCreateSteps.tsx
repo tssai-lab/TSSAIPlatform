@@ -26,7 +26,10 @@ import {
   isSingleTrainingMode,
 } from './trainingModePresentation.mjs';
 import { buildTrainingPlanHyperParams } from './trainingPlanDefaults.mjs';
-import { formatMiB } from './trainingResourcePresentation.mjs';
+import {
+  formatMiB,
+  formatTrainingResourceSummary,
+} from './trainingResourcePresentation.mjs';
 import type { TrainingCreateState } from './useTrainingCreate';
 /** 第 1 步：只展示状态，通过原回调更新向导。 */
 export function TrainingStep0({
@@ -651,7 +654,7 @@ export function TrainingStep4({
       <Form.Item
         name="hardwareTargetId"
         label="可训练硬件型号"
-        extra="列表来自 Kubernetes 和最新硬件指标；任务只固化型号目标，不暴露或指定服务器、IP和物理卡号。"
+        extra="Kubernetes 会自动分配并隔离一张当前可用的同型号 GPU；GPU 0/1 是节点本地编号，不由页面固定指定。"
         rules={[{ required: true, message: '请选择可训练硬件型号' }]}
       >
         <Select
@@ -739,6 +742,9 @@ export function TrainingStep4({
                 <Descriptions.Item label="本次 GPU 数量">
                   {selectedHardwareOption.gpuCount} 卡
                   （当前训练方案仅支持单卡）
+                </Descriptions.Item>
+                <Descriptions.Item label="GPU 分配方式">
+                  Kubernetes 自动分配并隔离空闲卡
                 </Descriptions.Item>
                 <Descriptions.Item label="集群检测到的同型号 GPU">
                   {selectedHardwareOption.gpu?.observedGpuCount ?? 0} 张
@@ -887,12 +893,11 @@ export function TrainingStep5({
         </Descriptions.Item>
         <Descriptions.Item label="执行方式">Kubernetes Job</Descriptions.Item>
         <Descriptions.Item label="运行规格">
-          {selectedHardwareOption
-            ? formatTrainingHardwareOptionLabel(
-                selectedHardwareOption,
-                formatMiB,
-              )
-            : '-'}
+          {formatTrainingResourceSummary(
+            form.getFieldValue('resourceMode'),
+            form.getFieldsValue(['cpuCores', 'memoryMiB']),
+            selectedHardwareOption,
+          )}
         </Descriptions.Item>
         <Descriptions.Item label="资源配置方式">
           {form.getFieldValue('resourceMode') === 'custom'

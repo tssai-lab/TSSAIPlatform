@@ -62,7 +62,7 @@ const TaskCreate: React.FC = () => {
           showIcon
           style={{ marginBottom: 16 }}
           message="基于此版本继续训练"
-          description="已带入该版本使用的模型、数据集、训练代码和参数；提交后会保留原版本并生成新版本。"
+          description="系统会尝试带入该版本使用的模型、数据集、训练代码和参数，请在各步骤核对；提交后会保留原版本并生成新版本。"
         />
       )}
 

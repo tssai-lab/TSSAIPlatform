@@ -51,6 +51,7 @@ import {
 import { getApiErrorMessage } from '@/utils/apiError';
 import type { WorkspaceEditableDatasetType } from '@/utils/datasetWorkspace';
 import { saveImportJobId } from '@/utils/importJobStorage';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
 type MultimodalWorkspacePanelProps = {
   /** V2 工作区 ID */
@@ -748,6 +749,28 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
               <Descriptions.Item label="外部 ID">
                 {detail.externalId || '-'}
               </Descriptions.Item>
+              <Descriptions.Item label="工作区 ID">
+                {detail.datasetVersionId || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="样本序号">
+                {detail.sampleIndex ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="创建时间">
+                {formatDisplayDateTime(detail.createdAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label="状态">
+                {detail.deleted ? '已删除' : '正常'}
+              </Descriptions.Item>
+              <Descriptions.Item label="标签" span={2}>
+                {detail.tags && Object.keys(detail.tags).length
+                  ? JSON.stringify(detail.tags)
+                  : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="元数据" span={2}>
+                {detail.metadata && Object.keys(detail.metadata).length
+                  ? JSON.stringify(detail.metadata)
+                  : '-'}
+              </Descriptions.Item>
             </Descriptions>
             {Array.isArray(detail.data) && (
               <div>
@@ -756,8 +779,9 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
                   <Tag key={d.sampleDataId}>
                     {MULTIMODAL_DATA_TYPE_LABEL[d.dataType] ||
                       d.dataType ||
-                      d.fileName ||
                       'data'}
+                    {d.fileName ? `：${d.fileName}` : ''}
+                    {!d.fileName && d.format ? `：${d.format}` : ''}
                   </Tag>
                 ))}
               </div>
@@ -767,7 +791,9 @@ const MultimodalWorkspacePanel: React.FC<MultimodalWorkspacePanelProps> = ({
                 <Typography.Title level={5}>标注</Typography.Title>
                 {detail.annotations.map((a) => (
                   <Tag key={a.annotationId}>
-                    {a.annotationType || a.format || '标注'}
+                    {a.annotationType || '标注'}
+                    {a.fileName ? `：${a.fileName}` : ''}
+                    {!a.fileName && a.format ? `：${a.format}` : ''}
                   </Tag>
                 ))}
               </div>

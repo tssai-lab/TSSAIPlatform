@@ -30,6 +30,7 @@ import {
 } from '@/services/platform';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { isStepSeriesMetric } from '@/utils/trainingMetrics';
+import { getTrainingStatusText } from '@/utils/trainingStatusDisplay';
 import {
   buildImprovementGroups,
   COMPARE_POOL_KEY,
@@ -698,15 +699,7 @@ const TaskCompare: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       width: 80,
-      render: (v: string) => {
-        const map: Record<string, string> = {
-          success: '成功',
-          running: '运行中',
-          pending: '待执行',
-          failed: '失败',
-        };
-        return map[v] || v;
-      },
+      render: (v: string) => getTrainingStatusText(v),
     },
   ];
 

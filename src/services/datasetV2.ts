@@ -4,6 +4,7 @@
  */
 import { request } from '@umijs/max';
 import type { DatasetListItem, DatasetListQuery, DatasetType } from './dataset';
+import type { MultimodalSampleDetail } from './datasetMultimodal';
 
 export type V2DatasetDisplayStatus =
   | 'EMPTY'
@@ -403,13 +404,39 @@ export async function getDatasetWorkspaceSample(
     `/v2/dataset-workspaces/${encodeURIComponent(workspaceId)}/samples/${encodeURIComponent(sampleId)}`,
     { method: 'GET', ...(options || {}) },
   );
-  const obj = raw as Record<string, unknown>;
+  return { data: normalizeDatasetWorkspaceSample(raw) };
+}
+
+/** 把 V2 工作区字段名适配成详情组件沿用的字段名。 */
+export function normalizeDatasetWorkspaceSample(
+  raw: unknown,
+): MultimodalSampleDetail | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const response = raw as Record<string, unknown>;
+  const nested = response.data;
+  const sample =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : response;
+  const data = Array.isArray(sample.data)
+    ? sample.data.map((item) => {
+        const value = item as Record<string, unknown>;
+        return {
+          ...value,
+          sampleDataId: String(value.sampleDataId || value.dataId || ''),
+        };
+      })
+    : [];
   return {
-    data:
-      obj?.data && typeof obj.data === 'object'
-        ? obj.data
-        : raw,
-  };
+    ...sample,
+    sampleId: String(sample.sampleId || ''),
+    datasetVersionId: String(
+      sample.datasetVersionId || sample.workspaceId || '',
+    ),
+    sampleIndex: Number(sample.sampleIndex ?? 0),
+    data,
+    annotations: Array.isArray(sample.annotations) ? sample.annotations : [],
+  } as MultimodalSampleDetail;
 }
 
 /** DELETE .../samples/{sampleId} */

@@ -1,9 +1,12 @@
 import { LockOutlined, MobileOutlined, UserOutlined } from '@ant-design/icons';
 import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
-import { Alert, App, Button, Form, Input } from 'antd';
+import { Alert, App, Button, Form, Input, Radio } from 'antd';
 import { createStyles } from 'antd-style';
 import React, { useRef, useState } from 'react';
-import { registerByMobile } from '@/services/ant-design-pro/api';
+import {
+  register as registerByUsername,
+  registerByMobile,
+} from '@/services/ant-design-pro/api';
 import { sendSmsCode } from '@/services/ant-design-pro/login';
 import {
   apiMessage,
@@ -51,6 +54,9 @@ const Register: React.FC = () => {
     message?: string;
   }>({});
   const [countdown, setCountdown] = useState(0);
+  const [registrationMode, setRegistrationMode] = useState<
+    'username' | 'mobile'
+  >('username');
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { styles } = useStyles();
   const { message: messageApi } = App.useApp();
@@ -124,13 +130,18 @@ const Register: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
-      const response = await registerByMobile({
+      const body = {
         username: values.username,
         password: values.password,
         confirmPassword: values.confirmPassword,
-        mobile: values.phone,
-        smsCode: values.captcha,
-      });
+        ...(registrationMode === 'mobile'
+          ? { mobile: values.phone, smsCode: values.captcha }
+          : {}),
+      };
+      // 用户名注册不依赖短信服务，手机号注册继续走原接口。
+      const response = await (registrationMode === 'mobile'
+        ? registerByMobile(body)
+        : registerByUsername(body));
 
       if (response.code === 200) {
         messageApi.success('注册成功！');
@@ -194,7 +205,9 @@ const Register: React.FC = () => {
             />
             <h2 style={{ marginBottom: 8 }}>注册账号</h2>
             <p style={{ color: '#999', fontSize: 14 }}>
-              设置用户名、手机号和登录密码
+              {registrationMode === 'mobile'
+                ? '设置用户名、手机号和登录密码'
+                : '设置用户名和登录密码'}
             </p>
           </div>
 
@@ -210,6 +223,17 @@ const Register: React.FC = () => {
             layout="vertical"
             size="large"
           >
+            <Form.Item label="注册方式">
+              <Radio.Group
+                value={registrationMode}
+                buttonStyle="solid"
+                onChange={(event) => setRegistrationMode(event.target.value)}
+              >
+                <Radio.Button value="username">用户名注册</Radio.Button>
+                <Radio.Button value="mobile">手机号注册</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+
             <Form.Item
               name="username"
               rules={[
@@ -264,49 +288,55 @@ const Register: React.FC = () => {
               />
             </Form.Item>
 
-            <Form.Item
-              name="phone"
-              rules={[
-                { required: true, message: '请输入手机号！' },
-                { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误！' },
-              ]}
-            >
-              <Input
-                prefix={<MobileOutlined />}
-                placeholder="请输入手机号（用于验证码登录和找回密码）"
-                maxLength={11}
-              />
-            </Form.Item>
+            {registrationMode === 'mobile' && (
+              <>
+                <Form.Item
+                  name="phone"
+                  preserve={false}
+                  rules={[
+                    { required: true, message: '请输入手机号！' },
+                    { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误！' },
+                  ]}
+                >
+                  <Input
+                    prefix={<MobileOutlined />}
+                    placeholder="请输入手机号（用于验证码登录和找回密码）"
+                    maxLength={11}
+                  />
+                </Form.Item>
 
-            <Form.Item
-              name="captcha"
-              rules={[
-                { required: true, message: '请输入验证码！' },
-                { pattern: /^\d{6}$/, message: '验证码为6位数字' },
-              ]}
-            >
-              <Input
-                prefix={<LockOutlined />}
-                placeholder="请输入短信验证码"
-                maxLength={6}
-                suffix={
-                  countdown > 0 ? (
-                    <span style={{ color: '#999', fontSize: 12 }}>
-                      {countdown}秒后可重新获取
-                    </span>
-                  ) : (
-                    <Button
-                      type="link"
-                      size="small"
-                      onClick={handleGetCaptcha}
-                      style={{ padding: 0, height: 'auto' }}
-                    >
-                      获取验证码
-                    </Button>
-                  )
-                }
-              />
-            </Form.Item>
+                <Form.Item
+                  name="captcha"
+                  preserve={false}
+                  rules={[
+                    { required: true, message: '请输入验证码！' },
+                    { pattern: /^\d{6}$/, message: '验证码为6位数字' },
+                  ]}
+                >
+                  <Input
+                    prefix={<LockOutlined />}
+                    placeholder="请输入短信验证码"
+                    maxLength={6}
+                    suffix={
+                      countdown > 0 ? (
+                        <span style={{ color: '#999', fontSize: 12 }}>
+                          {countdown}秒后可重新获取
+                        </span>
+                      ) : (
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={handleGetCaptcha}
+                          style={{ padding: 0, height: 'auto' }}
+                        >
+                          获取验证码
+                        </Button>
+                      )
+                    }
+                  />
+                </Form.Item>
+              </>
+            )}
 
             <Form.Item>
               <Button type="primary" htmlType="submit" block>

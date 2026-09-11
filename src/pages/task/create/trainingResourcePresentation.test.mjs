@@ -4,10 +4,12 @@ import test from 'node:test';
 import {
   buildTrainingResourceRequest,
   formatMiB,
+  formatTrainingResourceSummary,
   resourceStatusPresentation,
 } from './trainingResourcePresentation.mjs';
 
 const capability = {
+  displayName: 'RTX 4080',
   deviceType: 'NVIDIA_GPU',
   cpu: { requestCores: 1, limitCores: 4 },
   memory: { requestMiB: 2048, limitMiB: 8192 },
@@ -92,4 +94,19 @@ test('resource status and memory labels never invent missing values', () => {
   assert.equal('无数据', formatMiB(undefined));
   assert.equal('success', resourceStatusPresentation(capability).type);
   assert.equal('error', resourceStatusPresentation(undefined, '接口超时').type);
+});
+
+test('confirmation displays the resources that will actually be submitted', () => {
+  assert.equal(
+    'RTX 4080 / 1 核 / 4 GiB',
+    formatTrainingResourceSummary(
+      'custom',
+      { cpuCores: 1, memoryMiB: 4096 },
+      capability,
+    ),
+  );
+  assert.equal(
+    'RTX 4080 / 4 核 / 8 GiB',
+    formatTrainingResourceSummary('recommended', {}, capability),
+  );
 });

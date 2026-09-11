@@ -5,6 +5,23 @@ export function formatMiB(value) {
   return `${Math.round(amount)} MiB`;
 }
 
+/** 确认页必须展示本次真正提交的资源值，避免把方案上限误当成自定义值。 */
+export function formatTrainingResourceSummary(mode, values, capability) {
+  if (!capability) return '-';
+  const custom = mode === 'custom';
+  const cpuCores = Number(
+    custom ? values?.cpuCores : capability.cpu?.limitCores,
+  );
+  const memoryMiB = Number(
+    custom ? values?.memoryMiB : capability.memory?.limitMiB,
+  );
+  const cpuText = Number.isFinite(cpuCores) ? `${cpuCores} 核` : '无数据';
+  const hardwareText = capability.displayName
+    ? `${capability.displayName} / `
+    : '';
+  return `${hardwareText}${cpuText} / ${formatMiB(memoryMiB)}`;
+}
+
 export function resourceStatusPresentation(capability, error) {
   if (error) {
     return {
