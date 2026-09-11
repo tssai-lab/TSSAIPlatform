@@ -231,9 +231,10 @@ public class TrainingExperimentService {
         version.setExperimentId(experimentId);
         version.setVersionNo(latest.getVersionNo() + 1);
         version.setName(defaultName(req.getName(), latest.getName()));
-        String resolvedModelVersionId = resolveBaseModelVersionId(
-                req.getBaseModelVersionId(),
-                firstText(req.getModelVersionId(), latest.getModelVersionId())
+        // 只有请求同时传入两个不同字段时才算冲突；未传旧字段时可用新字段覆盖上一版模型。
+        String resolvedModelVersionId = firstText(
+                resolveBaseModelVersionId(req.getBaseModelVersionId(), req.getModelVersionId()),
+                latest.getModelVersionId()
         );
         version.setModelVersionId(resolvedModelVersionId);
         version.setCodeVersionId(firstRequiredText(req.getCodeVersionId(), latest.getCodeVersionId(), "codeVersionId 不能为空"));
