@@ -286,6 +286,7 @@ class KubernetesInferenceJobManifestBuilderTest {
 
         assertTrue(yaml.contains("kind: ResourceClaimTemplate"));
         assertTrue(yaml.contains("image: gpu-worker:test"));
+        assertTrue(yaml.contains("imagePullPolicy: IfNotPresent"));
         assertTrue(yaml.contains("resourceClaimTemplateName: tss-gpu-"));
         assertTrue(yaml.contains("name: TSS_SELECTED_GPU_UUID"));
         assertTrue(yaml.contains("value: \"GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\""));

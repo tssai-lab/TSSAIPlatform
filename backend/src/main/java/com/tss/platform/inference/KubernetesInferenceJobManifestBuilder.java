@@ -41,7 +41,7 @@ public class KubernetesInferenceJobManifestBuilder {
     @Value("${inference.kubernetes.worker-image-pull-policy:IfNotPresent}")
     private String workerImagePullPolicy;
 
-    @Value("${inference.kubernetes.gpu-worker-image:tss-inference-worker-gpu:local}")
+    @Value("${inference.kubernetes.gpu-worker-image}")
     private String gpuWorkerImage;
 
     private final InferenceResourceProfileService resourceProfileService;

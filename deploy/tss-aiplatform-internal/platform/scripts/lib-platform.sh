@@ -44,7 +44,7 @@ load_platform_config() {
   TSS_K8S_CLIENT_MODE="${TSS_K8S_CLIENT_MODE:-fabric8}"
   TSS_EXACT_GPU_SELECTION_ENABLED="${TSS_EXACT_GPU_SELECTION_ENABLED:-false}"
   TSS_GPU_DEVICE_CLASS_NAME="${TSS_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}"
-  TSS_GPU_INFERENCE_WORKER_IMAGE="${TSS_GPU_INFERENCE_WORKER_IMAGE:-tss-inference-worker-gpu:local}"
+  TSS_GPU_INFERENCE_WORKER_IMAGE="${TSS_GPU_INFERENCE_WORKER_IMAGE:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu@sha256:7354987c572dfca03f027442cbd034483f4c915eecf1e4df139e01b35b33c114}"
 
   local name
   for name in \

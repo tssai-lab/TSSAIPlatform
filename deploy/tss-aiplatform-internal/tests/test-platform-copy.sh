@@ -7,15 +7,18 @@ reproducible_root="${repo_root}/deploy/tss-aiplatform-internal/reproducible"
 compose="${platform_root}/compose.yml"
 lock="${platform_root}/platform-images.lock"
 runtime_lock="${reproducible_root}/runtime-images.lock"
+gpu_runtime_lock="${reproducible_root}/gpu-runtime-images.lock"
 dependency_inventory="${reproducible_root}/main-dependency-inventory.tsv"
 frontend_lock="${reproducible_root}/frontend-source.lock"
 frontend_nginx="${reproducible_root}/nginx/frontend.conf.template"
 rbac="${platform_root}/k8s/backend-access.yaml"
 workflow="${repo_root}/.github/workflows/tss-aiplatform-internal-validation.yml"
 classifier="${repo_root}/deploy/tss-aiplatform-internal/ci/classify-backend-deploy-scope.sh"
+backend_application="${repo_root}/backend/src/main/resources/application.yml"
+inference_manifest_builder="${repo_root}/backend/src/main/java/com/tss/platform/inference/KubernetesInferenceJobManifestBuilder.java"
 
 for file in \
-  "$compose" "$lock" "$rbac" \
+  "$compose" "$lock" "$rbac" "$backend_application" "$inference_manifest_builder" \
   "$platform_root/platform.env.example" \
   "$platform_root/scripts/lib-platform.sh" \
   "$platform_root/scripts/generate-platform-secrets.sh" \
@@ -35,7 +38,7 @@ for file in \
   "$platform_root/scripts/bootstrap-platform.sh" \
   "$platform_root/scripts/verify-internal-kubeadm.sh" \
   "$reproducible_root/README.md" \
-  "$runtime_lock" "$dependency_inventory" "$frontend_lock" "$frontend_nginx"; do
+  "$runtime_lock" "$gpu_runtime_lock" "$dependency_inventory" "$frontend_lock" "$frontend_nginx"; do
   [[ -f $file ]] || { echo "missing C5 file: $file" >&2; exit 1; }
 done
 
@@ -122,6 +125,17 @@ for image_variable in \
   grep -F "|${image_ref}|" "$lock" >/dev/null \
     || { echo "platform environment image is absent from the lock: $image_variable" >&2; exit 1; }
 done
+
+gpu_inference_ref="$(sed -n 's/^TSS_GPU_INFERENCE_WORKER_IMAGE=//p' "$platform_root/platform.env.example")"
+[[ -n $gpu_inference_ref ]]
+grep -F "|${gpu_inference_ref}|gpu-inference|" "$gpu_runtime_lock" >/dev/null \
+  || { echo "platform GPU inference image is absent from the runtime lock" >&2; exit 1; }
+grep -F "gpu-worker-image: \${INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:${gpu_inference_ref}}" \
+  "$backend_application" >/dev/null
+grep -F '@Value("${inference.kubernetes.gpu-worker-image}")' \
+  "$inference_manifest_builder" >/dev/null
+grep -F "INFERENCE_KUBERNETES_GPU_WORKER_IMAGE: \${TSS_GPU_INFERENCE_WORKER_IMAGE:-${gpu_inference_ref}}" \
+  "$compose" >/dev/null
 
 grep -F 'name: tss-aiplatform-internal' "$compose" >/dev/null
 grep -F '127.0.0.1:${TSS_POSTGRES_PORT' "$compose" >/dev/null

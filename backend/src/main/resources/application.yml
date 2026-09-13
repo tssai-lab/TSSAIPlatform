@@ -190,7 +190,7 @@ training:
 inference:
   kubernetes:
     worker-image: ${INFERENCE_KUBERNETES_WORKER_IMAGE:tss-inference-worker-cpu:local}
-    gpu-worker-image: ${INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:tss-inference-worker-gpu:local}
+    gpu-worker-image: ${INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu@sha256:7354987c572dfca03f027442cbd034483f4c915eecf1e4df139e01b35b33c114}
     worker-image-pull-policy: ${INFERENCE_KUBERNETES_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
     cpu-request: ${INFERENCE_KUBERNETES_CPU_REQUEST:500m}
     cpu-limit: ${INFERENCE_KUBERNETES_CPU_LIMIT:2}

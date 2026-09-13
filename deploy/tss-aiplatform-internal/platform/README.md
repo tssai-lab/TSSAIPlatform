@@ -82,6 +82,8 @@ root-owned `platform.env` only after all of the following are true:
 - host-level `nvidia-smi` confirms that no other laboratory user is using any
   GPU exposed by the worker's Device Plugin. The first-stage scheduler requests
   one GPU but cannot safely choose around unmanaged host processes.
+- `TSS_GPU_INFERENCE_WORKER_IMAGE` uses the immutable `gpu-inference` reference
+  recorded in `reproducible/gpu-runtime-images.lock`.
 
 The guarded Kubernetes bootstrap then installs the digest-locked NVIDIA Device
 Plugin, the `nvidia` RuntimeClass and the standalone DCGM Exporter from
