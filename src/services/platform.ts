@@ -297,9 +297,7 @@ export {
   fetchTaskList,
   fetchTaskDetail,
   createTask,
-  createConsistencyTask,
   createProfileTrainingTask,
-  CONSISTENCY_DEMO_PARAMS,
   CONSISTENCY_TRAINING_PROFILE,
   listExperimentVersions,
   getExperimentVersion,
@@ -311,7 +309,14 @@ export {
   publishTaskModel,
 } from './task';
 
-export { fetchTrainingPlans, type TrainingPlan } from './trainingPlans';
+export {
+  fetchTrainingPlans,
+  fetchTrainingHardwareOptions,
+  fetchTrainingResourceCapability,
+  type TrainingPlan,
+  type TrainingHardwareOption,
+  type TrainingResourceCapability,
+} from './trainingPlans';
 
 export {
   fetchMlflowMetricHistory,
@@ -349,6 +354,7 @@ export {
   deleteInferenceScript,
   createInferenceTask,
   listInferenceResourceProfiles,
+  listInferenceHardwareOptions,
   listInferenceTasks,
   getInferenceTask,
   stopInferenceTask,
@@ -361,6 +367,7 @@ export {
   type DeleteInferenceScriptResult,
   type DeleteInferenceTaskResult,
   type InferenceInputMode,
+  type InferenceHardwareOption,
   type InferenceResourceProfile,
   type InferenceScriptUploadResult,
   type InferenceScriptVersion,

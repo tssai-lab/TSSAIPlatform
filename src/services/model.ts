@@ -1,5 +1,7 @@
 import { request } from '@umijs/max';
+import { isLegacyEndpointUnavailable } from '@/utils/apiCompatibility.mjs';
 import { downloadAuthFile } from '@/utils/authFileDownload';
+import { modelFiles, modelPreview, modelReadData } from './modelReadResponse';
 import { collectPaginatedCandidates } from './paginatedCandidates.mjs';
 
 export type ModelTaskType = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT' | 'OTHER';
@@ -64,7 +66,11 @@ export type ModelDeleteResult = {
 };
 
 function formatBytes(sizeBytes?: number) {
-  if (sizeBytes === undefined || sizeBytes === null || Number.isNaN(sizeBytes)) {
+  if (
+    sizeBytes === undefined ||
+    sizeBytes === null ||
+    Number.isNaN(sizeBytes)
+  ) {
     return '-';
   }
   if (sizeBytes < 1024) {
@@ -113,7 +119,10 @@ export function resolveModelVersionId(
   assetId?: string,
 ): string | undefined {
   if (!version) return undefined;
-  const extra = version as ModelVersion & { modelVersionId?: string; versionId?: string };
+  const extra = version as ModelVersion & {
+    modelVersionId?: string;
+    versionId?: string;
+  };
   const candidates = [version.id, extra.modelVersionId, extra.versionId].filter(
     (v): v is string => typeof v === 'string' && v.length > 0,
   );
@@ -163,7 +172,9 @@ function mapModelItem(item?: BackendModelItem): API.ModelItem | undefined {
 }
 
 /** 解析 V2 model-uploads 响应为统一进度结构 */
-function normalizeV2ModelUploadDto(raw: unknown): API.ModelUploadInitResult | null {
+function normalizeV2ModelUploadDto(
+  raw: unknown,
+): API.ModelUploadInitResult | null {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<
     string,
     unknown
@@ -176,8 +187,7 @@ function normalizeV2ModelUploadDto(raw: unknown): API.ModelUploadInitResult | nu
     uploadId: String(data.uploadId),
     status: data.status ? String(data.status) : undefined,
     fileName: data.fileName ? String(data.fileName) : undefined,
-    fileSize:
-      data.fileSize != null ? Number(data.fileSize) : undefined,
+    fileSize: data.fileSize != null ? Number(data.fileSize) : undefined,
     chunkSize: data.chunkSize != null ? Number(data.chunkSize) : undefined,
     totalChunks:
       data.totalChunks != null ? Number(data.totalChunks) : undefined,
@@ -230,11 +240,11 @@ function normalizeV2ModelUploadComplete(raw: unknown): BackendModelItem | null {
 
 /**
  * 初始化或恢复模型分片上传。
- * 优先 V2 `/v2/model-uploads/init`（业务字段在 init 写入会话），失败回退 Legacy。
+ * 优先 V2（业务字段在 init 写入会话），仅接口不支持时兼容 Legacy。
  */
 export async function modelUploadInit(
   params: API.ModelUploadInitParams,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   const v2Body: Record<string, unknown> = {
     fileName: params.fileName,
@@ -261,8 +271,9 @@ export async function modelUploadInit(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型上传回执缺少 uploadId，请查询上传状态后再操作');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   return request<{ data: API.ModelUploadInitResult }>('/model/upload/init', {
@@ -279,12 +290,12 @@ export async function modelUploadInit(
   });
 }
 
-/** 上传模型分片；优先 V2 chunks，失败回退 Legacy */
+/** 上传模型分片；仅 V2 接口不支持时兼容旧接口，不重放结果不明的请求。 */
 export async function modelUploadChunk(
   uploadId: string,
   partIndex: number,
   chunk: Blob,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   try {
     const formData = new FormData();
@@ -303,8 +314,9 @@ export async function modelUploadChunk(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型分片回执缺少 uploadId，请查询上传状态后再操作');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   const formData = new FormData();
@@ -318,10 +330,10 @@ export async function modelUploadChunk(
   });
 }
 
-/** 查询模型上传进度；优先 V2 GET，失败回退 Legacy */
+/** 查询模型上传进度；仅 V2 接口不支持时兼容旧接口。 */
 export async function modelUploadProgress(
   uploadId: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   try {
     const raw = await request<unknown>(
@@ -336,24 +348,29 @@ export async function modelUploadProgress(
     if (normalized) {
       return { data: normalized };
     }
-  } catch {
-    // fall through
+    throw new Error('模型进度回执缺少 uploadId，请确认服务端响应');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
-  return request<{ data: API.ModelUploadInitResult }>('/model/upload/progress', {
-    method: 'GET',
-    params: { uploadId },
-    ...(options || {}),
-  });
+  return request<{ data: API.ModelUploadInitResult }>(
+    '/model/upload/progress',
+    {
+      method: 'GET',
+      params: { uploadId },
+      ...(options || {}),
+    },
+  );
 }
 
 /**
  * 完成模型上传。
- * 优先 V2 complete（仅 uploadId）；失败回退 Legacy complete（带业务字段）。
+ * 优先 V2 complete（仅 uploadId）；仅接口不支持时兼容 Legacy（带业务字段）。
+ * 服务端可能已完成入库，回执异常或超时不能再次提交到另一个接口。
  */
 export async function modelUploadComplete(
   params: API.ModelUploadCompleteParams,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   try {
     const raw = await request<unknown>(
@@ -370,8 +387,9 @@ export async function modelUploadComplete(
     if (completed?.id) {
       return { data: completed };
     }
-  } catch {
-    // fall through
+    throw new Error('模型完成回执缺少版本 ID，请先在模型列表确认是否已保存');
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
   }
 
   return request<{ data: BackendModelItem }>('/model/upload/complete', {
@@ -412,12 +430,9 @@ export async function fetchModelConsumerManifest(
         ...(options || {}),
       },
     );
-    const data = (
-      raw && typeof raw === 'object' && 'data' in (raw as object)
-        ? (raw as { data: unknown }).data
-        : raw
-    ) as Record<string, unknown> | null;
-    if (!data?.modelVersionId) return null;
+    const data = modelReadData(raw) as Record<string, unknown> | null;
+    if (!data?.modelVersionId || data.modelVersionId !== versionId)
+      throw new Error('模型消费清单回执不完整或版本不匹配');
     return {
       modelAssetId: String(data.modelAssetId || ''),
       modelVersionId: String(data.modelVersionId),
@@ -435,8 +450,9 @@ export async function fetchModelConsumerManifest(
       downloadUrl: data.downloadUrl ? String(data.downloadUrl) : undefined,
       filesUrl: data.filesUrl ? String(data.filesUrl) : undefined,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    if (isLegacyEndpointUnavailable(error)) return null;
+    throw error;
   }
 }
 
@@ -450,18 +466,27 @@ export type ModelListQuery = {
   artifactSpecIds?: string;
 };
 
-export async function getModelList(params?: ModelListQuery & {
-  sortBy?: string;
-  sortDirection?: string;
-}, options?: { [key: string]: any }) {
-  return request<{ data: { data: BackendModelItem[]; total: number } }>('/model/list', {
-    method: 'GET',
-    params,
-    ...(options || {}),
-  });
+export async function getModelList(
+  params?: ModelListQuery & {
+    sortBy?: string;
+    sortDirection?: string;
+  },
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: { data: BackendModelItem[]; total: number } }>(
+    '/model/list',
+    {
+      method: 'GET',
+      params,
+      ...(options || {}),
+    },
+  );
 }
 
-export async function getModelDetail(id: string, options?: { [key: string]: any }) {
+export async function getModelDetail(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
   return request<{ data: BackendModelItem }>('/model/detail', {
     method: 'GET',
     params: { id },
@@ -469,7 +494,10 @@ export async function getModelDetail(id: string, options?: { [key: string]: any 
   });
 }
 
-export async function listModelCodeFiles(id: string, options?: { [key: string]: any }) {
+export async function listModelCodeFiles(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
   try {
     const raw = await request<unknown>(
       `/v2/model-versions/${encodeURIComponent(id)}/files`,
@@ -479,27 +507,22 @@ export async function listModelCodeFiles(id: string, options?: { [key: string]: 
         ...(options || {}),
       },
     );
-    const obj = raw as Record<string, unknown>;
-    const data = obj?.data ?? raw;
-    const list = Array.isArray(data)
-      ? data
-      : Array.isArray((data as { files?: unknown })?.files)
-        ? (data as { files: unknown[] }).files
-        : [];
-    return { data: list as API.ModelCodeFile[] };
-  } catch {
-    return request<{ data: API.ModelCodeFile[] }>('/model/code-files', {
+    return { data: modelFiles(raw) };
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
+    const raw = await request<unknown>('/model/code-files', {
       method: 'GET',
       params: { id },
       ...(options || {}),
     });
+    return { data: modelFiles(raw) };
   }
 }
 
 export async function previewModelCode(
   id: string,
   path: string,
-  options?: { [key: string]: any },
+  options?: { [key: string]: unknown },
 ) {
   try {
     const raw = await request<unknown>(
@@ -511,31 +534,22 @@ export async function previewModelCode(
         ...(options || {}),
       },
     );
-    const obj = raw as Record<string, unknown>;
-    const data =
-      obj?.data && typeof obj.data === 'object' ? obj.data : obj;
-    return {
-      data: {
-        path,
-        content:
-          typeof (data as { content?: string }).content === 'string'
-            ? (data as { content: string }).content
-            : typeof data === 'string'
-              ? data
-              : JSON.stringify(data, null, 2),
-        ...(typeof data === 'object' && data ? data : {}),
-      } as API.ModelCodePreview,
-    };
-  } catch {
-    return request<{ data: API.ModelCodePreview }>('/model/previewCode', {
+    return { data: modelPreview(raw, path) };
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
+    const raw = await request<unknown>('/model/previewCode', {
       method: 'GET',
       params: { id, path },
       ...(options || {}),
     });
+    return { data: modelPreview(raw, path) };
   }
 }
 
-export async function deleteModel(id: string, options?: { [key: string]: any }) {
+export async function deleteModel(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
   return deleteModelVersion(id, options);
 }
 
@@ -553,11 +567,17 @@ export async function createModelAsset(
   });
 }
 
-export async function getModelAsset(id: string, options?: { [key: string]: unknown }) {
-  return request<{ data: ModelAsset }>(`/model-assets/${encodeURIComponent(id)}`, {
-    method: 'GET',
-    ...(options || {}),
-  });
+export async function getModelAsset(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: ModelAsset }>(
+    `/model-assets/${encodeURIComponent(id)}`,
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
 }
 
 export async function listModelAssets(options?: { [key: string]: unknown }) {
@@ -572,22 +592,31 @@ export async function updateModelAsset(
   body: Pick<ModelAsset, 'name' | 'type'> & { remark?: string },
   options?: { [key: string]: unknown },
 ) {
-  return request<{ data: ModelAsset }>(`/model-assets/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    data: body,
-    ...(options || {}),
-  });
+  return request<{ data: ModelAsset }>(
+    `/model-assets/${encodeURIComponent(id)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      ...(options || {}),
+    },
+  );
 }
 
-export async function deleteModelAsset(id: string, options?: { [key: string]: unknown }) {
-  return request<{ data: ModelDeleteResult }>(`/model-assets/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    ...(options || {}),
-  });
+export async function deleteModelAsset(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: ModelDeleteResult }>(
+    `/model-assets/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
 }
 
-/** PUT /api/v2/model-assets/{assetId}/current-version（正式）；失败回退兼容路径 */
+/** 切换当前版本；仅新接口不支持时走兼容路径，保留业务冲突和权限错误。 */
 export async function switchModelCurrentVersion(
   assetId: string,
   versionId: string,
@@ -604,7 +633,8 @@ export async function switchModelCurrentVersion(
         ...(options || {}),
       },
     );
-  } catch {
+  } catch (error) {
+    if (!isLegacyEndpointUnavailable(error)) throw error;
     return request<{ success?: boolean; data?: unknown }>(
       `/model-assets/${encodeURIComponent(assetId)}/current-version`,
       {
@@ -651,14 +681,23 @@ export async function createModelVersion(
   });
 }
 
-export async function getModelVersion(id: string, options?: { [key: string]: unknown }) {
-  return request<{ data: ModelVersion }>(`/model-versions/${encodeURIComponent(id)}`, {
-    method: 'GET',
-    ...(options || {}),
-  });
+export async function getModelVersion(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: ModelVersion }>(
+    `/model-versions/${encodeURIComponent(id)}`,
+    {
+      method: 'GET',
+      ...(options || {}),
+    },
+  );
 }
 
-export async function listModelVersions(assetId?: string, options?: { [key: string]: unknown }) {
+export async function listModelVersions(
+  assetId?: string,
+  options?: { [key: string]: unknown },
+) {
   return request<{ data: ModelVersion[] }>('/model-versions', {
     method: 'GET',
     params: assetId ? { assetId } : undefined,
@@ -668,22 +707,36 @@ export async function listModelVersions(assetId?: string, options?: { [key: stri
 
 export async function updateModelVersion(
   id: string,
-  body: Partial<Pick<ModelVersion, 'assetId' | 'version' | 'fileName' | 'storagePath' | 'sizeBytes'>>,
+  body: Partial<
+    Pick<
+      ModelVersion,
+      'assetId' | 'version' | 'fileName' | 'storagePath' | 'sizeBytes'
+    >
+  >,
   options?: { [key: string]: unknown },
 ) {
-  return request<{ data: ModelVersion }>(`/model-versions/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    data: body,
-    ...(options || {}),
-  });
+  return request<{ data: ModelVersion }>(
+    `/model-versions/${encodeURIComponent(id)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data: body,
+      ...(options || {}),
+    },
+  );
 }
 
-export async function deleteModelVersion(id: string, options?: { [key: string]: unknown }) {
-  return request<{ data: ModelDeleteResult }>(`/model-versions/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    ...(options || {}),
-  });
+export async function deleteModelVersion(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
+  return request<{ data: ModelDeleteResult }>(
+    `/model-versions/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
 }
 
 export async function fetchModelList(options?: {
@@ -739,8 +792,9 @@ export async function fetchModelList(options?: {
 
 /** V2 训练方案候选：服务端先按规格筛选，再逐页取回，避免 100 条截断。 */
 export async function fetchTrainingModelCandidates(artifactSpecIds: string[]) {
-  const normalizedSpecIds = [...new Set(artifactSpecIds.map((value) => value.trim()))]
-    .filter(Boolean);
+  const normalizedSpecIds = [
+    ...new Set(artifactSpecIds.map((value) => value.trim())),
+  ].filter(Boolean);
   if (!normalizedSpecIds.length) return { data: [], total: 0 };
   return collectPaginatedCandidates<API.ModelItem>(
     (current, pageSize) =>
@@ -831,10 +885,16 @@ export async function fetchModelVersionCodePreview(
   versionId: string,
   options?: { [key: string]: unknown },
 ) {
-  const versionRes = await getModelVersion(versionId, options).catch(() =>
-    getModelDetail(versionId, options),
+  const versionRes = await getModelVersion(versionId, options).catch(
+    (error) => {
+      if (!isLegacyEndpointUnavailable(error)) throw error;
+      return getModelDetail(versionId, options);
+    },
   );
-  const raw = versionRes?.data as ModelVersion | BackendModelItem | undefined;
+  const raw = modelReadData(versionRes) as
+    | ModelVersion
+    | BackendModelItem
+    | undefined;
   const version: API.ModelVersionDetail | undefined = raw
     ? {
         id: raw.id,
@@ -847,39 +907,41 @@ export async function fetchModelVersionCodePreview(
         createdAt: raw.createdAt,
         updatedAt: 'updatedAt' in raw ? raw.updatedAt : undefined,
         artifactSha256:
-          'artifactSha256' in raw ? (raw as any).artifactSha256 : undefined,
-        commitInfo: 'commitInfo' in raw ? (raw as any).commitInfo : undefined,
-        hyperParams:
-          'hyperParams' in raw ? (raw as any).hyperParams : undefined,
-        isCurrent: 'isCurrent' in raw ? (raw as any).isCurrent : undefined,
-        status: 'status' in raw ? (raw as any).status : undefined,
-        remark: 'remark' in raw ? (raw as any).remark : undefined,
+          'artifactSha256' in raw ? raw.artifactSha256 : undefined,
+        commitInfo: 'commitInfo' in raw ? raw.commitInfo : undefined,
+        hyperParams: 'hyperParams' in raw ? raw.hyperParams : undefined,
+        isCurrent: 'isCurrent' in raw ? raw.isCurrent : undefined,
+        status: 'status' in raw ? raw.status : undefined,
+        remark: 'remark' in raw ? raw.remark : undefined,
       }
     : undefined;
 
-  if (!version) {
-    return { data: undefined };
-  }
+  if (!version || version.id !== versionId)
+    throw new Error('模型版本回执不完整或版本不匹配');
 
   let codeContent: string | undefined;
   let codeFileName: string | undefined;
   let codeFilePath: string | undefined;
   let codeFiles: API.ModelCodeFile[] = [];
 
-  try {
+  {
     const codeFilesRes = await listModelCodeFiles(versionId, options);
     codeFiles = codeFilesRes?.data ?? [];
     if (codeFiles.length > 0 && codeFiles[0].path) {
-      const previewRes = await previewModelCode(versionId, codeFiles[0].path, options);
-      if (previewRes?.data?.content) {
+      const previewRes = await previewModelCode(
+        versionId,
+        codeFiles[0].path,
+        options,
+      );
+      if (typeof previewRes?.data?.content === 'string') {
         codeContent = previewRes.data.content;
         codeFileName =
-          previewRes.data.fileName || codeFiles[0].fileName || codeFiles[0].path;
+          previewRes.data.fileName ||
+          codeFiles[0].fileName ||
+          codeFiles[0].path;
         codeFilePath = previewRes.data.path || codeFiles[0].path;
       }
     }
-  } catch {
-    codeFiles = [];
   }
 
   return {
@@ -894,7 +956,10 @@ export async function fetchModelVersionCodePreview(
 }
 
 /** 兼容：按模型版本 ID 查详情（§3.2） */
-export async function fetchModelDetail(id: string, options?: { [key: string]: any }) {
+export async function fetchModelDetail(
+  id: string,
+  options?: { [key: string]: unknown },
+) {
   const codeRes = await fetchModelVersionCodePreview(id, options);
   if (!codeRes?.data) {
     return { data: undefined };

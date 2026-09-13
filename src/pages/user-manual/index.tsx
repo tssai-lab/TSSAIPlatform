@@ -63,7 +63,7 @@ const modelConstraints = [
   {
     key: 'modelType',
     constraint: '模型类型',
-    specification: 'CV（计算机视觉）/ NLP（自然语言处理）/ OTHER（暂未归类）',
+    specification: 'CV / NLP / POINT_CLOUD / ROBOT / OTHER（暂未归类）',
     remark: '上传后不可更改',
   },
   {
@@ -166,6 +166,13 @@ const datasetConstraints = [
     constraint: '机器人数据集',
     specification: '.xml / .yaml / .yml / .zip',
     remark: '仅支持单个配置文件或配置类 zip',
+  },
+  {
+    key: 'otherFormat',
+    constraint: '暂未归类数据集',
+    specification:
+      '安全白名单内的图片、文本、XML/YAML、PLY/PCD、Parquet、视频等文件或 .zip',
+    remark: '仅用于存储和检索，不自动取得训练资格',
   },
   {
     key: 'versionFormat',
@@ -997,6 +1004,21 @@ event({"type": "progress", "progress": 100})
                   模型/数据集/训练/推理的基本使用、算力状态查看、个人操作日志
                 </Descriptions.Item>
               </Descriptions>
+            </Card>
+
+            <Card style={cardStyle} title="新增账号与 API 权限">
+              <Paragraph>
+                管理员新增或恢复账号后，页面会显示后端随机生成的临时密码。该明文只显示这一次，请立即通过安全方式交给用户；如果遗失，请走密码重置流程，不要尝试公共默认密码。
+              </Paragraph>
+              <Paragraph>
+                超级管理员可在“系统管理 → 用户管理”的“API
+                权限”入口，按模型、数据集、训练代码与方案、训练任务、推理任务、系统管理与审计六个功能组，单独禁用或恢复某个用户，也可设置该用户在该功能组的并发上限。恢复立即生效，无需重启或重新登录；已有运行任务不会被删除。
+              </Paragraph>
+              <Alert
+                showIcon
+                type="warning"
+                message="用户级设置只会收紧原有角色权限，不会把普通用户提升成管理员"
+              />
             </Card>
 
             <Card style={cardStyle} title="系统配置">

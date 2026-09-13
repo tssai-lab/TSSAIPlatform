@@ -1,4 +1,9 @@
-export type ModelUploadCategory = 'CV' | 'NLP' | 'POINT_CLOUD' | 'ROBOT';
+export type ModelUploadCategory =
+  | 'CV'
+  | 'NLP'
+  | 'POINT_CLOUD'
+  | 'ROBOT'
+  | 'OTHER';
 
 export const MODEL_UPLOAD_CATEGORY_OPTIONS: readonly Readonly<{
   value: ModelUploadCategory;

@@ -10,6 +10,8 @@ export const SYSTEM_API_CONFIG = {
     USER_DELETE: '/system/user/delete',
     USER_TOGGLE_STATUS: '/system/user/toggleStatus',
     USER_CHECK_USERNAME: '/system/user/checkUsername',
+    /** 超级管理员重置指定账号密码 */
+    USER_RESET_PASSWORD: '/user/reset-password',
     /** 将普通用户晋升为普通管理员（仅超管） */
     USER_PROMOTE_TO_ADMIN: '/user/promote-to-admin',
 

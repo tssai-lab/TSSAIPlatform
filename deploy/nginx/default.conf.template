@@ -41,6 +41,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # The HTML shell points at content-hashed JavaScript bundles. Never retain
+    # an old shell across a deployment, otherwise an already-open browser may
+    # keep rendering the previous metric rules (for example, `null%`).
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

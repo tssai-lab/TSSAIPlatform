@@ -59,11 +59,46 @@ export interface EditUserParams {
   status: string;
 }
 
+/** 超级管理员重置指定账号密码 */
+export interface ResetUserPasswordParams {
+  userId: number;
+  newPassword: string;
+}
+
 /** 通用响应结构 */
 export interface CommonResponse<T = any> {
   code: number;
   message: string;
   data?: T;
+}
+
+export interface TemporaryPasswordData {
+  temporaryPassword: string;
+}
+
+export type UserApiFeatureGroup =
+  | 'MODEL_ASSET'
+  | 'DATASET_ASSET'
+  | 'TRAINING_DEFINITION'
+  | 'TRAINING_TASK'
+  | 'INFERENCE_TASK'
+  | 'SYSTEM_ADMIN_AUDIT';
+
+export interface UserApiPolicy {
+  userId: number;
+  featureGroup: UserApiFeatureGroup;
+  displayName: string;
+  enabled: boolean;
+  maxConcurrentRequests: number | null;
+  inherited: boolean;
+  version: number | null;
+  updatedAt?: string | null;
+}
+
+export interface UserApiPolicyUpdate {
+  enabled: boolean;
+  maxConcurrentRequests: number | null;
+  version?: number | null;
 }
 
 /** 列表角色展示：仅按 roleId / role_id 映射（1 超管 2 普管 3 普通用户） */
@@ -185,11 +220,47 @@ export async function fetchUserList(params: UserListParams): Promise<UserListRes
 
 /** 新增用户 POST /api/system/user/add */
 export async function addUser(params: AddUserParams) {
-  return request<CommonResponse<UserItem>>(SYSTEM_API_CONFIG.ENDPOINTS.USER_ADD, {
+  return request<CommonResponse<TemporaryPasswordData>>(SYSTEM_API_CONFIG.ENDPOINTS.USER_ADD, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     data: params,
   });
+}
+
+export async function fetchUserApiPolicies(userId: number) {
+  return request<CommonResponse<UserApiPolicy[]>>(
+    `/system/user/${userId}/api-policies`,
+    { method: 'GET' },
+  );
+}
+
+export async function updateUserApiPolicy(
+  userId: number,
+  featureGroup: UserApiFeatureGroup,
+  data: UserApiPolicyUpdate,
+) {
+  return request<CommonResponse<UserApiPolicy>>(
+    `/system/user/${userId}/api-policies/${featureGroup}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      data,
+    },
+  );
+}
+
+export async function resetUserApiPolicy(
+  userId: number,
+  featureGroup: UserApiFeatureGroup,
+  version?: number | null,
+) {
+  return request<CommonResponse<UserApiPolicy>>(
+    `/system/user/${userId}/api-policies/${featureGroup}`,
+    {
+      method: 'DELETE',
+      params: version == null ? undefined : { version },
+    },
+  );
 }
 
 /** 编辑用户 PUT /api/system/user/edit */
@@ -199,6 +270,18 @@ export async function editUser(params: EditUserParams) {
     headers: { 'Content-Type': 'application/json' },
     data: params,
   });
+}
+
+/** 重置指定账号密码；权限由后端再次校验，成功后该账号现有会话失效。 */
+export async function resetUserPassword(params: ResetUserPasswordParams) {
+  return request<CommonResponse>(
+    SYSTEM_API_CONFIG.ENDPOINTS.USER_RESET_PASSWORD,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      data: params,
+    },
+  );
 }
 
 /** 删除用户 DELETE /api/system/user/delete */

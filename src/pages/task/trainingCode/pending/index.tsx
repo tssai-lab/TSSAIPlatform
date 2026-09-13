@@ -119,6 +119,11 @@ const TrainingCodePending: React.FC = () => {
   const access = useAccess();
   const ownerUsernameMap = useOwnerUsernameMap();
   const actionRef = useRef<ActionType | null>(null);
+  const listRequestSequence = useRef(0);
+  const [listNotice, setListNotice] = useState<{
+    type: 'error' | 'warning';
+    text: string;
+  }>();
   const [addOpen, setAddOpen] = useState(false);
   const [addForm] = Form.useForm();
   const [adding, setAdding] = useState(false);
@@ -168,6 +173,7 @@ const TrainingCodePending: React.FC = () => {
     sortBy?: string;
     sortDirection?: string;
   }) => {
+    const sequence = ++listRequestSequence.current;
     const current = params.current ?? 1;
     const pageSize = params.pageSize ?? 10;
     const approvalStatus =
@@ -198,10 +204,24 @@ const TrainingCodePending: React.FC = () => {
         },
         { skipErrorHandler: true },
       );
-      remote = Array.isArray(res?.data) ? res.data : [];
+      if (!res || res.success === false || !Array.isArray(res.data)) {
+        throw new Error('管理员待审核列表响应异常');
+      }
+      // 新查询开始后，迟到的旧结果不能覆盖列表或清除新告警。
+      if (sequence !== listRequestSequence.current) {
+        return { data: [], success: false, total: 0 };
+      }
+      setListNotice(res.incomplete
+        ? { type: 'warning', text: res.warningMessage || '待审核列表未完整加载，请重试' }
+        : undefined);
+      remote = res.data;
       total = res?.total ?? remote.length;
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, '加载待审核队列失败'));
+      if (sequence === listRequestSequence.current) {
+        setListNotice({ type: 'error', text: getApiErrorMessage(error, '加载待审核队列失败') });
+      }
+      // ProTable 的 success=false 会保留旧表；本地登记不能代替远端读取成功。
+      return { data: [], success: false, total: 0 };
     }
 
     const remoteIds = new Set(remote.map((item) => item.codeVersionId));
@@ -743,13 +763,26 @@ const TrainingCodePending: React.FC = () => {
           </span>
         }
       />
+      {listNotice && (
+        <Alert
+          type={listNotice.type}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={listNotice.text}
+          description={listNotice.type === 'error'
+            ? '本次查询未成功；如表格仍有记录，展示的是上次查询结果，不代表当前筛选条件下的最新队列。'
+            : '当前展示已读取的记录，不能据此判断其它待审核代码不存在。'}
+          action={<Button size="small" onClick={() => actionRef.current?.reload()}>重试加载</Button>}
+        />
+      )}
       <ProTable<CodeVersionListItem>
         actionRef={actionRef}
         columns={columns}
         request={requestList}
         rowKey="codeVersionId"
         search={{ labelWidth: 'auto' }}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
+        // 只设初始值，让用户选择的每页条数与实际请求、表格展示保持一致。
+        pagination={{ defaultPageSize: 10, showSizeChanger: true }}
         tableLayout="auto"
         scroll={{ x: 'max-content' }}
         toolBarRender={() => [

@@ -175,7 +175,7 @@ declare namespace API {
     modelId?: string;
     datasetId?: string;
     createTime: string;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    status: 'pending' | 'queued' | 'scheduled' | 'running' | 'success' | 'failed' | 'stopped';
     progress: number;
     modelVersionId?: string;
     baseModelVersionId?: string;
@@ -193,6 +193,17 @@ declare namespace API {
     trainingPlanVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    runSpec?: {
+      resources?: {
+        profileId?: string;
+        gpuNodeName?: string;
+        gpuHostIndex?: string;
+        gpuUuid?: string;
+        gpuModel?: string;
+        gpuTotalMemoryMiB?: number;
+        gpuMemoryLimitMiB?: number;
+      };
+    };
     datasetVersionId?: string;
     hyperParams?: Record<string, any>;
     metrics?: Record<string, any>;
@@ -234,9 +245,20 @@ declare namespace API {
     trainingPlanVersion?: string;
     trainingMode?: string;
     resourceProfileId?: string;
+    runSpec?: {
+      resources?: {
+        profileId?: string;
+        gpuNodeName?: string;
+        gpuHostIndex?: string;
+        gpuUuid?: string;
+        gpuModel?: string;
+        gpuTotalMemoryMiB?: number;
+        gpuMemoryLimitMiB?: number;
+      };
+    };
     datasetVersionId: string;
     hyperParams?: Record<string, any>;
-    status: 'pending' | 'queued' | 'running' | 'success' | 'failed' | 'stopped';
+    status: 'pending' | 'queued' | 'scheduled' | 'running' | 'success' | 'failed' | 'stopped';
     progress?: number;
     metrics?: Record<string, any>;
     runId?: string;
@@ -388,14 +410,23 @@ declare namespace API {
     hostname: string;
     enabled?: boolean;
     status: 'online' | 'warning';
-    cpuRate: number;
-    memRate: number;
-    gpuRate: number;
-    diskRate?: number;
-    networkIn?: number;
-    networkOut?: number;
-    gpuMemRate?: number;
-    gpuTemp?: number;
+    cpuRate: number | null;
+    memRate: number | null;
+    gpuRate: number | null;
+    diskRate?: number | null;
+    networkIn?: number | null;
+    networkOut?: number | null;
+    gpuMemRate?: number | null;
+    gpuTemp?: number | null;
+    gpuDevices?: Array<{
+      hostGpuIndex?: string | null;
+      uuid?: string | null;
+      model?: string | null;
+      totalMemoryMiB?: number | null;
+      freeMemoryMiB?: number | null;
+      utilizationRate?: number | null;
+      temperatureCelsius?: number | null;
+    }>;
     metricsStatus:
       | 'fresh'
       | 'temporarily_unavailable'
@@ -422,7 +453,7 @@ declare namespace API {
     online: number;
     runningTasks: number;
     queuedTasks: number;
-    avgGpu: string | number;
+    avgGpu: string | number | null;
   };
 
   type ResourceMonitorMetricPoint = {
@@ -430,7 +461,7 @@ declare namespace API {
     fullTime: string;
     time: string;
     type: string;
-    value: number;
+    value: number | null;
   };
 
   type ResourceMonitorMetrics = {

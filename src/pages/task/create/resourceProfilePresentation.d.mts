@@ -1,20 +1,24 @@
 import type { TrainingPlan } from '@/services/trainingPlans';
 
-export type CpuTrainingResourceProfile =
+export type TrainingResourceProfile =
   TrainingPlan['runtimes'][number]['resourceProfiles'][number] & {
     runtimeId: string;
-    deviceType: 'CPU';
+    deviceType: 'CPU' | 'NVIDIA_GPU';
   };
 
-export function listCpuTrainingResourceProfiles(
+export function listTrainingResourceProfiles(
   plan?: TrainingPlan,
-): CpuTrainingResourceProfile[];
+): TrainingResourceProfile[];
 
-export function firstCpuTrainingResourceProfileId(
+export function firstTrainingResourceProfileId(
   plan?: TrainingPlan,
 ): string | undefined;
 
-export function isCpuTrainingResourceProfileIdAllowed(
-  profiles: CpuTrainingResourceProfile[],
+export function isTrainingResourceProfileIdAllowed(
+  profiles: TrainingResourceProfile[],
   profileId: unknown,
 ): boolean;
+
+export function formatTrainingResourceProfileLabel(
+  profile?: TrainingResourceProfile,
+): string;

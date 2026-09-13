@@ -2,18 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  firstCpuTrainingResourceProfileId,
-  isCpuTrainingResourceProfileIdAllowed,
-  listCpuTrainingResourceProfiles,
+  firstTrainingResourceProfileId,
+  formatTrainingResourceProfileLabel,
+  isTrainingResourceProfileIdAllowed,
+  listTrainingResourceProfiles,
 } from './resourceProfilePresentation.mjs';
 
-test('only exposes CPU profiles while the platform is CPU-only', () => {
+test('exposes valid CPU and GPU profiles from one training plan', () => {
   const plan = {
     runtimes: [
       {
         id: 'gpu-runtime',
         deviceType: 'NVIDIA_GPU',
-        resourceProfiles: [{ id: 'gpu-1', gpuCount: 1 }],
+        resourceProfiles: [
+          {
+            id: 'gpu-1',
+            gpuCount: 1,
+            cpuLimit: '8',
+            memoryLimit: '16Gi',
+          },
+          { id: 'invalid-gpu-zero', gpuCount: 0 },
+        ],
       },
       {
         id: 'cpu-runtime',
@@ -27,16 +36,16 @@ test('only exposes CPU profiles while the platform is CPU-only', () => {
   };
 
   assert.deepEqual(
-    listCpuTrainingResourceProfiles(plan).map((item) => item.id),
-    ['cpu-small'],
+    listTrainingResourceProfiles(plan).map((item) => item.id),
+    ['gpu-1', 'cpu-small'],
   );
-  assert.equal(firstCpuTrainingResourceProfileId(plan), 'cpu-small');
+  assert.equal(firstTrainingResourceProfileId(plan), 'cpu-small');
 });
 
-test('empty or GPU-only plans have no selectable CPU profile', () => {
-  assert.deepEqual(listCpuTrainingResourceProfiles(undefined), []);
+test('GPU-only plan remains selectable and empty plan does not', () => {
+  assert.deepEqual(listTrainingResourceProfiles(undefined), []);
   assert.equal(
-    firstCpuTrainingResourceProfileId({
+    firstTrainingResourceProfileId({
       runtimes: [
         {
           id: 'gpu-runtime',
@@ -45,20 +54,72 @@ test('empty or GPU-only plans have no selectable CPU profile', () => {
         },
       ],
     }),
-    undefined,
+    'gpu-1',
+  );
+  assert.equal(firstTrainingResourceProfileId({ runtimes: [] }), undefined);
+});
+
+test('rejects invalid device counts and duplicate profile ids', () => {
+  const profiles = listTrainingResourceProfiles({
+    runtimes: [
+      {
+        id: 'cpu-runtime',
+        deviceType: 'CPU',
+        resourceProfiles: [
+          { id: 'cpu-small', gpuCount: 0 },
+          { id: 'cpu-with-gpu', gpuCount: 1 },
+        ],
+      },
+      {
+        id: 'gpu-runtime',
+        deviceType: 'NVIDIA_GPU',
+        resourceProfiles: [
+          { id: 'cpu-small', gpuCount: 1 },
+          { id: 'fractional-gpu', gpuCount: 0.5 },
+          { id: 'missing-gpu-count' },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(
+    profiles.map((item) => item.id),
+    ['cpu-small'],
   );
 });
 
-test('accepts only the preserved form value that belongs to the current CPU profiles', () => {
+test('accepts only the preserved form value that belongs to the current profiles', () => {
   const profiles = [{ id: 'cpu-small' }];
 
   assert.equal(
-    isCpuTrainingResourceProfileIdAllowed(profiles, 'cpu-small'),
+    isTrainingResourceProfileIdAllowed(profiles, 'cpu-small'),
     true,
   );
   assert.equal(
-    isCpuTrainingResourceProfileIdAllowed(profiles, undefined),
+    isTrainingResourceProfileIdAllowed(profiles, undefined),
     false,
   );
-  assert.equal(isCpuTrainingResourceProfileIdAllowed(profiles, 'gpu-1'), false);
+  assert.equal(isTrainingResourceProfileIdAllowed(profiles, 'gpu-1'), false);
+});
+
+test('formats resource labels without exposing internal profile ids', () => {
+  assert.equal(
+    formatTrainingResourceProfileLabel({
+      id: 'gpu-internal',
+      deviceType: 'NVIDIA_GPU',
+      gpuCount: 1,
+      cpuLimit: '8',
+      memoryLimit: '16Gi',
+    }),
+    'GPU · 1 卡 · 8 核 · 16Gi',
+  );
+  assert.equal(
+    formatTrainingResourceProfileLabel({
+      id: 'cpu-internal',
+      deviceType: 'CPU',
+      gpuCount: 0,
+      cpuLimit: '4',
+      memoryLimit: '8Gi',
+    }),
+    'CPU · 4 核 · 8Gi',
+  );
 });

@@ -1,12 +1,7 @@
-/**
- * 训练后模型性能对比页
- * - 单值指标多维对照表
- * - 多任务过程曲线对比
- * - 性能提升曲线：同一训练不同版本，或具有稳定资产标识的同一模型+同一数据集
- */
 import { PageContainer } from '@ant-design/pro-components';
 import { history, useSearchParams } from '@umijs/max';
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -17,402 +12,69 @@ import {
   Space,
   Table,
   Tag,
-  Tooltip,
 } from 'antd';
 import type { ColumnType } from 'antd/es/table';
-import * as echarts from 'echarts';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import type * as echarts from 'echarts';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * 训练后模型性能对比页
+ * - 单值指标多维对照表
+ * - 多任务过程曲线对比
+ * - 性能提升曲线：同一训练不同版本，或具有稳定资产标识的同一模型+同一数据集
+ */
 import { MLFLOW_METRIC_KEYS } from '@/services/mlflow';
 import {
-  fetchMlflowMetricsBulk,
   fetchTaskDetail,
   fetchTaskList,
   listExperimentVersions,
 } from '@/services/platform';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
-import { enrichTaskItemsWithDisplayNames } from '@/utils/taskDisplayNames';
+import { isStepSeriesMetric } from '@/utils/trainingMetrics';
+import { getTrainingStatusText } from '@/utils/trainingStatusDisplay';
 import {
-  isStepSeriesMetric,
-  METRIC_LABELS as SHARED_METRIC_LABELS,
-} from '@/utils/trainingMetrics';
-
-const COMPARE_POOL_KEY = 'comparePoolIds';
-
-/** 对比页优先解析 URL/对比池中的任务，否则最多解析前 20 条，避免一次打满详情 */
-async function enrichFocusedTaskDisplayNames(
-  list: API.TaskItem[],
-  focusIds: string[],
-  options?: { [key: string]: unknown },
-) {
-  if (!list.length) return list;
-  const focus = new Set(focusIds.filter(Boolean).map(String));
-  const targets = focus.size
-    ? list.filter((item) => focus.has(String(item.id)))
-    : list.slice(0, 20);
-  if (!targets.length) return list;
-  const enriched = await enrichTaskItemsWithDisplayNames(targets, options);
-  const byId = new Map(enriched.map((item) => [String(item.id), item]));
-  return list.map((item) => byId.get(String(item.id)) ?? item);
-}
-function loadComparePool(): string[] {
-  try {
-    const raw = localStorage.getItem(COMPARE_POOL_KEY);
-    const arr = raw ? (JSON.parse(raw) as any[]) : [];
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveComparePool(ids: string[]) {
-  const uniq = Array.from(new Set(ids.map(String))).slice(0, 30);
-  localStorage.setItem(COMPARE_POOL_KEY, JSON.stringify(uniq));
-  return uniq;
-}
-
-const METRIC_LABELS: Record<string, string> = {
-  ...SHARED_METRIC_LABELS,
-  train_loss: '训练损失',
-  val_accuracy: '验证准确率',
-  val_mAP50: '验证 mAP50',
-  val_mAP50_95: '验证 mAP50-95',
-};
-
-/** 任务项（带 runId） */
-type TaskWithRunId = API.TaskItem & { runId?: string };
-
-/** 每个任务的指标数据 */
-type TaskMetricsData = {
-  taskId: string;
-  taskName: string;
-  modelName: string;
-  datasetName: string;
-  modelId?: string;
-  datasetId?: string;
-  modelVersionId?: string;
-  datasetVersionId?: string;
-  experimentId?: string;
-  versionNo?: number;
-  createTime?: string;
-  producedModelVersionId?: string;
-  runId: string;
-  metrics: Record<string, { step: number; value: number }[]>;
-};
-
-type ComparableGroup = {
-  /** experiment：同一训练不同版本；modelDataset：同模型+同数据集 */
-  kind: 'experiment' | 'modelDataset';
-  slug: string;
-  title: string;
-  modelName: string;
-  datasetName: string;
-  experimentId?: string;
-  tasks: TaskMetricsData[];
-};
-
-function lastPoint(series?: { step: number; value: number }[]) {
-  if (!series?.length) return null;
-  const sorted = [...series].sort((a, b) => a.step - b.step);
-  return sorted[sorted.length - 1] ?? null;
-}
-
-function formatNum(v: number | null | undefined, digits = 4) {
-  if (v == null || Number.isNaN(v)) return '-';
-  return Number(v).toFixed(digits);
-}
-
-/** 版本展示：同名任务靠版本号区分 */
-function formatVersionNo(versionNo?: number) {
-  return versionNo != null ? `第 ${versionNo} 版` : '-';
-}
-
-/** 截断 ID，完整值放 title */
-function shortId(id?: string, keep = 10) {
-  if (!id) return '-';
-  return id.length > keep ? `${id.slice(0, keep)}…` : id;
-}
-
-/** 曲线图例：名称 + 版本 + 短任务 ID，避免多条同名线无法辨认 */
-function formatTaskSeriesName(
-  task: Pick<TaskMetricsData, 'taskName' | 'versionNo' | 'taskId'>,
-) {
-  const parts = [task.taskName || '未命名'];
-  if (task.versionNo != null) parts.push(`v${task.versionNo}`);
-  parts.push(shortId(task.taskId, 8));
-  return parts.join(' · ');
-}
-
-/** 性能提升图横轴短标签：优先版本 + 短 ID，名称过长时压缩 */
-function formatImprovementAxisLabel(
-  task: Pick<TaskMetricsData, 'taskName' | 'versionNo' | 'taskId'>,
-) {
-  const ver = task.versionNo != null ? `v${task.versionNo}` : null;
-  const id = shortId(task.taskId, 8);
-  const name = (task.taskName || '未命名').slice(0, 12);
-  return [ver, id, name].filter(Boolean).join('\n');
-}
-
-/** 性能提升图 tooltip：数值优先，身份信息次要 */
-function formatImprovementTooltipHtml(
-  task: TaskMetricsData,
-  valueLines: string[],
-) {
-  const identity = [
-    task.versionNo != null ? `第 ${task.versionNo} 版` : null,
-    shortId(task.taskId, 10),
-    task.taskName || '未命名',
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  const detail = [
-    task.experimentId ? `训练 ${shortId(task.experimentId, 14)}` : null,
-    task.createTime ? formatDisplayDateTime(task.createTime) : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  return [
-    ...valueLines.map(
-      (line) => `<div style="font-size:13px;font-weight:600">${line}</div>`,
-    ),
-    `<div style="margin-top:6px;opacity:.85">${identity}</div>`,
-    detail
-      ? `<div style="margin-top:2px;font-size:11px;opacity:.7">${detail}</div>`
-      : null,
-  ]
-    .filter(Boolean)
-    .join('');
-}
-
-/** 表格身份列：一行主名称 + 一行次要标识，悬停看完整信息 */
-function TaskIdentityCell(props: {
-  taskName?: string;
-  versionNo?: number;
-  experimentId?: string;
-  taskId?: string;
-  createTime?: string;
-  modelName?: string;
-  datasetName?: string;
-}) {
-  const {
-    taskName,
-    versionNo,
-    experimentId,
-    taskId,
-    createTime,
-    modelName,
-    datasetName,
-  } = props;
-  const metaParts = [
-    versionNo != null ? `v${versionNo}` : null,
-    taskId ? shortId(taskId, 8) : null,
-    createTime ? formatDisplayDateTime(createTime) : null,
-  ].filter(Boolean);
-  const tipLines = [
-    taskName ? `名称：${taskName}` : null,
-    versionNo != null ? `训练版本：第 ${versionNo} 版` : null,
-    experimentId ? `训练编号：${experimentId}` : null,
-    taskId ? `任务 ID：${taskId}` : null,
-    createTime ? `创建时间：${formatDisplayDateTime(createTime)}` : null,
-    modelName && modelName !== '-' ? `模型：${modelName}` : null,
-    datasetName && datasetName !== '-' ? `数据集：${datasetName}` : null,
-  ].filter(Boolean) as string[];
-  const body = (
-    <div style={{ lineHeight: 1.35 }}>
-      <div style={{ fontWeight: 500 }}>{taskName || '未命名'}</div>
-      {metaParts.length > 0 && (
-        <div style={{ color: '#8c8c8c', fontSize: 12 }}>
-          {metaParts.join(' · ')}
-        </div>
-      )}
-    </div>
-  );
-  if (!tipLines.length) return body;
-  return (
-    <Tooltip
-      title={
-        <div style={{ whiteSpace: 'pre-line' }}>{tipLines.join('\n')}</div>
-      }
-    >
-      {body}
-    </Tooltip>
-  );
-}
-
-function isLowerBetter(metricKey: string) {
-  return metricKey.toLowerCase().includes('loss');
-}
-
-/** 相对首个模型版本的提升率；loss 下降视为提升，其余指标上升视为提升。 */
-function relativeImprovement(
-  value: number,
-  baseline: number,
-  lowerIsBetter: boolean,
-) {
-  if (Math.abs(baseline) < 1e-9) {
-    return Math.abs(value - baseline) < 1e-9 ? 0 : null;
-  }
-  const delta = lowerIsBetter ? baseline - value : value - baseline;
-  return (delta / Math.abs(baseline)) * 100;
-}
-
-/** 复用或重建 echarts 实例（DOM 换了 / 已 dispose 则重建） */
-function ensureEcharts(
-  store: React.MutableRefObject<Record<string, echarts.ECharts | null>>,
-  key: string,
-  el: HTMLDivElement,
-): echarts.ECharts {
-  const prev = store.current[key];
-  if (prev && !prev.isDisposed() && prev.getDom() === el) {
-    return prev;
-  }
-  if (prev && !prev.isDisposed()) {
-    prev.dispose();
-  }
-  const chart = echarts.init(el);
-  store.current[key] = chart;
-  return chart;
-}
-
-const TASK_COLORS = [
-  '#5470c6',
-  '#91cc75',
-  '#fac858',
-  '#ee6666',
-  '#73c0de',
-  '#3ba272',
-  '#fc8452',
-  '#9a60b4',
-];
-
-/** 只使用稳定资产标识分组；名称可能重复，不能作为“同一模型”的证据。 */
-function modelDatasetGroupKey(r: TaskMetricsData): string | null {
-  const modelKey = (r.modelId || r.modelVersionId || '').trim();
-  const datasetKey = (r.datasetId || r.datasetVersionId || '').trim();
-  return modelKey && datasetKey ? `${modelKey}\x1E${datasetKey}` : null;
-}
-
-/** ref / echarts 实例用的短键，避免特殊字符问题 */
-function safeSlug(raw: string): string {
-  return raw.replace(/\s+/g, '_').replace(/[^\w\u4e00-\u9fa5_-]/g, '_');
-}
-
-function taskIdSetKey(tasks: TaskMetricsData[]): string {
-  return [...tasks.map((t) => String(t.taskId))].sort().join(',');
-}
-
-function sortTasksForCurve(tasks: TaskMetricsData[]): TaskMetricsData[] {
-  return [...tasks].sort((a, b) => {
-    const va = a.versionNo;
-    const vb = b.versionNo;
-    if (va != null && vb != null && va !== vb) return va - vb;
-    const ta = Date.parse(a.createTime || '');
-    const tb = Date.parse(b.createTime || '');
-    if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
-    return String(a.taskName).localeCompare(String(b.taskName));
-  });
-}
-
-/** 性能提升分组：同一 experimentId，或具有稳定资产标识的同模型+同数据集。 */
-function buildImprovementGroups(data: TaskMetricsData[]): ComparableGroup[] {
-  const groups: ComparableGroup[] = [];
-  const expMemberSets = new Set<string>();
-
-  const byExp = new Map<string, TaskMetricsData[]>();
-  for (const r of data) {
-    const expId = (r.experimentId || '').trim();
-    if (!expId) continue;
-    if (!byExp.has(expId)) byExp.set(expId, []);
-    byExp.get(expId)?.push(r);
-  }
-  for (const [expId, list] of byExp) {
-    if (list.length < 2) continue;
-    const tasks = sortTasksForCurve(list);
-    expMemberSets.add(taskIdSetKey(tasks));
-    const head = tasks[0];
-    groups.push({
-      kind: 'experiment',
-      slug: safeSlug(`exp_${expId}`),
-      title: `同一训练 · ${expId}`,
-      modelName: head?.modelName || '-',
-      datasetName: head?.datasetName || '-',
-      experimentId: expId,
-      tasks,
-    });
-  }
-
-  const byMd = new Map<string, TaskMetricsData[]>();
-  for (const r of data) {
-    const k = modelDatasetGroupKey(r);
-    if (!k) continue;
-    if (!byMd.has(k)) byMd.set(k, []);
-    byMd.get(k)?.push(r);
-  }
-  for (const [, list] of byMd) {
-    if (list.length < 2) continue;
-    const tasks = sortTasksForCurve(list);
-    // 与某个「同一训练」组完全重合则跳过，避免重复展示
-    if (expMemberSets.has(taskIdSetKey(tasks))) continue;
-    const head = tasks[0];
-    if (!head) continue;
-    groups.push({
-      kind: 'modelDataset',
-      slug: safeSlug(`${head.modelName}|||${head.datasetName}`),
-      title: `同模型同数据集 · ${head.modelName} / ${head.datasetName}`,
-      modelName: head.modelName,
-      datasetName: head.datasetName,
-      tasks,
-    });
-  }
-
-  return groups;
-}
-
-/** 任务列表接口：兼容 { data: TaskItem[] } 与 { data: { data, total } } */
-function normalizeTaskListResponse(res: any): API.TaskItem[] {
-  const d = res?.data;
-  if (Array.isArray(d)) return d;
-  if (Array.isArray(d?.data)) return d.data;
-  return [];
-}
-
-/** 详情返回的训练实验版本 → 对比页任务行（列表里可能只有每个实验最新一条，需补全历史版本） */
-function experimentVersionToTaskRow(d: any, hint?: API.TaskItem): API.TaskItem {
-  return {
-    id: d.id,
-    name: d.name || `训练 · 第 ${d.versionNo ?? '?'} 版`,
-    createTime: d.createTime || d.createdAt || '',
-    status: d.status || 'pending',
-    progress: typeof d.progress === 'number' ? d.progress : 0,
-    modelVersionId: d.modelVersionId || hint?.modelVersionId,
-    datasetVersionId: d.datasetVersionId || hint?.datasetVersionId,
-    modelName:
-      d.modelName && !/^(model-ver-|dataset-ver-)/i.test(d.modelName)
-        ? d.modelName
-        : hint?.modelName,
-    datasetName:
-      d.datasetName && !/^(model-ver-|dataset-ver-)/i.test(d.datasetName)
-        ? d.datasetName
-        : hint?.datasetName,
-    experimentId: d.experimentId,
-    versionNo: d.versionNo,
-    producedModelVersionId:
-      d.producedModelVersionId || hint?.producedModelVersionId,
-  };
-}
+  buildImprovementGroups,
+  COMPARE_POOL_KEY,
+  type ComparableGroup,
+  enrichFocusedTaskDisplayNames,
+  ensureEcharts,
+  experimentVersionToTaskRow,
+  formatImprovementAxisLabel,
+  formatImprovementTooltipHtml,
+  formatNum,
+  formatTaskSeriesName,
+  formatVersionNo,
+  isLowerBetter,
+  lastPoint,
+  loadComparePool,
+  METRIC_LABELS,
+  normalizeTaskListResponse,
+  relativeImprovement,
+  saveComparePool,
+  shortId,
+  TASK_COLORS,
+  TaskIdentityCell,
+  type TaskMetricsData,
+} from './comparisonModel';
+import { useCompareData } from './useCompareData';
 
 const TaskCompare: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [taskList, setTaskList] = useState<API.TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const catalogLoadSequence = useRef(0);
+  const [catalogReadError, setCatalogReadError] = useState<string>();
+  const [catalogWarning, setCatalogWarning] = useState<string>();
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [metricsData, setMetricsData] = useState<TaskMetricsData[]>([]);
+  const {
+    compareLoadSequence,
+    metricsLoading,
+    setMetricsLoading,
+    metricsData,
+    setMetricsData,
+    loadCompareData,
+  } = useCompareData(selectedRowKeys, taskList);
+
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([
     'train_loss',
     'val_accuracy',
@@ -451,52 +113,67 @@ const TaskCompare: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const sequence = ++catalogLoadSequence.current;
+    compareLoadSequence.current += 1;
+    setMetricsLoading(false);
+    setMetricsData([]);
+    const isCurrent = () => sequence === catalogLoadSequence.current;
     const load = async () => {
       setLoading(true);
+      setCatalogReadError(undefined);
+      setCatalogWarning(undefined);
+      setTaskList([]);
       try {
         const expId = experimentIdFromUrl.trim();
         if (expId) {
           setExperimentIdInput(expId);
-          try {
-            const vr: any = await listExperimentVersions(expId, {
-              skipErrorHandler: true,
-            });
-            const vers: any[] = vr?.data ?? [];
-            const list: API.TaskItem[] = vers.map((d) =>
-              experimentVersionToTaskRow(d),
-            );
-            // 确保从详情页带入的所有版本 id 都可在对比页被选中
-            const want = idsFromUrl;
-            const hint = list.find((t) => t.modelName && t.datasetName);
-            const missing = want.filter(
-              (id) => !list.some((t) => String(t.id) === String(id)),
-            );
-            for (const id of missing) {
-              try {
-                const dr = await fetchTaskDetail(id, {
-                  skipErrorHandler: true,
-                });
-                const d: any = (dr as any)?.data;
-                if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
-              } catch {
-                // 详情失败则跳过，不造虚拟行
-              }
-            }
-            setTaskList(
-              await enrichFocusedTaskDisplayNames(list, idsFromUrl, {
+          const vr: any = await listExperimentVersions(expId, {
+            skipErrorHandler: true,
+          });
+          const vers = normalizeTaskListResponse(vr);
+          const list: API.TaskItem[] = vers.map((d) =>
+            experimentVersionToTaskRow(d),
+          );
+          // 确保从详情页带入的所有版本 id 都可在对比页被选中
+          const want = idsFromUrl;
+          const hint = list.find((t) => t.modelName && t.datasetName);
+          const missing = want.filter(
+            (id) => !list.some((t) => String(t.id) === String(id)),
+          );
+          let failures = 0;
+          for (const id of missing) {
+            try {
+              const dr = await fetchTaskDetail(id, {
                 skipErrorHandler: true,
-              }),
-            );
-            return;
-          } catch {
-            message.error('加载实验版本失败');
-            setTaskList([]);
-            return;
+              });
+              if (!isCurrent()) return;
+              const d: any = (dr as any)?.data;
+              if (dr?.success === false || !d?.id)
+                throw new Error('任务详情不可读');
+              list.unshift(experimentVersionToTaskRow(d, hint));
+            } catch {
+              failures += 1;
+            }
           }
+          const enriched = await enrichFocusedTaskDisplayNames(
+            list,
+            idsFromUrl,
+            {
+              skipErrorHandler: true,
+            },
+          );
+          if (!isCurrent()) return;
+          setTaskList(enriched);
+          if (failures)
+            setCatalogWarning(
+              `${failures} 个指定训练版本读取失败，列表不完整，请重试`,
+            );
+          return;
         }
 
         const res = await fetchTaskList({ current: 1, pageSize: 200 });
         const list = normalizeTaskListResponse(res);
+        let failures = 0;
 
         const want = idsFromUrl;
         const hint = list.find((t) => t.modelName && t.datasetName);
@@ -506,31 +183,47 @@ const TaskCompare: React.FC = () => {
         for (const id of missing) {
           try {
             const dr = await fetchTaskDetail(id, { skipErrorHandler: true });
+            if (!isCurrent()) return;
             const d: any = (dr as any)?.data;
-            if (d?.id) list.unshift(experimentVersionToTaskRow(d, hint));
+            if (dr?.success === false || !d?.id)
+              throw new Error('任务详情不可读');
+            list.unshift(experimentVersionToTaskRow(d, hint));
           } catch {
-            // 详情失败则跳过，不造虚拟行
+            failures += 1;
           }
         }
 
-        setTaskList(
-          await enrichFocusedTaskDisplayNames(
-            list,
-            [...idsFromUrl, ...loadComparePool()],
-            {
-              skipErrorHandler: true,
-            },
-          ),
+        const enriched = await enrichFocusedTaskDisplayNames(
+          list,
+          [...idsFromUrl, ...loadComparePool()],
+          {
+            skipErrorHandler: true,
+          },
         );
-      } catch {
-        message.error('加载训练任务列表失败');
-        setTaskList([]);
+        if (!isCurrent()) return;
+        setTaskList(enriched);
+        const hints = [
+          failures ? `${failures} 个指定训练版本读取失败` : '',
+          (res?.data?.total ?? list.length) > list.length
+            ? '候选列表最多展示首页 200 条，可通过训练编号加载历史版本'
+            : '',
+        ].filter(Boolean);
+        if (hints.length) setCatalogWarning(hints.join('；'));
+      } catch (error) {
+        if (isCurrent())
+          setCatalogReadError(
+            error instanceof Error ? error.message : '加载训练任务列表失败',
+          );
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     };
-    load();
-  }, [idsFromUrl.join(','), experimentIdFromUrl]);
+    void load();
+    return () => {
+      catalogLoadSequence.current += 1;
+      compareLoadSequence.current += 1;
+    };
+  }, [idsFromUrl.join(','), experimentIdFromUrl, catalogRefreshKey]);
 
   const handleLoadExperiment = async () => {
     const expId = experimentIdInput.trim();
@@ -540,114 +233,6 @@ const TaskCompare: React.FC = () => {
     }
     history.push(`/task/compare?experimentId=${encodeURIComponent(expId)}`);
   };
-
-  const loadCompareData = useCallback(
-    async (overrideIds?: string[]) => {
-      const ids = (overrideIds ?? (selectedRowKeys as string[])).map(String);
-      if (ids.length < 2) {
-        message.warning('合同要求至少选择 2 个训练任务进行同屏对比');
-        return;
-      }
-      setMetricsLoading(true);
-      try {
-        const idSet = new Set(ids);
-        const selectedTasks = taskList.filter((t) => idSet.has(String(t.id)));
-        const details: TaskWithRunId[] = [];
-        for (const id of ids) {
-          try {
-            const res = await fetchTaskDetail(id, { skipErrorHandler: true });
-            const d = (res?.data || {}) as TaskWithRunId;
-            d.runId = d.runId || (res?.data as any)?.run_id;
-            if (!d.id) d.id = id;
-            if (!d.name) {
-              d.name =
-                selectedTasks.find((t) => String(t.id) === id)?.name || id;
-            }
-            details.push(d);
-          } catch {
-            // 详情失败则跳过该任务
-          }
-        }
-        const byId = new Map(selectedTasks.map((t) => [String(t.id), t]));
-        const withRunId = details.filter((d) => d.runId);
-        if (withRunId.length === 0) {
-          setMetricsData([]);
-          message.warning('所选任务没有可用的训练指标');
-          return;
-        }
-        if (withRunId.length < ids.length) {
-          message.info(
-            `部分任务无详情或 Run ID，已跳过；共 ${withRunId.length} 个任务拉取指标`,
-          );
-        }
-
-        const results: TaskMetricsData[] = [];
-        let failed = 0;
-        for (const t of withRunId) {
-          const meta = byId.get(String(t.id)) || t;
-          try {
-            const runId = t.runId;
-            if (!runId) continue;
-            const metrics = await fetchMlflowMetricsBulk(
-              runId,
-              MLFLOW_METRIC_KEYS as unknown as string[],
-            );
-            results.push({
-              taskId: t.id,
-              taskName: t.name || meta.name,
-              modelName: meta.modelName || t.modelName || '-',
-              datasetName: meta.datasetName || t.datasetName || '-',
-              modelId: meta.modelId || t.modelId,
-              datasetId: meta.datasetId || t.datasetId,
-              modelVersionId: meta.modelVersionId || t.modelVersionId,
-              datasetVersionId: meta.datasetVersionId || t.datasetVersionId,
-              experimentId:
-                (t as API.TaskItem).experimentId ||
-                (meta as API.TaskItem).experimentId,
-              versionNo:
-                (t as API.TaskItem).versionNo ??
-                (meta as API.TaskItem).versionNo,
-              createTime:
-                (t as API.TaskItem).createTime ||
-                (meta as API.TaskItem).createTime,
-              producedModelVersionId:
-                (t as API.TaskItem).producedModelVersionId ||
-                (meta as API.TaskItem).producedModelVersionId,
-              runId,
-              metrics,
-            });
-          } catch {
-            failed += 1;
-          }
-        }
-        const hasComparableMetric = MLFLOW_METRIC_KEYS.some(
-          (key) =>
-            results.filter((task) => task.metrics[key]?.length).length >= 2,
-        );
-        if (results.length < 2 || !hasComparableMetric) {
-          setMetricsData([]);
-          message.error(
-            results.length < 2
-              ? '有效训练指标不足 2 个任务，无法形成合同要求的对比'
-              : '所选任务没有共同核心指标，无法进行有效对比',
-          );
-        } else {
-          setMetricsData(results);
-        }
-        if (results.length >= 2 && hasComparableMetric && failed > 0) {
-          message.warning(
-            `已加载 ${results.length} 个任务；另有 ${failed} 个指标拉取失败已跳过`,
-          );
-        }
-      } catch {
-        setMetricsData([]);
-        message.error('加载对比数据失败');
-      } finally {
-        setMetricsLoading(false);
-      }
-    },
-    [selectedRowKeys, taskList],
-  );
 
   /** 从任务详情带 ?ids= 进入：预选行并自动拉取真实指标 */
   const lastAppliedIdsRef = useRef<string>('');
@@ -1114,15 +699,7 @@ const TaskCompare: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       width: 80,
-      render: (v: string) => {
-        const map: Record<string, string> = {
-          success: '成功',
-          running: '运行中',
-          pending: '待执行',
-          failed: '失败',
-        };
-        return map[v] || v;
-      },
+      render: (v: string) => getTrainingStatusText(v),
     },
   ];
 
@@ -1195,6 +772,20 @@ const TaskCompare: React.FC = () => {
         <Button onClick={() => history.push('/task/list')}>返回列表</Button>
       }
     >
+      {catalogReadError || catalogWarning ? (
+        <Alert
+          type={catalogReadError ? 'error' : 'warning'}
+          showIcon
+          message={catalogReadError ? '训练目录读取失败' : '训练目录不完整'}
+          description={catalogReadError || catalogWarning}
+          action={
+            <Button onClick={() => setCatalogRefreshKey((key) => key + 1)}>
+              重试目录
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
       <Card title="按训练编号加载版本（高级）" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Input

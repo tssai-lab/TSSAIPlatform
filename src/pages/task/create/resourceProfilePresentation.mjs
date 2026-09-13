@@ -1,12 +1,17 @@
-export function listCpuTrainingResourceProfiles(plan) {
+export function listTrainingResourceProfiles(plan) {
   const seen = new Set();
   const profiles = [];
   for (const runtime of plan?.runtimes || []) {
-    if (runtime?.deviceType !== 'CPU') continue;
+    if (!['CPU', 'NVIDIA_GPU'].includes(runtime?.deviceType)) continue;
     for (const profile of runtime?.resourceProfiles || []) {
+      const gpuCount = Number(profile?.gpuCount);
+      const validDeviceCount =
+        (runtime.deviceType === 'CPU' && gpuCount === 0) ||
+        (runtime.deviceType === 'NVIDIA_GPU' && gpuCount > 0);
       if (
         !profile?.id ||
-        Number(profile.gpuCount || 0) !== 0 ||
+        !Number.isInteger(gpuCount) ||
+        !validDeviceCount ||
         seen.has(profile.id)
       ) {
         continue;
@@ -22,14 +27,26 @@ export function listCpuTrainingResourceProfiles(plan) {
   return profiles;
 }
 
-export function firstCpuTrainingResourceProfileId(plan) {
-  return listCpuTrainingResourceProfiles(plan)[0]?.id;
+export function firstTrainingResourceProfileId(plan) {
+  const profiles = listTrainingResourceProfiles(plan);
+  return (
+    profiles.find((profile) => profile.deviceType === 'CPU') || profiles[0]
+  )?.id;
 }
 
-export function isCpuTrainingResourceProfileIdAllowed(profiles, profileId) {
+export function isTrainingResourceProfileIdAllowed(profiles, profileId) {
   return (
     typeof profileId === 'string' &&
     profileId.length > 0 &&
     profiles.some((profile) => profile.id === profileId)
   );
+}
+
+export function formatTrainingResourceProfileLabel(profile) {
+  if (!profile) return '';
+  const device =
+    profile.deviceType === 'NVIDIA_GPU'
+      ? `GPU · ${profile.gpuCount} 卡`
+      : 'CPU';
+  return `${device} · ${profile.cpuLimit} 核 · ${profile.memoryLimit}`;
 }

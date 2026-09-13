@@ -1,6 +1,6 @@
 /**
  * 算力资源监控 - Services 层
- * 优先请求真实接口，失败时 fallback 到 mock（与 task/list 模式一致）
+ * 只读取真实接口；失败由页面展示错误，过期采样必须标记，不以假数据冒充成功。
  */
 import { request } from '@umijs/max';
 import { API_CONFIG } from '@/constants/platform';

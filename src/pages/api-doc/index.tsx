@@ -381,7 +381,7 @@ const ApiDoc: React.FC = () => {
     }
   }, []);
 
-  // 预加载 CDN swagger UI 资源
+  // 预加载随前端一起打包的 Swagger UI 资源，内网部署无需访问外部 CDN。
   useEffect(() => {
     let cancelled = false;
     loadSwaggerUICDN().then(() => {

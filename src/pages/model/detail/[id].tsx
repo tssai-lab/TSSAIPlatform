@@ -25,7 +25,13 @@ import {
   Typography,
 } from 'antd';
 import type { Key } from 'react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import CodePreview from '@/components/CodePreview';
 import ZipReadmePanel from '@/components/ZipReadmePanel';
 import {
@@ -77,8 +83,19 @@ const ModelDetail: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [assetInfo, setAssetInfo] = useState<API.ModelAssetDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [detailError, setDetailError] = useState('');
+  const detailReadSequence = useRef(0);
+  const detailReadActive = useRef(true);
+  const detailRouteRef = useRef(id);
+  detailRouteRef.current = id;
+  const detailQueryRef = useRef(searchParams.toString());
+  detailQueryRef.current = searchParams.toString();
   const [selectedVersionId, setSelectedVersionId] = useState<string>();
   const [codeLoading, setCodeLoading] = useState(false);
+  const [codeError, setCodeError] = useState('');
+  const [manifestError, setManifestError] = useState('');
+  const [readAttempt, setReadAttempt] = useState(0);
+  const previewSequence = useRef(0);
   const [versionCode, setVersionCode] = useState<API.ModelVersionDetail | null>(
     null,
   );
@@ -95,12 +112,19 @@ const ModelDetail: React.FC = () => {
   const [assetForm] = Form.useForm();
 
   const loadAsset = useCallback(async () => {
-    if (!id) return;
+    const query = searchParams.toString();
+    if (!id || !detailReadActive.current || detailRouteRef.current !== id ||
+        detailQueryRef.current !== query) return;
+    const request = ++detailReadSequence.current;
+    const isCurrent = () => detailReadActive.current &&
+      detailRouteRef.current === id && detailQueryRef.current === query &&
+      request === detailReadSequence.current;
     setLoading(true);
     try {
       const assetId = id;
       if (/^model-ver-/i.test(id)) {
         const verRes = await getModelVersion(id, { skipErrorHandler: true });
+        if (!isCurrent()) return;
         const aid = verRes?.data?.assetId;
         if (aid) {
           history.replace(
@@ -113,8 +137,14 @@ const ModelDetail: React.FC = () => {
       const res = await fetchModelAssetDetail(assetId, {
         skipErrorHandler: true,
       });
+      if (!isCurrent()) return;
       const detail = res?.data ?? null;
+      if (!detail || detail.id !== assetId || !Array.isArray(detail.versions) ||
+          ('success' in res && res.success === false) || ('errorCode' in res && res.errorCode)) {
+        throw new Error('模型详情回执不完整或资产不匹配，请重试');
+      }
       setAssetInfo(detail);
+      setDetailError('');
 
       const queryVersionId = searchParams.get('versionId') ?? undefined;
       const defaultVersionId =
@@ -129,41 +159,61 @@ const ModelDetail: React.FC = () => {
           .find(Boolean);
       setSelectedVersionId(defaultVersionId);
     } catch (error: unknown) {
-      message.error(
-        getApiErrorMessage(error, '未找到该模型，或不属于当前账号。'),
-      );
-      setAssetInfo(null);
+      if (isCurrent()) setDetailError(getApiErrorMessage(error, '模型详情读取失败，请重试。'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [id, searchParams]);
 
   useEffect(() => {
-    loadAsset();
+    // 换资产清理旧表单与版本；服务读取序号另行隔离同资产的重复刷新。
+    setAssetInfo(null);
+    setSelectedVersionId(undefined);
+    setDetailError('');
+    setAssetModalOpen(false);
+  }, [id]);
+
+  useEffect(() => {
+    detailReadActive.current = true;
+    void loadAsset();
+    return () => {
+      detailReadActive.current = false;
+      ++detailReadSequence.current;
+    };
   }, [loadAsset]);
 
   useEffect(() => {
-    if (!selectedVersionId) {
-      setVersionCode(null);
-      setSelectedCodePath(undefined);
-      setExpandedFileKeys([]);
-      return;
-    }
-    setCodeLoading(true);
+    let cancelled = false;
+    ++previewSequence.current;
+    setCodeError('');
+    setVersionCode(null);
     setSelectedCodePath(undefined);
-    fetchModelVersionCodePreview(selectedVersionId, { skipErrorHandler: true })
-      .then((res) => {
-        const data = res?.data ?? null;
-        setVersionCode(data);
-        const firstPath = data?.codeFilePath || data?.codeFiles?.[0]?.path;
-        setSelectedCodePath(firstPath);
+    setExpandedFileKeys([]);
+    setPreviewLoading(false);
+    setCodeLoading(Boolean(selectedVersionId));
+    if (selectedVersionId) {
+      fetchModelVersionCodePreview(selectedVersionId, {
+        skipErrorHandler: true,
       })
-      .catch(() => {
-        setVersionCode(null);
-        setSelectedCodePath(undefined);
-      })
-      .finally(() => setCodeLoading(false));
-  }, [selectedVersionId]);
+        .then((res) => {
+          if (cancelled) return;
+          const data = res?.data ?? null;
+          setVersionCode(data);
+          setSelectedCodePath(data?.codeFilePath || data?.codeFiles?.[0]?.path);
+        })
+        .catch((error) => {
+          if (!cancelled)
+            setCodeError(getApiErrorMessage(error, '模型代码读取失败'));
+        })
+        .finally(() => {
+          if (!cancelled) setCodeLoading(false);
+        });
+    }
+    return () => {
+      cancelled = true;
+      ++previewSequence.current;
+    };
+  }, [selectedVersionId, readAttempt]);
 
   const codeFiles = versionCode?.codeFiles ?? EMPTY_CODE_FILES;
   const readmeFilePaths = useMemo(
@@ -193,8 +243,10 @@ const ModelDetail: React.FC = () => {
   }, [defaultExpandedKeys]);
 
   useEffect(() => {
+    setManifestError('');
+    setConsumerManifest(null);
+    setManifestLoading(false);
     if (!selectedVersionId) {
-      setConsumerManifest(null);
       return;
     }
     let cancelled = false;
@@ -203,25 +255,35 @@ const ModelDetail: React.FC = () => {
       .then((manifest) => {
         if (!cancelled) setConsumerManifest(manifest);
       })
+      .catch((error) => {
+        if (!cancelled)
+          setManifestError(getApiErrorMessage(error, '模型消费清单读取失败'));
+      })
       .finally(() => {
         if (!cancelled) setManifestLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedVersionId]);
+  }, [selectedVersionId, readAttempt]);
 
   const handleSelectCodeFile = async (path: string) => {
     if (!selectedVersionId || !path) return;
     if (path === selectedCodePath && versionCode?.codeContent) {
       return;
     }
+    const request = ++previewSequence.current;
+    setCodeError('');
+    setVersionCode((prev) =>
+      prev ? { ...prev, codeContent: undefined } : prev,
+    );
     setSelectedCodePath(path);
     setPreviewLoading(true);
     try {
       const previewRes = await previewModelCode(selectedVersionId, path, {
         skipErrorHandler: true,
       });
+      if (request !== previewSequence.current) return;
       const preview = previewRes?.data;
       setVersionCode((prev) =>
         prev
@@ -233,10 +295,11 @@ const ModelDetail: React.FC = () => {
             }
           : prev,
       );
-    } catch (error: any) {
-      message.error(error?.info?.message || error?.message || '预览该文件失败');
+    } catch (error: unknown) {
+      if (request === previewSequence.current)
+        setCodeError(getApiErrorMessage(error, '预览该文件失败'));
     } finally {
-      setPreviewLoading(false);
+      if (request === previewSequence.current) setPreviewLoading(false);
     }
   };
 
@@ -352,7 +415,7 @@ const ModelDetail: React.FC = () => {
     (v) => v.id === selectedVersionId,
   );
 
-  if (loading) {
+  if (loading || (assetInfo && assetInfo.id !== id)) {
     return (
       <PageContainer
         title="模型详情"
@@ -363,6 +426,13 @@ const ModelDetail: React.FC = () => {
         </div>
       </PageContainer>
     );
+  }
+
+  if (detailError) {
+    return <PageContainer title="模型详情" onBack={() => history.push('/model/list')}>
+      <Alert type="error" showIcon message="模型详情读取失败" description={detailError}
+        action={<Button onClick={() => void loadAsset()}>重试详情</Button>} />
+    </PageContainer>;
   }
 
   if (!assetInfo) {
@@ -439,6 +509,22 @@ const ModelDetail: React.FC = () => {
         }
       />
 
+      {(codeError || manifestError) && (
+        <Alert
+          type="error"
+          showIcon
+          message="部分模型信息读取失败"
+          description={[codeError, manifestError].filter(Boolean).join('；')}
+          action={
+            <Button
+              loading={codeLoading || manifestLoading}
+              onClick={() => setReadAttempt((n) => n + 1)}
+            >
+              重试读取
+            </Button>
+          }
+        />
+      )}
       <Card title="资产信息" style={{ marginBottom: 16 }}>
         <Descriptions column={2}>
           <Descriptions.Item label="模型名称">

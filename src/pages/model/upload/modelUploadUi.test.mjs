@@ -9,12 +9,12 @@ import {
 test('new model uploads expose backend taskType categories', () => {
   assert.deepEqual(
     MODEL_UPLOAD_CATEGORY_OPTIONS.map((item) => item.value),
-    ['CV', 'NLP', 'POINT_CLOUD', 'ROBOT'],
+    ['CV', 'NLP', 'POINT_CLOUD', 'ROBOT', 'OTHER'],
   );
   assert.equal(isModelUploadCategory('cv'), true);
   assert.equal(isModelUploadCategory('POINT_CLOUD'), true);
   assert.equal(isModelUploadCategory('ROBOT'), true);
-  assert.equal(isModelUploadCategory('OTHER'), false);
+  assert.equal(isModelUploadCategory('other'), true);
 });
 
 test('new versions inherit identity and verified specification from the asset', () => {

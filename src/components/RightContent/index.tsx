@@ -1,5 +1,5 @@
 import { QuestionCircleOutlined } from '@ant-design/icons';
-import { SelectLang as UmiSelectLang } from '@umijs/max';
+import { Link, SelectLang as UmiSelectLang } from '@umijs/max';
 
 export type SiderTheme = 'light' | 'dark';
 
@@ -15,10 +15,10 @@ export const SelectLang: React.FC = () => {
 
 export const Question: React.FC = () => {
   return (
-    <a
-      href="https://pro.ant.design/docs/getting-started"
-      target="_blank"
-      rel="noreferrer"
+    <Link
+      to="/user-manual"
+      aria-label="平台用户手册"
+      title="平台用户手册"
       style={{
         display: 'inline-flex',
         padding: '4px',
@@ -27,6 +27,6 @@ export const Question: React.FC = () => {
       }}
     >
       <QuestionCircleOutlined />
-    </a>
+    </Link>
   );
 };

@@ -13,6 +13,23 @@ interface MlflowMetricsResponse {
   metrics?: API.MlflowMetricPoint[];
 }
 
+/** 空记录与读取失败必须分开；保留旧响应省略 metrics 的兼容形式。 */
+function readMetricPoints(payload: unknown): API.MlflowMetricPoint[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('训练指标响应格式异常，请刷新重试');
+  }
+  const response = payload as Record<string, unknown>;
+  if (
+    response.error_code ||
+    response.errorCode ||
+    response.success === false ||
+    (response.metrics !== undefined && !Array.isArray(response.metrics))
+  ) {
+    throw new Error('训练指标响应异常，请刷新重试');
+  }
+  return (response.metrics as API.MlflowMetricPoint[] | undefined) ?? [];
+}
+
 /** 与标准 key 对应的 MLflow 常见别名（如 Ultralytics / 自定义脚本） */
 export const MLFLOW_METRIC_ALIASES: Partial<Record<TrainingMlflowMetricKey, string[]>> = {
   train_loss: ['loss', 'train/loss', 'metrics/train/loss', 'training_loss'],
@@ -65,14 +82,11 @@ async function fetchMetricSeries(
   ];
 
   for (const key of candidates) {
-    try {
-      const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
-      const list = res?.metrics || [];
-      if (!list.length) continue;
-      return normalizeMlflowMetricHistory(list);
-    } catch {
-      // try next alias
-    }
+    const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
+    const list = readMetricPoints(res);
+    // 只有成功查得空记录才尝试别名；鉴权、超时等错误交给页面明确展示。
+    if (!list.length) continue;
+    return normalizeMlflowMetricHistory(list);
   }
 
   return [];
@@ -95,12 +109,8 @@ export async function fetchMlflowMetricsBulk(
         );
         return;
       }
-      try {
-        const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
-        result[key] = normalizeMlflowMetricHistory(res?.metrics || []);
-      } catch {
-        result[key] = [];
-      }
+      const res = await fetchMlflowMetricHistory(runId, key, 10000, options);
+      result[key] = normalizeMlflowMetricHistory(readMetricPoints(res));
     }),
   );
 

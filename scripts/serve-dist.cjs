@@ -13,7 +13,7 @@ const indexFile = path.join(distDir, 'index.html');
 const backendTarget =
   process.env.BACKEND_PROXY_TARGET ||
   process.env.DEV_API_TARGET ||
-  'http://47.114.84.133:8080';
+  'http://127.0.0.1:8080';
 const mlflowTarget = process.env.MLFLOW_PROXY_TARGET || 'http://127.0.0.1:5000';
 
 function createProxyMiddleware(target, options = {}) {

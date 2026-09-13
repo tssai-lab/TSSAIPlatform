@@ -33,6 +33,7 @@ import {
 } from '@/services/platform';
 import { getUsageColor } from './constants';
 import KubernetesDiagnosticsPanel from './KubernetesDiagnosticsPanel';
+import { formatMetric, isMetricAvailable } from './metricDisplay.mjs';
 import { getMetricsStatusMeta, getNodeWarnings } from './monitorStatus.mjs';
 
 const { Search } = Input;
@@ -138,13 +139,19 @@ const ServerCard = ({ server, onClick, onDelete, canManageNodes }) => {
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {item.label}
               </Text>
-              <Text style={{ fontSize: 12 }}>{item.value}%</Text>
+              <Text style={{ fontSize: 12 }}>
+                {formatMetric(item.value, '%')}
+              </Text>
             </div>
             <Progress
-              percent={item.value}
+              percent={isMetricAvailable(item.value) ? item.value : 0}
               showInfo={false}
               size="small"
-              strokeColor={getUsageColor(item.value)}
+              strokeColor={
+                isMetricAvailable(item.value)
+                  ? getUsageColor(item.value)
+                  : '#d9d9d9'
+              }
             />
           </div>
         ))}
@@ -210,7 +217,7 @@ const ResourceMonitor = () => {
     online: 0,
     runningTasks: 0,
     queuedTasks: 0,
-    avgGpu: 0,
+    avgGpu: null,
   });
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -379,8 +386,8 @@ const ResourceMonitor = () => {
           <Card size="small">
             <Statistic
               title="平均 GPU 使用率"
-              value={summary.avgGpu}
-              suffix="%"
+              value={summary.avgGpu ?? '无数据'}
+              suffix={summary.avgGpu == null ? undefined : '%'}
             />
           </Card>
         </Col>

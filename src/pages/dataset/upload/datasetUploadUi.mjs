@@ -4,6 +4,7 @@ export const DATASET_DIRECTORY_OPTIONS = Object.freeze([
   Object.freeze({ value: 'POINT_CLOUD', label: '点云数据' }),
   Object.freeze({ value: 'ROBOT', label: '机器人数据' }),
   Object.freeze({ value: 'MULTIMODAL', label: '多模态数据' }),
+  Object.freeze({ value: 'OTHER', label: '其他（暂未归类）' }),
 ]);
 
 export const VISUAL_FILE_LAYOUT_OPTIONS = Object.freeze([
@@ -70,6 +71,8 @@ export function resolveDatasetUploadMetadata(
       return undefined;
     case 'MULTIMODAL':
       return { type: 'MULTIMODAL' };
+    case 'OTHER':
+      return { type: 'OTHER' };
     default:
       return undefined;
   }

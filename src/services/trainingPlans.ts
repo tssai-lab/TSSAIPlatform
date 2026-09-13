@@ -63,10 +63,90 @@ export type TrainingPlan = {
   }>;
 };
 
+export type TrainingResourceCapability = {
+  planId: string;
+  planVersion: string;
+  resourceProfileId: string;
+  deviceType: 'CPU' | 'NVIDIA_GPU';
+  cpu: { requestCores: number; limitCores: number };
+  memory: { requestMiB: number; limitMiB: number };
+  gpuCount: number;
+  eligibleNodeCount: number;
+  capacityAvailable: boolean;
+  gpu?: {
+    models: string[];
+    observedGpuCount: number;
+    safeTotalMemoryMiB?: number;
+    maxFreeMemoryMiB?: number;
+    metricsComplete: boolean;
+  };
+  dataStatus: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE';
+  observedAt?: string;
+  message: string;
+};
+
+export type TrainingHardwareOption = {
+  hardwareTargetId: string;
+  displayName: string;
+  resourceProfileId: string;
+  deviceType: 'CPU' | 'NVIDIA_GPU';
+  cpu: { requestCores: number; limitCores: number };
+  memory: { requestMiB: number; limitMiB: number };
+  gpuCount: number;
+  eligibleNodeCount: number;
+  gpu?: {
+    model: string;
+    observedGpuCount: number;
+    safeTotalMemoryMiB?: number;
+    maxFreeMemoryMiB?: number;
+    metricsComplete: boolean;
+    hostGpuIndex?: string;
+    uuid?: string;
+    nodeName?: string;
+    utilizationRate?: number;
+    temperatureCelsius?: number;
+  };
+  dataStatus: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE';
+  observedAt?: string;
+  message: string;
+};
+
 /** 后端是可选训练方案的唯一可信来源。 */
 export async function fetchTrainingPlans(options?: { [key: string]: unknown }) {
   return request<{ success: boolean; data: TrainingPlan[]; errorMessage?: string }>(
     '/training-plans',
     { method: 'GET', ...(options || {}) },
   );
+}
+
+export async function fetchTrainingResourceCapability(
+  planId: string,
+  params: { version?: string; resourceProfileId: string },
+  options?: { [key: string]: unknown },
+) {
+  return request<{
+    success: boolean;
+    data: TrainingResourceCapability;
+    errorMessage?: string;
+  }>(`/training-plans/${encodeURIComponent(planId)}/resource-capabilities`, {
+    method: 'GET',
+    params,
+    ...(options || {}),
+  });
+}
+
+export async function fetchTrainingHardwareOptions(
+  planId: string,
+  params: { version?: string },
+  options?: { [key: string]: unknown },
+) {
+  return request<{
+    success: boolean;
+    data: TrainingHardwareOption[];
+    errorMessage?: string;
+  }>(`/training-plans/${encodeURIComponent(planId)}/hardware-options`, {
+    method: 'GET',
+    params,
+    ...(options || {}),
+  });
 }
