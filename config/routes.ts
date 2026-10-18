@@ -1,7 +1,8 @@
 export default [
+  { path: '/platforms', component: './platforms', layout: false, hideInMenu: true },
   {
     path: '/',
-    redirect: '/dashboard',
+    redirect: '/platforms',
   },
   {
     path: '/user',

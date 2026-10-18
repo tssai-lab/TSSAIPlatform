@@ -82,12 +82,12 @@ const pickLatestTask = (tasks: API.TaskItem[]) => {
 };
 
 const cardStyles = {
-  header: { minHeight: 38, padding: '0 14px', fontSize: 14 },
-  body: { padding: '12px 14px' },
+  header: { minHeight: 54, padding: '0 22px', fontSize: 15 },
+  body: { padding: '22px' },
 };
 
 const statProps = {
-  valueStyle: { fontSize: 22 },
+  valueStyle: { fontSize: 30 },
 };
 
 /**
@@ -167,7 +167,10 @@ const Dashboard: React.FC = () => {
         modelTotal: modelRes?.total ?? modelRes?.data?.length ?? 0,
         datasetTotal: datasetRes?.total ?? datasetRes?.data?.length ?? 0,
         taskTotal: parseTaskTotal(taskRes, allTasks.length),
-        runningTotal: parseTaskTotal(runningRes, countTasksByStatus(runningTasks, 'running')),
+        runningTotal: parseTaskTotal(
+          runningRes,
+          countTasksByStatus(runningTasks, 'running'),
+        ),
       });
       setLatestTask(enrichedLatest);
     } catch (error) {
@@ -196,7 +199,7 @@ const Dashboard: React.FC = () => {
   if (dashboardError && !loading) {
     return (
       <PageContainer
-        title="首页"
+        title="工作台"
         subTitle={userName ? `欢迎回来，${userName}` : undefined}
       >
         <Result
@@ -215,10 +218,32 @@ const Dashboard: React.FC = () => {
 
   return (
     <PageContainer
-      title="首页"
+      title="工作台"
       subTitle={userName ? `欢迎回来，${userName}` : undefined}
     >
       <Spin spinning={loading}>
+        <section className="tss-dashboard-hero" aria-label="工作空间概览">
+          <div>
+            <small>TSS / AI WORKSPACE</small>
+            <h2>{userName ? `${userName}，开始新的探索` : '开始新的探索'}</h2>
+            <p>管理数据与模型，连接算力，让实验走向应用。</p>
+          </div>
+          <div className="tss-dashboard-actions">
+            <Button
+              type="primary"
+              size="large"
+              onClick={() => history.push('/task/create')}
+            >
+              创建训练任务 ↗
+            </Button>
+            <Button
+              size="large"
+              onClick={() => history.push('/task/resourceMonitor')}
+            >
+              查看算力
+            </Button>
+          </div>
+        </section>
         <GuideEntryCard />
         <Row gutter={[12, 12]} data-tour="home-stats">
           <Col xs={12} sm={12} md={6}>

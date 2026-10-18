@@ -9,19 +9,49 @@ const Settings: ProLayoutProps & {
 } = {
   navTheme: 'light',
   // 拂晓蓝
-  colorPrimary: '#1890ff',
-  layout: 'mix',
+  colorPrimary: '#3765d9',
+  layout: 'side',
   contentWidth: 'Fluid',
-  fixedHeader: false,
+  fixedHeader: true,
   fixSiderbar: true,
   colorWeak: false,
-  title: 'AI训练平台',
+  title: 'TSS AI 平台',
   pwa: false,
   logo: '/estun-logo.svg',
   iconfontUrl: '',
   token: {
-    // 参见ts声明，demo 见文档，通过token 修改样式
-    //https://procomponents.ant.design/components/layout#%E9%80%9A%E8%BF%87-token-%E4%BF%AE%E6%94%B9%E6%A0%B7%E5%BC%8F
+    bgLayout: '#f3f6fb',
+    header: {
+      colorBgHeader: '#ffffffed',
+      colorBgScrollHeader: '#ffffffed',
+      colorHeaderTitle: '#172b45',
+      colorTextRightActionsItem: '#40516b',
+      colorBgRightActionsItemHover: '#eaf0fa',
+      heightLayoutHeader: 64,
+    },
+    sider: {
+      colorMenuBackground: '#101e35',
+      colorBgMenuItemCollapsedElevated: '#172b45',
+      colorBgMenuItemHover: '#203958',
+      colorBgMenuItemSelected: '#294b75',
+      colorTextMenu: '#b9cbe1',
+      colorTextMenuSecondary: '#94abc7',
+      colorTextMenuSelected: '#ffffff',
+      colorTextMenuActive: '#ffffff',
+      colorTextMenuItemHover: '#ffffff',
+      colorTextMenuTitle: '#f1f5ff',
+      colorTextSubMenuSelected: '#a9e1ec',
+      colorBgCollapsedButton: '#203958',
+      colorTextCollapsedButton: '#b9cbe1',
+      colorTextCollapsedButtonHover: '#ffffff',
+      menuHeight: 44,
+    },
+    pageContainer: {
+      colorBgPageContainer: '#f3f6fb',
+      colorBgPageContainerFixed: '#f3f6fb',
+      paddingInlinePageContainerContent: 24,
+      paddingBlockPageContainerContent: 24,
+    },
   },
 };
 

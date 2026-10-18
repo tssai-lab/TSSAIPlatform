@@ -126,8 +126,31 @@ export default defineConfig({
     configProvider: {
       theme: {
         cssVar: true,
+        components: {
+          Card: { borderRadiusLG: 16, headerFontSize: 16 },
+          Table: {
+            headerBg: '#f4f7fb',
+            headerColor: '#536781',
+            rowHoverBg: '#f1f6ff',
+            cellPaddingBlock: 14,
+          },
+          Button: { primaryShadow: '0 4px 12px #3765d91c', fontWeight: 500 },
+          Tabs: { itemSelectedColor: '#3765d9', inkBarColor: '#3765d9' },
+          Modal: { borderRadiusLG: 18 },
+        },
         token: {
-          fontFamily: 'AlibabaSans, sans-serif',
+          fontFamily:
+            "'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+          colorPrimary: '#3765d9',
+          colorInfo: '#3765d9',
+          colorText: '#172b45',
+          colorTextSecondary: '#718096',
+          colorBgLayout: '#f3f6fb',
+          colorBorder: '#dce3ec',
+          colorBorderSecondary: '#e8edf4',
+          borderRadius: 10,
+          controlHeight: 38,
+          controlHeightLG: 46,
         },
       },
     },

@@ -1,7 +1,6 @@
 import { LockOutlined, MobileOutlined } from '@ant-design/icons';
 import { FormattedMessage, Helmet, history, useIntl } from '@umijs/max';
 import { Alert, App, Button, Form, Input } from 'antd';
-import { createStyles } from 'antd-style';
 import React, { useEffect, useRef, useState } from 'react';
 import { forgotPassword } from '@/services/ant-design-pro/api';
 import { sendSmsCode } from '@/services/ant-design-pro/login';
@@ -11,20 +10,6 @@ import {
   localSmsCode,
 } from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import Settings from '../../../../config/defaultSettings';
-
-const useStyles = createStyles(({ token }) => {
-  return {
-    container: {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      overflow: 'auto',
-      backgroundImage:
-        "url('https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/V-_oS6r-i7wAAAAAAAAAAAAAFl94AQBr')",
-      backgroundSize: '100% 100%',
-    },
-  };
-});
 
 const ResetPasswordMessage: React.FC<{
   content: string;
@@ -52,7 +37,6 @@ const ResetPassword: React.FC = () => {
   }>({});
   const [countdown, setCountdown] = useState(0);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const { styles } = useStyles();
   const { message: messageApi } = App.useApp();
   const intl = useIntl();
 
@@ -150,9 +134,7 @@ const ResetPassword: React.FC = () => {
       });
 
       if (isApiSuccess(response)) {
-        messageApi.success(
-          apiMessage(response, '密码重置成功！'),
-        );
+        messageApi.success(apiMessage(response, '密码重置成功！'));
         setTimeout(() => {
           history.push('/user/login');
         }, 1000);
@@ -175,7 +157,7 @@ const ResetPassword: React.FC = () => {
   };
 
   return (
-    <div className={styles.container}>
+    <div className="tss-auth-page">
       <Helmet>
         <title>
           {intl.formatMessage({
@@ -193,6 +175,7 @@ const ResetPassword: React.FC = () => {
         }}
       >
         <div
+          className="tss-auth-card"
           style={{
             margin: '0 auto',
             maxWidth: 450,
@@ -203,11 +186,12 @@ const ResetPassword: React.FC = () => {
           }}
         >
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <img
-              alt="logo"
-              src="/estun.png"
-              style={{ height: 44, marginBottom: 16 }}
-            />
+            <div className="tss-auth-brand">
+              <span className="tss-brand-mark" aria-hidden="true">
+                T
+              </span>
+              <strong>TSS / AI PLATFORM</strong>
+            </div>
             <h2 style={{ marginBottom: 8 }}>重置密码</h2>
             <p style={{ color: '#999', fontSize: 14 }}>请输入验证码和新密码</p>
           </div>

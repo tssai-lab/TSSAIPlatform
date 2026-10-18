@@ -95,7 +95,7 @@ export const layout: RunTimeLayoutConfig = ({
   // 初始化message实例
   return {
     // 顶部导航栏右侧的菜单
-    actionsRender: () => [<Question key="doc" />],
+    actionsRender: () => [<Link key="platforms" to="/platforms">切换平台</Link>, <Question key="doc" />],
     // 配置顶部栏右侧的用户头像
     avatarProps: {
       // 头像图片地址
@@ -127,26 +127,7 @@ export const layout: RunTimeLayoutConfig = ({
       }
     },
     // 配置布局装饰背景图
-    bgLayoutImgList: [
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/D2LWSqNny4sAAAAAAAAAAAAAFl94AQBr',
-        left: 85,
-        bottom: 100,
-        height: '303px',
-      },
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/C2TWRpJpiC0AAAAAAAAAAAAAFl94AQBr',
-        bottom: -68,
-        right: -45,
-        height: '303px',
-      },
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/F6vSTbj8KpYAAAAAAAAAAAAAFl94AQBr',
-        bottom: 0,
-        left: 0,
-        width: '331px',
-      },
-    ],
+    bgLayoutImgList: [],
     links: [
       <Link key="usermanual" to="/user-manual">
         <LinkOutlined />
@@ -154,7 +135,23 @@ export const layout: RunTimeLayoutConfig = ({
       </Link>,
     ],
     // 边栏顶部默认 Logo
-    menuHeaderRender: undefined,
+    menuHeaderRender: () => (
+      <Link
+        to="/dashboard"
+        className="tss-brand"
+        aria-label="TSS AI 平台工作台"
+      >
+        <span className="tss-brand-mark" aria-hidden="true">
+          T
+        </span>
+        <span className="tss-brand-wordmark">
+          <strong>
+            TSS <em>/</em>
+          </strong>
+          <small>AI PLATFORM</small>
+        </span>
+      </Link>
+    ),
     // 自定义 403 页面
     // unAccessible: <div>unAccessible</div>,
     // 增加一个 loading 的状态
