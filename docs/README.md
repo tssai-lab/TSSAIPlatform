@@ -7,9 +7,20 @@
 | 建议阅读顺序 | 文档 | 解决的问题 |
 | --- | --- | --- |
 | 1 | [Demo 需求文档](demo-requirements.md) | 做什么、暂时不做什么、如何演示、有哪些限制 |
-| 2 | [账号初始化指南](account-initialization.md) | 拉取部署、创建三类账号、找到密码、处理重复初始化 |
+| 2 | [账号初始化指南](account-initialization.md) | 拉取部署、默认账号密码、既有账号更新及测试项目清理 |
 | 3 | [部署验收清单](deployment-acceptance.md) | 新环境逐项检查、记录实际结果、区分已验证与待验证 |
 | 4 | 本文档 | 代码、运行方法、历史技术资料的入口 |
+
+## 默认登录账号
+
+全新数据库首次启动自动创建账号，无需运行账号工具：
+
+| 用户名 | 角色 | 密码 |
+| --- | --- | --- |
+| `admin01` | 管理员 | `123456` |
+| `user01` | 普通用户 | `123456` |
+
+已有数据库不会自动重置同名账号；既有服务器账号更新及两条测试项目清理步骤见[账号初始化指南](account-initialization.md)，执行结果须在目标环境核验。
 
 ## 运行与代码入口
 
@@ -18,7 +29,7 @@
 | 项目总说明 | [README](../README.md) |
 | 完整环境部署配置 | [deploy/compose.yml](../deploy/compose.yml) |
 | 初始表和角色 | [deploy/database/01-users.sql](../deploy/database/01-users.sql) |
-| 演示账号初始化工具 | [init-demo-accounts.py](../deploy/init-demo-accounts.py) |
+| 默认演示账号 SQL | [02-demo-accounts.sql](../deploy/database/02-demo-accounts.sql) |
 | 登录与注册 | [登录页](../frontend/src/pages/user/login/index.tsx)、[注册页](../frontend/src/pages/user/register/index.tsx) |
 | 平台选择 | [platforms](../frontend/src/pages/platforms/index.tsx) |
 | 项目创建与压缩包上传 | [label-projects](../frontend/src/pages/label-projects/index.tsx) |

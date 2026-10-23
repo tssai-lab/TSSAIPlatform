@@ -1,103 +1,102 @@
 # 账号初始化指南
 
-适用分支：`demo`。更新日期：2026-10-23。以下以 Linux/macOS 终端为例，使用 Docker Compose v2 与宿主机 Python 3.10+。
+适用分支：`demo`。更新日期：2026-10-23。以下以 Linux/macOS 终端、Docker Compose v2 为例。
 
-## 1. 拉取代码后有什么账号
+## 1. 默认登录账号
 
-**新部署没有任何预置网页登录账号。** Git 只有源码和表结构，不包含线上账号数据库。`DATABASE_PASSWORD` 和 `STORAGE_PASSWORD` 分别用于数据库、对象存储，不是网页登录密码。
-
-当前已有演示服务器的 `admin01` 属于该服务器自己的数据库，不能拿它登录新建的独立环境。线上密码没有放进 GitHub，也不在本文发布。
-
-执行本文的初始化命令后，会创建以下账号：
+全新数据库首次启动时自动创建两个账号，**无需运行账号工具**：
 
 | 用户名 | 角色 | 密码 |
 | --- | --- | --- |
-| `demo_root` | 超级管理员，角色 ID 1 | 初始化时生成，查看账号文件 |
-| `demo_admin` | 管理员，角色 ID 2 | 初始化时生成，查看账号文件 |
-| `demo_user` | 普通用户，角色 ID 3 | 初始化时生成，查看账号文件 |
+| `admin01` | 管理员，角色 ID 2 | `123456` |
+| `user01` | 普通用户，角色 ID 3 | `123456` |
 
-每个账号密码独立随机生成，为 16 位字母数字；没有所有部署通用的固定密码。
+`admin01` 是普通管理员，不是角色 ID 1 的超级管理员。两个账号的人工标注项目各自独立。
 
-## 2. 部署独立环境
+这些是 Demo 默认账号。SQL 中保存 BCrypt 密码哈希，不保存明文密码。数据库和对象存储密码是另外配置的服务密码，不是网页登录密码。
+
+## 2. 拉取与部署
 
 ```bash
 git clone --branch demo --single-branch https://github.com/tssai-lab/TSSAIPlatform.git
 cd TSSAIPlatform
 ```
 
-Docker 构建需要访问 npm、Maven 及容器镜像仓库。部署需要为数据库、上传原件、解压结果预留空间；10 GB 是默认上传容量上限，不代表安装只需要 10 GB 磁盘。
-
-在同一个终端设置两个基础服务密码。请保存到自己的密码管理器中，后续管理 Compose 也需要这些环境变量：
+Docker 构建需要访问 npm、Maven 及容器镜像仓库。在同一个终端设置服务密码并启动：
 
 ```bash
 read -rsp '数据库密码：' DATABASE_PASSWORD; printf '\n'
 export DATABASE_PASSWORD
 read -rsp '对象存储密码（至少8位）：' STORAGE_PASSWORD; printf '\n'
 export STORAGE_PASSWORD
-# 默认端口为 8014，已占用时可设置其他端口。
 export DEMO_PORT=8014
 docker compose -f deploy/compose.yml up -d --build
 docker compose -f deploy/compose.yml ps
 docker compose -f deploy/compose.yml logs --tail=100 backend
 ```
 
-首次构建及数据库迁移需要时间，容器显示运行中不保证后端已经就绪。确认日志无启动异常，再打开 `http://127.0.0.1:8014/#/user/login`。部署在其他机器时，将 `127.0.0.1` 换成该机器地址，并按环境放通对应端口。
-
-## 3. 创建并校验账号
-
-在仓库根目录、保持上面的环境变量可用时执行：
-
-```bash
-python3 deploy/init-demo-accounts.py
-```
-
-工具会使用正在运行的 `manual-label-api` 容器访问同一套 Compose 内部的注册/登录 API，由后端生成 BCrypt 密码哈希，再通过本套 PostgreSQL 设置角色，并重新登录校验角色。不会连接原线上服务器，不会修改原开发工程。
-
-默认账号文件位于宿主机：
+保存好自行设置的服务密码，后续 Compose 操作仍需要这些环境变量。首次构建与数据库迁移需要时间，后端启动完成后访问：
 
 ```text
-~/.config/tss-demo/accounts.json
+http://127.0.0.1:8014/#/user/login
 ```
 
-该文件权限为 `600`，只允许当前系统用户读写，且位于仓库外。使用你自己的终端查看密码：
+选择用户名密码登录，使用 `admin01 / 123456` 或 `user01 / 123456`。部署到其他机器时将地址替换为该机器地址；端口已占用时修改 `DEMO_PORT`。
+
+## 3. 自动创建的工作方式
+
+Compose 将以下 SQL 挂载到 PostgreSQL 的初始化目录：
+
+1. [01-users.sql](../deploy/database/01-users.sql)：创建账号相关表和角色。
+2. [02-demo-accounts.sql](../deploy/database/02-demo-accounts.sql)：创建两个默认账号。
+
+PostgreSQL 只在**数据卷为空的首次启动**时自动执行这些文件。普通重启、`git pull` 或重新构建镜像不会把已有账号密码改成默认值。
+
+默认账号 SQL 使用 `ON CONFLICT (username) DO NOTHING`，已有同名账号的密码、角色和状态保持不变。
+
+## 4. 已经部署过的环境
+
+`02-demo-accounts.sql` 只补充缺少的账号，不会覆盖已有账号。若需将既有 Demo 中的 `admin01`、`user01` 统一为上表角色和密码，先确认 Compose 当前指向目标 Demo，并备份 PostgreSQL；然后在仓库根目录执行以下定向更新。命令只更新两个未软删除的同名账号，且必须恰好更新两行，否则事务会失败：
 
 ```bash
-cat "$HOME/.config/tss-demo/accounts.json"
+docker compose -f deploy/compose.yml exec -T postgres \
+  psql -X -v ON_ERROR_STOP=1 -U tss -d tss <<'SQL'
+DO $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE users
+    SET role_id = CASE username WHEN 'admin01' THEN 2 WHEN 'user01' THEN 3 END,
+        password = CASE username
+            WHEN 'admin01' THEN '$2a$10$2tqH40CEfpKBp42Lex.MdOIjxPui89MB9aKWv6f1hrtPNc6R8nF4a'
+            WHEN 'user01' THEN '$2a$10$FL3YVDeE.xnh2RTKaP8cg.3XfxRLnJ5pT.Zw0aH8jV9GS8TCCLQvi'
+        END,
+        status = TRUE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE username IN ('admin01', 'user01') AND deleted_at IS NULL;
+
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    IF updated_count <> 2 THEN
+        RAISE EXCEPTION 'Expected 2 active demo accounts; updated %', updated_count;
+    END IF;
+END $$;
+SQL
 ```
 
-结构如下，下面的文字是示意，不是可登录密码：
+成功后核对用户名、角色 ID、启用状态，并分别用 `admin01 / 123456`、`user01 / 123456` 实际登录验证。角色 ID 2 是管理员、ID 3 是普通用户；不要将 `admin01` 设为角色 ID 1 的超级管理员。若命令报错或更新行数不是 2，先检查账号是否缺失或已软删除，不要删数据库卷，也不要放宽更新条件。
 
-```json
-{
-  "demo_root": "初始化生成的密码",
-  "demo_admin": "初始化生成的密码",
-  "demo_user": "初始化生成的密码"
-}
-```
+## 5. 既有服务器演示项目清理
 
-也可以在首次初始化时指定仓库之外的文件：
+服务器项目清理尚需在目标环境实际执行和验证。清理前先备份标注服务的数据卷；通过 SQLite 项目表核对项目名称 `项目上传部署验证`、上传文件名 `deployment-check.csv` 及项目 ID，确认目标恰好是那两条测试记录后，只删除对应项目及其关联文件。不要按文件名直接清空目录、删除整个数据卷或清理其他用户项目。清理后确认两条记录不再显示，并验证其他项目仍可打开。
 
-```bash
-python3 deploy/init-demo-accounts.py --accounts-file "$HOME/.config/tss-demo/team-demo-accounts.json"
-```
+## 6. 故障检查
 
-后续再次执行需使用同一文件。向同事分发相应账号密码即可；不要把账号文件加入 Git，也不要把它误认为数据库备份。
+- **登录失败**：先区分是否为全新数据卷；旧库同名账号不会被覆盖，再确认后端已完成启动。
+- **提示缺少环境变量**：重新在当前终端设置原 `DATABASE_PASSWORD` 和 `STORAGE_PASSWORD`。
+- **默认账号不存在**：确认空库初始日志执行了两个 SQL，或按第 4 节检查既有账号。
+- **能登录但部分管理功能不可见**：`admin01` 是角色 ID 2 的管理员，超级管理员专属能力不在其权限内。
+- **短信验证码不可用**：默认 `SMS_PROVIDER=disabled`，请使用用户名密码登录。
 
-## 4. 重复执行与故障处理
+可以通过登录页用户名注册创建其他普通账号。用户名 6–20 个字符，不能是手机号格式；密码为 6–16 位字母、数字或下划线。
 
-- **中断后再次执行**：保留账号文件，用同一命令重试。已创建账号先验证密码；校验通过才设置预期角色，不重复注册、不改密码。
-- **同名账号已存在但密码不匹配**：停止，不接管或重置这个账号。确认是否用错部署环境、账号文件，或账号密码是否已被人工修改。
-- **账号文件不存在而数据库已有账号**：不能重新生成一组密码后期待登录旧账号。恢复原账号文件，或由超级管理员按平台流程重置密码并妥善记录。
-- **容器尚未就绪、环境变量缺失**：先看 `docker compose -f deploy/compose.yml ps` 和后端日志，再运行工具。日志中不要公开贴出密码或令牌。
-- **账号文件权限过宽**：执行 `chmod 600 "$HOME/.config/tss-demo/accounts.json"` 后重试。
-- **初始化部分完成**：前面成功的账号会保留，不会删除数据库数据；再次执行完成剩余账号。
-
-工具应在默认 `tss-demo` Compose 环境运行。更改 `COMPOSE_PROJECT_NAME` 或其他 Docker 上下文会改变目标实例，应保证启动与初始化时使用相同环境。
-
-## 5. 其他账号与功能范围
-
-用户也可以通过登录页“用户名注册”创建普通账号，不依赖短信；用户名 6–20 个字符，不能是手机号格式；密码为 6–16 位字母、数字或下划线。普通注册不能自行获取管理员权限。
-
-默认 `SMS_PROVIDER=disabled`，不把短信登录、手机注册、短信找回密码作为本 Demo 的可用登录方式。超级管理员与管理员也不能直接读取其他用户的人工标注项目。
-
-默认 Compose 未启用真实训练所需的 Kubernetes / MLflow；创建管理员并不等于这些外部服务已经配置完成。逐项核验见[部署验收清单](deployment-acceptance.md)。
+默认 Compose 未启用真实训练所需的 Kubernetes / MLflow，账号可登录不代表计算资源已配置。按[部署验收清单](deployment-acceptance.md)完成目标环境核验。
