@@ -1,0 +1,120 @@
+name: tss-demo
+services:
+  frontend:
+    image: tss-demo-frontend:local
+    build: ../frontend
+    ports:
+      - "${DEMO_PORT:-8014}:80"
+    depends_on:
+      - backend
+      - manual-label-api
+    environment:
+      BACKEND_UPSTREAM: http://backend:8080
+      LABEL_UPSTREAM: http://manual-label-api:8013
+      MLFLOW_UPSTREAM: http://backend:8080
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+  backend:
+    image: tss-demo-backend:local
+    build: ../backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/tss
+      SPRING_DATASOURCE_USERNAME: tss
+      SPRING_DATASOURCE_PASSWORD: ${DATABASE_PASSWORD:?required}
+      SPRING_DATA_REDIS_HOST: redis
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: tssstorage
+      MINIO_SECRET_KEY: ${STORAGE_PASSWORD:?required}
+      MINIO_BUCKET: models
+      TRAINING_K8S_ENABLED: "false"
+      TRAINING_MLFLOW_ENABLED: "false"
+      SMS_PROVIDER: disabled
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=60.0
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB: INFO
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: WARN
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    volumes:
+      - backend-logs:/app/logs
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: 1.0
+    logging: *logging
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: tss
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?required}
+      POSTGRES_DB: tss
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/01-users.sql:/docker-entrypoint-initdb.d/01-users.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U tss -d tss"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *logging
+  redis:
+    image: redis:7.4-alpine
+    command: [redis-server, --appendonly, "yes", --maxmemory, 128mb, --maxmemory-policy, noeviction]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: 0.25
+    logging: *logging
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: tssstorage
+      MINIO_ROOT_PASSWORD: ${STORAGE_PASSWORD:?required}
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *logging
+  manual-label-api:
+    build: ../server
+    image: tss-demo-manual-label-api:local
+    environment:
+      LABEL_AUTH_URL: http://backend:8080/api/user/current-user
+      LABEL_MAX_UPLOAD_GB: '10'
+      LABEL_MAX_EXPANDED_GB: '20'
+    volumes:
+      - manual-label-data:/data
+    depends_on:
+      - backend
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
+    logging: *logging
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  backend-logs:
+
+  manual-label-data:

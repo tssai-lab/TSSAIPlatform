@@ -1,0 +1,21 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const ts = require('../frontend/node_modules/typescript');
+const fflate = require('../frontend/node_modules/fflate');
+const output = ts.transpileModule(fs.readFileSync(`${__dirname}/../frontend/src/pages/manual-label/archive.ts`, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const mod = { exports: {} };
+new Function('exports', 'module', 'require', output)(mod.exports, mod, name => { assert.equal(name, 'fflate'); return fflate; });
+(async () => {
+ const { readZip, expandFiles } = mod.exports;
+ const archive = fflate.zipSync({ ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`image-${i}.png`, new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64'))])), 'a.csv': fflate.strToU8('sample,value\n0,1\n1,2'), 'b.csv': fflate.strToU8('sample,value\n0,2\n1,3'), 'README.md': fflate.strToU8('测试说明') });
+ const entries = await readZip(archive);
+ assert.equal(Object.keys(entries).length, 8);
+ const files = await expandFiles([new File([archive], 'demo.zip')]);
+ assert.equal(files.length, 8);
+ assert.equal(files.filter(f => f.type === 'image/png').length, 6);
+ await assert.rejects(readZip(fflate.zipSync({ 'README.md': fflate.strToU8('说明') })), /没有图片/);
+ await assert.rejects(readZip(new Uint8Array([1, 2, 3])), /无法解压/);
+ await assert.rejects(readZip(fflate.zipSync({ '../bad.csv': fflate.strToU8('a,b\n1,2') })), /不安全/);
+ await assert.rejects(readZip(fflate.zipSync(Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`${i}.csv`, fflate.strToU8('a,b\n1,2')])))), /500/);
+ console.log('ZIP 实测通过：6 图像+2时序，跳过说明、正确 MIME、拒绝损坏/不安全路径/过多文件');
+})().catch(error => { console.error(error); process.exitCode = 1; });
