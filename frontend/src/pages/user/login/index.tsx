@@ -211,20 +211,20 @@ const Login: React.FC = () => {
 
         <section
           className={styles.showcase}
-          aria-label="东南大学 AI 平台介绍"
+          aria-label="TSSAIPlatform AI 平台介绍"
           onPointerMove={handleShowcasePointer}
           onPointerLeave={resetShowcasePointer}
           onPointerCancel={resetShowcasePointer}
         >
           <div className={styles.showcaseHeader}>
             <div className={styles.brand}>
-              <img className={styles.universityEmblem} src="/seu-emblem-navy.png" alt="东南大学校徽" />
-              <span className={styles.wordmark}>
-                <strong>
-                  东南大学
-                </strong>
-                <span>SOUTHEAST UNIVERSITY</span>
-              </span>
+              <svg className={styles.platformMark} viewBox="0 0 330 96" role="img" aria-label="TSS AI Platform">
+                <rect x="4" y="3" width="74" height="73" rx="5" fill="#a9e1ec" fillOpacity=".025" stroke="#58758e" strokeWidth="1.2" />
+                <text x="41" y="58" textAnchor="middle" fill="#a9e1ec" fontFamily="Georgia, serif" fontSize="53">T</text>
+                <text x="99" y="46" fill="#f1f5ff" fontFamily="Arial, Helvetica, sans-serif" fontSize="43" fontWeight="700" letterSpacing="1">TSS</text>
+                <text x="215" y="49" fill="#9adce7" fontFamily="Arial, Helvetica, sans-serif" fontSize="45" fontWeight="300">/</text>
+                <text x="101" y="73" fill="#b8cde7" fontFamily="Arial, Helvetica, sans-serif" fontSize="16" fontWeight="700" letterSpacing="4">AI PLATFORM</text>
+              </svg>
             </div>
           </div>
           <div className={styles.story}>
@@ -339,7 +339,7 @@ const Login: React.FC = () => {
             <span>推理应用</span>
           </div>
           <div className={styles.showcaseFooter}>
-            东南大学 · AI 工作空间<span>从数据出发，向应用延伸</span>
+            TSSAIPlatform · AI 工作空间<span>从数据出发，向应用延伸</span>
           </div>
         </section>
         <section className={styles.loginPanel} aria-label="登录">
@@ -612,7 +612,7 @@ const Login: React.FC = () => {
             </div>
           </div>
           <footer className={styles.panelFooter}>
-            东南大学 · 数据标注与模型训练
+            TSSAIPlatform · 数据标注与模型训练
           </footer>
         </section>
       </main>

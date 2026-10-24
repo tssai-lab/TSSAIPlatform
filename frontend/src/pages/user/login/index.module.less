@@ -31,17 +31,6 @@
   font-weight: 600;
   letter-spacing: 2px;
 }
-.brandMark {
-  display: grid;
-  place-items: center;
-  width: 35px;
-  height: 35px;
-  border: 1px solid #8aa1bd;
-  border-radius: 10px 3px 10px 3px;
-  font: 500 25px Georgia, serif;
-  color: #a9e1ec;
-}
-.brandDivider { margin: 0 11px; color: #70849f; font-weight: 400; }
 .story { position: relative; z-index: 1; margin-top: clamp(64px, 10vh, 116px); }
 .eyebrow { font-size: 12px; letter-spacing: 3px; color: #a4bbd6; margin-bottom: 24px; }
 .story h1 {
@@ -176,25 +165,9 @@
 /* 让标题、表单和页脚按实际高度排列，缩放时自然滚动。 */
 .showcaseHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .brand { gap: 15px; }
-.brandMark { width: 48px; height: 48px; flex: 0 0 auto; font-size: 34px; background: linear-gradient(145deg, #a9e1ec16, transparent); border-color: #a9e1ec80; }
-.wordmark { display: flex; flex-direction: column; gap: 4px; line-height: 1; }
-.wordmark strong { font-size: 32px; font-weight: 650; letter-spacing: 2px; }
-.wordmark > span { font-size: 12px; letter-spacing: 3px; color: #b8cde7; font-weight: 500; }
-.wordmark .brandDivider { margin-left: 8px; margin-right: 0; color: #8ed6e3; font-weight: 300; }
+.platformMark { display: block; width: min(330px, 100%); height: auto; flex: 0 1 330px; }
 .registerPrompt { margin-top: 24px; text-align: center; line-height: 1.9; color: #718096; font-size: 13px; }
 @media (max-width: 760px) {
-  .brandMark { width: 42px; height: 42px; font-size: 30px; }
-  .wordmark strong { font-size: 28px; }
-  .wordmark > span { font-size: 10px; letter-spacing: 2.5px; }
   .loginPanel { gap: 26px; }
   .formWrap { margin-bottom: 0; }
 }
-
-/* 校名使用醒目的中文字体，英文全称作为辅助标识。 */
-.brandMark { font-size: 18px; letter-spacing: 0; }
-.wordmark strong { font-family: 'STKaiti', 'KaiTi', 'Microsoft YaHei', serif; font-size: clamp(30px, 3vw, 42px); letter-spacing: 5px; }
-.wordmark > span { font-size: 10px; letter-spacing: 2px; }
-@media (max-width: 760px) { .brandMark { font-size: 16px; } }
-
-.universityEmblem { width: 84px; height: 84px; flex: 0 0 auto; object-fit: contain; filter: brightness(0) invert(1); }
-@media (max-width: 760px) { .universityEmblem { width: 64px; height: 64px; } }
