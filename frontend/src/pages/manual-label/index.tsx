@@ -170,8 +170,16 @@ export default function ManualLabel() {
       if (dirty) { message.warning('请先保存标注，再导出项目结果'); return; }
       try {
         const response = await serverRequest(`/projects/${projectId}/export`);
-        const url = URL.createObjectURL(await response.blob());
-        const a = document.createElement('a'); a.href = url; a.download = `服务器标注-${projectId}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        const result = await response.json() as { project_name: string; source_filename: string; file_count: number; annotated_file_count: number };
+        const safePart = (value: string): string => Array.from(value.replace(/[\u0000-\u001f<>:"/\\|?*]/g, '-').replace(/[. ]+$/g, '').trim()).slice(0, 60).join('') || '项目';
+        const projectName = safePart(result.project_name);
+        const sourceName = safePart(result.source_filename.replace(/\.[^.]+$/, ''));
+        const name = sourceName.toLowerCase() === projectName.toLowerCase() ? projectName : `${projectName}-${sourceName}`;
+        const now = new Date();
+        const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(result)], { type: 'application/json' }));
+        const a = document.createElement('a'); a.href = url; a.download = `${name}-标注结果-${date}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        message.success(`已导出项目全部 ${result.file_count} 个文件，其中 ${result.annotated_file_count} 个文件含标注`);
       } catch (e) { message.error((e as Error).message); }
       return;
     }

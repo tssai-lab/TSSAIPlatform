@@ -87,6 +87,10 @@ class Workflow(unittest.TestCase):
         self.assertEqual(self.request('/projects')[1][0]['filename'], 'data.zip')
         asset = listing['items'][0]
         self.assertEqual(self.request('/assets/' + asset['id'] + '/content', token='bob')[0], 404)
+        initial_export = self.request('/projects/' + pid + '/export')[1]
+        self.assertEqual(initial_export['file_count'], 1)
+        self.assertEqual(initial_export['annotated_file_count'], 0)
+        self.assertEqual(initial_export['items'][0]['marks'], [])
         self.assertEqual(len(self.request('/assets/' + asset['id'] + '/content')[1]['rows']), 3)
         annotation = {'marks': [{'label': '异常', 'start': 1, 'end': 2, 'details': {'state': '异常'}}], 'done': True, 'revision': 0}
         path = '/assets/' + asset['id'] + '/annotation'
@@ -94,7 +98,12 @@ class Workflow(unittest.TestCase):
         self.assertEqual(self.request(path, 'PUT', annotation)[0], 409)
         app.initialize()
         self.assertTrue(self.request('/projects/' + pid)[1]['items'][0]['done'])
-        self.assertEqual(self.request('/projects/' + pid + '/export')[1]['items'][0]['marks'], annotation['marks'])
+        export = self.request('/projects/' + pid + '/export')[1]
+        self.assertEqual(export['project_name'], '工业时序演示')
+        self.assertEqual(export['source_filename'], 'data.zip')
+        self.assertEqual(export['file_count'], 1)
+        self.assertEqual(export['annotated_file_count'], 1)
+        self.assertEqual(export['items'][0]['marks'], annotation['marks'])
         self.assertEqual(self.request('/projects/' + pid + '?page=1')[1]['items'], [])
         with self.assertRaises(ValueError):
             app.safe_name('../../outside')

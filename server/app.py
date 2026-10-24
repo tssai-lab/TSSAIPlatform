@@ -355,10 +355,17 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise FileNotFoundError('接口不存在')
         elif len(route) == 3 and route[0] == 'projects' and route[2] == 'export' and self.command == 'GET':
-            self.project(route[1], owner)
+            project = self.project(route[1], owner)
             with database() as db:
                 rows = db.execute('SELECT id,name,kind,marks,done FROM assets WHERE project=? ORDER BY name', (route[1],)).fetchall()
-            self.send_json({'format': 'server-annotations-v1', 'project_id': route[1], 'items': [{'id': r['id'], 'name': r['name'], 'kind': r['kind'], 'marks': json.loads(r['marks']), 'done': bool(r['done'])} for r in rows]})
+            items = [{'id': r['id'], 'name': r['name'], 'kind': r['kind'],
+                      'marks': json.loads(r['marks']), 'done': bool(r['done'])}
+                     for r in rows]
+            annotated_file_count = sum(bool(item['marks']) for item in items)
+            self.send_json({'format': 'server-annotations-v1', 'project_id': route[1],
+                            'project_name': project['name'], 'source_filename': project['filename'],
+                            'file_count': len(items), 'annotated_file_count': annotated_file_count,
+                            'items': items})
         else:
             raise FileNotFoundError('接口不存在')
 
