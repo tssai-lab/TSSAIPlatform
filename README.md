@@ -6,13 +6,14 @@
 
 ## 交接文档与登录账号
 
-新部署不包含线上账号数据库，不能直接用现有服务器的 `admin01` 登录。完整环境启动后运行：
+全新数据库第一次启动时自动创建以下账号，无需账号工具或额外初始化命令：
 
-```bash
-python3 deploy/init-demo-accounts.py
-```
+| 账号 | 角色 | 密码 |
+| --- | --- | --- |
+| `admin01` | 管理员 | `123456` |
+| `user01` | 普通用户 | `123456` |
 
-会创建 `demo_root`（超级管理员）、`demo_admin`（管理员）、`demo_user`（普通用户），各自随机密码保存在仓库外的 `~/.config/tss-demo/accounts.json`，没有固定通用密码。
+已有数据库不会自动重置账号；补充默认账号的方法见账号初始化指南。
 
 - [文档索引](docs/README.md)
 - [Demo 需求文档](docs/demo-requirements.md)
@@ -72,7 +73,7 @@ export STORAGE_PASSWORD='自行设置至少8位对象存储密码'
 docker compose -f deploy/compose.yml up -d --build
 ```
 
-默认入口 `http://127.0.0.1:8014/#/user/login`。新数据库没有预置账号，按上面的初始化命令创建三类演示账号；也可通过登录页注册普通账号。全栈 Compose 使用独立数据卷，不连接或替换现有线上容器。仅启动界面、资产管理与标注所需服务，GPU/Kubernetes 调度、短信及 MLflow 需按实际环境另行配置。
+默认入口 `http://127.0.0.1:8014/#/user/login`。新数据库自动创建上面的两个默认演示账号；也可通过登录页注册普通账号。全栈 Compose 使用独立数据卷，不连接或替换现有线上容器。仅启动界面、资产管理与标注所需服务，GPU/Kubernetes 调度、短信及 MLflow 需按实际环境另行配置。
 
 `server/compose.yml` 则用于把标注服务接入现有线上 `tss-trunk-8001_default` 网络，与全栈 Compose 二选一使用。
 
@@ -85,7 +86,7 @@ node tests/data.cjs
 node tests/archive.cjs
 node tests/edit-mark.cjs
 (cd server && python3 -m unittest test_app.py)
-python3 -m unittest discover -s tests -p 'test_demo_accounts.py'
+(cd backend && ./mvnw -Dtest=DemoSeedAccountsTest test)
 ```
 
 测试使用内存生成的小型数据，不需要真实数据集。测试认证服务仅在测试进程中运行，正式后端每次请求验证登录令牌和项目归属。
